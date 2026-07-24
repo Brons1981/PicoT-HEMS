@@ -1,0 +1,43 @@
+template:
+  - sensor:
+      - name: "HEMS Project Version"
+        unique_id: hems_project_version
+        state: "0.2.0-alpha"
+
+      - name: "HEMS Project Phase"
+        unique_id: hems_project_phase
+        state: "Design"
+
+      - name: "HEMS Current Document"
+        unique_id: hems_current_document
+        state: "DOC-002 Design Specification"
+
+      - name: "HEMS Current Chapter"
+        unique_id: hems_current_chapter
+        state: "3"
+
+      - name: "HEMS Next Action"
+        unique_id: hems_next_action
+        state: "Design Chapter 3"
+
+      - name: "HEMS Repository Status"
+        unique_id: hems_repository_status
+        state: "Healthy"
+
+      - name: "HEMS Project Health"
+        unique_id: hems_project_health
+        state: "100"
+        unit_of_measurement: "%"
+
+      - name: "HEMS Current Sprint"
+        unique_id: hems_current_sprint
+        state: "Sprint 001"
+
+      - name: "HEMS Current Milestone"
+        unique_id: hems_current_milestone
+        state: "Development Dashboard"
+
+      - name: "HEMS Roadmap Progress"
+        unique_id: hems_roadmap_progress
+        state: "15"
+        unit_of_measurement: "%"

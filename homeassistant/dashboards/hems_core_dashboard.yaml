@@ -1,0 +1,62 @@
+views:
+  - title: HEMS Core
+    path: hems-development
+    icon: mdi:view-dashboard
+    cards:
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: |
+              # HEMS Core Development
+              Projectstatus en huidige werkzaamheden
+          - type: entities
+            title: Projectstatus
+            show_header_toggle: false
+            entities:
+              - entity: sensor.hems_project_version
+                name: Versie
+              - entity: sensor.hems_project_phase
+                name: Fase
+              - entity: sensor.hems_repository_status
+                name: Repository
+              - entity: sensor.hems_project_health
+                name: Project health
+          - type: entities
+            title: Huidig werk
+            show_header_toggle: false
+            entities:
+              - entity: sensor.hems_current_document
+                name: Document
+              - entity: sensor.hems_current_chapter
+                name: Hoofdstuk
+              - entity: sensor.hems_next_action
+                name: Volgende actie
+      - type: entities
+        title: Sprint
+        show_header_toggle: false
+        entities:
+          - entity: sensor.hems_current_sprint
+            name: Huidige sprint
+          - entity: sensor.hems_current_milestone
+            name: Mijlpaal
+          - entity: sensor.hems_roadmap_progress
+            name: Voortgang
+      - type: markdown
+        title: Roadmap
+        content: |
+          ## Roadmap
+
+          ✅ Foundation
+
+          🟡 Development Dashboard
+
+          ⚪ Architecture
+
+          ⚪ Planner
+
+          ⚪ Health Monitor
+
+          ⚪ Battery Controller
+
+          ⚪ Optimizer
+    type: masonry

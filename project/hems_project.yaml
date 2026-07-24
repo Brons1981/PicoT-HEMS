@@ -1,0 +1,57 @@
+project:
+  name: HEMS Core
+  phase: design
+  status: active
+  current_document: DOC-002
+  current_chapter: 2
+  next_action: Create GitHub foundation and prepare Chapter 3
+  source_of_truth: GitHub
+
+documents:
+  DOC-001:
+    title: README
+    version: "1.0"
+    status: approved
+
+  DOC-002:
+    title: Design Specification
+    version: "0.2"
+    status: draft
+    approved_chapters:
+      - 1
+      - 2
+    next_chapter: 3
+
+  DOC-003:
+    title: Architecture
+    status: not_started
+
+  DOC-004:
+    title: Data Dictionary
+    version: "0.1"
+    status: draft
+
+  DOC-005:
+    title: Entity Registry
+    status: not_started
+
+  DOC-006:
+    title: Design Decisions
+    status: not_started
+
+  DOC-007:
+    title: Project Status
+    status: not_started
+
+  DOC-008:
+    title: Roadmap
+    status: not_started
+
+  DOC-009:
+    title: Test Plan
+    status: not_started
+
+  DOC-010:
+    title: Project Rules
+    version: "0.1"
+    status: draft

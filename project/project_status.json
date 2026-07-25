@@ -1,0 +1,14 @@
+{
+  "name": "HEMS Core",
+  "version": "0.3.0-alpha",
+  "sprint": "Sprint 002",
+  "phase": "Architecture",
+  "status": "Active",
+  "current_document": "DOC-002 Design Specification",
+  "current_chapter": "3.2 Architecture Overview",
+  "next_action": "HEMS Project Dashboard automatiseren",
+  "repository_status": "Healthy",
+  "project_health": 100,
+  "milestone": "DOC-002 hoofdstuk 3.1 goedgekeurd",
+  "roadmap_progress": 20
+}

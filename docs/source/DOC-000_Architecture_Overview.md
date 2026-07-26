@@ -5,7 +5,7 @@ Copyright © 2026 Alex Brons. All rights reserved.
 | Field | Value |
 |---|---|
 | Project | PicoT HEMS |
-| Status | Release Candidate |
+| Status | Audit Approved |
 | Version | 1.0-RC3 |
 | Date | 2026-07-26 |
 | Source format | Markdown |
@@ -22,12 +22,12 @@ Home Assistant is the primary and only target platform during design, implementa
 
 ## 3. Processing pipeline
 
-Measured state and active user controls are both explicit inputs to the Decision Context.
+Measured state and `ActiveUserControls` are both explicit inputs to the Decision Context.
 
 ```text
 Measure ───────────────┐
                        ↓
-Active User Controls → Decision Context
+ActiveUserControls → Decision Context
                        ↓
                      Policy
                        ↓
@@ -50,15 +50,17 @@ User Control does not bypass the transaction model. Manual commands and override
 
 ## 4. Architectural layers
 
+The following order is the canonical architecture order and shall be used consistently in all PicoT documentation, diagrams and implementation descriptions:
+
 1. User Layer
 2. User Control Layer
-3. Report Layer
-4. Decision Layer
+3. Integration Layer
+4. Learning Layer
 5. Capability & Health Layer
-6. Learning Layer
-7. Integration Layer
-8. Execution Layer
-9. Control & Verification Layer
+6. Decision Layer
+7. Execution Layer
+8. Control & Verification Layer
+9. Report Layer
 
 Cross-cutting:
 
@@ -79,7 +81,7 @@ Learning Layer
   ↓
 Capability & Health
   ↓
-Decision Context ← Active User Controls
+Decision Context ← ActiveUserControls
   ↓
 DecisionSpace
   ↓
@@ -92,6 +94,8 @@ Safety validation
 Execution and verification
 ```
 
+`ActiveUserControls` is the canonical interface object representing the currently active user directives, including overrides, manual commands and temporary constraints. `DecisionContext` consumes `ActiveUserControls` as an explicit input.
+
 ## 6. Authority model
 
 PicoT automates within established boundaries until the user consciously and explicitly chooses otherwise.
@@ -100,14 +104,14 @@ The authority order is:
 
 ```text
 Physical reality
-→ Verified device capability and health
+→ Available device capability and assessed health
 → Safety constraints
 → Explicit User Control
 → Active policy
 → Automated optimization
 ```
 
-User Control therefore takes precedence over normal policy and optimization, but never over physical limitations, verified capability or safety constraints.
+User Control therefore takes precedence over normal policy and optimization, but never over physical limitations, available device capability, assessed health or safety constraints.
 
 ## 7. Architectural rules
 

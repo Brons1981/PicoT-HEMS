@@ -5,7 +5,7 @@ Copyright © 2026 Alex Brons. All rights reserved.
 | Field | Value |
 |---|---|
 | Project | PicoT HEMS |
-| Status | Release Candidate |
+| Status | Audit Approved |
 | Version | 1.0-RC3 |
 | Date | 2026-07-26 |
 
@@ -34,10 +34,21 @@ PicoT automates within established boundaries until the user consciously and exp
 ## 4. Core principles
 
 ### Safety First
-Safety-related policy takes precedence over optimization. The PicoT Safety Layer itself is not a safety, security or alarm system and cannot replace certified hardware or external safety integrations.
+Safety constraints take precedence over explicit User Control, active policy and automated optimization.
+
+The optional PicoT Safety Layer is not a safety, security or alarm system and cannot replace certified hardware, external safety integrations or human intervention. Its primary purpose is to stop PicoT from issuing further control commands when configured conditions occur. Upon activation, PicoT may make a final best-effort attempt to place supported devices in a configured state, but only when the required integrations, communication paths and hardware remain available. Success must never be assumed.
 
 ### User Authority
-The user retains ultimate authority over normal automated operation. An explicit user control takes precedence over active policy and automated optimization, but cannot override physical reality, verified device capability or safety constraints.
+The user retains ultimate authority over normal automated operation. An explicit User Control takes precedence over active policy and automated optimization, but cannot override physical reality, available device capability and assessed health, or safety constraints.
+
+The canonical authority order is:
+
+1. Physical reality
+2. Available device capability and assessed health
+3. Safety constraints
+4. Explicit User Control
+5. Active policy
+6. Automated optimization
 
 PicoT must never silently ignore, alter or prolong a user control. A rejected, limited, failed or expired control must be reported with evidence and reasons.
 
@@ -68,7 +79,7 @@ Each module answers one architectural question and produces one explicit output.
 Missing or unreliable inputs reduce capability, not predictability. PicoT falls back deliberately and visibly.
 
 ### Platform Independence
-The core uses canonical models rather than Home Assistant or vendor-specific models.
+The core uses canonical models rather than Home Assistant or vendor-specific models. Platform Independence describes the internal architecture and does not change Home Assistant's position as the primary and only target platform during design, implementation and stabilisation. Support for other platforms is not a parallel objective and must not shape or constrain the current design.
 
 ### Closed-loop Control
 Planning, execution, observation and verification form a continuous control loop. Manual commands use the same closed-loop path as automated actions.
@@ -95,6 +106,8 @@ Every user control must be explicit about:
 - execution and verification result where applicable.
 
 Supported control categories may include preferences, constraints, temporary overrides, immediate manual commands, automation locks and explicit release of control back to PicoT.
+
+The currently active and applicable user controls are exposed to the Decision Context through the canonical `ActiveUserControls` interface object.
 
 ## 6. Transparency obligations
 

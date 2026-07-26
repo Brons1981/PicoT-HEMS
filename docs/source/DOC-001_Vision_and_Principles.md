@@ -90,6 +90,8 @@ Understandable and testable behavior is preferred over opaque sophistication.
 ### Operational Stability outweighs Marginal Economic Gain
 The Planner shall avoid unnecessary switching, oscillation and relay wear even when a small additional economic benefit might be available.
 
+Committed actions should not be revoked unless a significant event or a change in the operational context justifies replanning. The expected benefit of replanning shall be balanced against the impact of changing an already committed plan.
+
 ### Design for Evolution
 Future capabilities are enabled through stable interfaces and retained evidence, without unnecessarily increasing the complexity of the first usable version.
 
@@ -127,6 +129,45 @@ For every significant decision, health classification or user control, PicoT mus
 
 No opaque scores, unexplained classifications or hidden overrides are permitted.
 
-## 7. Evolution rule
+## 7. Architectural philosophy
+
+PicoT is designed around a deterministic operational lifecycle:
+
+```text
+Observe
+  ↓
+Decide
+  ↓
+Plan
+  ↓
+Execute
+  ↓
+Verify
+  ↓
+Explain
+```
+
+The lifecycle defines six distinct architectural responsibilities:
+
+- **Observe** — build an accurate and qualified representation of current and expected reality.
+- **Decide** — determine the best achievable strategy within the applicable boundaries.
+- **Plan** — produce the most stable executable plan.
+- **Execute** — implement the approved plan without reinterpreting it.
+- **Verify** — establish what actually happened.
+- **Explain** — make the complete decision and outcome understandable.
+
+Every architectural component shall contribute to exactly one lifecycle stage unless an explicit architectural decision defines otherwise.
+
+A component shall not combine multiple lifecycle stages merely for implementation convenience. In particular:
+
+- observation shall not silently become decision logic;
+- planning shall remain separate from execution;
+- execution shall not optimize or reinterpret a plan;
+- verification shall not silently correct a failed plan; and
+- reporting shall not alter operational state.
+
+This separation preserves deterministic behaviour, testability, maintainability, transparency and long-term extensibility.
+
+## 8. Evolution rule
 
 New capabilities shall be introduced by extending the architecture rather than modifying stable operational components. Optional components expose the same interface as their pass-through implementation.

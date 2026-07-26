@@ -25,6 +25,8 @@ The capital **T** is intentional. Transparency is not an isolated feature; it is
 
 PicoT continuously determines and coordinates the best responsible operating strategy for a residential energy ecosystem, using measurable evidence, explicit policy, verified execution and transparent reporting.
 
+PicoT automates within established boundaries until the user consciously and explicitly chooses otherwise.
+
 ## 3. Principle Zero
 
 > No module may assume success. Every important action must be verified before it is considered complete.
@@ -33,6 +35,11 @@ PicoT continuously determines and coordinates the best responsible operating str
 
 ### Safety First
 Safety-related policy takes precedence over optimization. The PicoT Safety Layer itself is not a safety, security or alarm system and cannot replace certified hardware or external safety integrations.
+
+### User Authority
+The user retains ultimate authority over normal automated operation. An explicit user control takes precedence over active policy and automated optimization, but cannot override physical reality, verified device capability or safety constraints.
+
+PicoT must never silently ignore, alter or prolong a user control. A rejected, limited, failed or expired control must be reported with evidence and reasons.
 
 ### Verify, Don't Assume
 Commands are requests until execution is verified through observable state or other approved evidence.
@@ -64,7 +71,7 @@ Missing or unreliable inputs reduce capability, not predictability. PicoT falls 
 The core uses canonical models rather than Home Assistant or vendor-specific models.
 
 ### Closed-loop Control
-Planning, execution, observation and verification form a continuous control loop.
+Planning, execution, observation and verification form a continuous control loop. Manual commands use the same closed-loop path as automated actions.
 
 ### Clarity Above Cleverness
 Understandable and testable behavior is preferred over opaque sophistication.
@@ -75,14 +82,29 @@ The Planner shall avoid unnecessary switching, oscillation and relay wear even w
 ### Design for Evolution
 Future capabilities are enabled through stable interfaces and retained evidence, without unnecessarily increasing the complexity of the first usable version.
 
-## 5. Transparency obligations
+## 5. User Control obligations
 
-For every significant decision or health classification, PicoT must be able to answer:
+Every user control must be explicit about:
+
+- intent and control type;
+- scope, such as device, function, operating mode or time period;
+- source and creation time;
+- expiry, release condition or permanence;
+- decisions and actions affected;
+- acceptance, limitation or rejection reason;
+- execution and verification result where applicable.
+
+Supported control categories may include preferences, constraints, temporary overrides, immediate manual commands, automation locks and explicit release of control back to PicoT.
+
+## 6. Transparency obligations
+
+For every significant decision, health classification or user control, PicoT must be able to answer:
 
 - What do we know?
 - What is measured, calculated or estimated?
 - How reliable is it?
 - What is allowed?
+- Is an explicit user control active?
 - What strategy was selected?
 - Why was it selected?
 - Why were alternatives rejected?
@@ -90,8 +112,8 @@ For every significant decision or health classification, PicoT must be able to a
 - Was execution successful?
 - What changed after verification?
 
-No opaque scores or unexplained classifications are permitted.
+No opaque scores, unexplained classifications or hidden overrides are permitted.
 
-## 6. Evolution rule
+## 7. Evolution rule
 
 New capabilities shall be introduced by extending the architecture rather than modifying stable operational components. Optional components expose the same interface as their pass-through implementation.

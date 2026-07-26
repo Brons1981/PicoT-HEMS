@@ -1,14 +1,17 @@
 {
-  "name": "HEMS Core",
-  "version": "0.3.0-alpha",
-  "sprint": "Sprint 002",
+  "name": "PicoT HEMS",
+  "repository": "Brons1981/PicoT-HEMS",
+  "namespace": "picot_hems",
+  "version": "1.0-RC3",
+  "sprint": "RC3 Documentation Migration",
   "phase": "Architecture",
   "status": "Active",
   "current_document": "DOC-002 Design Specification",
-  "current_chapter": "3.2 Architecture Overview",
-  "next_action": "DOC-002 hoofdstuk 3.2 uitwerken",
+  "current_chapter": "RC3 architecture migration",
+  "next_action": "Add ADR-009 through ADR-012 and rewrite DOC-002",
   "repository_status": "Healthy",
   "project_health": 100,
-  "milestone": "DOC-002 hoofdstuk 3.1 goedgekeurd",
-  "roadmap_progress": 20
+  "milestone": "Capability & Health and Learning architecture approved",
+  "roadmap_progress": 35,
+  "documentation_source": "Markdown"
 }

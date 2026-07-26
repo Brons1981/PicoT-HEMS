@@ -46,9 +46,38 @@ ActiveUserControls → Decision Context
 
 Each optimization cycle is one HEMS Transaction with a unique `transaction_id`, immutable artifacts and end-to-end traceability.
 
-User Control does not bypass the transaction model. Manual commands and overrides remain subject to capability assessment, safety validation, execution and verification.
+User Control does not bypass the transaction model. Manual commands and overrides remain subject to capability assessment, applicable Safety Layer restrictions, execution and verification.
 
-## 4. Architectural layers
+## 4. Canonical operational lifecycle
+
+PicoT is designed around one deterministic operational lifecycle:
+
+```text
+Observe
+  ↓
+Decide
+  ↓
+Plan
+  ↓
+Execute
+  ↓
+Verify
+  ↓
+Explain
+```
+
+The lifecycle provides the architectural meaning behind the processing pipeline:
+
+- **Observe** builds the best available representation of current and expected reality.
+- **Decide** determines the best achievable strategy within the resolved Decision Space.
+- **Plan** converts the selected strategy into a stable, timed and coordinated execution plan.
+- **Execute** implements only the approved plan and does not reinterpret it.
+- **Verify** determines what actually happened and records deviations.
+- **Explain** exposes the evidence, confidence, reasons and outcome.
+
+Every architectural component shall contribute to exactly one lifecycle stage unless an explicit architectural decision defines otherwise. Components shall not silently combine observation, decision, planning, execution, verification or explanation responsibilities.
+
+## 5. Architectural layers
 
 The following order is the canonical architecture order and shall be used consistently in all PicoT documentation, diagrams and implementation descriptions:
 
@@ -68,7 +97,9 @@ Cross-cutting:
 
 Only the Safety Layer is cross-cutting.
 
-## 5. Core interfaces
+The User Layer is strictly read-only. All user actions that influence PicoT enter through the User Control Layer.
+
+## 6. Core interfaces
 
 ```text
 External data
@@ -89,14 +120,14 @@ DecisionProposal
   ↓
 RequestedAction
   ↓
-Safety validation
+Safety Layer evaluation, where configured and applicable
   ↓
 Execution and verification
 ```
 
 `ActiveUserControls` is the canonical interface object representing the currently active user directives, including overrides, manual commands and temporary constraints. `DecisionContext` consumes `ActiveUserControls` as an explicit input.
 
-## 6. Authority model
+## 7. Authority model
 
 PicoT automates within established boundaries until the user consciously and explicitly chooses otherwise.
 
@@ -111,9 +142,9 @@ Physical reality
 → Automated optimization
 ```
 
-User Control therefore takes precedence over normal policy and optimization, but never over physical limitations, available device capability, assessed health or safety constraints.
+User Control therefore takes precedence over normal policy and optimization, but never over physical limitations, available device capability, assessed health or applicable safety constraints.
 
-## 7. Architectural rules
+## 8. Architectural rules
 
 - No module may assume success.
 - Every important action must be verified before it is considered complete.
@@ -124,8 +155,11 @@ User Control therefore takes precedence over normal policy and optimization, but
 - An active user override may never be silently ignored.
 - User controls must have an explicit scope and, where applicable, an end condition.
 - Manual commands must use the same execution and verification path as automated actions.
+- The Planner shall prefer stable committed plans over marginal improvements.
+- The Execution Layer shall never optimize, reinterpret or silently replace an approved plan.
+- Execution deviations become evidence for verification and a subsequent planning cycle.
 
-## 8. Safety Layer boundary
+## 9. Safety Layer boundary
 
 The Safety Layer is optional and is not a safety, security or alarm system. Its purpose is to stop PicoT from issuing further control commands when configured conditions occur.
 
@@ -133,7 +167,7 @@ On activation, PicoT may make a best-effort attempt to place supported devices i
 
 User Control cannot disable or bypass the Safety Layer.
 
-## 9. Dashboard transparency
+## 10. Dashboard transparency
 
 Every architectural layer shall expose at least:
 

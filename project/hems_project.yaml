@@ -2,36 +2,54 @@ project:
   name: PicoT HEMS
   repository: Brons1981/PicoT-HEMS
   namespace: picot_hems
-  phase: architecture
+  phase: implementation_architecture
   status: active
-  current_document: DOC-002
+  current_document: RC3 architecture set
   current_release: 1.0-RC3
-  next_action: Complete RC3 architecture migration
+  milestone: architecture_frozen
+  next_action: Define component interfaces, canonical models, events, state machines and package structure
   source_of_truth: GitHub
   documentation_source_format: Markdown
 
 architecture:
+  overall_status: approved_frozen
+  operational_lifecycle_status: approved_frozen
   processing_pipeline_status: approved_frozen
   decision_layer_status: approved_frozen
+  planning_strategy_status: approved_frozen
+  execution_philosophy_status: approved_frozen
+  verification_philosophy_status: approved_frozen
+  reporting_philosophy_status: approved_frozen
+  operational_timeline_status: approved_frozen
   canonical_domain_models_status: approved_frozen
   capability_health_layer_status: approved_frozen
-  learning_layer_status: architecture_approved_frozen
+  learning_layer_status: approved_frozen
   safety_layer_status: approved_frozen
-  dashboard_direction_status: approved
+  dashboard_direction_status: approved_frozen
+
+lifecycle:
+  - Observe
+  - Decide
+  - Plan
+  - Execute
+  - Verify
+  - Explain
 
 documents:
   DOC-000:
     title: Architecture Overview
-    status: update_required
+    version: 1.0-RC3
+    status: audit_approved
 
   DOC-001:
     title: Vision & Principles
-    status: update_required
+    version: 1.0-RC3
+    status: audit_approved
 
   DOC-002:
     title: Design Specification
     version: 1.0-RC3
-    status: migration_in_progress
+    status: architecture_frozen_final_consistency_pending
 
   DOC-010:
     title: Project Rules
@@ -53,6 +71,33 @@ adrs:
   ADR-012:
     title: Extensible Components
     status: approved_frozen
+  ADR-013:
+    title: User Control Layer
+    status: approved_frozen
+  ADR-014:
+    title: Canonical Operational Lifecycle
+    status: approved_frozen
+  ADR-015:
+    title: Planning Strategy
+    status: approved_frozen
+  ADR-016:
+    title: Transparency and Operational Timeline
+    status: approved_frozen
+
+next_phase:
+  name: Implementation Architecture
+  status: ready_to_start
+  tasks:
+    - Component interfaces
+    - Canonical input and output models
+    - Services and application boundaries
+    - Events and transaction flow
+    - State machines
+    - picot_hems package structure
+    - Home Assistant runtime architecture
+    - Persistence and retention interfaces
+    - Test strategy
+    - Dashboard implementation model
 
 naming:
   brand: PicoT HEMS

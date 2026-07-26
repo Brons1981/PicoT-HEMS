@@ -16,3 +16,4 @@ Copyright © 2026 Alex Brons. All rights reserved.
 | ADR-010 | 2026-07-26 | Learning Layer is present from V1 with pass-through behavior | Approved & Frozen | DOC-000, DOC-002 |
 | ADR-011 | 2026-07-26 | Evidence over Assumption | Approved & Frozen | DOC-001, DOC-002 |
 | ADR-012 | 2026-07-26 | New capabilities extend stable components through pass-through interfaces | Approved & Frozen | DOC-001, DOC-002 |
+| ADR-013 | 2026-07-26 | User Control Layer preserves explicit user authority over normal automation | Approved & Frozen | DOC-000, DOC-001, DOC-002 |

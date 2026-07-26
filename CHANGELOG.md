@@ -10,6 +10,7 @@ All notable PicoT HEMS project changes are recorded in this file.
 - Established `picot_hems.*` as the technical namespace convention.
 - Defined Markdown as the source format for controlled documentation.
 - Started the RC3 architecture migration.
+- Updated DOC-000, DOC-001 and DOC-002 to include explicit user authority and the User Control Layer.
 
 ### Added
 
@@ -18,17 +19,17 @@ All notable PicoT HEMS project changes are recorded in this file.
 - Evidence over Assumption as an approved and frozen principle.
 - Dynamic Device Capability and Thermal Derating rules.
 - Extensible Components rule with transparent pass-through behaviour.
+- User Control Layer with preferences, constraints, temporary overrides, manual commands, automation locks and release controls.
+- ADR-013 defining the authority order between physical reality, capability, safety, user control, policy and optimization.
 - Transparency-first dashboard direction with per-layer online, health, reliability and operating-mode status.
 - Copyright requirement for official documentation.
 
 ### To migrate
 
-- DOC-000 Architecture Overview
-- DOC-001 Vision & Principles
-- DOC-002 Design Specification RC3
 - DOC-010 Project Rules
-- ADR-009 through ADR-012
+- Consistency validation of DOC-000 through DOC-002 against ADR-001 through ADR-013
 - Home Assistant dashboard and package naming
+- Home Assistant terminology and architecture references
 
 ## Initial repository foundation
 

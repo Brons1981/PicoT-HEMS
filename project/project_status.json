@@ -3,15 +3,25 @@
   "repository": "Brons1981/PicoT-HEMS",
   "namespace": "picot_hems",
   "version": "1.0-RC3",
-  "sprint": "RC3 Documentation Migration",
-  "phase": "Architecture",
+  "sprint": "Implementation Architecture Preparation",
+  "phase": "Implementation Architecture",
   "status": "Active",
-  "current_document": "DOC-002 Design Specification",
-  "current_chapter": "RC3 architecture migration",
-  "next_action": "Add ADR-009 through ADR-012 and rewrite DOC-002",
+  "current_document": "RC3 architecture set",
+  "current_chapter": "Architecture frozen",
+  "next_action": "Define component interfaces, canonical models, events, state machines and package structure",
   "repository_status": "Healthy",
   "project_health": 100,
-  "milestone": "Capability & Health and Learning architecture approved",
-  "roadmap_progress": 35,
-  "documentation_source": "Markdown"
+  "milestone": "PicoT HEMS v1.0-RC3 architecture frozen",
+  "architecture_progress": 100,
+  "implementation_architecture_progress": 0,
+  "roadmap_progress": 45,
+  "documentation_source": "Markdown",
+  "operational_lifecycle": [
+    "Observe",
+    "Decide",
+    "Plan",
+    "Execute",
+    "Verify",
+    "Explain"
+  ]
 }

@@ -2,15 +2,31 @@
 
 | ID | Document | Source format | Status |
 |---|---|---|---|
-| DOC-000 | Architecture Overview | Markdown | Update required for RC3 |
-| DOC-001 | Vision & Principles | Markdown | Update required for RC3 |
-| DOC-002 | Design Specification | Markdown | RC3 migration in progress |
+| DOC-000 | Architecture Overview | Markdown | Audit Approved — RC3 |
+| DOC-001 | Vision & Principles | Markdown | Audit Approved — RC3 |
+| DOC-002 | Design Specification | Markdown | Architecture Frozen — final consistency pass pending |
 | DOC-010 | Project Rules | Markdown | Update required |
 | ADR-001–ADR-008 | Architecture Decision Records | Markdown / Word legacy | Review required |
-| ADR-009 | Capability & Health Layer | Markdown | Approved & Frozen; to add |
-| ADR-010 | Learning Layer | Markdown | Approved & Frozen; to add |
-| ADR-011 | Evidence over Assumption | Markdown | Approved & Frozen; to add |
-| ADR-012 | Extensible Components | Markdown | Approved & Frozen; to add |
+| ADR-009 | Capability & Health Layer | Markdown | Approved & Frozen |
+| ADR-010 | Learning Layer | Markdown | Approved & Frozen |
+| ADR-011 | Evidence over Assumption | Markdown | Approved & Frozen |
+| ADR-012 | Extensible Components | Markdown | Approved & Frozen |
+| ADR-013 | User Control Layer | Markdown | Approved & Frozen |
+| ADR-014 | Canonical Operational Lifecycle | Markdown | Approved & Frozen |
+| ADR-015 | Planning Strategy | Markdown | Approved & Frozen |
+| ADR-016 | Transparency and Operational Timeline | Markdown | Approved & Frozen |
+
+## Current milestone
+
+**PicoT HEMS v1.0-RC3 — Architecture Frozen**
+
+Canonical lifecycle:
+
+```text
+Observe → Decide → Plan → Execute → Verify → Explain
+```
+
+Next phase: **Implementation Architecture**.
 
 ## Documentation policy
 

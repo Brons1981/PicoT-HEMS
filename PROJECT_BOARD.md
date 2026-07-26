@@ -1,34 +1,57 @@
 # PicoT HEMS Project Board
 
-## In progress
+## Current phase
 
-- RC3 documentation migration
-- Repository-wide naming migration to PicoT HEMS
-- Capability & Health Layer documentation
-- Learning Layer integration
+**RC3 Architecture Frozen**
+
+The normative architecture is complete. New work shall conform to the approved RC3 lifecycle, layers, authority model and transparency obligations.
 
 ## Approved & Frozen
 
-- Processing pipeline
-- Canonical Domain Models
-- Decision Layer
+- PicoT identity: Planning, Intelligence, Coordination, Orchestration & Transparency
+- Canonical operational lifecycle: Observe → Decide → Plan → Execute → Verify → Explain
+- Canonical architecture layer order
+- Authority hierarchy
+- User Layer as strictly read-only
+- User Control Layer and `ActiveUserControls`
+- Integration Layer boundaries
+- Learning Layer with pass-through behaviour
 - Capability & Health Layer
+- Decision Layer
+- Planning Strategy and Planning Commitment
+- Execution Philosophy
+- Verification Philosophy
+- Reporting Philosophy
+- Operational Timeline
+- Safety Layer boundary
+- Canonical Domain Models
 - Evidence over Assumption
-- Dynamic Device Capability
-- Thermal Derating
-- Extensible Components with pass-through behaviour
+- Extensible Components
 
-## Next
+## Implementation Architecture — Next
 
-- Add ADR-009 through ADR-012
-- Rewrite DOC-002 architecture chapter for RC3
-- Update Safety Layer wording to its final scope
-- Define the Transparency-first dashboard model
-- Update Home Assistant dashboard and package naming
+- Define component interfaces
+- Define canonical input and output models
+- Define services and application boundaries
+- Define events and transaction flow
+- Define component state machines
+- Define `picot_hems.*` package structure
+- Define Home Assistant runtime architecture
+- Define persistence and retention interfaces
+- Define test strategy and architecture conformance tests
+- Define dashboard implementation model
+
+## Documentation follow-up
+
+- Final consistency pass across DOC-000, DOC-001, DOC-002 and ADR-001 through ADR-016
+- Add architecture and component interaction diagrams
+- Update DOC-010 Project Rules
+- Update documentation indexes for ADR-014 through ADR-016
+- Generate controlled Word and PDF publication artefacts from Markdown
 
 ## Backlog
 
-- Generate Word and PDF publication artefacts from Markdown
-- Add architecture diagrams
-- Add automated documentation validation
-- Add future Learning Engine implementation milestones
+- Automated documentation validation
+- Learning Engine implementation milestones
+- Home Assistant dashboard implementation
+- Optional Homey support only after the Home Assistant version is stable and maintenance-light

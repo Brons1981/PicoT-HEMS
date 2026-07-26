@@ -1,57 +1,65 @@
 project:
-  name: HEMS Core
-  phase: design
+  name: PicoT HEMS
+  repository: Brons1981/PicoT-HEMS
+  namespace: picot_hems
+  phase: architecture
   status: active
   current_document: DOC-002
-  current_chapter: 2
-  next_action: Create GitHub foundation and prepare Chapter 3
+  current_release: 1.0-RC3
+  next_action: Complete RC3 architecture migration
   source_of_truth: GitHub
+  documentation_source_format: Markdown
+
+architecture:
+  processing_pipeline_status: approved_frozen
+  decision_layer_status: approved_frozen
+  canonical_domain_models_status: approved_frozen
+  capability_health_layer_status: approved_frozen
+  learning_layer_status: architecture_approved_frozen
+  safety_layer_status: approved_frozen
+  dashboard_direction_status: approved
 
 documents:
+  DOC-000:
+    title: Architecture Overview
+    status: update_required
+
   DOC-001:
-    title: README
-    version: "1.0"
-    status: approved
+    title: Vision & Principles
+    status: update_required
 
   DOC-002:
     title: Design Specification
-    version: "0.2"
-    status: draft
-    approved_chapters:
-      - 1
-      - 2
-    next_chapter: 3
-
-  DOC-003:
-    title: Architecture
-    status: not_started
-
-  DOC-004:
-    title: Data Dictionary
-    version: "0.1"
-    status: draft
-
-  DOC-005:
-    title: Entity Registry
-    status: not_started
-
-  DOC-006:
-    title: Design Decisions
-    status: not_started
-
-  DOC-007:
-    title: Project Status
-    status: not_started
-
-  DOC-008:
-    title: Roadmap
-    status: not_started
-
-  DOC-009:
-    title: Test Plan
-    status: not_started
+    version: 1.0-RC3
+    status: migration_in_progress
 
   DOC-010:
     title: Project Rules
-    version: "0.1"
-    status: draft
+    status: update_required
+
+adrs:
+  ADR-008:
+    title: Canonical Domain Models
+    status: approved_frozen
+  ADR-009:
+    title: Capability & Health Layer
+    status: approved_frozen
+  ADR-010:
+    title: Learning Layer
+    status: approved_frozen
+  ADR-011:
+    title: Evidence over Assumption
+    status: approved_frozen
+  ADR-012:
+    title: Extensible Components
+    status: approved_frozen
+
+naming:
+  brand: PicoT HEMS
+  repository: PicoT-HEMS
+  technical_namespace: picot_hems.*
+
+copyright:
+  owner: Alex Brons
+  year: 2026
+  notice: All rights reserved.

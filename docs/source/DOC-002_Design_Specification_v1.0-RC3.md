@@ -10,41 +10,186 @@ Copyright © 2026 Alex Brons. All rights reserved.
 | Date | 2026-07-26 |
 | Source format | Markdown |
 
-## 1. Purpose
+## 1. Document information
 
-This document defines the functional and architectural design of PicoT HEMS.
+### 1.1 Purpose
 
-PicoT is a modular, explainable and verification-driven Home Energy Management System. Home Assistant is the runtime and user-interface platform, while PicoT contains the energy policy, planning, orchestration and verification logic.
+This document defines the functional design and normative software architecture of **PicoT HEMS**.
 
-## 2. Architecture principles
+It describes the architectural building blocks, responsibility boundaries, decision flow, planning behaviour, execution model and implementation constraints that together form the PicoT reference architecture.
 
-PicoT follows DOC-001. The normative principles include:
+This specification is normative unless explicitly stated otherwise. Implementations are expected to conform to the architectural rules defined in this document.
 
-- Principle Zero: no module may assume success.
-- Safety First.
-- User Authority.
-- Verify, Don't Assume.
-- Evidence over Assumption.
-- Explain Every Decision.
-- Deterministic by Design.
-- Modularity over Complexity.
-- Graceful Degradation.
-- Platform Independence.
-- Closed-loop Control.
-- Clarity Above Cleverness.
-- Operational Stability outweighs Marginal Economic Gain.
-- Design for Evolution.
+### 1.2 Audience
 
-## 3. Processing model
+- Project Owner
+- Software Architects
+- Developers
+- Testers
+- Future Contributors
 
-Every optimization cycle is exactly one HEMS Transaction.
+### 1.3 Related documents
 
-Measured state and active user controls converge in Decision Context:
+- DOC-000 Architecture Overview
+- DOC-001 Vision & Principles
+- DOC-003 Data Dictionary
+- DOC-004 Entity Registry
+- DOC-005 Architecture Decision Records
+- DOC-006 Design Decisions
+- DOC-007 Project Status
+- DOC-008 Roadmap
+- DOC-009 Test Plan
+- DOC-010 Project Rules
+
+## 2. Purpose and vision
+
+### 2.1 Purpose
+
+PicoT HEMS is an intelligent, modular and deterministic Home Energy Management System that continuously plans, coordinates and orchestrates the residential energy ecosystem.
+
+Its purpose is to determine the best achievable energy strategy for every planning interval while respecting physical limitations, verified device capabilities, assessed health, applicable constraints, active user controls and configured energy policies.
+
+PicoT does not optimise individual devices in isolation. It evaluates the complete energy ecosystem, including production, consumption, storage, forecasts, market conditions and user objectives, to produce a coherent and explainable execution plan.
+
+Every significant decision shall be:
+
+- technically feasible;
+- explainable and traceable;
+- verifiable after execution;
+- adaptable to changing operating conditions; and
+- consistent with the Authority Hierarchy.
+
+Home Assistant is the primary and only runtime platform during design, implementation and stabilisation. PicoT retains a platform-independent internal architecture based on canonical domain models.
+
+### 2.2 Vision
+
+PicoT HEMS is the intelligent planning and orchestration platform for residential energy management.
+
+Its architecture is built around five defining qualities:
+
+- **Planning** — determine future strategy instead of reacting only to current events.
+- **Intelligence** — combine measurements, forecasts, learned behaviour and policy into a consistent operational picture.
+- **Coordination** — operate connected devices as one coherent energy system.
+- **Orchestration** — translate strategy into controlled and verified execution.
+- **Transparency** — make every significant decision understandable, traceable and verifiable.
+
+The ultimate objective is increasingly autonomous operation without sacrificing user authority, predictability, operational stability or explainability.
+
+### 2.3 Scope
+
+PicoT covers the complete decision lifecycle from acquiring measurements to verifying and explaining execution outcomes.
+
+Within this scope, PicoT is responsible for:
+
+- acquiring and normalising data from supported integrations;
+- assessing data quality, device health and operational capability;
+- maintaining canonical representations of the energy ecosystem;
+- generating and consuming forecasts;
+- supporting configurable and learned device profiles;
+- evaluating user controls and active policies;
+- producing deterministic and explainable decisions;
+- planning stable and coordinated actions;
+- orchestrating supported devices through integration adapters;
+- verifying whether requested actions were achieved; and
+- recording evidence for transparency and diagnostics.
+
+PicoT is not responsible for:
+
+- acting as a certified safety, security or alarm system;
+- replacing electrical protection, fire detection or emergency systems;
+- guaranteeing uninterrupted external communication;
+- guaranteeing execution by third-party devices;
+- replacing Home Assistant's general automation capabilities; or
+- delegating energy strategy to vendor cloud platforms.
+
+### 2.4 Design goals
+
+The architecture shall support:
+
+- Safety First
+- Planning Before Acting
+- Deterministic by Design
+- Explain Every Decision
+- Verify, Don't Assume
+- Graceful Degradation
+- Platform Independence
+- Modularity
+- Transparency
+- Evidence over Assumption
+- Operational Stability
+- Extensibility
+
+### 2.5 Architectural principles
+
+#### Single Source of Truth
+
+Every information element shall have one authoritative representation. Derived values shall not become independent sources of truth.
+
+#### Separation of Responsibilities
+
+Observation, decision, planning, execution, verification and explanation are distinct architectural responsibilities.
+
+#### Capability-aware Planning
+
+Planning shall use currently available capability rather than nominal specifications alone.
+
+#### Health-aware Operation
+
+Data, forecast, device and integration health shall influence confidence and available optimisation behaviour.
+
+#### User Authority
+
+Explicit User Control influences planning but never bypasses physical reality, available capability, assessed health or applicable constraints.
+
+#### Stable Control Behaviour
+
+PicoT shall avoid unnecessary mode changes, oscillation, switching wear and plan churn.
+
+#### Learning Improves, Never Governs
+
+Learning may improve models and confidence but never replaces verified measurements, explicit configuration, available capability or active policy.
+
+## 3. Canonical operational lifecycle
+
+PicoT is designed around one deterministic operational lifecycle:
+
+```text
+Observe
+  ↓
+Decide
+  ↓
+Plan
+  ↓
+Execute
+  ↓
+Verify
+  ↓
+Explain
+```
+
+The lifecycle defines the responsibility of every component:
+
+- **Observe** builds the best available representation of current and expected reality.
+- **Decide** selects the best achievable strategy.
+- **Plan** converts the strategy into a stable and executable plan.
+- **Execute** implements only the approved plan.
+- **Verify** establishes what actually happened.
+- **Explain** exposes evidence, reasons, confidence and outcome.
+
+Every architectural component shall contribute to exactly one lifecycle stage unless an explicit architecture decision defines otherwise.
+
+No component may silently combine lifecycle responsibilities for implementation convenience.
+
+## 4. Processing model
+
+Every optimisation cycle is exactly one HEMS Transaction.
+
+Measured state and `ActiveUserControls` converge in the Decision Context:
 
 ```text
 Measure ───────────────┐
                        ↓
-Active User Controls → Decision Context
+ActiveUserControls → Decision Context
                        ↓
                      Policy
                        ↓
@@ -52,7 +197,7 @@ Active User Controls → Decision Context
                        ↓
                     Planning
                        ↓
-                     Safety
+        Safety Layer evaluation
                        ↓
                    Execution
                        ↓
@@ -64,222 +209,174 @@ Active User Controls → Decision Context
 Each transaction contains:
 
 - `transaction_id`;
-- immutable artifacts;
+- immutable artefacts;
 - timestamps;
 - source and configuration versions;
 - active user controls;
 - reason codes;
 - confidence and evidence;
-- verification result.
+- requested actions; and
+- verification results.
 
 Manual commands and overrides do not bypass this transaction model.
 
-## 4. Architecture layers
+## 5. Architecture overview
 
-### 4.1 User Layer
+### 5.1 Canonical layer order
 
-Provides the human-facing interaction surface. It captures user intent and configuration and presents information, but does not itself decide, plan or execute energy actions.
+1. User Layer
+2. User Control Layer
+3. Integration Layer
+4. Learning Layer
+5. Capability & Health Layer
+6. Decision Layer
+7. Execution Layer
+8. Control & Verification Layer
+9. Report Layer
 
-### 4.2 User Control Layer — ADR-013
+Cross-cutting:
 
-Question: **What has the user explicitly requested PicoT to do differently?**
+- Safety Layer
 
-Output: `UserControlSet`
+Only the Safety Layer is cross-cutting.
 
-The User Control Layer translates explicit user intent into validated, traceable controls for the Decision Context and, for immediate commands, the normal execution path.
+### 5.2 Architectural characteristics
 
-Supported control categories:
+PicoT intentionally separates:
 
-- `PREFERENCE`: influences future decisions without requiring a specific result;
-- `CONSTRAINT`: limits allowed behavior, such as do not discharge;
-- `TEMPORARY_OVERRIDE`: temporarily replaces normal automated behavior;
-- `MANUAL_COMMAND`: requests an immediate concrete action;
-- `AUTOMATION_LOCK`: excludes a device or function from automatic control;
-- `OVERRIDE_RELEASE`: returns control to normal PicoT automation.
+- presentation from user control;
+- integration from business logic;
+- learning from decision making;
+- capability assessment from optimisation;
+- planning from execution;
+- execution from verification; and
+- reporting from operational logic.
 
-Every control contains, where applicable:
+## 6. Component architecture
+
+### 6.1 User Layer
+
+#### Responsibility
+
+The User Layer is responsible exclusively for presenting information to the user.
+
+It provides visibility into the current, historical and planned state of PicoT without influencing behaviour, planning or decision making.
+
+The User Layer is strictly read-only.
+
+#### Responsibilities
+
+- display current system status;
+- display planning results;
+- display energy flows and forecasts;
+- display device status and system health;
+- display decision explanations;
+- display execution and verification results;
+- display historical information and diagnostics;
+- display notifications;
+- display active user controls; and
+- display system confidence.
+
+#### Prohibited responsibilities
+
+The User Layer shall never:
+
+- create or modify configuration;
+- create or modify user controls;
+- initiate planning;
+- execute commands;
+- communicate directly with integrations; or
+- influence optimisation.
+
+### 6.2 User Control Layer — ADR-013
+
+#### Responsibility
+
+The User Control Layer is responsible for all user interactions that intentionally influence PicoT behaviour.
+
+Every user action is validated and translated into an internal representation. The currently active and applicable controls are exposed through the canonical `ActiveUserControls` interface object.
+
+The User Control Layer is the only architectural path through which user intent may influence operational behaviour.
+
+#### Supported control categories
+
+- `PREFERENCE`
+- `CONSTRAINT`
+- `TEMPORARY_OVERRIDE`
+- `MANUAL_COMMAND`
+- `AUTOMATION_LOCK`
+- `OVERRIDE_RELEASE`
+
+#### ActiveUserControl attributes
+
+Each control contains, where applicable:
 
 - unique `control_id`;
-- control type;
-- target and scope;
-- requested value or mode;
-- source and creation time;
-- activation time;
-- expiry, release condition or permanence;
+- source and initiating user;
+- creation and activation timestamps;
+- optional expiration timestamp or release condition;
+- scope and affected entities;
+- requested behaviour;
 - priority within User Control;
 - acceptance state;
-- reason and evidence;
+- reason and evidence; and
 - affected transactions and actions.
 
-Rules:
+#### Rules
 
-- Explicit User Control takes precedence over active policy and automated optimization.
-- User Control cannot override physical limitations, verified capability or Safety constraints.
+- Explicit User Control takes precedence over active policy and automated optimisation.
+- User Control cannot override physical reality, available capability, assessed health or applicable constraints.
 - User Control never sends device commands directly.
-- Manual commands use Safety, Execution and Verification.
+- Manual commands use the normal planning, execution and verification path.
 - An active control may never be silently ignored, altered, prolonged or released.
-- Rejection, limitation, expiry, execution failure and verification failure must be reported.
-- A control should be narrowly scoped and have an explicit end condition unless permanence is intentional.
-- Device-scoped control does not automatically disable PicoT for unrelated devices or functions.
+- Rejection, limitation, expiry, execution failure and verification failure shall be reported.
+- Controls should be narrowly scoped and have an explicit end condition unless permanence is intentional.
 
-### 4.3 Report Layer
+### 6.3 Integration Layer
 
-Presents current state, decisions, user controls, evidence, confidence, execution and verification results. Reporting observes completed transactions and active control state and does not alter them.
+#### Responsibility
 
-### 4.4 Decision Layer
+The Integration Layer manages all communication between PicoT and external systems.
 
-The Decision Layer is Approved & Frozen and consists of four components.
+It translates external data into canonical models and approved execution requests into platform- or vendor-specific commands.
 
-#### Decision Context — ADR-003
+#### Responsibilities
 
-Question: **What do we know?**
+- data acquisition;
+- protocol translation;
+- canonical mapping;
+- unit and timestamp normalisation;
+- communication management;
+- retries and timeout handling;
+- authentication; and
+- transparent failure reporting.
 
-Output: `DecisionContext`
+Business, planning and optimisation logic are prohibited inside integration adapters.
 
-Decision Context includes the current `UserControlSet` as an explicit input alongside measured state, forecasts, capability, health and configuration.
+All higher layers operate exclusively on canonical models.
 
-#### Policy Engine — ADR-005
+### 6.4 Learning Layer — ADR-010
 
-Question: **What is allowed?**
+#### Responsibility
 
-Output: `DecisionSpace`
+The Learning Layer improves PicoT's understanding of the residential energy ecosystem by analysing historical observations, execution results and recurring behaviour.
 
-Policy priority:
+It never decides, plans or executes.
 
-1. Safety and physical constraints
-2. Verified device capability and health
-3. Explicit User Control
-4. Operational policy
-5. Contract policy
-6. System policy
-7. User preferences that are not explicit overrides
+#### Responsibilities
 
-The Policy Engine never chooses a strategy. It resolves active user constraints and overrides into the permitted Decision Space and records any rejected or limited control with reasons.
+- learn consumption and production patterns;
+- refine configurable device profiles;
+- estimate expected runtime, energy use, power curves and completion times;
+- compare forecasts with observed reality;
+- improve prediction confidence; and
+- expose learned values together with model version, evidence and confidence.
 
-#### Decision Engine — ADR-006
+Configured device profiles remain available from the first usable version. Learning may refine them later through the same canonical profile structure.
 
-Question: **What is the best strategy?**
+#### Failure behaviour
 
-Output: `DecisionProposal`
-
-Responsibilities include candidate generation, ranking, score breakdown, confidence, alternatives and reason codes. It never plans or executes. It optimizes only within the Decision Space already constrained by User Control.
-
-#### Planner — ADR-007
-
-Question: **Is this the right moment to execute the strategy?**
-
-Output: `RequestedAction`
-
-Responsibilities include hysteresis, minimum runtime, oscillation prevention, relay protection, switching budgets and operational stability. The Planner does not optimize.
-
-A User Control can prevent, replace or defer a planned action, but cannot bypass Planner protections where these are required for safe and stable operation. Any such limitation is reported transparently.
-
-The interfaces are immutable:
-
-```text
-DecisionContext
-→ DecisionSpace
-→ DecisionProposal
-→ RequestedAction
-```
-
-### 4.5 Capability & Health Layer — ADR-009
-
-Question: **Can PicoT responsibly optimize in the current situation?**
-
-Output: `CapabilityReport`
-
-Responsibilities:
-
-- Data Health;
-- Forecast Health;
-- Device Health;
-- Integration Health;
-- Capability Resolution;
-- Overall System Confidence.
-
-A common assessment framework evaluates, where applicable:
-
-```text
-Freshness
-→ Completeness
-→ Consistency
-→ Plausibility
-→ Source Reliability
-→ Observed Performance
-→ Health
-→ Capability
-```
-
-Health describes trustworthiness or technical condition. Capability describes what can still be used responsibly.
-
-Uniform health states:
-
-- `UNKNOWN`
-- `INITIALIZING`
-- `HEALTHY`
-- `DEGRADED`
-- `UNRELIABLE`
-- `STALE`
-- `UNAVAILABLE`
-
-All classifications expose evidence and reasons. No health score may be a black box.
-
-#### Forecast reliability
-
-The original forecast is immutable. PicoT derives a separate reliability assessment and operational estimate.
-
-```text
-Original Forecast
-+ Observed Reality
-→ Reliability Assessment
-→ Operational Forecast Confidence
-→ Conservative Operational Estimate
-```
-
-Loss of confidence may occur faster than recovery. Degraded confidence can lead to more conservative planning, such as retaining additional battery reserve.
-
-#### Dynamic device capability
-
-Nominal specifications are never treated as guaranteed real-time availability. Available capability depends on observed state and conditions, including temperature, SoC, firmware limits, device self-protection, grid conditions, mode, communication and verified behavior.
-
-```text
-requested capability ≤ available capability ≤ nominal capability
-```
-
-Thermal derating is represented as degraded but potentially still available capability, not automatically as device failure.
-
-Capability limitation evidence may be:
-
-- confirmed by the device or integration;
-- inferred from temperature and observed behavior;
-- unknown in magnitude, requiring conservative planning.
-
-A user request outside available capability is limited or rejected; it is never presented as successfully accepted without evidence.
-
-#### Trends and history
-
-Capability & Health may use short-term trends to anticipate degradation. Relevant operational history is retained for reliability assessment, explainability and future learning.
-
-### 4.6 Learning Layer — ADR-010
-
-The Learning Layer is an optional, non-authoritative model-enhancement layer.
-
-```text
-Learning available and sufficiently reliable?
-
-YES → Produce enhanced model
-NO  → Pass original model through unchanged
-```
-
-The rest of PicoT always consumes the same interface. The Learning Layer:
-
-- never makes decisions;
-- never controls devices;
-- never overwrites original source data;
-- never changes explicit User Control;
-- exposes correction, model version, confidence and evidence;
-- is subject to Capability & Health assessment.
+When learning is unavailable, disabled or insufficiently reliable, the original configured or source model passes through unchanged.
 
 Minimum states:
 
@@ -291,64 +388,313 @@ Minimum states:
 - `DEGRADED`
 - `UNRELIABLE`
 
-V1 may implement the layer as a transparent no-op/pass-through component.
+### 6.5 Capability & Health Layer — ADR-009
 
-### 4.7 Integration Layer
+#### Responsibility
 
-Adapters translate external vendor, provider and Home Assistant models into canonical domain models. Integrations contain no energy strategy and cannot reinterpret explicit user intent.
+The Capability & Health Layer determines what PicoT can responsibly achieve in the current operational context and how reliable that conclusion is.
 
-### 4.8 Execution Layer
+Capability and Health are evaluated independently.
 
-Translates an approved `RequestedAction`, including an approved manual command, into concrete commands. Sending a command does not imply success.
+- Capability answers: **What is currently possible?**
+- Health answers: **How reliable is the operational picture?**
 
-### 4.9 Control & Verification Layer
+#### Health domains
 
-Observes the actual result, compares requested and achieved state and records success, partial success, failure or deviation. Verification closes the control loop and provides evidence to later transactions.
+- Data Health
+- Forecast Health
+- Device Health
+- Integration Health
+- Learning Health
+- Overall System Confidence
 
-For User Control, verification also records whether the requested user outcome was achieved, limited or contradicted by subsequent device behavior.
+#### Capability resolution
 
-### 4.10 Safety Layer
+Nominal specifications are never treated as guaranteed real-time availability.
+
+```text
+requested capability ≤ available capability ≤ nominal capability
+```
+
+Available capability may depend on:
+
+- measured state;
+- temperature;
+- SoC;
+- firmware limits;
+- device self-protection;
+- grid conditions;
+- active mode;
+- communication availability; and
+- verified behaviour.
+
+Thermal derating is represented as degraded but potentially available capability, not automatically as device failure.
+
+#### Forecast reliability
+
+The original forecast is immutable. PicoT derives a separate operational interpretation:
+
+```text
+Original Forecast
++ Observed Reality
+→ Reliability Assessment
+→ Operational Forecast Confidence
+→ Conservative Operational Estimate
+```
+
+Confidence may decay faster than it recovers.
+
+Uniform health states:
+
+- `UNKNOWN`
+- `INITIALIZING`
+- `HEALTHY`
+- `DEGRADED`
+- `UNRELIABLE`
+- `STALE`
+- `UNAVAILABLE`
+
+Every classification shall expose evidence and reasons. No opaque health score is permitted.
+
+### 6.6 Decision Layer
+
+The Decision Layer determines what should happen, when it should happen and why it should happen.
+
+It consists of four components.
+
+#### 6.6.1 Decision Context — ADR-003
+
+Question: **What do we know?**
+
+Output: `DecisionContext`
+
+The Decision Context is immutable for the duration of one planning cycle and includes:
+
+- canonical measurements;
+- original and operational forecasts;
+- learned models and device profiles;
+- capability and health assessments;
+- `ActiveUserControls`;
+- configuration;
+- tariffs; and
+- external constraints.
+
+#### 6.6.2 Policy Engine — ADR-005
+
+Question: **What is allowed?**
+
+Output: `DecisionSpace`
+
+The Policy Engine resolves applicable objectives and constraints. It does not choose a strategy.
+
+#### 6.6.3 Decision Engine — ADR-006
+
+Question: **What is the best achievable strategy?**
+
+Output: `DecisionProposal`
+
+The Decision Engine:
+
+- generates candidate strategies;
+- rejects infeasible candidates;
+- ranks valid alternatives;
+- exposes score breakdown, confidence and reasons; and
+- selects a strategy within the resolved Decision Space.
+
+It does not plan or execute.
+
+#### 6.6.4 Planner — ADR-007
+
+Question: **How and when should the selected strategy be executed?**
+
+Output: `RequestedAction` or a coordinated set of requested actions.
+
+The Planner determines:
+
+- timing;
+- sequencing;
+- coordination;
+- planning horizon;
+- expected outcome;
+- expected completion state; and
+- plan confidence.
+
+The Planner never communicates directly with devices.
+
+### 6.7 Planning Strategy
+
+#### Planning Horizon
+
+The Planning Horizon defines how far into the future PicoT creates an execution plan. It may vary according to forecast availability, forecast reliability and the devices involved.
+
+#### Replanning Triggers
+
+A new planning cycle may be triggered by material changes in:
+
+- measurements;
+- energy prices;
+- forecasts;
+- device availability;
+- capability or health;
+- user controls;
+- policy; or
+- other operational context.
+
+Minor fluctuations should not automatically replace the current plan.
+
+#### Plan Stability
+
+Where multiple plans produce comparable outcomes, the Planner shall prefer the plan requiring the fewest changes to the current execution strategy.
+
+#### Hysteresis
+
+Thresholds may be used to prevent oscillation caused by small forecast changes, measurement noise or marginal economic differences.
+
+#### Minimum Benefit Threshold
+
+A new plan should replace the current plan only when the expected improvement exceeds a configurable minimum benefit.
+
+#### Switching Penalty
+
+The Planner shall account for the operational cost of changing device state.
+
+Switching penalties may represent:
+
+- relay or contactor wear;
+- compressor wear;
+- communication overhead;
+- reduced predictability;
+- user disruption; or
+- other device-specific operational costs.
+
+Every state transition therefore has an explicit or implicit planning cost.
+
+#### Planning Commitment
+
+Once an execution plan has been committed, PicoT should preserve it whenever reasonably possible.
+
+Committed actions should not be revoked unless a significant event or a change in the operational context justifies replanning.
+
+The Planner shall balance the expected benefit of replanning against the impact of changing an already committed execution plan.
+
+#### Predictability
+
+Stable and predictable execution is preferred over marginal optimisation gains when alternatives are otherwise comparable.
+
+### 6.8 Safety Layer — cross-cutting
 
 The Safety Layer is optional and cross-cutting.
 
-It is not a safety, security or alarm system. Its sole purpose is to stop PicoT from issuing further control commands when configured conditions occur.
+It is not a safety, security or alarm system. Its purpose is to stop PicoT from issuing further control commands when configured conditions occur.
 
-On activation, PicoT may make a best-effort attempt to place supported devices, such as an inverter or battery, in a less active state. Such attempts depend entirely on integrations, communication and hardware availability and are not guaranteed.
+On activation, PicoT may make a best-effort attempt to place supported devices in a configured less-active state. Such attempts depend entirely on integrations, communication and hardware availability and are not guaranteed.
 
-The Safety Layer must never be documented as a replacement for certified protection, fire detection, electrical protection or external safety automation.
+The Safety Layer must never be represented as a replacement for certified protection, fire detection, electrical protection, external safety automation or human intervention.
 
-No User Control can disable, bypass or downgrade an active Safety constraint.
+No User Control can disable or bypass an active Safety Layer restriction.
 
-## 5. Authority model
+### 6.9 Execution Layer
+
+#### Responsibility
+
+The Execution Layer translates an approved `RequestedAction` into concrete device commands through the Integration Layer.
+
+Sending a command does not imply success.
+
+#### Execution philosophy
+
+Execution is the controlled implementation of an approved plan.
+
+The Execution Layer shall never optimise, reinterpret or improve a planning decision.
+
+Execution shall be:
+
+- deterministic;
+- observable;
+- repeatable;
+- transparent; and
+- verifiable where the integration provides suitable evidence.
+
+Execution failures shall never silently modify the plan.
+
+When execution deviates from the requested action, the deviation shall be recorded and propagated to Control & Verification. Any changed strategy is determined by a later planning cycle, not by hidden execution logic.
+
+### 6.10 Control & Verification Layer
+
+#### Responsibility
+
+The Control & Verification Layer observes the actual result and compares requested state with achieved state.
+
+It records:
+
+- success;
+- partial success;
+- failure;
+- timeout;
+- contradiction; or
+- other deviation.
+
+Verification closes the operational loop and provides evidence to subsequent transactions.
+
+For explicit User Control, verification also records whether the requested user outcome was achieved, limited or contradicted by later device behaviour.
+
+Verification does not silently correct a failed plan.
+
+### 6.11 Report Layer
+
+#### Responsibility
+
+The Report Layer provides complete transparency and explainability.
+
+It presents:
+
+- current and historical state;
+- Decision Records;
+- active user controls;
+- evidence and confidence;
+- applied policies;
+- rejected alternatives;
+- requested actions;
+- execution results;
+- verification outcomes; and
+- diagnostics.
+
+The Report Layer observes and explains completed and active transactions. It never changes operational state or influences planning directly.
+
+## 7. Authority model
 
 The normative order of authority is:
 
 ```text
 Physical reality
-→ Verified device capability and health
+→ Available device capability and assessed health
 → Safety constraints
 → Explicit User Control
 → Active policy
-→ Automated optimization
+→ Automated optimisation
 ```
 
-This order means that the user controls normal automation, while PicoT remains honest about what is physically, technically and operationally possible.
+This order means that the user controls normal automation while PicoT remains honest about what is physically, technically and operationally possible.
 
-## 6. Canonical Domain Models — ADR-008
+## 8. Canonical Domain Models — ADR-008
 
 The Decision Core never consumes vendor models directly.
 
 ```text
-External
+External systems
 ↓
-Adapters
+Integration adapters
 ↓
 Canonical Domain Models
+↓
+Learning
+↓
+Capability & Health
 ↓
 Decision Context
 ```
 
-Canonical model families:
+Canonical model families include:
 
 - Energy
 - Market
@@ -358,57 +704,82 @@ Canonical model families:
 - Battery
 - Grid
 - Forecast
+- Device Profile
 - Policy
 - User Control
 - Capability & Health
+- Decision Record
+- Execution Result
+- Verification Result
 
 Market Price and Grid Tariff remain separate. Effective Cost preserves all components. Time intervals are generic and are not restricted to hours.
 
-## 7. Extensibility — ADR-012
+## 9. Decision Record
 
-New capabilities shall extend the architecture rather than modify stable operational components. Optional components must expose transparent pass-through behavior when unavailable, disabled or insufficiently reliable.
+Every completed planning cycle shall produce a Decision Record containing sufficient evidence to reconstruct:
 
-New User Control types must extend the canonical control interface rather than introduce direct device-specific bypasses.
+- the Decision Context;
+- active `ActiveUserControls`;
+- applicable policy;
+- evaluated alternatives;
+- rejected strategies;
+- selected strategy;
+- planning confidence;
+- committed execution plan;
+- requested actions;
+- execution results; and
+- verification outcomes.
 
-## 8. Dashboard and transparency
+## 10. Extensibility — ADR-012
 
-Every architectural layer shall expose:
+New capabilities shall extend the architecture rather than modify stable operational components.
+
+Optional components shall expose transparent pass-through behaviour when unavailable, disabled or insufficiently reliable.
+
+New User Control types shall extend the canonical control interface rather than introduce direct device-specific bypasses.
+
+## 11. Dashboard and transparency
+
+Every architectural layer shall expose, where applicable:
 
 - online state;
 - health state;
-- reliability/confidence;
+- reliability or confidence;
 - operating mode;
 - last update;
 - reasons and evidence.
 
 The User Control Layer additionally exposes:
 
-- active controls and their source;
+- active controls and source;
 - scope and affected device or function;
 - activation and expiry or release condition;
 - effect on automated decisions;
-- acceptance or limitation state;
+- acceptance or limitation state; and
 - latest execution and verification outcome.
 
-The user must be able to identify where a problem exists before having to inspect why it exists.
+The User Layer presents this information but never modifies it.
+
+The user should be able to identify where a problem exists before having to inspect why it exists.
 
 The capital **T** is the central visual concept: Transparency forms the backbone of the architecture and dashboard.
 
-## 9. Retention and future learning
+## 12. Retention and future learning
 
-PicoT retains operational evidence wherever it provides value for:
+PicoT retains operational evidence where it provides value for:
 
 - verification;
 - explainability;
 - trend assessment;
 - reliability assessment;
+- device profile refinement; and
 - future self-learning.
 
-Historical observations must not directly influence optimization unless processed through an approved Capability & Health or Learning component.
+Historical observations shall not directly influence optimisation unless processed through an approved Capability & Health or Learning component.
 
-User Control history may be retained for traceability and explanation, but must not be converted into learned preferences without explicit user consent and an approved design decision.
+User Control history may be retained for traceability and explanation but shall not become learned preference without explicit user consent and an approved design decision.
 
-## 10. Non-goals
+## 13. Non-goals
 
 PicoT is not:
 
@@ -417,5 +788,5 @@ PicoT is not:
 - a vendor-specific controller;
 - a mandatory cloud platform;
 - a certified safety or alarm system;
-- an opaque autonomous decision-maker;
+- an opaque autonomous decision-maker; or
 - a system that removes final control from the user.

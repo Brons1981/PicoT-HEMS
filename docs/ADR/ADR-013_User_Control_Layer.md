@@ -80,7 +80,4 @@ Trade-offs:
 - DOC-000 — Architecture Overview
 - DOC-001 — Vision & Principles
 - DOC-002 — Design Specification
-- ADR-003 — Decision Context
-- ADR-005 — Policy Engine
-- ADR-007 — Planner
 - ADR-009 — Capability & Health Layer

@@ -5,7 +5,7 @@ Copyright © 2026 Alex Brons. All rights reserved.
 | Field | Value |
 |---|---|
 | Project | PicoT HEMS |
-| Status | Release Candidate |
+| Status | Consistency Review |
 | Version | 1.0-RC3 |
 | Date | 2026-07-26 |
 | Source format | Markdown |
@@ -72,6 +72,8 @@ Its architecture is built around five defining qualities:
 - **Coordination** — operate connected devices as one coherent energy system.
 - **Orchestration** — translate strategy into controlled and verified execution.
 - **Transparency** — make every significant decision understandable, traceable and verifiable.
+
+**Transparency is an architectural property, not a feature.**
 
 The ultimate objective is increasingly autonomous operation without sacrificing user authority, predictability, operational stability or explainability.
 
@@ -615,6 +617,8 @@ Execution shall be:
 - transparent; and
 - verifiable where the integration provides suitable evidence.
 
+Where suitable evidence is unavailable, the outcome shall remain unverified or unknown; success shall not be assumed.
+
 Execution failures shall never silently modify the plan.
 
 When execution deviates from the requested action, the deviation shall be recorded and propagated to Control & Verification. Any changed strategy is determined by a later planning cycle, not by hidden execution logic.
@@ -694,7 +698,7 @@ Capability & Health
 Decision Context
 ```
 
-Canonical model families include:
+Canonical model families and interface objects include:
 
 - Energy
 - Market
@@ -708,6 +712,11 @@ Canonical model families include:
 - Policy
 - User Control
 - Capability & Health
+- `ActiveUserControls`
+- `DecisionContext`
+- `DecisionSpace`
+- `DecisionProposal`
+- `RequestedAction`
 - Decision Record
 - Execution Result
 - Verification Result
@@ -716,7 +725,7 @@ Market Price and Grid Tariff remain separate. Effective Cost preserves all compo
 
 ## 9. Decision Record
 
-Every completed planning cycle shall produce a Decision Record containing sufficient evidence to reconstruct:
+Every HEMS Transaction shall maintain a Decision Record that is finalised after verification and contains sufficient evidence to reconstruct:
 
 - the Decision Context;
 - active `ActiveUserControls`;

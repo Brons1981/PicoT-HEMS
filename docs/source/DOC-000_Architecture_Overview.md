@@ -5,16 +5,16 @@ Copyright © 2026 Alex Brons. All rights reserved.
 | Field | Value |
 |---|---|
 | Project | PicoT HEMS |
-| Status | Audit Approved |
+| Status | Consistency Review |
 | Version | 1.0-RC3 |
-| Date | 2026-07-26 |
+| Date | 2026-07-27 |
 | Source format | Markdown |
 
 ## 1. Purpose
 
 This document provides the high-level architecture of PicoT HEMS.
 
-PicoT stands for **Planning, Intelligence, Coordination, Orchestration & Transparency**. Transparency is the unifying principle across the complete architecture.
+PicoT stands for **Planning, Intelligence, Coordination, Orchestration & Transparency**. Transparency is an architectural property, not a feature. It spans the complete operational lifecycle and connects every architectural responsibility.
 
 ## 2. Runtime position
 
@@ -35,7 +35,7 @@ ActiveUserControls → Decision Context
                        ↓
                     Planning
                        ↓
-                     Safety
+        Safety Layer evaluation
                        ↓
                    Execution
                        ↓
@@ -118,14 +118,22 @@ DecisionSpace
   ↓
 DecisionProposal
   ↓
+Planner
+  ↓
 RequestedAction
   ↓
 Safety Layer evaluation, where configured and applicable
   ↓
-Execution and verification
+Execution
+  ↓
+Verification
+  ↓
+Reporting
 ```
 
 `ActiveUserControls` is the canonical interface object representing the currently active user directives, including overrides, manual commands and temporary constraints. `DecisionContext` consumes `ActiveUserControls` as an explicit input.
+
+The Report Layer implements the **Explain** lifecycle responsibility by exposing the evidence, reasons, confidence and verified outcome produced by the preceding lifecycle stages.
 
 ## 7. Authority model
 
@@ -163,9 +171,9 @@ User Control therefore takes precedence over normal policy and optimization, but
 
 The Safety Layer is optional and is not a safety, security or alarm system. Its purpose is to stop PicoT from issuing further control commands when configured conditions occur.
 
-On activation, PicoT may make a best-effort attempt to place supported devices in a less active state, but only when integrations, communication and hardware remain available. PicoT does not guarantee that such commands will be delivered or executed.
+On activation, PicoT may make a best-effort attempt to place supported devices in a configured less-active state, but only when integrations, communication and hardware remain available. PicoT does not guarantee that such commands will be delivered or executed.
 
-User Control cannot disable or bypass the Safety Layer.
+User Control cannot disable or bypass an active Safety Layer restriction.
 
 ## 10. Dashboard transparency
 

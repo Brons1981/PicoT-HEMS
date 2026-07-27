@@ -11,6 +11,15 @@ __pycache__/
 *.pyc
 .venv/
 
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# PicoT Discovery generated output
+output/*
+!output/.gitkeep
+
 # Home Assistant secrets and runtime data
 secrets.yaml
 .storage/

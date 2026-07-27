@@ -5,7 +5,7 @@ Copyright © 2026 Alex Brons. All rights reserved.
 | ID | Date | Decision | Status | Related documents |
 |---|---|---|---|---|
 | ADR-001 | 2026-07-24 | GitHub is the project source of truth | Approved | DOC-002, DOC-010 |
-| ADR-002 | 2026-07-24 | PicoT HEMS shall never make a silent decision | Approved | DOC-001, DOC-002 |
+| ADR-002 | 2026-07-24 | PicoT HEMS shall never make a silent decision | Approved | DOC-001, DOC-002, DOC-010 |
 | ADR-003 | 2026-07-25 | Decision Context answers “What do we know?” | Approved & Frozen | DOC-002 |
 | ADR-004 | 2026-07-25 | Every optimization cycle is one HEMS Transaction | Approved & Frozen | DOC-000, DOC-002 |
 | ADR-005 | 2026-07-25 | Policy Engine answers “What is allowed?” | Approved & Frozen | DOC-002 |

@@ -1,24 +1,35 @@
-# HEMS Core
+# PicoT HEMS
 
-**The best energy decision, every moment.**
+**Planning, Intelligence, Coordination, Orchestration & Transparency**
 
-HEMS Core is a modular and explainable Home Energy Management System built on Home Assistant.
+PicoT HEMS is a modular, explainable Home Energy Management System for Home Assistant.
 
 ## Current phase
 
-Design
+Phase 3 — Discovery, Canonical Data Model and dependency-risk analysis.
 
 ## Active work
 
-- DOC-002 Design Specification
-- GitHub project foundation
-- Project status dashboard preparation
+- Home Assistant Discovery Tool
+- Canonical Data Model
+- Integration and dependency health assessment
+- Architecture review and fallback design
 
 ## Core principles
 
-- Safety first
+- Robust and verifiable before clever or extensive
 - Modular architecture
-- Hardware independence
+- Hardware and vendor independence
 - Transparency and explainability
-- Reliability
+- Reliability and graceful degradation
 - Minimal unnecessary battery relay switching
+
+## Local Discovery setup
+
+1. Clone this repository.
+2. Copy `.env.example` to `.env`.
+3. Add your Home Assistant Long-Lived Access Token to `.env`.
+4. Install dependencies with `python -m pip install -r requirements.txt`.
+5. Run `python src/main.py`.
+
+The real `.env` file is ignored by Git and must never be committed. Generated Discovery output is written to `output/` and is also ignored by default.

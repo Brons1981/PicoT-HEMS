@@ -9,6 +9,7 @@ from typing import Any
 from api import HomeAssistantClient
 from architecture import build_architecture_map
 from architecture_analysis import analyze_architecture
+from readiness import analyze_readiness
 from websocket_api import HomeAssistantWebSocketClient
 
 
@@ -33,7 +34,7 @@ def _count_entity_domains(states: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def run_discovery(client: HomeAssistantClient) -> dict[str, Any]:
-    """Collect REST data, registries, relationships and structural analysis."""
+    """Collect, relate, analyze and validate Home Assistant discovery data."""
     collected_at = datetime.now(timezone.utc).isoformat()
     api_status = client.check_api()
     config = client.get_config()
@@ -50,6 +51,9 @@ def run_discovery(client: HomeAssistantClient) -> dict[str, Any]:
     statuses = structure["statuses"]
     architecture = build_architecture_map(datasets, states)
     analysis = analyze_architecture(architecture, states)
+    readiness = analyze_readiness(
+        datasets, states, architecture, analysis, statuses
+    )
 
     summary = {
         "collected_at_utc": collected_at,
@@ -70,12 +74,17 @@ def run_discovery(client: HomeAssistantClient) -> dict[str, Any]:
         "websocket_statuses": statuses,
         "architecture": architecture["summary"],
         "analysis": analysis["summary"],
+        "readiness": {
+            "status": readiness["status"],
+            "planning_allowed": readiness["planning_allowed"],
+            **readiness["summary"],
+        },
     }
 
     return {
         "metadata": {
-            "schema": "picot_hems.discovery.analyzed_architectural_snapshot",
-            "schema_version": "0.5.0",
+            "schema": "picot_hems.discovery.readiness_snapshot",
+            "schema_version": "0.6.0",
             "collected_at_utc": collected_at,
         },
         "api_status": api_status,
@@ -85,6 +94,7 @@ def run_discovery(client: HomeAssistantClient) -> dict[str, Any]:
         "structure": datasets,
         "architecture": architecture,
         "analysis": analysis,
+        "readiness": readiness,
         "websocket_statuses": statuses,
         "summary": summary,
     }

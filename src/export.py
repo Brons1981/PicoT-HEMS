@@ -19,7 +19,7 @@ def write_json(path: Path, data: Any) -> None:
 def export_discovery_snapshot(
     result: dict[str, Any], output_directory: Path
 ) -> dict[str, Path]:
-    """Export source datasets and the complete structural snapshot."""
+    """Export source datasets, relationships and the complete snapshot."""
     files = {
         "config": output_directory / "config.json",
         "states": output_directory / "states.json",
@@ -31,6 +31,9 @@ def export_discovery_snapshot(
         "floors": output_directory / "floors.json",
         "labels": output_directory / "labels.json",
         "websocket_statuses": output_directory / "websocket_statuses.json",
+        "architecture": output_directory / "architecture_map.json",
+        "architecture_summary": output_directory / "architecture_summary.json",
+        "architecture_exceptions": output_directory / "architecture_exceptions.json",
         "summary": output_directory / "discovery_summary.json",
         "snapshot": output_directory / "discovery_snapshot.json",
     }
@@ -46,6 +49,11 @@ def export_discovery_snapshot(
     write_json(files["areas"], structure["areas"])
     write_json(files["floors"], structure["floors"])
     write_json(files["labels"], structure["labels"])
+
+    architecture = result["architecture"]
+    write_json(files["architecture"], architecture)
+    write_json(files["architecture_summary"], architecture["summary"])
+    write_json(files["architecture_exceptions"], architecture["exceptions"])
     write_json(files["websocket_statuses"], result["websocket_statuses"])
     write_json(files["summary"], result["summary"])
     write_json(files["snapshot"], result)

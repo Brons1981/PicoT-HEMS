@@ -19,7 +19,7 @@ def write_json(path: Path, data: Any) -> None:
 def export_discovery_snapshot(
     result: dict[str, Any], output_directory: Path
 ) -> dict[str, Path]:
-    """Export source datasets, relationships and the complete snapshot."""
+    """Export source datasets, relationships, analysis and complete snapshot."""
     files = {
         "config": output_directory / "config.json",
         "states": output_directory / "states.json",
@@ -34,6 +34,12 @@ def export_discovery_snapshot(
         "architecture": output_directory / "architecture_map.json",
         "architecture_summary": output_directory / "architecture_summary.json",
         "architecture_exceptions": output_directory / "architecture_exceptions.json",
+        "analysis": output_directory / "architecture_analysis.json",
+        "analysis_summary": output_directory / "architecture_analysis_summary.json",
+        "integration_health": output_directory / "integration_health.json",
+        "device_health": output_directory / "device_health.json",
+        "state_only_entities": output_directory / "state_only_entities.json",
+        "unlinked_entity_classification": output_directory / "unlinked_entity_classification.json",
         "summary": output_directory / "discovery_summary.json",
         "snapshot": output_directory / "discovery_snapshot.json",
     }
@@ -54,6 +60,15 @@ def export_discovery_snapshot(
     write_json(files["architecture"], architecture)
     write_json(files["architecture_summary"], architecture["summary"])
     write_json(files["architecture_exceptions"], architecture["exceptions"])
+
+    analysis = result["analysis"]
+    write_json(files["analysis"], analysis)
+    write_json(files["analysis_summary"], analysis["summary"])
+    write_json(files["integration_health"], analysis["integration_health"])
+    write_json(files["device_health"], analysis["device_health"])
+    write_json(files["state_only_entities"], analysis["state_only_entities"])
+    write_json(files["unlinked_entity_classification"], analysis["unlinked_entities"])
+
     write_json(files["websocket_statuses"], result["websocket_statuses"])
     write_json(files["summary"], result["summary"])
     write_json(files["snapshot"], result)

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from api import HomeAssistantClient
+from architecture import build_architecture_map
 from websocket_api import HomeAssistantWebSocketClient
 
 
@@ -31,7 +32,7 @@ def _count_entity_domains(states: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def run_discovery(client: HomeAssistantClient) -> dict[str, Any]:
-    """Collect REST data and structural Home Assistant registries."""
+    """Collect REST data, registries and their traceable relationships."""
     collected_at = datetime.now(timezone.utc).isoformat()
     api_status = client.check_api()
     config = client.get_config()
@@ -46,6 +47,7 @@ def run_discovery(client: HomeAssistantClient) -> dict[str, Any]:
     structure = websocket_client.collect_structure()
     datasets = structure["datasets"]
     statuses = structure["statuses"]
+    architecture = build_architecture_map(datasets, states)
 
     summary = {
         "collected_at_utc": collected_at,
@@ -64,12 +66,13 @@ def run_discovery(client: HomeAssistantClient) -> dict[str, Any]:
         "floor_count": len(datasets["floors"]),
         "label_count": len(datasets["labels"]),
         "websocket_statuses": statuses,
+        "architecture": architecture["summary"],
     }
 
     return {
         "metadata": {
-            "schema": "picot_hems.discovery.structural_snapshot",
-            "schema_version": "0.3.0",
+            "schema": "picot_hems.discovery.architectural_snapshot",
+            "schema_version": "0.4.0",
             "collected_at_utc": collected_at,
         },
         "api_status": api_status,
@@ -77,6 +80,7 @@ def run_discovery(client: HomeAssistantClient) -> dict[str, Any]:
         "states": states,
         "services": services,
         "structure": datasets,
+        "architecture": architecture,
         "websocket_statuses": statuses,
         "summary": summary,
     }

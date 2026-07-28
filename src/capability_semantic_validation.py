@@ -20,7 +20,6 @@ _PORTABLE_TOKENS = {
     "laptop", "macbook", "watch", "telefoon", "headset", "earbuds",
 }
 _CAPACITY_TOKENS = {"capacity", "capaciteit", "rated", "nominal", "nominaal"}
-_CURRENT_POWER_TOKENS = {"power", "vermogen", "current", "active", "actual"}
 _ENERGY_TOKENS = {"energy", "energie", "yield", "opbrengst", "production", "productie"}
 _BATTERY_TOKENS = {"battery", "accu", "soc", "state_of_charge", "zendure"}
 _PV_TOKENS = {"pv", "solar", "photovoltaic", "inverter", "omvormer", "yield", "opbrengst"}
@@ -74,7 +73,10 @@ def _validate_candidate(capability_id: str, candidate: dict[str, Any]) -> tuple[
             reasons.append("power_observation_requires_sensor")
         if device_class != "power" and unit not in _POWER_UNITS:
             reasons.append("instantaneous_power_semantics_missing")
-        if tokens.intersection(_CAPACITY_TOKENS) and not tokens.intersection(_CURRENT_POWER_TOKENS):
+        # Capacity/rated/nominal sensors describe a configured or nameplate limit,
+        # never an instantaneous measured flow. A power device_class does not
+        # override this explicit semantic contradiction.
+        if tokens.intersection(_CAPACITY_TOKENS):
             reasons.append("rated_capacity_not_instantaneous_power")
         if tokens.intersection({"energy", "energie", "today", "total", "daily"}):
             reasons.append("energy_counter_not_instantaneous_power")
@@ -175,7 +177,7 @@ def validate_capability_candidates(discovery_result: dict[str, Any]) -> dict[str
     return {
         "metadata": {
             "schema": "picot_hems.capability.semantic_validation",
-            "schema_version": "0.1.0",
+            "schema_version": "0.1.1",
             "method": "fixed_semantic_rules",
             "selection_performed": False,
             "learning_used": False,

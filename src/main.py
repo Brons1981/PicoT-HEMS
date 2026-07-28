@@ -15,7 +15,7 @@ OUTPUT_DIRECTORY = PROJECT_ROOT / "output"
 
 
 def main() -> None:
-    """Run Discovery Step 2.2 and export a structural snapshot."""
+    """Run Discovery Step 2.3 and export an architectural snapshot."""
     try:
         client = HomeAssistantClient.from_environment()
         result = run_discovery(client)
@@ -24,15 +24,24 @@ def main() -> None:
         raise SystemExit(f"Discovery failed: {exc}") from exc
 
     summary = result["summary"]
-    print("PicoT Discovery Step 2.2 completed.")
+    architecture = summary["architecture"]
+
+    print("PicoT Discovery Step 2.3 completed.")
     print(f"Home Assistant version: {summary['home_assistant_version']}")
     print(f"States/entities: {summary['state_count']}")
     print(f"Config entries/integrations: {summary['config_entry_count']}")
     print(f"Devices: {summary['device_count']}")
     print(f"Entity registry entries: {summary['entity_registry_count']}")
     print(f"Areas: {summary['area_count']}")
-    print(f"Floors: {summary['floor_count']}")
-    print(f"Labels: {summary['label_count']}")
+    print(f"Linked devices: {architecture['linked_device_count']}")
+    print(f"Orphan devices: {architecture['orphan_device_count']}")
+    print(f"Entities with current state: {architecture['entity_with_state_count']}")
+    print(f"Entities without current state: {architecture['entity_without_state_count']}")
+    print(f"Disabled entities: {architecture['disabled_entity_count']}")
+    print(
+        "Entities without device or integration: "
+        f"{architecture['entity_without_device_or_integration_count']}"
+    )
 
     failed = [
         name
@@ -43,6 +52,8 @@ def main() -> None:
         print(f"Unavailable structural datasets: {', '.join(failed)}")
         print("Details: output\\websocket_statuses.json")
 
+    print(f"Architecture map: {files['architecture']}")
+    print(f"Exceptions: {files['architecture_exceptions']}")
     print(f"JSON output: {files['snapshot'].parent}")
 
 

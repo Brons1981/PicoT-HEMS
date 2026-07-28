@@ -39,9 +39,8 @@ def _entity_characteristics(
     device_class = entity.get("device_class") or attributes.get("device_class")
     state_class = entity.get("state_class") or attributes.get("state_class")
     entity_id = entity.get("entity_id")
-    domain = _domain(entity_id if isinstance(entity_id, str) else None)
     return {
-        "domain": domain,
+        "domain": _domain(entity_id if isinstance(entity_id, str) else None),
         "device_class": device_class,
         "state_class": state_class,
         "entity_category": entity.get("entity_category"),
@@ -53,38 +52,37 @@ def _relevance(characteristics: dict[str, Any]) -> tuple[str, list[str]]:
     domain = characteristics["domain"]
     device_class = characteristics["device_class"]
     entity_category = characteristics["entity_category"]
-    reasons: list[str] = []
 
+    if entity_category in {"diagnostic", "config"}:
+        return "low", ["diagnostic_or_config_entity"]
     if device_class in ENERGY_DEVICE_CLASSES:
         return "very_high", ["energy_device_class"]
     if domain == "sensor" and device_class in PLANNING_DEVICE_CLASSES:
         return "high", ["planning_device_class"]
-    if entity_category in {"diagnostic", "config"}:
-        return "low", ["diagnostic_or_config_entity"]
     if domain in LOW_RELEVANCE_DOMAINS:
         return "low", ["low_relevance_domain"]
     if domain in MEDIUM_RELEVANCE_DOMAINS:
         return "medium", ["operational_domain"]
     if domain == "sensor":
         return "medium", ["generic_sensor"]
-    reasons.append("no_relevance_rule_matched")
-    return "unknown", reasons
+    return "unknown", ["no_relevance_rule_matched"]
 
 
 def _severity(
-    *, issue_type: str, relevance: str, disabled: bool
+    *, issue_type: str, relevance: str, disabled: bool, required: bool
 ) -> tuple[str, list[str]]:
-    reasons: list[str] = []
+    """Classify impact without treating relevance as a dependency declaration."""
     if disabled:
         return "informational", ["entity_disabled"]
     if issue_type == "state_only":
         return "informational", ["state_exists_without_registry_entry"]
-    if relevance == "very_high":
-        return "critical", ["very_high_relevance_data_unavailable"]
-    if relevance in {"high", "medium"}:
-        return "warning", ["relevant_data_unavailable"]
-    reasons.append("low_or_unknown_relevance")
-    return "informational", reasons
+    if required:
+        return "critical", ["explicit_required_dependency_unavailable"]
+    if relevance in {"very_high", "high"}:
+        return "warning", ["relevant_but_not_declared_required"]
+    if relevance == "medium":
+        return "warning", ["operational_data_unavailable"]
+    return "informational", ["low_or_unknown_relevance"]
 
 
 def _capabilities(characteristics: dict[str, Any]) -> list[str]:
@@ -110,8 +108,15 @@ def analyze_readiness(
     architecture: dict[str, Any],
     analysis: dict[str, Any],
     websocket_statuses: dict[str, dict[str, Any]],
+    required_entity_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Create a reproducible Discovery readiness result from observed facts."""
+    """Create readiness from observations and explicit dependency declarations.
+
+    An entity's relevance never makes it mandatory by itself. Only entity IDs supplied
+    through ``required_entity_ids`` may block planning. Discovery currently supplies no
+    required IDs; role assignment belongs to the later Capability Layer.
+    """
+    required_entity_ids = required_entity_ids or set()
     state_by_id = {
         state["entity_id"]: state
         for state in states
@@ -135,10 +140,12 @@ def analyze_readiness(
         state = state_by_id.get(entity_id)
         characteristics = _entity_characteristics(entity, state)
         relevance, relevance_reasons = _relevance(characteristics)
+        required = entity_id in required_entity_ids
         severity, severity_reasons = _severity(
             issue_type=issue_type,
             relevance=relevance,
             disabled=characteristics["disabled"],
+            required=required,
         )
         issues.append(
             {
@@ -150,6 +157,8 @@ def analyze_readiness(
                 "state_class": characteristics["state_class"],
                 "entity_category": characteristics["entity_category"],
                 "disabled": characteristics["disabled"],
+                "required_dependency": required,
+                "blocking": required,
                 "observed_state": state.get("state") if state else None,
                 "relevance": relevance,
                 "severity": severity,
@@ -178,6 +187,8 @@ def analyze_readiness(
                 "issue_id": f"dataset_unavailable:{dataset}",
                 "issue_type": "dataset_unavailable",
                 "dataset": dataset,
+                "required_dependency": True,
+                "blocking": True,
                 "relevance": "very_high",
                 "severity": "critical",
                 "affected_capabilities": ["discovery_validation"],
@@ -187,12 +198,13 @@ def analyze_readiness(
 
     severity_counts = Counter(issue["severity"] for issue in issues)
     relevance_counts = Counter(issue["relevance"] for issue in issues)
-    capability_issues: dict[str, list[str]] = defaultdict(list)
+    blocking_issues = [issue for issue in issues if issue.get("blocking")]
+    capability_issues: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for issue in issues:
         for capability in issue.get("affected_capabilities", []):
-            capability_issues[capability].append(issue["issue_id"])
+            capability_issues[capability].append(issue)
 
-    if severity_counts["critical"]:
+    if blocking_issues:
         status = "NOT_READY"
     elif severity_counts["warning"]:
         status = "READY_WITH_WARNINGS"
@@ -200,9 +212,8 @@ def analyze_readiness(
         status = "READY"
 
     capability_statuses = []
-    for capability, issue_ids in sorted(capability_issues.items()):
-        linked = [issue for issue in issues if issue["issue_id"] in issue_ids]
-        if any(issue["severity"] == "critical" for issue in linked):
+    for capability, linked in sorted(capability_issues.items()):
+        if any(issue.get("blocking") for issue in linked):
             capability_status = "NOT_READY"
         elif any(issue["severity"] == "warning" for issue in linked):
             capability_status = "READY_WITH_WARNINGS"
@@ -212,22 +223,25 @@ def analyze_readiness(
             {
                 "capability": capability,
                 "status": capability_status,
-                "issue_count": len(issue_ids),
-                "issue_ids": sorted(issue_ids),
+                "issue_count": len(linked),
+                "blocking_issue_count": sum(1 for issue in linked if issue.get("blocking")),
+                "issue_ids": sorted(issue["issue_id"] for issue in linked),
             }
         )
 
     return {
         "metadata": {
             "schema": "picot_hems.discovery.readiness",
-            "schema_version": "0.1.0",
-            "method": "deterministic_rules",
+            "schema_version": "0.2.0",
+            "method": "deterministic_rules_with_explicit_dependencies",
             "name_matching_used": False,
         },
         "status": status,
-        "planning_allowed": status != "NOT_READY",
+        "planning_allowed": not blocking_issues,
         "summary": {
             "issue_count": len(issues),
+            "blocking_issue_count": len(blocking_issues),
+            "required_entity_count": len(required_entity_ids),
             "severity_counts": dict(sorted(severity_counts.items())),
             "relevance_counts": dict(sorted(relevance_counts.items())),
             "failed_structural_dataset_count": len(failed_datasets),
@@ -237,13 +251,15 @@ def analyze_readiness(
         "issues": sorted(
             issues,
             key=lambda item: (
+                not item.get("blocking", False),
                 {"critical": 0, "warning": 1, "informational": 2}.get(item["severity"], 3),
                 str(item["issue_id"]),
             ),
         ),
         "rules": {
-            "critical": "Unavailable or missing very-high-relevance data, or a required structural dataset failure.",
-            "warning": "Unavailable or missing high- or medium-relevance data.",
-            "informational": "Disabled, low-relevance, unknown-relevance or state-only observations.",
+            "blocking": "Only failed required structural datasets or explicitly declared required entities block planning.",
+            "critical": "An explicitly required dependency is unavailable or missing.",
+            "warning": "Relevant observed data is unavailable but has not been declared required.",
+            "informational": "Disabled, low-relevance, unknown-relevance or state-only observation.",
         },
     }

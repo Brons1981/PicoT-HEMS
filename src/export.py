@@ -16,6 +16,19 @@ def write_json(path: Path, data: Any) -> None:
     )
 
 
+def export_capability_semantic_validation(
+    result: dict[str, Any], output_directory: Path
+) -> dict[str, Path]:
+    """Export complete semantic validation audit and compact summary."""
+    files = {
+        "audit": output_directory / "capability_semantic_validation.json",
+        "summary": output_directory / "capability_semantic_validation_summary.json",
+    }
+    write_json(files["audit"], result)
+    write_json(files["summary"], result["summary"])
+    return files
+
+
 def export_capability_selection(
     result: dict[str, Any], output_directory: Path
 ) -> dict[str, Path]:

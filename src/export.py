@@ -19,11 +19,18 @@ def write_json(path: Path, data: Any) -> None:
 def export_discovery_snapshot(
     result: dict[str, Any], output_directory: Path
 ) -> dict[str, Path]:
-    """Export both source datasets and a complete Discovery snapshot."""
+    """Export source datasets and the complete structural snapshot."""
     files = {
         "config": output_directory / "config.json",
         "states": output_directory / "states.json",
         "services": output_directory / "services.json",
+        "config_entries": output_directory / "config_entries.json",
+        "devices": output_directory / "devices.json",
+        "entities": output_directory / "entity_registry.json",
+        "areas": output_directory / "areas.json",
+        "floors": output_directory / "floors.json",
+        "labels": output_directory / "labels.json",
+        "websocket_statuses": output_directory / "websocket_statuses.json",
         "summary": output_directory / "discovery_summary.json",
         "snapshot": output_directory / "discovery_snapshot.json",
     }
@@ -31,6 +38,15 @@ def export_discovery_snapshot(
     write_json(files["config"], result["config"])
     write_json(files["states"], result["states"])
     write_json(files["services"], result["services"])
+
+    structure = result["structure"]
+    write_json(files["config_entries"], structure["config_entries"])
+    write_json(files["devices"], structure["devices"])
+    write_json(files["entities"], structure["entities"])
+    write_json(files["areas"], structure["areas"])
+    write_json(files["floors"], structure["floors"])
+    write_json(files["labels"], structure["labels"])
+    write_json(files["websocket_statuses"], result["websocket_statuses"])
     write_json(files["summary"], result["summary"])
     write_json(files["snapshot"], result)
 

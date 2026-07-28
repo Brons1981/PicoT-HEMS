@@ -16,6 +16,159 @@ def write_json(path: Path, data: Any) -> None:
     )
 
 
+def _contains_any_term(value: Any, terms: tuple[str, ...]) -> bool:
+    """Return whether a JSON-compatible value contains one of the terms."""
+    if isinstance(value, dict):
+        return any(
+            _contains_any_term(key, terms) or _contains_any_term(item, terms)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_any_term(item, terms) for item in value)
+    if value is None:
+        return False
+    text = str(value).casefold()
+    return any(term in text for term in terms)
+
+
+def _as_id_set(value: Any) -> set[str]:
+    """Normalize a scalar or collection of identifiers to a string set."""
+    if value is None:
+        return set()
+    if isinstance(value, (list, tuple, set)):
+        return {str(item) for item in value if item is not None}
+    return {str(value)}
+
+
+def export_zendure_diagnostic(
+    result: dict[str, Any], output_directory: Path
+) -> Path:
+    """Export all evidence related to Zendure and the @gielz integration.
+
+    The export starts with direct textual matches and then expands through
+    entity-registry, device and config-entry relationships. This keeps direct
+    Zendure entities and Homey mirrors visible in one deterministic audit.
+    """
+    terms = ("zendure", "gielz", "solarflow", "2400pro", "2400 pro")
+    structure = result["structure"]
+    states = result["states"]
+    entities = structure["entities"]
+    devices = structure["devices"]
+    config_entries = structure["config_entries"]
+
+    matched_entity_ids: set[str] = set()
+    matched_device_ids: set[str] = set()
+    matched_config_entry_ids: set[str] = set()
+
+    for state in states:
+        if _contains_any_term(state, terms):
+            entity_id = state.get("entity_id")
+            if entity_id:
+                matched_entity_ids.add(str(entity_id))
+
+    for entity in entities:
+        entity_id = entity.get("entity_id")
+        if _contains_any_term(entity, terms) or (
+            entity_id and str(entity_id) in matched_entity_ids
+        ):
+            if entity_id:
+                matched_entity_ids.add(str(entity_id))
+            matched_device_ids.update(_as_id_set(entity.get("device_id")))
+            matched_config_entry_ids.update(
+                _as_id_set(entity.get("config_entry_id"))
+            )
+            matched_config_entry_ids.update(
+                _as_id_set(entity.get("config_entry_ids"))
+            )
+
+    for device in devices:
+        device_id = device.get("id") or device.get("device_id")
+        if _contains_any_term(device, terms) or (
+            device_id and str(device_id) in matched_device_ids
+        ):
+            if device_id:
+                matched_device_ids.add(str(device_id))
+            matched_config_entry_ids.update(
+                _as_id_set(device.get("config_entries"))
+            )
+            matched_config_entry_ids.update(
+                _as_id_set(device.get("config_entry_id"))
+            )
+
+    for entity in entities:
+        device_id = entity.get("device_id")
+        config_ids = _as_id_set(entity.get("config_entry_id")) | _as_id_set(
+            entity.get("config_entry_ids")
+        )
+        if (
+            device_id and str(device_id) in matched_device_ids
+        ) or config_ids.intersection(matched_config_entry_ids):
+            entity_id = entity.get("entity_id")
+            if entity_id:
+                matched_entity_ids.add(str(entity_id))
+
+    relevant_states = sorted(
+        [
+            state
+            for state in states
+            if str(state.get("entity_id", "")) in matched_entity_ids
+        ],
+        key=lambda row: str(row.get("entity_id", "")),
+    )
+    relevant_entities = sorted(
+        [
+            entity
+            for entity in entities
+            if str(entity.get("entity_id", "")) in matched_entity_ids
+        ],
+        key=lambda row: str(row.get("entity_id", "")),
+    )
+    relevant_devices = sorted(
+        [
+            device
+            for device in devices
+            if str(device.get("id") or device.get("device_id") or "")
+            in matched_device_ids
+        ],
+        key=lambda row: str(row.get("id") or row.get("device_id") or ""),
+    )
+    relevant_config_entries = sorted(
+        [
+            entry
+            for entry in config_entries
+            if str(entry.get("entry_id") or entry.get("config_entry_id") or "")
+            in matched_config_entry_ids
+            or _contains_any_term(entry, terms)
+        ],
+        key=lambda row: str(
+            row.get("entry_id") or row.get("config_entry_id") or ""
+        ),
+    )
+
+    diagnostic = {
+        "metadata": {
+            "schema": "picot_hems.diagnostic.zendure",
+            "schema_version": "0.1.0",
+            "method": "direct_term_match_then_relationship_expansion",
+            "filter_terms": list(terms),
+        },
+        "summary": {
+            "state_count": len(relevant_states),
+            "entity_registry_count": len(relevant_entities),
+            "device_count": len(relevant_devices),
+            "config_entry_count": len(relevant_config_entries),
+        },
+        "states": relevant_states,
+        "entity_registry": relevant_entities,
+        "devices": relevant_devices,
+        "config_entries": relevant_config_entries,
+    }
+
+    path = output_directory / "zendure_diagnostic.json"
+    write_json(path, diagnostic)
+    return path
+
+
 def export_capability_semantic_validation(
     result: dict[str, Any], output_directory: Path
 ) -> dict[str, Path]:

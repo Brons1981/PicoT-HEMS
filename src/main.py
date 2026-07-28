@@ -14,6 +14,7 @@ from export import (
     export_capability_selection,
     export_capability_semantic_validation,
     export_discovery_snapshot,
+    export_zendure_diagnostic,
 )
 from websocket_api import HomeAssistantWebSocketError
 
@@ -28,6 +29,10 @@ def main() -> None:
         client = HomeAssistantClient.from_environment()
         result = run_discovery(client)
         files = export_discovery_snapshot(result, OUTPUT_DIRECTORY)
+        zendure_diagnostic_file = export_zendure_diagnostic(
+            result,
+            OUTPUT_DIRECTORY,
+        )
 
         capability_result = discover_capabilities(
             result["structure"],
@@ -100,6 +105,7 @@ def main() -> None:
     print(f"Discovery readiness: {files['readiness']}")
     print(f"Readiness issues: {files['readiness_issues']}")
     print(f"Capability readiness: {files['capability_readiness']}")
+    print(f"Zendure diagnostic: {zendure_diagnostic_file}")
     print(f"Capability candidates: {capability_files['candidates']}")
     print(f"Capability statistics: {capability_files['statistics']}")
     print(f"Semantic validation: {semantic_files['audit']}")

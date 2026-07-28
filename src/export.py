@@ -16,6 +16,42 @@ def write_json(path: Path, data: Any) -> None:
     )
 
 
+def export_capability_selection(
+    result: dict[str, Any], output_directory: Path
+) -> dict[str, Path]:
+    """Export selected mappings, full selection audit and summary."""
+    files = {
+        "mapping": output_directory / "capability_mapping.json",
+        "audit": output_directory / "capability_selection_audit.json",
+        "summary": output_directory / "capability_selection_summary.json",
+    }
+
+    mapping = {
+        "metadata": result["metadata"],
+        "summary": result["summary"],
+        "mappings": [
+            {
+                "capability_id": row["capability_id"],
+                "category": row["category"],
+                "kind": row["kind"],
+                "status": row["status"],
+                "selected": row["selected"],
+            }
+            for row in result["mappings"]
+        ],
+    }
+    audit = {
+        "metadata": result["metadata"],
+        "summary": result["summary"],
+        "mappings": result["mappings"],
+    }
+
+    write_json(files["mapping"], mapping)
+    write_json(files["audit"], audit)
+    write_json(files["summary"], result["summary"])
+    return files
+
+
 def export_capability_discovery(
     result: dict[str, Any], output_directory: Path
 ) -> dict[str, Path]:

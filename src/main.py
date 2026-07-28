@@ -15,7 +15,7 @@ OUTPUT_DIRECTORY = PROJECT_ROOT / "output"
 
 
 def main() -> None:
-    """Run Discovery Step 2.3 and export an architectural snapshot."""
+    """Run Discovery Step 2.4 and export structural analysis."""
     try:
         client = HomeAssistantClient.from_environment()
         result = run_discovery(client)
@@ -25,8 +25,9 @@ def main() -> None:
 
     summary = result["summary"]
     architecture = summary["architecture"]
+    analysis = summary["analysis"]
 
-    print("PicoT Discovery Step 2.3 completed.")
+    print("PicoT Discovery Step 2.4 completed.")
     print(f"Home Assistant version: {summary['home_assistant_version']}")
     print(f"States/entities: {summary['state_count']}")
     print(f"Config entries/integrations: {summary['config_entry_count']}")
@@ -35,13 +36,11 @@ def main() -> None:
     print(f"Areas: {summary['area_count']}")
     print(f"Linked devices: {architecture['linked_device_count']}")
     print(f"Orphan devices: {architecture['orphan_device_count']}")
-    print(f"Entities with current state: {architecture['entity_with_state_count']}")
-    print(f"Entities without current state: {architecture['entity_without_state_count']}")
-    print(f"Disabled entities: {architecture['disabled_entity_count']}")
-    print(
-        "Entities without device or integration: "
-        f"{architecture['entity_without_device_or_integration_count']}"
-    )
+    print(f"State-only entities: {analysis['state_only_entity_count']}")
+    print(f"Unlinked entities classified: {analysis['unlinked_entity_count']}")
+    print(f"Unlinked categories: {analysis['unlinked_entity_categories']}")
+    print(f"Integration structural statuses: {analysis['integration_status_counts']}")
+    print(f"Device structural statuses: {analysis['device_status_counts']}")
 
     failed = [
         name
@@ -52,8 +51,10 @@ def main() -> None:
         print(f"Unavailable structural datasets: {', '.join(failed)}")
         print("Details: output\\websocket_statuses.json")
 
-    print(f"Architecture map: {files['architecture']}")
-    print(f"Exceptions: {files['architecture_exceptions']}")
+    print(f"Architecture analysis: {files['analysis']}")
+    print(f"Integration health: {files['integration_health']}")
+    print(f"Device health: {files['device_health']}")
+    print(f"State-only entities: {files['state_only_entities']}")
     print(f"JSON output: {files['snapshot'].parent}")
 
 

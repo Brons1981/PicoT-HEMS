@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from api import HomeAssistantClient
+from websocket_api import HomeAssistantWebSocketClient
 
 
 def _count_services(services: list[dict[str, Any]]) -> int:
@@ -30,12 +31,21 @@ def _count_entity_domains(states: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def run_discovery(client: HomeAssistantClient) -> dict[str, Any]:
-    """Collect a neutral and traceable Home Assistant REST snapshot."""
+    """Collect REST data and structural Home Assistant registries."""
     collected_at = datetime.now(timezone.utc).isoformat()
     api_status = client.check_api()
     config = client.get_config()
     states = client.get_states()
     services = client.get_services()
+
+    websocket_client = HomeAssistantWebSocketClient(
+        base_url=client.base_url,
+        token=client.token,
+        timeout_seconds=client.timeout_seconds,
+    )
+    structure = websocket_client.collect_structure()
+    datasets = structure["datasets"]
+    statuses = structure["statuses"]
 
     summary = {
         "collected_at_utc": collected_at,
@@ -47,17 +57,26 @@ def run_discovery(client: HomeAssistantClient) -> dict[str, Any]:
         "service_domain_count": len(services),
         "service_count": _count_services(services),
         "entity_domains": _count_entity_domains(states),
+        "config_entry_count": len(datasets["config_entries"]),
+        "device_count": len(datasets["devices"]),
+        "entity_registry_count": len(datasets["entities"]),
+        "area_count": len(datasets["areas"]),
+        "floor_count": len(datasets["floors"]),
+        "label_count": len(datasets["labels"]),
+        "websocket_statuses": statuses,
     }
 
     return {
         "metadata": {
-            "schema": "picot_hems.discovery.rest_snapshot",
-            "schema_version": "0.2.0",
+            "schema": "picot_hems.discovery.structural_snapshot",
+            "schema_version": "0.3.0",
             "collected_at_utc": collected_at,
         },
         "api_status": api_status,
         "config": config,
         "states": states,
         "services": services,
+        "structure": datasets,
+        "websocket_statuses": statuses,
         "summary": summary,
     }

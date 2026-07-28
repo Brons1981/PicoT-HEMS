@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from api import HomeAssistantApiError, HomeAssistantClient
+from capability_discovery import discover_capabilities
 from discovery import run_discovery
-from export import export_discovery_snapshot
+from export import export_capability_discovery, export_discovery_snapshot
 from websocket_api import HomeAssistantWebSocketError
 
 
@@ -15,11 +16,20 @@ OUTPUT_DIRECTORY = PROJECT_ROOT / "output"
 
 
 def main() -> None:
-    """Run Discovery Step 2.5 and export readiness analysis."""
+    """Run Discovery Step 2.6 and export capability candidates."""
     try:
         client = HomeAssistantClient.from_environment()
         result = run_discovery(client)
         files = export_discovery_snapshot(result, OUTPUT_DIRECTORY)
+
+        capability_result = discover_capabilities(
+            result["structure"],
+            result["states"],
+        )
+        capability_files = export_capability_discovery(
+            capability_result,
+            OUTPUT_DIRECTORY,
+        )
     except (RuntimeError, HomeAssistantApiError, HomeAssistantWebSocketError) as exc:
         raise SystemExit(f"Discovery failed: {exc}") from exc
 
@@ -27,8 +37,9 @@ def main() -> None:
     architecture = summary["architecture"]
     analysis = summary["analysis"]
     readiness = summary["readiness"]
+    capability_summary = capability_result["summary"]
 
-    print("PicoT Discovery Step 2.5 completed.")
+    print("PicoT Discovery Step 2.6 completed.")
     print(f"Home Assistant version: {summary['home_assistant_version']}")
     print(f"States/entities: {summary['state_count']}")
     print(f"Config entries/integrations: {summary['config_entry_count']}")
@@ -45,6 +56,10 @@ def main() -> None:
     print(f"Severity counts: {readiness['severity_counts']}")
     print(f"Relevance counts: {readiness['relevance_counts']}")
     print(f"Capability readiness records: {readiness['capability_count']}")
+    print(f"Capability definitions: {capability_summary['capability_count']}")
+    print(f"Populated capabilities: {capability_summary['populated_capability_count']}")
+    print(f"Capability candidates: {capability_summary['candidate_count']}")
+    print(f"Entities evaluated for capabilities: {capability_summary['entities_evaluated']}")
 
     failed = [
         name
@@ -58,6 +73,8 @@ def main() -> None:
     print(f"Discovery readiness: {files['readiness']}")
     print(f"Readiness issues: {files['readiness_issues']}")
     print(f"Capability readiness: {files['capability_readiness']}")
+    print(f"Capability candidates: {capability_files['candidates']}")
+    print(f"Capability statistics: {capability_files['statistics']}")
     print(f"JSON output: {files['snapshot'].parent}")
 
 

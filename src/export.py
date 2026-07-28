@@ -16,6 +16,32 @@ def write_json(path: Path, data: Any) -> None:
     )
 
 
+def export_capability_discovery(
+    result: dict[str, Any], output_directory: Path
+) -> dict[str, Path]:
+    """Export capability candidates and deterministic discovery statistics."""
+    files = {
+        "candidates": output_directory / "capability_candidates.json",
+        "statistics": output_directory / "capability_statistics.json",
+    }
+
+    candidates = {
+        "metadata": result["metadata"],
+        "summary": result["summary"],
+        "capabilities": result["capabilities"],
+    }
+    statistics = {
+        "metadata": result["metadata"],
+        "summary": result["summary"],
+        "statistics": result["statistics"],
+    }
+
+    write_json(files["candidates"], candidates)
+    write_json(files["statistics"], statistics)
+
+    return files
+
+
 def export_discovery_snapshot(
     result: dict[str, Any], output_directory: Path
 ) -> dict[str, Path]:

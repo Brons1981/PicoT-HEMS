@@ -23,11 +23,16 @@ def _eligibility(candidate: dict[str, Any]) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     entity_id = _normalized(candidate.get("entity_id"))
     state = _normalized(candidate.get("state"))
+    semantic_validation = candidate.get("semantic_validation") or {}
+    semantic_status = _normalized(semantic_validation.get("status"))
 
     if not entity_id or "." not in entity_id:
         reasons.append("invalid_entity_id")
     if state in _INVALID_STATES:
         reasons.append(f"state_not_usable:{state or 'empty'}")
+    if semantic_status != "valid":
+        semantic_reasons = semantic_validation.get("reasons") or ["semantic_validation_missing"]
+        reasons.extend(f"semantic:{reason}" for reason in semantic_reasons)
 
     return not reasons, reasons
 
@@ -48,7 +53,7 @@ def _selection_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def _selection_basis(candidate: dict[str, Any]) -> list[str]:
-    basis = ["usable_current_state"]
+    basis = ["semantic_validation_passed", "usable_current_state"]
     if candidate.get("device_id"):
         basis.append("linked_device")
     if candidate.get("config_entry_id"):
@@ -60,8 +65,8 @@ def _selection_basis(candidate: dict[str, Any]) -> list[str]:
     return basis
 
 
-def select_capabilities(discovery_result: dict[str, Any]) -> dict[str, Any]:
-    """Select at most one candidate for every discovered capability.
+def select_capabilities(validation_result: dict[str, Any]) -> dict[str, Any]:
+    """Select at most one semantically valid candidate for every capability.
 
     Every candidate remains present in the audit output. Non-selected records
     state whether they were ineligible or lost to a higher-priority candidate.
@@ -69,7 +74,7 @@ def select_capabilities(discovery_result: dict[str, Any]) -> dict[str, Any]:
     mappings: list[dict[str, Any]] = []
     status_counts: Counter[str] = Counter()
 
-    for capability in discovery_result.get("capabilities", []):
+    for capability in validation_result.get("capabilities", []):
         candidates = capability.get("candidates") or []
         evaluated: list[dict[str, Any]] = []
         eligible: list[dict[str, Any]] = []
@@ -107,6 +112,7 @@ def select_capabilities(discovery_result: dict[str, Any]) -> dict[str, Any]:
                 "device_id": selected.get("device_id"),
                 "config_entry_id": selected.get("config_entry_id"),
                 "platform": selected.get("platform"),
+                "semantic_validation": selected.get("semantic_validation"),
                 "selection_basis": _selection_basis(selected),
             }
         elif candidates:
@@ -134,12 +140,13 @@ def select_capabilities(discovery_result: dict[str, Any]) -> dict[str, Any]:
     return {
         "metadata": {
             "schema": "picot_hems.capability.selection",
-            "schema_version": "0.1.0",
-            "method": "fixed_priority_rules",
+            "schema_version": "0.2.0",
+            "method": "fixed_priority_rules_after_semantic_validation",
             "probabilistic_selection": False,
             "learning_used": False,
             "maximum_selected_per_capability": 1,
             "rule_order": [
+                "semantic_validation_required",
                 "usable_current_state_required",
                 "prefer_linked_device",
                 "prefer_linked_config_entry",

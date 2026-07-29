@@ -15,7 +15,7 @@ from capability_mapping_store import CapabilityMappingStore, MappingStoreError
 
 _SCHEMA = "picot_hems.capability.lifecycle_event"
 _SCHEMA_VERSION = "1.0.0"
-_ENGINE_VERSION = "0.1.0"
+_ENGINE_VERSION = "0.1.1"
 
 _TEMPORARY_EVENTS = {"SOURCE_UNAVAILABLE"}
 _RESTORE_EVENTS = {"SOURCE_AVAILABLE"}
@@ -90,6 +90,10 @@ class CapabilityLifecycleEngine:
                 rediscovery_required = False
                 reason = "temporary_unavailability_is_not_invalidity"
             elif normalized_event in _RESTORE_EVENTS:
+                if before["status"] != "TEMPORARILY_UNAVAILABLE":
+                    raise LifecycleError(
+                        "SOURCE_AVAILABLE is valid only when the mapping is temporarily unavailable"
+                    )
                 after = self._mapping_store.restore_available(
                     capability_id, capability_role
                 )

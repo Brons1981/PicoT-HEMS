@@ -45,3 +45,23 @@ The future PicoT bot and runtime interfaces are deterministic and may only retri
 
 ### ADR-014 — Architecture is future-proof; v0.1 implementation remains minimal
 Necessary structural contracts are designed now, while non-essential functionality is deferred to the roadmap.
+
+### ADR-015 — Execution Primitive Architecture
+The Core expresses desired energy behaviour through generic Execution Primitives. Device Adapters translate those primitives into vendor-specific modes and commands.
+
+Detailed record: [`ADR-015-execution-primitives.md`](ADR-015-execution-primitives.md)
+
+### ADR-016 — Execution Plan Architecture
+The Planner produces a complete, immutable and time-bound Execution Plan. Execution validates each due segment before translating it into a vendor-specific command. Conflicting User Rules are automatically disabled, logged and followed by standard-planner replanning.
+
+Detailed record: [`ADR-016-execution-plan-architecture.md`](ADR-016-execution-plan-architecture.md)
+
+### ADR-017 — Planning Decision Pipeline
+PicoT evaluates complete energy paths over a rolling planning horizon, replans on material knowledge changes, and uses confidence, recoverability and Candidate Space Reduction before final evaluation.
+
+Detailed record: [`ADR-017-planning-decision-pipeline.md`](ADR-017-planning-decision-pipeline.md)
+
+### ADR-018 — User Objective Model
+Users configure transparent personal objectives rather than technical battery modes. An Objective Mapping Layer translates understandable UI input into internal Planner weights with noticeable influence.
+
+Detailed record: [`ADR-018-user-objective-model.md`](ADR-018-user-objective-model.md)

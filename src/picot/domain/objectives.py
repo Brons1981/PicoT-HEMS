@@ -7,10 +7,10 @@ weights used by the Planner. See ADR-018 and ADR-025.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class ObjectiveKind(str, Enum):
+class ObjectiveKind(StrEnum):
     """Objectives currently understood by the Planner Strategy Model."""
 
     FINANCIAL_RESULT = "financial_result"
@@ -22,7 +22,7 @@ class ObjectiveKind(str, Enum):
     NET_BALANCE = "net_balance"
 
 
-class OptimisationProfile(str, Enum):
+class OptimisationProfile(StrEnum):
     """User-selected optimisation intensity."""
 
     CONSERVATIVE = "conservative"

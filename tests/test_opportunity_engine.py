@@ -16,7 +16,6 @@ from picot.domain.planning_input_snapshot import (
     PlanningInputVersions,
     RuntimePressureState,
 )
-
 from picot.planner.opportunity_engine import OpportunityEngine
 
 

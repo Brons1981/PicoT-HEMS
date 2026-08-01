@@ -50,20 +50,20 @@ class OpportunityEngine:
         sequence = 1
 
         for series in snapshot.forecasts.by_kind(ForecastKind.ENERGY_PRICE):
-            for window in self._negative_price_windows(series, snapshot):
+            for negative_window in self._negative_price_windows(series, snapshot):
                 opportunities.append(
                     Opportunity(
                         opportunity_id=f"{snapshot.snapshot_id}:negative-price:{sequence}",
                         snapshot_id=snapshot.snapshot_id,
                         kind=OpportunityKind.NEGATIVE_PRICE_WINDOW,
-                        starts_at=window.starts_at,
-                        ends_at=window.ends_at,
-                        confidence=window.confidence,
+                        starts_at=negative_window.starts_at,
+                        ends_at=negative_window.ends_at,
+                        confidence=negative_window.confidence,
                         lifecycle=OpportunityLifecycle.DETECTED,
                         evidence=(
                             EvidenceReference(
                                 source_id=series.forecast_id,
-                                point_indexes=window.point_indexes,
+                                point_indexes=negative_window.point_indexes,
                             ),
                         ),
                     )
@@ -74,30 +74,30 @@ class OpportunityEngine:
         load_series = snapshot.forecasts.by_kind(ForecastKind.HOUSEHOLD_LOAD)
         for pv in pv_series:
             for load in load_series:
-                for window in self._pv_surplus_windows(pv, load, snapshot):
+                for surplus_window in self._pv_surplus_windows(pv, load, snapshot):
                     opportunities.append(
                         Opportunity(
                             opportunity_id=f"{snapshot.snapshot_id}:pv-surplus:{sequence}",
                             snapshot_id=snapshot.snapshot_id,
                             kind=OpportunityKind.PV_SURPLUS_WINDOW,
-                            starts_at=window.starts_at,
-                            ends_at=window.ends_at,
-                            confidence=window.confidence,
+                            starts_at=surplus_window.starts_at,
+                            ends_at=surplus_window.ends_at,
+                            confidence=surplus_window.confidence,
                             lifecycle=OpportunityLifecycle.DETECTED,
                             evidence=(
                                 EvidenceReference(
                                     source_id=pv.forecast_id,
-                                    point_indexes=window.pv_point_indexes,
+                                    point_indexes=surplus_window.pv_point_indexes,
                                 ),
                                 EvidenceReference(
                                     source_id=load.forecast_id,
-                                    point_indexes=window.load_point_indexes,
+                                    point_indexes=surplus_window.load_point_indexes,
                                 ),
                             ),
                             metrics=(
                                 OpportunityMetric(
                                     kind=OpportunityMetricKind.MINIMUM_EXPECTED_POWER_W,
-                                    value=window.minimum_expected_power_w,
+                                    value=surplus_window.minimum_expected_power_w,
                                 ),
                             ),
                         )

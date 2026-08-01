@@ -45,6 +45,7 @@ jobs:
           tests/test_candidate_engine.py
           tests/test_evaluation_engine.py
           tests/test_execution_plan_builder.py
+          tests/test_execution_engine.py
 
       - name: Run Mypy on PicoT Core slice
         run: >-
@@ -62,6 +63,7 @@ jobs:
           tests/test_candidate_engine.py
           tests/test_evaluation_engine.py
           tests/test_execution_plan_builder.py
+          tests/test_execution_engine.py
 
       - name: Run Pytest on PicoT Core slice
         run: >-
@@ -79,3 +81,4 @@ jobs:
           tests/test_candidate_engine.py
           tests/test_evaluation_engine.py
           tests/test_execution_plan_builder.py
+          tests/test_execution_engine.py

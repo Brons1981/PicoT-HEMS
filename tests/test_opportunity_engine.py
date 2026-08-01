@@ -2,12 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from picot.domain.forecast import (
-    ForecastKind,
-    ForecastPoint,
-    ForecastSeries,
-    ForecastSet,
-)
+from picot.domain.forecast import ForecastKind, ForecastPoint, ForecastSeries, ForecastSet
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import OptimisationProfile, PlannerStrategy
 from picot.domain.opportunity import OpportunityKind, OpportunityLifecycle

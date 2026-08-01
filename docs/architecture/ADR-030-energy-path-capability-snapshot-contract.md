@@ -153,6 +153,18 @@ A projected state point may contain, where available:
 
 Unknown state dimensions remain explicitly unknown. A path is invalid when a required future state cannot be calculated with sufficient support for a hard feasibility decision.
 
+## Candidate Set output contract
+
+The Candidate Engine returns one immutable `CandidateSet` containing:
+
+- the generated Candidates;
+- the complete immutable Energy Paths referenced by those Candidates;
+- exclusion records for rejected scenario families.
+
+Every Candidate references exactly one Energy Path in the same Candidate Set through `energy_path_id`. Every Energy Path in the Candidate Set belongs to exactly one Candidate. Candidate and Energy Path must reference the same Planning Input Snapshot, Candidate Family, strategy version, opportunities, constraints, capabilities, assumptions and confidence.
+
+PicoT does not introduce a separate Candidate Generation Result wrapper. The Candidate Set itself is the complete output contract of the Candidate Engine.
+
 ## Candidate Engine use
 
 The Candidate Engine:
@@ -205,8 +217,9 @@ Every rejected path family records the objective exclusion reason and relevant s
 - Complete paths can be validated and simulated before Evaluation.
 - Capability health, limits, freshness and mapping versions remain explainable.
 - Candidate paths remain distinct from committed Execution Plans.
+- Candidate Engine output remains one coherent immutable aggregate without an extra wrapper layer.
 - Missing capability information causes explicit exclusion or reduced confidence rather than invented defaults.
 
 ## Core principle
 
-> The Candidate Engine builds complete, vendor-independent Energy Paths from an atomic Capability Snapshot Set. Capabilities define what is technically supported; Energy Paths describe complete possible household scenarios; Evaluation chooses the winner; Execution commits and translates it.
+> The Candidate Engine builds complete, vendor-independent Energy Paths from an atomic Capability Snapshot Set. The Candidate Set contains both the Candidates and their complete Energy Paths. Capabilities define what is technically supported; Energy Paths describe complete possible household scenarios; Evaluation chooses the winner; Execution commits and translates it.

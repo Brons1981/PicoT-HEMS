@@ -38,8 +38,8 @@ def _record(candidate_id: str | None) -> EvaluationRecord:
 
 
 def _winner(*, with_segments: bool = True) -> EvaluationResult:
-    segments = ()
-    capability_ids = ()
+    segments: tuple[PathSegment, ...] = ()
+    capability_ids: tuple[str, ...] = ()
     if with_segments:
         segments = (
             PathSegment(

@@ -38,6 +38,7 @@ jobs:
           tests/test_forecast.py
           tests/test_opportunity_engine.py
           tests/test_pv_surplus_opportunity.py
+          tests/test_lowest_price_opportunity.py
 
       - name: Run Mypy on PicoT Core slice
         run: >-
@@ -48,6 +49,7 @@ jobs:
           tests/test_forecast.py
           tests/test_opportunity_engine.py
           tests/test_pv_surplus_opportunity.py
+          tests/test_lowest_price_opportunity.py
 
       - name: Run Pytest on PicoT Core slice
         run: >-
@@ -58,3 +60,4 @@ jobs:
           tests/test_forecast.py
           tests/test_opportunity_engine.py
           tests/test_pv_surplus_opportunity.py
+          tests/test_lowest_price_opportunity.py

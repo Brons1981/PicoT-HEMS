@@ -65,3 +65,23 @@ Detailed record: [`ADR-017-planning-decision-pipeline.md`](ADR-017-planning-deci
 Users configure transparent personal objectives rather than technical battery modes. An Objective Mapping Layer translates understandable UI input into internal Planner weights with noticeable influence.
 
 Detailed record: [`ADR-018-user-objective-model.md`](ADR-018-user-objective-model.md)
+
+### ADR-019 — Energy Profile Model
+User Rules and Energy Profiles remain separate Core concepts. Expert-mode Planning Hints may describe user-declared expected energy impact and can later evolve into Managed Energy Profiles without modifying rule logic.
+
+Detailed record: [`ADR-019-energy-profile-model.md`](ADR-019-energy-profile-model.md)
+
+### ADR-020 — Dual User Input Model
+PicoT supports Simple and Expert input where useful. Both compile to the same validated internal model; Expert mode provides more expressiveness but never more authority.
+
+Detailed record: [`ADR-020-dual-user-input-model.md`](ADR-020-dual-user-input-model.md)
+
+### ADR-021 — Layered Diagnostic Isolation
+PicoT diagnostics isolate configurable layers through temporary fallbacks while preserving original configuration and essential baseline operation.
+
+Detailed record: [`ADR-021-layered-diagnostic-isolation.md`](ADR-021-layered-diagnostic-isolation.md)
+
+### ADR-022 — Progressive Complexity Principle
+PicoT keeps the default experience simple and exposes additional complexity only by explicit opt-in. New features should extend existing Core models instead of introducing parallel systems.
+
+Detailed record: [`ADR-022-progressive-complexity-principle.md`](ADR-022-progressive-complexity-principle.md)

@@ -18,7 +18,6 @@ from picot.domain.planning_input_snapshot import (
 )
 from picot.planner.opportunity_engine import OpportunityEngine
 
-
 BASE = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
 
 

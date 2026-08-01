@@ -1,6 +1,6 @@
 # ADR-032 — Candidate Evaluation Contract
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-01
 
 ## Context

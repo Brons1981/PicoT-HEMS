@@ -99,7 +99,9 @@ class EvaluationEngine:
             snapshot_id=candidate_set.snapshot_id,
             strategy_version=strategy.strategy_version,
             candidate_set_reference=outcomes.candidate_set_reference,
-            evaluated_candidate_ids=tuple(candidate.candidate_id for candidate in candidate_set.candidates),
+            evaluated_candidate_ids=tuple(
+                candidate.candidate_id for candidate in candidate_set.candidates
+            ),
             invalid_candidates=invalid,
             strategic_objective_order=objective_order,
             objective_comparisons=tuple(objective_records),
@@ -116,8 +118,14 @@ class EvaluationEngine:
                 winning_candidate=None,
                 winning_energy_path=None,
             )
-        candidate = next(item for item in candidate_set.candidates if item.candidate_id == winner_id)
-        path = next(item for item in candidate_set.energy_paths if item.path_id == candidate.energy_path_id)
+        candidate = next(
+            item for item in candidate_set.candidates if item.candidate_id == winner_id
+        )
+        path = next(
+            item
+            for item in candidate_set.energy_paths
+            if item.path_id == candidate.energy_path_id
+        )
         return EvaluationResult(
             status=EvaluationOutcomeStatus.WINNER_SELECTED,
             record=record,
@@ -171,7 +179,11 @@ class EvaluationEngine:
         unit: str | None = None
         for candidate_id in candidate_ids:
             match = next(
-                (item for item in outcomes[candidate_id].objective_outcomes if item.objective is objective),
+                (
+                    item
+                    for item in outcomes[candidate_id].objective_outcomes
+                    if item.objective is objective
+                ),
                 None,
             )
             if match is None:
@@ -197,15 +209,19 @@ class EvaluationEngine:
             unit = match.unit
         assert direction is not None
         raw_values = [value for _, value in values]
-        best = max(raw_values) if direction is ComparisonDirection.HIGHER_IS_BETTER else min(raw_values)
+        best = (
+            max(raw_values)
+            if direction is ComparisonDirection.HIGHER_IS_BETTER
+            else min(raw_values)
+        )
         retained = [candidate_id for candidate_id, value in values if value == best]
         compared = tuple(
             CandidateComparisonValue(
                 candidate_id,
                 value,
-                RelativeResult.BETTER if value == best and len(retained) == 1 else (
-                    RelativeResult.EQUAL if value == best else RelativeResult.WORSE
-                ),
+                RelativeResult.BETTER
+                if value == best and len(retained) == 1
+                else (RelativeResult.EQUAL if value == best else RelativeResult.WORSE),
             )
             for candidate_id, value in values
         )
@@ -246,8 +262,16 @@ class EvaluationEngine:
         steps = (
             (TieBreakKind.CONFIDENCE, True, lambda item: item.confidence),
             (TieBreakKind.RECOVERABILITY, True, lambda item: item.recoverability),
-            (TieBreakKind.EXECUTION_COMPLEXITY, False, lambda item: item.execution_complexity),
-            (TieBreakKind.EXPECTED_SWITCHING_COUNT, False, lambda item: item.expected_switching_count),
+            (
+                TieBreakKind.EXECUTION_COMPLEXITY,
+                False,
+                lambda item: item.execution_complexity,
+            ),
+            (
+                TieBreakKind.EXPECTED_SWITCHING_COUNT,
+                False,
+                lambda item: item.expected_switching_count,
+            ),
         )
         for kind, higher, getter in steps:
             raw = [(candidate_id, getter(outcomes[candidate_id])) for candidate_id in remaining]
@@ -276,8 +300,12 @@ class EvaluationEngine:
                         CandidateComparisonValue(
                             item,
                             value,
-                            RelativeResult.BETTER if value == best and decisive else (
-                                RelativeResult.EQUAL if value == best else RelativeResult.WORSE
+                            RelativeResult.BETTER
+                            if value == best and decisive
+                            else (
+                                RelativeResult.EQUAL
+                                if value == best
+                                else RelativeResult.WORSE
                             ),
                         )
                         for item, value in raw

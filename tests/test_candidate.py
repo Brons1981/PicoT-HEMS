@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from picot.domain.candidate import (
@@ -9,6 +11,9 @@ from picot.domain.candidate import (
     CandidateFamily,
     CandidateSet,
 )
+from picot.domain.energy_path import EnergyPath
+
+BASE = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
 
 
 def _candidate() -> Candidate:
@@ -26,8 +31,28 @@ def _candidate() -> Candidate:
     )
 
 
+def _energy_path() -> EnergyPath:
+    return EnergyPath(
+        path_id="energy-path-1",
+        snapshot_id="snapshot-1",
+        family=CandidateFamily.COST_FIRST,
+        horizon_start=BASE,
+        horizon_end=BASE + timedelta(hours=4),
+        segments=(),
+        projected_states=(),
+        opportunity_ids=("opportunity-1",),
+        constraint_ids=("constraint-1",),
+        capability_ids=("capability-battery-charge",),
+        strategy_version=3,
+        mapping_version=2,
+        assumptions=("Forecast remains valid for the planning horizon.",),
+        confidence=0.82,
+    )
+
+
 def test_candidate_set_preserves_traceability() -> None:
     candidate = _candidate()
+    energy_path = _energy_path()
     exclusion = CandidateExclusion(
         family=CandidateFamily.PV_FIRST,
         kind=CandidateExclusionKind.OBJECTIVELY_IMPOSSIBLE,
@@ -39,10 +64,12 @@ def test_candidate_set_preserves_traceability() -> None:
         snapshot_id="snapshot-1",
         strategy_version=3,
         candidates=(candidate,),
+        energy_paths=(energy_path,),
         exclusions=(exclusion,),
     )
 
     assert result.candidates[0].energy_path_id == "energy-path-1"
+    assert result.energy_paths[0].path_id == "energy-path-1"
     assert result.candidates[0].opportunity_ids == ("opportunity-1",)
     assert result.exclusions[0].kind is CandidateExclusionKind.OBJECTIVELY_IMPOSSIBLE
 
@@ -69,6 +96,7 @@ def test_candidate_set_rejects_snapshot_mismatch() -> None:
             snapshot_id="snapshot-2",
             strategy_version=3,
             candidates=(_candidate(),),
+            energy_paths=(_energy_path(),),
             exclusions=(),
         )
 
@@ -79,5 +107,17 @@ def test_candidate_set_rejects_strategy_version_mismatch() -> None:
             snapshot_id="snapshot-1",
             strategy_version=4,
             candidates=(_candidate(),),
+            energy_paths=(_energy_path(),),
+            exclusions=(),
+        )
+
+
+def test_candidate_set_rejects_missing_energy_path() -> None:
+    with pytest.raises(ValueError, match="reference each other exactly once"):
+        CandidateSet(
+            snapshot_id="snapshot-1",
+            strategy_version=3,
+            candidates=(_candidate(),),
+            energy_paths=(),
             exclusions=(),
         )

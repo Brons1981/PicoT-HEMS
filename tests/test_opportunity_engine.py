@@ -10,7 +10,7 @@ from picot.domain.forecast import (
 )
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import OptimisationProfile, PlannerStrategy
-from picot.domain.opportunity import OpportunityKind, OpportunityLifecycle
+from picot.domain.opportunity import Opportunity, OpportunityKind, OpportunityLifecycle
 from picot.domain.planning_input_snapshot import (
     PlanningInputSnapshot,
     PlanningInputVersions,
@@ -65,7 +65,7 @@ def _point(hour: int, value: float, confidence: float = 0.9) -> ForecastPoint:
     )
 
 
-def _negative_opportunities(snapshot: PlanningInputSnapshot):
+def _negative_opportunities(snapshot: PlanningInputSnapshot) -> tuple[Opportunity, ...]:
     return tuple(
         opportunity
         for opportunity in OpportunityEngine().detect(snapshot).opportunities

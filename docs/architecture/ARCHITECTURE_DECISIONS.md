@@ -125,3 +125,13 @@ Detailed record: [`ADR-029-household-power-capacity-management.md`](ADR-029-hous
 The Candidate Engine builds complete, vendor-independent Energy Paths from atomic logical Capability Snapshot Sets while preserving limits, health, freshness, mapping versions and traceability.
 
 Detailed record: [`ADR-030-energy-path-capability-snapshot-contract.md`](ADR-030-energy-path-capability-snapshot-contract.md)
+
+### ADR-031 — Candidate Scenario Construction Contract
+The Candidate Engine applies accepted scenario templates to explicit logical capability roles and constructs only complete, technically supported and explainable Energy Paths.
+
+Detailed record: [`ADR-031-candidate-scenario-construction-contract.md`](ADR-031-candidate-scenario-construction-contract.md)
+
+### ADR-032 — Candidate Evaluation Contract
+The Evaluation Engine compares immutable Candidate outcomes in strategy order, records every objective and tie-break, and selects one existing Candidate without hidden scoring.
+
+Detailed record: [`ADR-032-candidate-evaluation-contract.md`](ADR-032-candidate-evaluation-contract.md)

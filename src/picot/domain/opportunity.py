@@ -15,6 +15,7 @@ class OpportunityKind(StrEnum):
     """Objective opportunity categories currently supported by PicoT."""
 
     NEGATIVE_PRICE_WINDOW = "negative_price_window"
+    PV_SURPLUS_WINDOW = "pv_surplus_window"
 
 
 class OpportunityLifecycle(StrEnum):
@@ -25,6 +26,24 @@ class OpportunityLifecycle(StrEnum):
     EXPIRED = "expired"
     SUPERSEDED = "superseded"
     INVALIDATED = "invalidated"
+
+
+class OpportunityMetricKind(StrEnum):
+    """Objective metrics that may describe an opportunity."""
+
+    MINIMUM_EXPECTED_POWER_W = "minimum_expected_power_w"
+
+
+@dataclass(frozen=True, slots=True)
+class OpportunityMetric:
+    """One typed numeric fact derived for an opportunity."""
+
+    kind: OpportunityMetricKind
+    value: float
+
+    def __post_init__(self) -> None:
+        if self.kind is OpportunityMetricKind.MINIMUM_EXPECTED_POWER_W and self.value <= 0:
+            raise ValueError("Minimum expected power must be greater than zero.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +76,7 @@ class Opportunity:
     confidence: float
     lifecycle: OpportunityLifecycle
     evidence: tuple[EvidenceReference, ...]
+    metrics: tuple[OpportunityMetric, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.opportunity_id.strip():
@@ -73,6 +93,9 @@ class Opportunity:
             raise ValueError("Opportunity confidence must be between 0.0 and 1.0.")
         if not self.evidence:
             raise ValueError("Opportunity requires evidence.")
+        metric_kinds = [metric.kind for metric in self.metrics]
+        if len(metric_kinds) != len(set(metric_kinds)):
+            raise ValueError("Each opportunity metric kind may appear only once.")
 
 
 @dataclass(frozen=True, slots=True)

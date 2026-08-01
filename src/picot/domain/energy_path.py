@@ -43,18 +43,21 @@ class PathSegment:
     energy_profile_id: str | None = None
 
     def __post_init__(self) -> None:
-        for value, label in (
+        for text_value, label in (
             (self.segment_id, "Segment ID"),
             (self.execution_scope_id, "Execution scope ID"),
             (self.capability_id, "Capability ID"),
             (self.purpose, "Purpose"),
         ):
-            if not value.strip():
+            if not text_value.strip():
                 raise ValueError(f"{label} must not be empty.")
         if self.order < 1:
             raise ValueError("Segment order must be at least 1.")
-        for value, label in ((self.starts_at, "Segment start"), (self.ends_at, "Segment end")):
-            if value.tzinfo is None or value.utcoffset() is None:
+        for time_value, label in (
+            (self.starts_at, "Segment start"),
+            (self.ends_at, "Segment end"),
+        ):
+            if time_value.tzinfo is None or time_value.utcoffset() is None:
                 raise ValueError(f"{label} must be timezone-aware.")
         if self.ends_at <= self.starts_at:
             raise ValueError("Path segment must end after it starts.")
@@ -147,14 +150,17 @@ class EnergyPath:
     confidence: float
 
     def __post_init__(self) -> None:
-        for value, label in ((self.path_id, "Path ID"), (self.snapshot_id, "Snapshot ID")):
-            if not value.strip():
+        for text_value, label in (
+            (self.path_id, "Path ID"),
+            (self.snapshot_id, "Snapshot ID"),
+        ):
+            if not text_value.strip():
                 raise ValueError(f"{label} must not be empty.")
-        for value, label in (
+        for time_value, label in (
             (self.horizon_start, "Horizon start"),
             (self.horizon_end, "Horizon end"),
         ):
-            if value.tzinfo is None or value.utcoffset() is None:
+            if time_value.tzinfo is None or time_value.utcoffset() is None:
                 raise ValueError(f"{label} must be timezone-aware.")
         if self.horizon_end <= self.horizon_start:
             raise ValueError("Energy Path horizon must end after it starts.")

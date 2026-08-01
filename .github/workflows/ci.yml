@@ -43,6 +43,7 @@ jobs:
           tests/test_candidate.py
           tests/test_energy_path_capability_snapshot.py
           tests/test_candidate_engine.py
+          tests/test_evaluation_engine.py
 
       - name: Run Mypy on PicoT Core slice
         run: >-
@@ -58,6 +59,7 @@ jobs:
           tests/test_candidate.py
           tests/test_energy_path_capability_snapshot.py
           tests/test_candidate_engine.py
+          tests/test_evaluation_engine.py
 
       - name: Run Pytest on PicoT Core slice
         run: >-
@@ -73,3 +75,4 @@ jobs:
           tests/test_candidate.py
           tests/test_energy_path_capability_snapshot.py
           tests/test_candidate_engine.py
+          tests/test_evaluation_engine.py

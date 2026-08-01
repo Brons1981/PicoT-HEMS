@@ -16,6 +16,7 @@ class OpportunityKind(StrEnum):
 
     NEGATIVE_PRICE_WINDOW = "negative_price_window"
     LOWEST_PRICE_WINDOW = "lowest_price_window"
+    HIGH_EXPORT_VALUE_WINDOW = "high_export_value_window"
     PV_SURPLUS_WINDOW = "pv_surplus_window"
 
 

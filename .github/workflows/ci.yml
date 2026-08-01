@@ -37,6 +37,7 @@ jobs:
           tests/test_household_state.py
           tests/test_forecast.py
           tests/test_opportunity_engine.py
+          tests/test_pv_surplus_opportunity.py
 
       - name: Run Mypy on PicoT Core slice
         run: >-
@@ -46,6 +47,7 @@ jobs:
           tests/test_household_state.py
           tests/test_forecast.py
           tests/test_opportunity_engine.py
+          tests/test_pv_surplus_opportunity.py
 
       - name: Run Pytest on PicoT Core slice
         run: >-
@@ -55,3 +57,4 @@ jobs:
           tests/test_household_state.py
           tests/test_forecast.py
           tests/test_opportunity_engine.py
+          tests/test_pv_surplus_opportunity.py

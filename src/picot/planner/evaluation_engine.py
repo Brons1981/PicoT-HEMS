@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from hashlib import sha256
 
@@ -70,18 +71,20 @@ class EvaluationEngine:
         if remaining:
             for objective in objective_order:
                 weight = strategy.weight_for(objective).value
-                record, retained = self._compare_objective(
+                objective_record, retained = self._compare_objective(
                     objective,
                     weight,
                     remaining,
                     by_id,
                 )
-                objective_records.append(record)
-                if weight > 0 and record.available:
+                objective_records.append(objective_record)
+                if weight > 0 and objective_record.available:
                     remaining = retained
                     if len(remaining) == 1:
                         decisive_step = f"objective:{objective.value}"
-                        objective_records[-1] = self._mark_objective_decisive(record)
+                        objective_records[-1] = self._mark_objective_decisive(
+                            objective_record
+                        )
                         break
 
         if len(remaining) > 1:
@@ -93,7 +96,7 @@ class EvaluationEngine:
             outcomes.candidate_set_reference,
             strategy.strategy_version,
         )
-        record = EvaluationRecord(
+        evaluation_record = EvaluationRecord(
             evaluation_id=evaluation_id,
             schema_version=1,
             snapshot_id=candidate_set.snapshot_id,
@@ -114,7 +117,7 @@ class EvaluationEngine:
         if winner_id is None:
             return EvaluationResult(
                 status=EvaluationOutcomeStatus.NO_VALID_CANDIDATE,
-                record=record,
+                record=evaluation_record,
                 winning_candidate=None,
                 winning_energy_path=None,
             )
@@ -128,7 +131,7 @@ class EvaluationEngine:
         )
         return EvaluationResult(
             status=EvaluationOutcomeStatus.WINNER_SELECTED,
-            record=record,
+            record=evaluation_record,
             winning_candidate=candidate,
             winning_energy_path=path,
         )
@@ -240,7 +243,9 @@ class EvaluationEngine:
         )
 
     @staticmethod
-    def _mark_objective_decisive(record: ObjectiveComparisonRecord) -> ObjectiveComparisonRecord:
+    def _mark_objective_decisive(
+        record: ObjectiveComparisonRecord,
+    ) -> ObjectiveComparisonRecord:
         return ObjectiveComparisonRecord(
             objective=record.objective,
             configured_weight=record.configured_weight,
@@ -259,7 +264,8 @@ class EvaluationEngine:
     ) -> tuple[list[str], list[TieBreakRecord], str | None]:
         records: list[TieBreakRecord] = []
         remaining = candidate_ids
-        steps = (
+        getter_type = Callable[[CandidateOutcome], float | int | None]
+        steps: tuple[tuple[TieBreakKind, bool, getter_type], ...] = (
             (TieBreakKind.CONFIDENCE, True, lambda item: item.confidence),
             (TieBreakKind.RECOVERABILITY, True, lambda item: item.recoverability),
             (

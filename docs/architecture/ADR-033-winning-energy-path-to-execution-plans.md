@@ -1,6 +1,6 @@
 # ADR-033 — Winning Energy Path to Execution Plans
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-01
 
 ## Context

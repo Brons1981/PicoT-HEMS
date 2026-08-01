@@ -1,6 +1,6 @@
 # ADR-031 — Candidate Scenario Construction Contract
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-01
 
 ## Context
@@ -39,6 +39,7 @@ Each `LogicalCapabilitySnapshot` includes one explicit logical role:
 - `CONTROLLABLE_PRODUCER`
 - `GRID_INTERFACE`
 - `BALANCING_RESOURCE`
+- `UNKNOWN`
 
 A role describes how a logical capability participates in household energy paths. It is vendor-independent and does not replace supported Execution Primitives or technical limits.
 
@@ -60,8 +61,6 @@ The Candidate Engine uses accepted scenario templates. A template defines:
 A template may create zero, one or several representative Energy Paths. It may not generate arbitrary minute-by-minute variants.
 
 ## Initial scenario templates
-
-The first implementation supports only the templates below.
 
 ### PV-first storage charging
 
@@ -105,14 +104,7 @@ Required capability:
 - known positive maximum power;
 - known charge flow support.
 
-Construction:
-
-- Candidate Family `COST_FIRST`;
-- one Path Segment within the Opportunity window;
-- requested power requires an explicit supported planning value derived from known capability limits and future energy requirements;
-- without a required energy target, Energy Profile or accepted power-allocation rule, no charging Candidate is created.
-
-This prevents the Candidate Engine from assuming that maximum charging is always desirable.
+Construction requires an explicit supported planning value derived from known capability limits and future energy requirements. Without a required energy target, Energy Profile or accepted power-allocation rule, no charging Candidate is created.
 
 ### High-value storage discharge
 
@@ -129,14 +121,7 @@ Required capability:
 - known positive maximum power;
 - known discharge flow support.
 
-Construction:
-
-- Candidate Family `COST_FIRST`;
-- one Path Segment within the Opportunity window;
-- requested power requires an explicit supported allocation derived from projected SoC, reserve requirements, household demand and capability limits;
-- without sufficient projected-state support, no discharge Candidate is created.
-
-This prevents the Candidate Engine from assuming available energy or sacrificing required reserve.
+Construction requires explicit allocation derived from projected SoC, reserve requirements, household demand and capability limits. Without sufficient projected-state support, no discharge Candidate is created.
 
 ## Baseline path
 
@@ -166,8 +151,6 @@ An Energy Path:
 - records all assumptions explicitly;
 - remains immutable after creation.
 
-A path is not complete merely because it contains one valid Path Segment.
-
 ## Matching and atomicity
 
 Before generation, the Candidate Engine rejects mismatched inputs when:
@@ -181,34 +164,11 @@ No partial Candidate Set is returned for mismatched atomic inputs.
 
 ## Exclusions
 
-Rejected templates produce immutable `CandidateExclusion` records.
-
-The initial objective exclusion reasons include:
-
-- no matching logical role;
-- unsupported Execution Primitive;
-- unavailable capability;
-- unhealthy capability;
-- unknown required power limit;
-- missing projected-state support;
-- insufficient SoC or reserve evidence;
-- unsupported energy-flow direction;
-- hard boundary violation.
-
-Source references include the relevant Opportunity and capability IDs where available.
+Rejected templates produce immutable `CandidateExclusion` records. Reasons remain explicit in the exclusion text and source references include relevant Opportunity and capability IDs where available.
 
 ## Determinism
 
-For identical immutable inputs and the same implementation version, Candidate Generation produces identical:
-
-- scenario families;
-- Energy Paths;
-- Candidates;
-- exclusions;
-- ordering;
-- identifiers.
-
-Identifiers are derived deterministically from source snapshot, template, Opportunity and capability references. Random UUID generation is not used inside Candidate Generation.
+For identical immutable inputs and the same implementation version, Candidate Generation produces identical scenario families, Energy Paths, Candidates, exclusions, ordering and identifiers. Random UUID generation is not used.
 
 ## Initial implementation boundary
 
@@ -221,25 +181,6 @@ The first Candidate Engine slice implements:
 5. immutable `CandidateSet` output containing Candidates, Energy Paths and exclusions.
 
 Cost-first charging and high-value discharge remain excluded until the required energy-target, projected-state and power-allocation contracts are implemented.
-
-## Relationship to existing ADRs
-
-- ADR-001: only logical capabilities enter the Planner;
-- ADR-015: Path Segments use generic Execution Primitives;
-- ADR-017: Candidates are complete paths over the full horizon;
-- ADR-023: Opportunities remain objective and do not prescribe actions;
-- ADR-024: Candidate Generation uses hard reduction and controlled branching;
-- ADR-025: strategy guides families without overriding hard constraints;
-- ADR-029: hard phase capacity limits remain mandatory;
-- ADR-030: Capability Snapshots, Energy Paths and Candidate Sets are immutable and traceable.
-
-## Consequences
-
-- Opportunity-to-action policy is no longer hidden in code.
-- The Candidate Engine can generate its first meaningful path without pretending every Opportunity is executable.
-- Logical capability roles become explicit and vendor-independent.
-- Missing power, SoC or reserve information results in exclusions rather than invented behaviour.
-- Later scenario templates can extend the same contract without creating another planner layer.
 
 ## Core principle
 

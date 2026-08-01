@@ -30,10 +30,19 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
 
       - name: Run Ruff on PicoT Core slice
-        run: ruff check src/picot tests/test_planner_strategy.py
+        run: >-
+          ruff check src/picot
+          tests/test_planner_strategy.py
+          tests/test_planning_input_snapshot.py
 
       - name: Run Mypy on PicoT Core slice
-        run: mypy src/picot tests/test_planner_strategy.py
+        run: >-
+          mypy src/picot
+          tests/test_planner_strategy.py
+          tests/test_planning_input_snapshot.py
 
       - name: Run Pytest on PicoT Core slice
-        run: pytest -q tests/test_planner_strategy.py
+        run: >-
+          pytest -q
+          tests/test_planner_strategy.py
+          tests/test_planning_input_snapshot.py

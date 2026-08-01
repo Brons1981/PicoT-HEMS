@@ -40,6 +40,15 @@ class _LowestPriceWindow:
 
 
 @dataclass(frozen=True, slots=True)
+class _HighestPriceWindow:
+    starts_at: datetime
+    ends_at: datetime
+    point_indexes: tuple[int, ...]
+    confidence: float
+    price_eur_per_kwh: float
+
+
+@dataclass(frozen=True, slots=True)
 class _PvSurplusWindow:
     starts_at: datetime
     ends_at: datetime
@@ -99,6 +108,32 @@ class OpportunityEngine:
                             OpportunityMetric(
                                 kind=OpportunityMetricKind.ENERGY_PRICE_EUR_PER_KWH,
                                 value=lowest_window.price_eur_per_kwh,
+                            ),
+                        ),
+                    )
+                )
+                sequence += 1
+
+            for highest_window in self._highest_price_windows(series, snapshot):
+                opportunities.append(
+                    Opportunity(
+                        opportunity_id=f"{snapshot.snapshot_id}:high-export-value:{sequence}",
+                        snapshot_id=snapshot.snapshot_id,
+                        kind=OpportunityKind.HIGH_EXPORT_VALUE_WINDOW,
+                        starts_at=highest_window.starts_at,
+                        ends_at=highest_window.ends_at,
+                        confidence=highest_window.confidence,
+                        lifecycle=OpportunityLifecycle.DETECTED,
+                        evidence=(
+                            EvidenceReference(
+                                source_id=series.forecast_id,
+                                point_indexes=highest_window.point_indexes,
+                            ),
+                        ),
+                        metrics=(
+                            OpportunityMetric(
+                                kind=OpportunityMetricKind.ENERGY_PRICE_EUR_PER_KWH,
+                                value=highest_window.price_eur_per_kwh,
                             ),
                         ),
                     )
@@ -233,6 +268,58 @@ class OpportunityEngine:
 
             flush()
             if is_lowest:
+                current.append((index, point))
+
+        flush()
+        return tuple(windows)
+
+    def _highest_price_windows(
+        self,
+        series: ForecastSeries,
+        snapshot: PlanningInputSnapshot,
+    ) -> tuple[_HighestPriceWindow, ...]:
+        if series.unit != "EUR/kWh":
+            return ()
+
+        eligible = tuple(
+            (index, point)
+            for index, point in enumerate(series.points)
+            if point.ends_at > snapshot.captured_at
+            and point.starts_at < snapshot.horizon_end
+        )
+        if not eligible:
+            return ()
+
+        highest_price = max(point.value for _, point in eligible)
+        windows: list[_HighestPriceWindow] = []
+        current: list[tuple[int, ForecastPoint]] = []
+
+        def flush() -> None:
+            if not current:
+                return
+            first = current[0][1]
+            last = current[-1][1]
+            windows.append(
+                _HighestPriceWindow(
+                    starts_at=max(first.starts_at, snapshot.captured_at),
+                    ends_at=min(last.ends_at, snapshot.horizon_end),
+                    point_indexes=tuple(index for index, _ in current),
+                    confidence=min(point.confidence for _, point in current),
+                    price_eur_per_kwh=highest_price,
+                )
+            )
+            current.clear()
+
+        for index, point in eligible:
+            is_highest = point.value == highest_price
+            contiguous = not current or current[-1][1].ends_at == point.starts_at
+
+            if is_highest and contiguous:
+                current.append((index, point))
+                continue
+
+            flush()
+            if is_highest:
                 current.append((index, point))
 
         flush()

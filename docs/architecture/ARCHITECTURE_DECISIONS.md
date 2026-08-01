@@ -120,3 +120,8 @@ Detailed record: [`ADR-028-runtime-resource-governance.md`](ADR-028-runtime-reso
 PicoT manages energy flows within the physical phase distribution, always enforces hard per-phase limits, exposes Net Balance as an optimisation objective and provides evidence-based installation advice.
 
 Detailed record: [`ADR-029-household-power-capacity-management.md`](ADR-029-household-power-capacity-management.md)
+
+### ADR-030 — Energy Path and Capability Snapshot Contract
+The Candidate Engine builds complete, vendor-independent Energy Paths from atomic logical Capability Snapshot Sets while preserving limits, health, freshness, mapping versions and traceability.
+
+Detailed record: [`ADR-030-energy-path-capability-snapshot-contract.md`](ADR-030-energy-path-capability-snapshot-contract.md)

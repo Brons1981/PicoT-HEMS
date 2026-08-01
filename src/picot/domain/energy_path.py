@@ -191,7 +191,11 @@ class EnergyPath:
             by_scope.setdefault(segment.execution_scope_id, []).append(segment)
         for scope_segments in by_scope.values():
             ordered = sorted(scope_segments, key=lambda item: item.starts_at)
-            if any(left.ends_at > right.starts_at for left, right in zip(ordered, ordered[1:], strict=False)):
+            overlaps = any(
+                left.ends_at > right.starts_at
+                for left, right in zip(ordered, ordered[1:], strict=False)
+            )
+            if overlaps:
                 raise ValueError("Path Segments for one execution scope may not overlap.")
 
     def _validate_projected_states(self) -> None:

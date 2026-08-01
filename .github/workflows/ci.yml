@@ -41,6 +41,7 @@ jobs:
           tests/test_lowest_price_opportunity.py
           tests/test_high_export_value_opportunity.py
           tests/test_candidate.py
+          tests/test_energy_path_capability_snapshot.py
 
       - name: Run Mypy on PicoT Core slice
         run: >-
@@ -54,6 +55,7 @@ jobs:
           tests/test_lowest_price_opportunity.py
           tests/test_high_export_value_opportunity.py
           tests/test_candidate.py
+          tests/test_energy_path_capability_snapshot.py
 
       - name: Run Pytest on PicoT Core slice
         run: >-
@@ -67,3 +69,4 @@ jobs:
           tests/test_lowest_price_opportunity.py
           tests/test_high_export_value_opportunity.py
           tests/test_candidate.py
+          tests/test_energy_path_capability_snapshot.py

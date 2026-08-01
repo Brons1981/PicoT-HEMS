@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+from picot.domain.forecast import ForecastSet
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import PlannerStrategy
 
@@ -53,6 +54,7 @@ class PlanningInputSnapshot:
     horizon_end: datetime
     strategy: PlannerStrategy
     household_state: HouseholdState
+    forecasts: ForecastSet
     runtime_state: RuntimePressureState
     versions: PlanningInputVersions
     replan_reasons: tuple[str, ...]
@@ -68,6 +70,10 @@ class PlanningInputSnapshot:
             raise ValueError("Planning horizon must end after snapshot capture time.")
         if self.household_state.measured_at > self.captured_at:
             raise ValueError("Household state cannot be measured after snapshot capture time.")
+        if any(series.created_at > self.captured_at for series in self.forecasts.series):
+            raise ValueError("Forecasts cannot be created after snapshot capture time.")
+        if any(series.is_expired_at(self.captured_at) for series in self.forecasts.series):
+            raise ValueError("Expired forecasts cannot enter a Planning Input Snapshot.")
         if not self.replan_reasons:
             raise ValueError("A Planning Input Snapshot requires a replan reason.")
         if any(not reason.strip() for reason in self.replan_reasons):

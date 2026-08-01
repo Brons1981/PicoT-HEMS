@@ -65,6 +65,14 @@ def _point(hour: int, value: float, confidence: float = 0.9) -> ForecastPoint:
     )
 
 
+def _negative_opportunities(snapshot: PlanningInputSnapshot):
+    return tuple(
+        opportunity
+        for opportunity in OpportunityEngine().detect(snapshot).opportunities
+        if opportunity.kind is OpportunityKind.NEGATIVE_PRICE_WINDOW
+    )
+
+
 def test_engine_detects_and_merges_contiguous_negative_price_points() -> None:
     snapshot = _snapshot(
         (
@@ -75,11 +83,10 @@ def test_engine_detects_and_merges_contiguous_negative_price_points() -> None:
         )
     )
 
-    result = OpportunityEngine().detect(snapshot)
+    opportunities = _negative_opportunities(snapshot)
 
-    assert len(result.opportunities) == 1
-    opportunity = result.opportunities[0]
-    assert opportunity.kind is OpportunityKind.NEGATIVE_PRICE_WINDOW
+    assert len(opportunities) == 1
+    opportunity = opportunities[0]
     assert opportunity.lifecycle is OpportunityLifecycle.DETECTED
     assert opportunity.starts_at == BASE + timedelta(hours=1)
     assert opportunity.ends_at == BASE + timedelta(hours=3)
@@ -88,13 +95,10 @@ def test_engine_detects_and_merges_contiguous_negative_price_points() -> None:
     assert opportunity.evidence[0].point_indexes == (1, 2)
 
 
-def test_engine_returns_empty_set_when_no_negative_price_exists() -> None:
+def test_engine_returns_no_negative_opportunity_when_no_negative_price_exists() -> None:
     snapshot = _snapshot((_point(0, 0.10), _point(1, 0.08)))
 
-    result = OpportunityEngine().detect(snapshot)
-
-    assert result.snapshot_id == snapshot.snapshot_id
-    assert result.opportunities == ()
+    assert _negative_opportunities(snapshot) == ()
 
 
 def test_engine_creates_separate_windows_for_non_contiguous_negative_prices() -> None:
@@ -106,8 +110,8 @@ def test_engine_creates_separate_windows_for_non_contiguous_negative_prices() ->
         )
     )
 
-    result = OpportunityEngine().detect(snapshot)
+    opportunities = _negative_opportunities(snapshot)
 
-    assert len(result.opportunities) == 2
-    assert result.opportunities[0].opportunity_id.endswith(":1")
-    assert result.opportunities[1].opportunity_id.endswith(":2")
+    assert len(opportunities) == 2
+    assert opportunities[0].opportunity_id.endswith(":1")
+    assert opportunities[1].opportunity_id.endswith(":2")

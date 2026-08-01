@@ -295,8 +295,11 @@ class EvaluationEngine:
                     )
                 )
                 continue
-            values = [value for _, value in raw]
-            best = max(values) if higher else min(values)
+            numeric_values: list[float | int] = []
+            for _, value in raw:
+                assert value is not None
+                numeric_values.append(value)
+            best = max(numeric_values) if higher else min(numeric_values)
             retained = [item for item, value in raw if value == best]
             decisive = len(retained) == 1
             records.append(

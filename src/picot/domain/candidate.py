@@ -1,14 +1,13 @@
-"""Immutable Candidate Engine records defined by ADR-024.
-
-This first slice defines the Candidate envelope and its traceability. Concrete
-household energy-path construction is added only when its supporting domain
-models and capability records are available.
-"""
+"""Immutable Candidate Engine records defined by ADR-024 and ADR-030."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from picot.domain.energy_path import EnergyPath
 
 
 class CandidateFamily(StrEnum):
@@ -94,11 +93,12 @@ class CandidateExclusion:
 
 @dataclass(frozen=True, slots=True)
 class CandidateSet:
-    """Finite immutable Candidate Engine output for one planning snapshot."""
+    """Complete immutable Candidate Engine output for one planning snapshot."""
 
     snapshot_id: str
     strategy_version: int
     candidates: tuple[Candidate, ...]
+    energy_paths: tuple[EnergyPath, ...]
     exclusions: tuple[CandidateExclusion, ...]
 
     def __post_init__(self) -> None:
@@ -106,6 +106,7 @@ class CandidateSet:
             raise ValueError("Candidate Set snapshot ID must not be empty.")
         if self.strategy_version < 1:
             raise ValueError("Candidate Set strategy version must be at least 1.")
+
         candidate_ids = [candidate.candidate_id for candidate in self.candidates]
         if len(candidate_ids) != len(set(candidate_ids)):
             raise ValueError("Each candidate ID may appear only once.")
@@ -116,3 +117,35 @@ class CandidateSet:
             for candidate in self.candidates
         ):
             raise ValueError("Every candidate must use the Candidate Set strategy version.")
+
+        path_ids = [path.path_id for path in self.energy_paths]
+        if len(path_ids) != len(set(path_ids)):
+            raise ValueError("Each Energy Path ID may appear only once.")
+        if any(path.snapshot_id != self.snapshot_id for path in self.energy_paths):
+            raise ValueError("Every Energy Path must reference the Candidate Set snapshot.")
+        if any(path.strategy_version != self.strategy_version for path in self.energy_paths):
+            raise ValueError("Every Energy Path must use the Candidate Set strategy version.")
+
+        candidate_path_ids = [candidate.energy_path_id for candidate in self.candidates]
+        if len(candidate_path_ids) != len(set(candidate_path_ids)):
+            raise ValueError("Each Energy Path may be referenced by only one candidate.")
+        if set(candidate_path_ids) != set(path_ids):
+            raise ValueError(
+                "Candidates and Energy Paths must reference each other exactly once."
+            )
+
+        paths_by_id = {path.path_id: path for path in self.energy_paths}
+        for candidate in self.candidates:
+            path = paths_by_id[candidate.energy_path_id]
+            if candidate.family is not path.family:
+                raise ValueError("Candidate and Energy Path family must match.")
+            if candidate.opportunity_ids != path.opportunity_ids:
+                raise ValueError("Candidate and Energy Path opportunities must match.")
+            if candidate.constraint_ids != path.constraint_ids:
+                raise ValueError("Candidate and Energy Path constraints must match.")
+            if candidate.capability_ids != path.capability_ids:
+                raise ValueError("Candidate and Energy Path capabilities must match.")
+            if candidate.assumptions != path.assumptions:
+                raise ValueError("Candidate and Energy Path assumptions must match.")
+            if candidate.confidence != path.confidence:
+                raise ValueError("Candidate and Energy Path confidence must match.")

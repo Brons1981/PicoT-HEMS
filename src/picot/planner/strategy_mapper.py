@@ -45,7 +45,7 @@ class ObjectiveMappingPolicy:
         if not 0 <= visible_value <= 100:
             raise ValueError("Visible value must be between 0 and 100.")
 
-        for left, right in zip(self.points, self.points[1:], strict=True):
+        for left, right in zip(self.points, self.points[1:]):
             left_visible, left_internal = left
             right_visible, right_internal = right
             if left_visible <= visible_value <= right_visible:

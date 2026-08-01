@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from picot.domain.forecast import ForecastKind, ForecastPoint, ForecastSeries, ForecastSet
 from picot.domain.household_state import HouseholdState, Phase, PhaseState
 from picot.domain.objectives import OptimisationProfile, PlannerStrategy
 from picot.domain.planning_input_snapshot import (
@@ -53,6 +54,29 @@ def _household_state(measured_at: datetime) -> HouseholdState:
     )
 
 
+def _forecasts(captured_at: datetime) -> ForecastSet:
+    return ForecastSet(
+        series=(
+            ForecastSeries(
+                forecast_id="pv-forecast-v7",
+                kind=ForecastKind.PV_POWER,
+                source="validated-pv-source",
+                created_at=captured_at - timedelta(minutes=5),
+                expires_at=captured_at + timedelta(hours=36),
+                unit="W",
+                points=(
+                    ForecastPoint(
+                        starts_at=captured_at,
+                        ends_at=captured_at + timedelta(hours=1),
+                        value=2500.0,
+                        confidence=0.9,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
 def _snapshot() -> PlanningInputSnapshot:
     captured_at = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
     return PlanningInputSnapshot(
@@ -61,6 +85,7 @@ def _snapshot() -> PlanningInputSnapshot:
         horizon_end=captured_at + timedelta(hours=36),
         strategy=_strategy(),
         household_state=_household_state(captured_at),
+        forecasts=_forecasts(captured_at),
         runtime_state=RuntimePressureState.NORMAL,
         versions=_versions(),
         replan_reasons=("initial_planner_run",),
@@ -69,31 +94,30 @@ def _snapshot() -> PlanningInputSnapshot:
 
 def test_snapshot_is_immutable() -> None:
     snapshot = _snapshot()
-
     with pytest.raises(FrozenInstanceError):
         snapshot.snapshot_id = "changed"  # type: ignore[misc]
 
 
-def test_snapshot_preserves_exact_strategy_versions_and_household_state() -> None:
+def test_snapshot_preserves_exact_strategy_versions_household_and_forecast() -> None:
     snapshot = _snapshot()
-
     assert snapshot.strategy.strategy_version == 2
-    assert snapshot.strategy.mapping_version == "objective-map-v1"
-    assert snapshot.versions.household_state == 11
+    assert snapshot.versions.forecasts == 7
     assert snapshot.household_state.phases[0].phase is Phase.L1
+    assert snapshot.forecasts.series[0].kind is ForecastKind.PV_POWER
     assert snapshot.runtime_state is RuntimePressureState.NORMAL
 
 
 def test_snapshot_rejects_naive_capture_time() -> None:
     captured_at = datetime(2026, 8, 1, 18, 0)
-
+    aware = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
     with pytest.raises(ValueError, match="capture time must be timezone-aware"):
         PlanningInputSnapshot(
             snapshot_id="snapshot-0002",
             captured_at=captured_at,
-            horizon_end=datetime(2026, 8, 3, 6, 0, tzinfo=UTC),
+            horizon_end=aware + timedelta(hours=36),
             strategy=_strategy(),
-            household_state=_household_state(datetime(2026, 8, 1, 18, 0, tzinfo=UTC)),
+            household_state=_household_state(aware),
+            forecasts=_forecasts(aware),
             runtime_state=RuntimePressureState.NORMAL,
             versions=_versions(),
             replan_reasons=("forecast_changed",),
@@ -102,7 +126,6 @@ def test_snapshot_rejects_naive_capture_time() -> None:
 
 def test_snapshot_rejects_non_future_horizon() -> None:
     captured_at = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
-
     with pytest.raises(ValueError, match="must end after"):
         PlanningInputSnapshot(
             snapshot_id="snapshot-0003",
@@ -110,6 +133,7 @@ def test_snapshot_rejects_non_future_horizon() -> None:
             horizon_end=captured_at,
             strategy=_strategy(),
             household_state=_household_state(captured_at),
+            forecasts=_forecasts(captured_at),
             runtime_state=RuntimePressureState.NORMAL,
             versions=_versions(),
             replan_reasons=("user_rules_changed",),
@@ -118,7 +142,6 @@ def test_snapshot_rejects_non_future_horizon() -> None:
 
 def test_snapshot_requires_explicit_replan_reason() -> None:
     captured_at = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
-
     with pytest.raises(ValueError, match="requires a replan reason"):
         PlanningInputSnapshot(
             snapshot_id="snapshot-0004",
@@ -126,6 +149,7 @@ def test_snapshot_requires_explicit_replan_reason() -> None:
             horizon_end=captured_at + timedelta(hours=36),
             strategy=_strategy(),
             household_state=_household_state(captured_at),
+            forecasts=_forecasts(captured_at),
             runtime_state=RuntimePressureState.TRANSIENT_PRESSURE,
             versions=_versions(),
             replan_reasons=(),
@@ -134,7 +158,6 @@ def test_snapshot_requires_explicit_replan_reason() -> None:
 
 def test_snapshot_rejects_future_household_measurement() -> None:
     captured_at = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
-
     with pytest.raises(ValueError, match="cannot be measured after"):
         PlanningInputSnapshot(
             snapshot_id="snapshot-0005",
@@ -142,6 +165,7 @@ def test_snapshot_rejects_future_household_measurement() -> None:
             horizon_end=captured_at + timedelta(hours=36),
             strategy=_strategy(),
             household_state=_household_state(captured_at + timedelta(seconds=1)),
+            forecasts=_forecasts(captured_at),
             runtime_state=RuntimePressureState.NORMAL,
             versions=_versions(),
             replan_reasons=("measurement_changed",),

@@ -135,3 +135,8 @@ Detailed record: [`ADR-031-candidate-scenario-construction-contract.md`](ADR-031
 The Evaluation Engine compares immutable Candidate outcomes in strategy order, records every objective and tie-break, and selects one existing Candidate without hidden scoring.
 
 Detailed record: [`ADR-032-candidate-evaluation-contract.md`](ADR-032-candidate-evaluation-contract.md)
+
+### ADR-033 — Winning Energy Path to Execution Plans
+A successful Evaluation Result is converted deterministically into an atomic set of immutable, scope-specific Execution Plans without changing the Winning Energy Path.
+
+Detailed record: [`ADR-033-winning-energy-path-to-execution-plans.md`](ADR-033-winning-energy-path-to-execution-plans.md)

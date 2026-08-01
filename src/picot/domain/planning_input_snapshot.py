@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import PlannerStrategy
 
 
@@ -45,17 +46,13 @@ class PlanningInputVersions:
 
 @dataclass(frozen=True, slots=True)
 class PlanningInputSnapshot:
-    """Atomic and immutable temporal input envelope for one Planner Run.
-
-    Typed household, forecast, capability, rule and commitment sections will be
-    added as their domain contracts are implemented. Their exact captured
-    revisions are already represented by ``versions``.
-    """
+    """Atomic and immutable temporal input envelope for one Planner Run."""
 
     snapshot_id: str
     captured_at: datetime
     horizon_end: datetime
     strategy: PlannerStrategy
+    household_state: HouseholdState
     runtime_state: RuntimePressureState
     versions: PlanningInputVersions
     replan_reasons: tuple[str, ...]
@@ -69,6 +66,8 @@ class PlanningInputSnapshot:
             raise ValueError("Planning horizon end must be timezone-aware.")
         if self.horizon_end <= self.captured_at:
             raise ValueError("Planning horizon must end after snapshot capture time.")
+        if self.household_state.measured_at > self.captured_at:
+            raise ValueError("Household state cannot be measured after snapshot capture time.")
         if not self.replan_reasons:
             raise ValueError("A Planning Input Snapshot requires a replan reason.")
         if any(not reason.strip() for reason in self.replan_reasons):

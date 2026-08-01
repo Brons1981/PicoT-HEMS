@@ -62,14 +62,14 @@ class LogicalCapabilitySnapshot:
     power_step_w: float | None = None
 
     def __post_init__(self) -> None:
-        for value, label in (
+        for text_value, text_label in (
             (self.capability_id, "Capability ID"),
             (self.execution_scope_id, "Execution scope ID"),
             (self.source_mapping_id, "Source mapping ID"),
             (self.adapter_contract_version, "Adapter contract version"),
         ):
-            if not value.strip():
-                raise ValueError(f"{label} must not be empty.")
+            if not text_value.strip():
+                raise ValueError(f"{text_label} must not be empty.")
         if self.fresh_at.tzinfo is None or self.fresh_at.utcoffset() is None:
             raise ValueError("Capability freshness time must be timezone-aware.")
         if not 0.0 <= self.confidence <= 1.0:
@@ -87,24 +87,24 @@ class LogicalCapabilitySnapshot:
             and self.minimum_power_w > self.maximum_power_w
         ):
             raise ValueError("Minimum power must not exceed maximum power.")
-        for value, label in (
+        for soc_value, soc_label in (
             (self.minimum_soc, "Minimum SoC"),
             (self.maximum_soc, "Maximum SoC"),
         ):
-            if value is not None and not 0.0 <= value <= 1.0:
-                raise ValueError(f"{label} must be between 0.0 and 1.0.")
+            if soc_value is not None and not 0.0 <= soc_value <= 1.0:
+                raise ValueError(f"{soc_label} must be between 0.0 and 1.0.")
         if (
             self.minimum_soc is not None
             and self.maximum_soc is not None
             and self.minimum_soc > self.maximum_soc
         ):
             raise ValueError("Minimum SoC must not exceed maximum SoC.")
-        for value, label in (
+        for seconds_value, seconds_label in (
             (self.minimum_on_seconds, "Minimum on-time"),
             (self.minimum_off_seconds, "Minimum off-time"),
         ):
-            if value is not None and value < 0:
-                raise ValueError(f"{label} must not be negative.")
+            if seconds_value is not None and seconds_value < 0:
+                raise ValueError(f"{seconds_label} must not be negative.")
         if self.power_step_w is not None and self.power_step_w <= 0:
             raise ValueError("Power step must be greater than zero.")
 

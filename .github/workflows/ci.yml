@@ -34,15 +34,18 @@ jobs:
           ruff check src/picot
           tests/test_planner_strategy.py
           tests/test_planning_input_snapshot.py
+          tests/test_household_state.py
 
       - name: Run Mypy on PicoT Core slice
         run: >-
           mypy src/picot
           tests/test_planner_strategy.py
           tests/test_planning_input_snapshot.py
+          tests/test_household_state.py
 
       - name: Run Pytest on PicoT Core slice
         run: >-
           pytest -q
           tests/test_planner_strategy.py
           tests/test_planning_input_snapshot.py
+          tests/test_household_state.py

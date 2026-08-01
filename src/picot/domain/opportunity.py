@@ -15,6 +15,7 @@ class OpportunityKind(StrEnum):
     """Objective opportunity categories currently supported by PicoT."""
 
     NEGATIVE_PRICE_WINDOW = "negative_price_window"
+    LOWEST_PRICE_WINDOW = "lowest_price_window"
     PV_SURPLUS_WINDOW = "pv_surplus_window"
 
 
@@ -31,6 +32,7 @@ class OpportunityLifecycle(StrEnum):
 class OpportunityMetricKind(StrEnum):
     """Objective metrics that may describe an opportunity."""
 
+    ENERGY_PRICE_EUR_PER_KWH = "energy_price_eur_per_kwh"
     MINIMUM_EXPECTED_POWER_W = "minimum_expected_power_w"
 
 

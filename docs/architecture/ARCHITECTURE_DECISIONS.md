@@ -85,3 +85,38 @@ Detailed record: [`ADR-021-layered-diagnostic-isolation.md`](ADR-021-layered-dia
 PicoT keeps the default experience simple and exposes additional complexity only by explicit opt-in. New features should extend existing Core models instead of introducing parallel systems.
 
 Detailed record: [`ADR-022-progressive-complexity-principle.md`](ADR-022-progressive-complexity-principle.md)
+
+### ADR-023 — Opportunity Engine
+The Opportunity Engine derives objective, evidence-backed opportunities and constraints from the Planning Input Set without selecting devices, assigning power or creating plans.
+
+Detailed record: [`ADR-023-opportunity-engine.md`](ADR-023-opportunity-engine.md)
+
+### ADR-024 — Candidate Engine
+The Candidate Engine produces a small, diverse and meaningful set of complete household energy scenarios using hard reduction, controlled branching, strategic guidance and safe dominance removal.
+
+Detailed record: [`ADR-024-candidate-engine.md`](ADR-024-candidate-engine.md)
+
+### ADR-025 — Planner Strategy Model
+User Objectives and the Optimisation Profile form a cross-cutting immutable strategy that guides the entire Planning Decision Pipeline without becoming a separate pipeline layer.
+
+Detailed record: [`ADR-025-planner-strategy-model.md`](ADR-025-planner-strategy-model.md)
+
+### ADR-026 — Evaluation Engine
+The Evaluation Engine selects one Winning Candidate through deterministic comparison per strategic objective and a fixed, explainable tie-break order instead of an opaque total score.
+
+Detailed record: [`ADR-026-evaluation-engine.md`](ADR-026-evaluation-engine.md)
+
+### ADR-027 — Execution Plan Commitment and Dynamic Power Allocation
+Execution Plans become stable commitments. PicoT optimises around running tasks and only changes technically and explicitly flexible parts while respecting anti-flipper limits.
+
+Detailed record: [`ADR-027-execution-plan-commitment.md`](ADR-027-execution-plan-commitment.md)
+
+### ADR-028 — Runtime Resource Governance
+PicoT governs CPU, memory, storage and Planner runtime through resource budgets, pressure states, graceful degradation, a fixed five-second stabilisation interval and fresh atomic Planning Input Snapshots.
+
+Detailed record: [`ADR-028-runtime-resource-governance.md`](ADR-028-runtime-resource-governance.md)
+
+### ADR-029 — Household Power Capacity Management
+PicoT manages energy flows within the physical phase distribution, always enforces hard per-phase limits, exposes Net Balance as an optimisation objective and provides evidence-based installation advice.
+
+Detailed record: [`ADR-029-household-power-capacity-management.md`](ADR-029-household-power-capacity-management.md)

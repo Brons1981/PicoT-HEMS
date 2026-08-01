@@ -28,7 +28,11 @@ BASE = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
 
 
 def _path(path_id: str, candidate_id: str) -> tuple[Candidate, EnergyPath]:
-    family = CandidateFamily.RESERVE_FIRST if candidate_id == "candidate-a" else CandidateFamily.PV_FIRST
+    family = (
+        CandidateFamily.RESERVE_FIRST
+        if candidate_id == "candidate-a"
+        else CandidateFamily.PV_FIRST
+    )
     path = EnergyPath(
         path_id=path_id,
         snapshot_id="snapshot-1",

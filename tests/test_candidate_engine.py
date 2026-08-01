@@ -12,6 +12,7 @@ from picot.domain.capability_snapshot import (
     EnergyFlowDirection,
     LogicalCapabilitySnapshot,
 )
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.forecast import ForecastKind, ForecastPoint, ForecastSeries, ForecastSet
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import OptimisationProfile, PlannerStrategy
@@ -29,7 +30,6 @@ from picot.domain.planning_input_snapshot import (
     PlanningInputVersions,
     RuntimePressureState,
 )
-from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.planner.candidate_engine import CandidateEngine
 
 BASE = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)

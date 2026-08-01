@@ -1,4 +1,4 @@
-"""Immutable logical capability snapshots defined by ADR-030."""
+"""Immutable logical capability snapshots defined by ADR-030 and ADR-031."""
 
 from __future__ import annotations
 
@@ -11,8 +11,6 @@ from picot.domain.household_state import Phase
 
 
 class CapabilityAvailability(StrEnum):
-    """Current runtime availability of one logical capability."""
-
     AVAILABLE = "available"
     TEMPORARILY_UNAVAILABLE = "temporarily_unavailable"
     UNAVAILABLE = "unavailable"
@@ -20,17 +18,24 @@ class CapabilityAvailability(StrEnum):
 
 
 class CapabilityHealth(StrEnum):
-    """Current validated health of one logical capability."""
-
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     INVALID = "invalid"
     UNKNOWN = "unknown"
 
 
-class EnergyFlowDirection(StrEnum):
-    """Energy-flow directions supported by one logical capability."""
+class CapabilityRole(StrEnum):
+    """Vendor-independent role used by Candidate scenario templates."""
 
+    ENERGY_STORAGE = "energy_storage"
+    FLEXIBLE_CONSUMER = "flexible_consumer"
+    CONTROLLABLE_PRODUCER = "controllable_producer"
+    GRID_INTERFACE = "grid_interface"
+    BALANCING_RESOURCE = "balancing_resource"
+    UNKNOWN = "unknown"
+
+
+class EnergyFlowDirection(StrEnum):
     CHARGE = "charge"
     DISCHARGE = "discharge"
     BIDIRECTIONAL = "bidirectional"
@@ -51,6 +56,7 @@ class LogicalCapabilitySnapshot:
     confidence: float
     source_mapping_id: str
     adapter_contract_version: str
+    role: CapabilityRole = CapabilityRole.UNKNOWN
     flow_directions: tuple[EnergyFlowDirection, ...] = ()
     minimum_power_w: float | None = None
     maximum_power_w: float | None = None
@@ -116,8 +122,6 @@ class LogicalCapabilitySnapshot:
 
 @dataclass(frozen=True, slots=True)
 class CapabilitySnapshotSet:
-    """Atomic capability view linked to one Planning Input Snapshot."""
-
     snapshot_id: str
     mapping_version: int
     captured_at: datetime

@@ -100,9 +100,13 @@ class HomeAssistantServiceCall:
             raise ValueError("Mapping version must be at least 1.")
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("Service call creation time must be timezone-aware.")
-        if not self.target or any(not key.strip() or not value.strip() for key, value in self.target):
+        if not self.target or any(
+            not key.strip() or not value.strip() for key, value in self.target
+        ):
             raise ValueError("Home Assistant target must contain non-empty values.")
-        if not self.service_data or any(not key.strip() for key, _ in self.service_data):
+        if not self.service_data or any(
+            not key.strip() for key, _ in self.service_data
+        ):
             raise ValueError("Home Assistant service data must contain non-empty keys.")
 
 

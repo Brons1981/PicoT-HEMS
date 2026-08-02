@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from picot.commissioning.home_assistant import build_parser
 
 
-def test_commissioning_defaults_to_accepted_first_call(monkeypatch) -> None:
+def test_commissioning_defaults_to_accepted_first_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("PICOT_HA_BASE_URL", raising=False)
 
     args = build_parser().parse_args([])
@@ -12,7 +16,9 @@ def test_commissioning_defaults_to_accepted_first_call(monkeypatch) -> None:
     assert args.power_w == 1200.0
 
 
-def test_commissioning_accepts_runtime_overrides(monkeypatch) -> None:
+def test_commissioning_accepts_runtime_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("PICOT_HA_BASE_URL", "http://homeassistant.local:8123")
 
     args = build_parser().parse_args(["--power-w", "800"])

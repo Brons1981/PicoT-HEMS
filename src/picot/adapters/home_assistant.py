@@ -119,7 +119,9 @@ class HomeAssistantDispatcher:
                 dispatch_mode=call.dispatch_mode,
                 status=HomeAssistantDispatchStatus.REJECTED,
                 attempted_at=attempted_at,
-                error_reason="LIVE dispatch requires an explicit Home Assistant transport.",
+                error_reason=(
+                    "LIVE dispatch requires an explicit Home Assistant transport."
+                ),
             )
         try:
             response_status = transport.send(call)
@@ -136,13 +138,16 @@ class HomeAssistantDispatcher:
             if 200 <= response_status < 300
             else HomeAssistantDispatchStatus.FAILED
         )
+        error_reason = (
+            None
+            if status is HomeAssistantDispatchStatus.DISPATCHED
+            else "Home Assistant rejected the service call."
+        )
         return HomeAssistantDispatchResult(
             command_id=call.command_id,
             dispatch_mode=call.dispatch_mode,
             status=status,
             attempted_at=attempted_at,
             response_status=response_status,
-            error_reason=(
-                None if status is HomeAssistantDispatchStatus.DISPATCHED else "Home Assistant rejected the service call."
-            ),
+            error_reason=error_reason,
         )

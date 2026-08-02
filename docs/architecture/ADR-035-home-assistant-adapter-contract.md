@@ -28,10 +28,13 @@ The first implementation supports exactly one generic Execution Primitive:
 
 - `CHARGE_AT_POWER`
 
-and translates it through one explicit mapping to:
+and translates it through one explicit mapping to one of these Home Assistant service forms:
 
-- Home Assistant domain: `number`;
-- Home Assistant service: `set_value`;
+- domain: `number`, service: `set_value`; or
+- domain: `input_number`, service: `set_value`.
+
+Both forms use:
+
 - service data key: `value`;
 - target key: `entity_id`.
 
@@ -96,6 +99,7 @@ Translation is rejected when:
 - the primitive is not supported by the mapping;
 - `CHARGE_AT_POWER` has no requested power;
 - the resulting numeric value is outside configured mapping bounds;
+- the domain/service pair is not `number.set_value` or `input_number.set_value`;
 - domain, service, target or service-data key is empty;
 - timestamps are not timezone-aware.
 
@@ -150,7 +154,7 @@ HomeAssistantDispatchResult
 The first implementation includes:
 
 1. immutable mapping, service-call and dispatch-result records;
-2. deterministic `CHARGE_AT_POWER` to `number.set_value` translation;
+2. deterministic `CHARGE_AT_POWER` translation to an accepted `set_value` service;
 3. explicit `DRY_RUN` and `LIVE` modes;
 4. strict mapping and numeric-bound validation;
 5. a dispatcher interface with a dry-run implementation;

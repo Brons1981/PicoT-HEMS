@@ -61,6 +61,7 @@ jobs:
           tests/test_home_assistant_goodwe.py
           tests/test_home_assistant_goodwe_observer.py
           tests/test_home_assistant_goodwe_dashboard.py
+          tests/test_home_assistant_runtime_observation.py
 
       - name: Run Mypy on PicoT Core slice
         run: >-
@@ -94,6 +95,7 @@ jobs:
           tests/test_home_assistant_goodwe.py
           tests/test_home_assistant_goodwe_observer.py
           tests/test_home_assistant_goodwe_dashboard.py
+          tests/test_home_assistant_runtime_observation.py
 
       - name: Run Pytest on PicoT Core slice
         run: >-
@@ -127,3 +129,4 @@ jobs:
           tests/test_home_assistant_goodwe.py
           tests/test_home_assistant_goodwe_observer.py
           tests/test_home_assistant_goodwe_dashboard.py
+          tests/test_home_assistant_runtime_observation.py

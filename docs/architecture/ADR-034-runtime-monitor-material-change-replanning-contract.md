@@ -1,6 +1,6 @@
 # ADR-034 — Runtime Monitor, Material Change and Replanning Contract
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-02
 
 ## Context

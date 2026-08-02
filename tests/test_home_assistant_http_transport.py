@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import cast
 from urllib.request import Request
@@ -57,6 +58,7 @@ def test_transport_posts_exact_home_assistant_service_call() -> None:
     transport = HomeAssistantHttpTransport(
         base_url="http://192.168.6.26:8123/",
         access_token="secret-token",
+        transport_mode=HomeAssistantDispatchMode.LIVE,
         opener=opener,
     )
 
@@ -76,6 +78,32 @@ def test_transport_posts_exact_home_assistant_service_call() -> None:
         "entity_id": "input_number.zendure_2400_ac_handmatig_vermogen",
         "value": 1200.0,
     }
+
+
+def test_transport_defaults_to_dry_run_and_refuses_network_send() -> None:
+    opener = _RecordingOpener()
+    transport = HomeAssistantHttpTransport(
+        base_url="http://192.168.6.26:8123",
+        access_token="secret-token",
+        opener=opener,
+    )
+
+    with pytest.raises(RuntimeError, match="not enabled"):
+        transport.send(_call())
+
+    assert opener.request is None
+
+
+def test_live_transport_rejects_non_live_service_call() -> None:
+    transport = HomeAssistantHttpTransport(
+        base_url="http://192.168.6.26:8123",
+        access_token="secret-token",
+        transport_mode=HomeAssistantDispatchMode.LIVE,
+    )
+    dry_run_call = replace(_call(), dispatch_mode=HomeAssistantDispatchMode.DRY_RUN)
+
+    with pytest.raises(RuntimeError, match="only LIVE"):
+        transport.send(dry_run_call)
 
 
 def test_transport_rejects_invalid_runtime_configuration() -> None:

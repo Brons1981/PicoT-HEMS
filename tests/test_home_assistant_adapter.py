@@ -31,16 +31,20 @@ def _request(power: float = 1200.0) -> ExecutionPrimitiveRequest:
     )
 
 
-def _mapping() -> HomeAssistantCommandMapping:
+def _mapping(
+    *,
+    domain: str = "number",
+    entity_id: str = "number.battery_charge_power",
+) -> HomeAssistantCommandMapping:
     return HomeAssistantCommandMapping(
         mapping_id="ha-mapping-1",
         mapping_version=1,
         capability_id="battery-charge",
         execution_scope_id="battery-main",
         primitive=ExecutionPrimitive.CHARGE_AT_POWER,
-        domain="number",
+        domain=domain,
         service="set_value",
-        entity_id="number.battery_charge_power",
+        entity_id=entity_id,
         value_key="value",
         minimum_value=0.0,
         maximum_value=2400.0,
@@ -56,6 +60,22 @@ def test_adapter_translates_charge_power_deterministically() -> None:
     assert first.target == (("entity_id", "number.battery_charge_power"),)
     assert first.service_data == (("value", 1200.0),)
     assert first.dispatch_mode is HomeAssistantDispatchMode.DRY_RUN
+
+
+def test_adapter_translates_input_number_charge_power() -> None:
+    mapping = _mapping(
+        domain="input_number",
+        entity_id="input_number.zendure_2400_ac_handmatig_vermogen",
+    )
+
+    call = HomeAssistantAdapter().translate(_request(), mapping, created_at=NOW)
+
+    assert call.domain == "input_number"
+    assert call.service == "set_value"
+    assert call.target == (
+        ("entity_id", "input_number.zendure_2400_ac_handmatig_vermogen"),
+    )
+    assert call.service_data == (("value", 1200.0),)
 
 
 def test_dry_run_never_requires_transport() -> None:

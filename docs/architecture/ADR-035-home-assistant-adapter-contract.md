@@ -1,6 +1,6 @@
 # ADR-035 — Home Assistant Adapter and Controlled Dispatch Contract
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-02
 
 ## Context

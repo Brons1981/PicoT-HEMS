@@ -87,7 +87,14 @@ Supported dispatch modes are:
 
 Dry-run and live mode use identical translation and validation. Switching to live mode may not alter domain, service, target or service data.
 
-The initial operational default is `DRY_RUN`. Live mode must be selected explicitly by the caller.
+The operational default is `DRY_RUN`. Live mode must be selected explicitly by the caller.
+
+The HTTP transport has its own explicit runtime mode and also defaults to `DRY_RUN`. A network request is permitted only when both conditions are true:
+
+1. the immutable `HomeAssistantServiceCall` is marked `LIVE`;
+2. the HTTP transport is explicitly constructed in `LIVE` mode.
+
+A dry-run transport refuses all network sends. A live transport refuses service calls that are not marked `LIVE`. This creates two independent, visible gates without changing the service-call contents.
 
 ## Validation
 
@@ -102,6 +109,11 @@ Translation is rejected when:
 - the domain/service pair is not `number.set_value` or `input_number.set_value`;
 - domain, service, target or service-data key is empty;
 - timestamps are not timezone-aware.
+
+Transport dispatch is rejected when:
+
+- the HTTP transport is not explicitly in `LIVE` mode;
+- the supplied service call is not explicitly in `LIVE` mode.
 
 No partial or fallback command is produced.
 
@@ -157,8 +169,9 @@ The first implementation includes:
 2. deterministic `CHARGE_AT_POWER` translation to an accepted `set_value` service;
 3. explicit `DRY_RUN` and `LIVE` modes;
 4. strict mapping and numeric-bound validation;
-5. a dispatcher interface with a dry-run implementation;
-6. unit tests and CI coverage.
+5. dispatcher and HTTP transport with explicit dry-run defaults;
+6. dual live gating at service-call and transport level;
+7. unit tests and CI coverage.
 
 It does not include:
 
@@ -170,8 +183,6 @@ It does not include:
 - acknowledgement polling;
 - support for additional primitives;
 - direct Planner invocation.
-
-A later live transport implementation may send the already validated service call without changing this contract.
 
 ## Relationship to existing ADRs
 

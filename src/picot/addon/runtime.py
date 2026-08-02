@@ -1,4 +1,4 @@
-"""Minimal Home Assistant add-on runtime for the first live PicoT validation."""
+"""Home Assistant add-on runtime for controlled live PicoT validation."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from picot.planner.price_driven_strategy import PriceDrivenStrategy, PriceDriven
 SUPERVISOR_BASE_URL = "http://supervisor/core"
 OPTIONS_PATH = Path("/data/options.json")
 LOCAL_TIMEZONE = ZoneInfo("Europe/Amsterdam")
+SCHEDULER_TICK_SECONDS = 0.25
 
 
 def _request_json(path: str, token: str) -> dict[str, Any]:
@@ -188,7 +189,9 @@ def _grid_fields(
     }
 
 
-def run_once(options: dict[str, Any], token: str) -> None:
+def run_planner_once(options: dict[str, Any], token: str) -> dict[str, object]:
+    """Run the price planner and return a stable decision snapshot."""
+
     now = datetime.now(LOCAL_TIMEZONE)
     price_entity = str(options["price_entity"])
     target_entity = str(options["target_entity"])
@@ -219,10 +222,11 @@ def run_once(options: dict[str, Any], token: str) -> None:
             now=now,
         )
 
-    event: dict[str, object] = {
+    return {
         "event": "picot_price_decision",
         "evaluated_at": now.isoformat(),
         "mode": mode.value,
+        "strategy": "Price Driven v1",
         "current_option": current_option,
         "desired_option": desired_option,
         "reason": decision.reason,
@@ -235,10 +239,37 @@ def run_once(options: dict[str, Any], token: str) -> None:
         "average_price_eur_per_kwh": decision.average_price_eur_per_kwh,
         "current_price_eur_per_kwh": decision.current_price_eur_per_kwh,
         "dispatch_status": dispatch_status,
+        "planner_interval_seconds": int(options["planner_interval_seconds"]),
     }
+
+
+def run_telemetry_once(
+    options: dict[str, Any],
+    token: str,
+    planner_event: dict[str, object],
+) -> dict[str, object]:
+    """Refresh live measurements without re-running or changing the plan."""
+
+    event = dict(planner_event)
     event.update(_grid_fields(options, token))
+    event["telemetry_updated_at"] = datetime.now(LOCAL_TIMEZONE).isoformat()
+    event["telemetry_interval_seconds"] = int(options["telemetry_interval_seconds"])
     publish_dashboard_states(event, token)
+    return event
+
+
+def _log_event(event: dict[str, object]) -> None:
     print(json.dumps(event, separators=(",", ":")), flush=True)
+
+
+def _log_runtime_error(stream: str, exc: Exception) -> None:
+    _log_event(
+        {
+            "event": "picot_runtime_error",
+            "stream": stream,
+            "error": str(exc) or exc.__class__.__name__,
+        }
+    )
 
 
 def main() -> int:
@@ -250,23 +281,32 @@ def main() -> int:
     with OPTIONS_PATH.open(encoding="utf-8") as handle:
         options = cast(dict[str, Any], json.load(handle))
 
-    interval_seconds = int(options["interval_seconds"])
+    planner_interval = int(options["planner_interval_seconds"])
+    telemetry_interval = int(options["telemetry_interval_seconds"])
+    next_planner_run = 0.0
+    next_telemetry_run = 0.0
+    planner_event: dict[str, object] | None = None
+
     print("PicoT HEMS add-on starting", flush=True)
     while True:
-        try:
-            run_once(options, token)
-        except Exception as exc:
-            print(
-                json.dumps(
-                    {
-                        "event": "picot_runtime_error",
-                        "error": str(exc) or exc.__class__.__name__,
-                    },
-                    separators=(",", ":"),
-                ),
-                flush=True,
-            )
-        time.sleep(interval_seconds)
+        monotonic_now = time.monotonic()
+
+        if monotonic_now >= next_planner_run:
+            try:
+                planner_event = run_planner_once(options, token)
+                _log_event(planner_event)
+            except Exception as exc:
+                _log_runtime_error("planner", exc)
+            next_planner_run = monotonic_now + planner_interval
+
+        if planner_event is not None and monotonic_now >= next_telemetry_run:
+            try:
+                run_telemetry_once(options, token, planner_event)
+            except Exception as exc:
+                _log_runtime_error("telemetry", exc)
+            next_telemetry_run = monotonic_now + telemetry_interval
+
+        time.sleep(SCHEDULER_TICK_SECONDS)
 
 
 if __name__ == "__main__":

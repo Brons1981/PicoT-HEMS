@@ -1,0 +1,89 @@
+type: custom:apexcharts-card
+header:
+  show: true
+  title: Power Comparison
+  show_states: true
+  colorize_states: true
+graph_span: 24h
+span:
+  start: day
+now:
+  show: true
+  label: Nu
+update_interval: 5sec
+yaxis:
+  - id: power
+    decimals: 0
+    apex_config:
+      title:
+        text: Vermogen (W)
+apex_config:
+  chart:
+    height: 420
+    toolbar:
+      show: true
+    zoom:
+      enabled: true
+  dataLabels:
+    enabled: false
+  stroke:
+    curve: smooth
+  grid:
+    strokeDashArray: 4
+  fill:
+    type: solid
+  legend:
+    show: true
+  tooltip:
+    shared: true
+    intersect: false
+  annotations:
+    yaxis:
+      - y: 0
+        borderWidth: 2
+        strokeDashArray: 0
+        label:
+          show: false
+series:
+  - entity: sensor.picot_zendure_power
+    name: Zendure batterijvermogen
+    type: area
+    color: "#4caf50"
+    curve: smooth
+    stroke_width: 2
+    opacity: 0.28
+    extend_to: false
+    group_by:
+      func: avg
+      duration: 1min
+  - entity: sensor.picot_grid_power
+    name: P1 netvermogen
+    type: area
+    color: "#f5f5f5"
+    curve: smooth
+    stroke_width: 2
+    opacity: 0.32
+    extend_to: false
+    group_by:
+      func: avg
+      duration: 1min
+  - entity: sensor.picot_goodwe_power
+    name: GoodWe PV-vermogen
+    type: line
+    color: "#ffb300"
+    curve: smooth
+    stroke_width: 2
+    extend_to: false
+    group_by:
+      func: avg
+      duration: 1min
+  - entity: sensor.picot_house_power
+    name: Huisverbruik (afgeleid)
+    type: line
+    color: "#1e88e5"
+    curve: smooth
+    stroke_width: 2
+    extend_to: false
+    group_by:
+      func: avg
+      duration: 1min

@@ -32,6 +32,7 @@ class HomeAssistantCommandMapping:
     service: str
     entity_id: str
     value_key: str
+    fixed_value: str | None = None
     scale_factor: float = 1.0
     minimum_value: float | None = None
     maximum_value: float | None = None
@@ -51,6 +52,8 @@ class HomeAssistantCommandMapping:
                 raise ValueError(f"{label} must not be empty.")
         if self.mapping_version < 1:
             raise ValueError("Mapping version must be at least 1.")
+        if self.fixed_value is not None and not self.fixed_value.strip():
+            raise ValueError("Fixed mapping value must not be empty when provided.")
         if self.scale_factor <= 0:
             raise ValueError("Scale factor must be greater than zero.")
         if (
@@ -75,7 +78,7 @@ class HomeAssistantServiceCall:
     domain: str
     service: str
     target: tuple[tuple[str, str], ...]
-    service_data: tuple[tuple[str, float], ...]
+    service_data: tuple[tuple[str, str | float], ...]
     created_at: datetime
     dispatch_mode: HomeAssistantDispatchMode
     implementation_version: str
@@ -108,6 +111,11 @@ class HomeAssistantServiceCall:
             not key.strip() for key, _ in self.service_data
         ):
             raise ValueError("Home Assistant service data must contain non-empty keys.")
+        if any(
+            isinstance(value, str) and not value.strip()
+            for _, value in self.service_data
+        ):
+            raise ValueError("String service data values must not be empty.")
 
 
 @dataclass(frozen=True, slots=True)

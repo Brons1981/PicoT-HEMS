@@ -149,7 +149,7 @@ def test_scheduled_boundary_dispatches_without_replanning(
     ]
 
 
-def test_telemetry_refresh_reuses_last_planner_snapshot(
+def test_telemetry_refresh_combines_p1_and_solcast_without_replanning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     published: list[dict[str, object]] = []
@@ -171,11 +171,24 @@ def test_telemetry_refresh_reuses_last_planner_snapshot(
             "p1_measured_at": "2026-08-02T12:50:57+02:00",
         }
 
+    def fake_solcast_fields(token: str, *, observed_at: datetime) -> dict[str, object]:
+        assert token == "token"
+        assert observed_at.tzinfo is not None
+        return {
+            "solcast_status": "available",
+            "solcast_error": None,
+            "solcast_forecast_today_kwh": 25.7,
+            "solcast_forecast_tomorrow_kwh": 23.7,
+            "solcast_current_expected_power_w": 933.0,
+            "solcast_observed_at": observed_at.isoformat(),
+        }
+
     def fake_publish(event: dict[str, object], token: str) -> None:
         assert token == "token"
         published.append(event)
 
     monkeypatch.setattr(runtime, "_grid_fields", fake_grid_fields)
+    monkeypatch.setattr(runtime, "_solcast_fields", fake_solcast_fields)
     monkeypatch.setattr(runtime, "publish_dashboard_states", fake_publish)
 
     planner_event: dict[str, object] = {
@@ -193,6 +206,48 @@ def test_telemetry_refresh_reuses_last_planner_snapshot(
 
     assert event["evaluated_at"] == planner_event["evaluated_at"]
     assert event["grid_power_w"] == -1200.0
+    assert event["solcast_status"] == "available"
+    assert event["solcast_forecast_today_kwh"] == 25.7
     assert event["telemetry_interval_seconds"] == 5
     assert isinstance(event["telemetry_updated_at"], str)
     assert published == [event]
+
+
+def test_solcast_failure_is_returned_as_unavailable_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_request(path: str, token: str) -> dict[str, Any]:
+        raise RuntimeError(f"unavailable: {path}:{token}")
+
+    monkeypatch.setattr(runtime, "_request_json", fail_request)
+
+    observed_at = datetime.fromisoformat("2026-08-02T19:00:00+02:00")
+    fields = runtime._solcast_fields("token", observed_at=observed_at)
+
+    assert fields["solcast_status"] == "unavailable"
+    assert fields["solcast_forecast_today_kwh"] is None
+    assert fields["solcast_observed_at"] == observed_at.isoformat()
+
+
+def test_solcast_log_event_is_compact() -> None:
+    event: dict[str, object] = {
+        "solcast_status": "available",
+        "solcast_error": None,
+        "solcast_forecast_today_kwh": 25.7,
+        "solcast_forecast_tomorrow_kwh": 23.7,
+        "solcast_remaining_today_kwh": 1.5,
+        "solcast_current_expected_power_w": 933.0,
+        "solcast_today_confidence": 0.84,
+        "solcast_tomorrow_confidence": 0.62,
+        "solcast_api_used": 10,
+        "solcast_api_limit": 10,
+        "solcast_observed_at": "2026-08-02T19:00:00+02:00",
+        "solcast_last_api_update": "2026-08-02T16:23:59+00:00",
+    }
+
+    log_event = runtime._solcast_log_event(event)
+
+    assert log_event["event"] == "picot_solcast_snapshot"
+    assert log_event["status"] == "available"
+    assert log_event["forecast_today_kwh"] == 25.7
+    assert log_event["expected_power_w"] == 933.0

@@ -1,0 +1,162 @@
+title: PicoT Technical View
+views:
+  - title: PicoT
+    path: picot
+    icon: mdi:home-lightning-bolt
+    type: sections
+    max_columns: 3
+    sections:
+      - type: grid
+        title: Externe wereld
+        cards:
+          - type: entities
+            title: Prijs en bron
+            show_header_toggle: false
+            entities:
+              - entity: sensor.picot_current_price
+                name: Actuele prijs
+              - type: attribute
+                entity: sensor.picot_current_price
+                attribute: selected_window_average
+                name: Gemiddelde gekozen venster
+              - type: attribute
+                entity: sensor.picot_current_price
+                attribute: window_starts_at
+                name: Venster start
+              - type: attribute
+                entity: sensor.picot_current_price
+                attribute: window_ends_at
+                name: Venster einde
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: p1_status
+                name: P1-status
+
+      - type: grid
+        title: PicoT-brein
+        cards:
+          - type: entities
+            title: Actuele beslissing
+            show_header_toggle: false
+            entities:
+              - entity: sensor.picot_hems_status
+                name: PicoT-status
+              - entity: sensor.picot_operating_mode
+                name: Huidige modus
+              - entity: sensor.picot_desired_mode
+                name: Gewenste modus
+              - entity: sensor.picot_dispatch_status
+                name: Laatste dispatch
+              - entity: sensor.picot_active_price_window
+                name: Prijsvenster actief
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: strategy
+                name: Strategie
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: reason
+                name: Reden
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: last_planner_run
+                name: Laatste planner-run
+
+      - type: grid
+        title: Woning en net
+        cards:
+          - type: glance
+            title: Live energiestroom
+            columns: 3
+            entities:
+              - entity: sensor.picot_grid_power
+                name: Netto
+              - entity: sensor.picot_grid_import
+                name: Import
+              - entity: sensor.picot_grid_export
+                name: Export
+          - type: entities
+            title: Telemetrie
+            show_header_toggle: false
+            entities:
+              - type: attribute
+                entity: sensor.picot_grid_power
+                attribute: direction
+                name: Richting
+              - type: attribute
+                entity: sensor.picot_grid_power
+                attribute: source_entity
+                name: Bron
+              - type: attribute
+                entity: sensor.picot_grid_power
+                attribute: measured_at
+                name: Gemeten om
+              - type: attribute
+                entity: sensor.picot_grid_power
+                attribute: telemetry_updated_at
+                name: Dashboard bijgewerkt
+
+      - type: grid
+        title: Historie vandaag
+        column_span: 3
+        cards:
+          - type: history-graph
+            title: Netvermogen, import en export
+            hours_to_show: 24
+            entities:
+              - entity: sensor.picot_grid_power
+                name: Netto
+              - entity: sensor.picot_grid_import
+                name: Import
+              - entity: sensor.picot_grid_export
+                name: Export
+          - type: history-graph
+            title: Elektriciteitsprijs
+            hours_to_show: 24
+            entities:
+              - entity: sensor.picot_current_price
+                name: Actuele prijs
+          - type: history-graph
+            title: PicoT-modus en prijsvenster
+            hours_to_show: 24
+            entities:
+              - entity: sensor.picot_operating_mode
+                name: Huidige modus
+              - entity: sensor.picot_desired_mode
+                name: Gewenste modus
+              - entity: sensor.picot_active_price_window
+                name: Prijsvenster actief
+
+      - type: grid
+        title: Runtime en lagen
+        column_span: 3
+        cards:
+          - type: entities
+            title: Runtime
+            show_header_toggle: false
+            entities:
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: planner_interval_seconds
+                name: Planner-interval
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: telemetry_interval_seconds
+                name: Telemetrie-interval
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: last_telemetry_update
+                name: Laatste telemetrie-update
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: p1_error
+                name: Laatste P1-fout
+          - type: markdown
+            content: |
+              ## Voorbereide cockpitlagen
+
+              - Omgeving en weer: nog niet gekoppeld
+              - PV-opwek en forecast: nog niet gekoppeld
+              - Batterij-SoC en vermogen: nog niet gekoppeld
+              - EV-status en planning: nog niet gekoppeld
+              - Safety Layer en User Rules: volgen later

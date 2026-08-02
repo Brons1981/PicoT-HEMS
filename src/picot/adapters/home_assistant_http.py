@@ -40,8 +40,9 @@ class HomeAssistantHttpTransport:
     def send(self, call: HomeAssistantServiceCall) -> int:
         """POST one immutable service call and return the HTTP status code."""
         endpoint = f"{self._base_url}/api/services/{call.domain}/{call.service}"
-        payload = dict(call.target)
-        payload.update(dict(call.service_data))
+        payload: dict[str, str | float] = dict(call.target)
+        for key, value in call.service_data:
+            payload[key] = value
         request = Request(
             endpoint,
             data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),

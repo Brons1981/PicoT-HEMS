@@ -12,6 +12,9 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from picot.adapters.home_assistant import HomeAssistantAdapter, HomeAssistantDispatcher
+from picot.adapters.home_assistant_household_state import (
+    household_state_from_grid_power_entity,
+)
 from picot.adapters.home_assistant_http import HomeAssistantHttpTransport
 from picot.domain.execution import ExecutionPrimitiveRequest
 from picot.domain.execution_primitive import ExecutionPrimitive
@@ -54,12 +57,10 @@ def _price_forecast(state: dict[str, Any], *, now: datetime) -> ForecastSeries:
             continue
         if not isinstance(price_value, (int, float)):
             continue
-        starts_at = _parse_datetime(start_value)
-        ends_at = _parse_datetime(end_value)
         points.append(
             ForecastPoint(
-                starts_at=starts_at,
-                ends_at=ends_at,
+                starts_at=_parse_datetime(start_value),
+                ends_at=_parse_datetime(end_value),
                 value=float(price_value),
                 confidence=1.0,
             )
@@ -142,6 +143,43 @@ def _dispatch(
     return result.status.value
 
 
+def _grid_fields(
+    options: dict[str, Any],
+    token: str,
+) -> dict[str, str | float | None]:
+    entity = str(options["p1_power_entity"])
+    try:
+        raw_state = _request_json(f"/api/states/{entity}", token)
+        household = household_state_from_grid_power_entity(
+            raw_state,
+            import_is_positive=bool(options["p1_import_is_positive"]),
+        )
+    except Exception as exc:
+        return {
+            "p1_status": "unavailable",
+            "p1_entity": entity,
+            "p1_error": str(exc) or exc.__class__.__name__,
+            "grid_power_w": None,
+            "grid_import_w": None,
+            "grid_export_w": None,
+            "grid_direction": "unknown",
+            "p1_measured_at": None,
+        }
+
+    grid_power_w = household.grid_power_w
+    assert grid_power_w is not None
+    return {
+        "p1_status": "available",
+        "p1_entity": entity,
+        "p1_error": None,
+        "grid_power_w": grid_power_w,
+        "grid_import_w": max(0.0, grid_power_w),
+        "grid_export_w": max(0.0, -grid_power_w),
+        "grid_direction": "import" if grid_power_w > 0 else "export" if grid_power_w < 0 else "balanced",
+        "p1_measured_at": household.measured_at.isoformat(),
+    }
+
+
 def run_once(options: dict[str, Any], token: str) -> None:
     now = datetime.now(LOCAL_TIMEZONE)
     price_entity = str(options["price_entity"])
@@ -173,29 +211,25 @@ def run_once(options: dict[str, Any], token: str) -> None:
             now=now,
         )
 
-    print(
-        json.dumps(
-            {
-                "event": "picot_price_decision",
-                "evaluated_at": now.isoformat(),
-                "mode": mode.value,
-                "current_option": current_option,
-                "desired_option": desired_option,
-                "reason": decision.reason,
-                "window_starts_at": decision.window_starts_at.isoformat()
-                if decision.window_starts_at
-                else None,
-                "window_ends_at": decision.window_ends_at.isoformat()
-                if decision.window_ends_at
-                else None,
-                "average_price_eur_per_kwh": decision.average_price_eur_per_kwh,
-                "current_price_eur_per_kwh": decision.current_price_eur_per_kwh,
-                "dispatch_status": dispatch_status,
-            },
-            separators=(",", ":"),
-        ),
-        flush=True,
-    )
+    event: dict[str, object] = {
+        "event": "picot_price_decision",
+        "evaluated_at": now.isoformat(),
+        "mode": mode.value,
+        "current_option": current_option,
+        "desired_option": desired_option,
+        "reason": decision.reason,
+        "window_starts_at": decision.window_starts_at.isoformat()
+        if decision.window_starts_at
+        else None,
+        "window_ends_at": decision.window_ends_at.isoformat()
+        if decision.window_ends_at
+        else None,
+        "average_price_eur_per_kwh": decision.average_price_eur_per_kwh,
+        "current_price_eur_per_kwh": decision.current_price_eur_per_kwh,
+        "dispatch_status": dispatch_status,
+    }
+    event.update(_grid_fields(options, token))
+    print(json.dumps(event, separators=(",", ":")), flush=True)
 
 
 def main() -> int:

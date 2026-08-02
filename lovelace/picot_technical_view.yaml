@@ -11,6 +11,8 @@ views:
         column_span: 4
         cards:
           - type: glance
+            grid_options:
+              columns: full
             title: Actuele vermogens
             columns: 4
             show_name: true
@@ -34,6 +36,9 @@ views:
         column_span: 4
         cards:
           - type: custom:apexcharts-card
+            grid_options:
+              columns: full
+              rows: 8
             header:
               show: true
               title: Power Comparison
@@ -128,6 +133,8 @@ views:
         column_span: 2
         cards:
           - type: entities
+            grid_options:
+              columns: full
             title: Zendure
             show_header_toggle: false
             entities:
@@ -151,6 +158,8 @@ views:
         column_span: 2
         cards:
           - type: entities
+            grid_options:
+              columns: full
             title: Actuele beslissing
             show_header_toggle: false
             entities:
@@ -186,6 +195,9 @@ views:
         column_span: 4
         cards:
           - type: custom:apexcharts-card
+            grid_options:
+              columns: full
+              rows: 6
             header:
               show: true
               title: Solcast versus GoodWe
@@ -233,6 +245,8 @@ views:
                   func: avg
                   duration: 5min
           - type: entities
+            grid_options:
+              columns: full
             title: PV-validatie
             show_header_toggle: false
             entities:
@@ -254,6 +268,8 @@ views:
         column_span: 4
         cards:
           - type: entities
+            grid_options:
+              columns: full
             title: Databronnen
             show_header_toggle: false
             entities:
@@ -276,6 +292,8 @@ views:
                 attribute: last_planner_run
                 name: Laatste planner-run
           - type: markdown
+            grid_options:
+              columns: full
             content: |
               ## Cockpit v0.1
 

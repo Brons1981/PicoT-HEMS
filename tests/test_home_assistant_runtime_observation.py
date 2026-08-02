@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from picot.addon import runtime_observation
+from picot.addon import runtime, runtime_observation
 
 OBSERVED_AT = datetime(2026, 8, 2, 18, 0, tzinfo=UTC)
 
@@ -14,7 +14,7 @@ def test_goodwe_fields_isolates_source_failure(monkeypatch: pytest.MonkeyPatch) 
     def failing_request(path: str, token: str) -> dict[str, Any]:
         raise RuntimeError("GoodWe unavailable")
 
-    monkeypatch.setattr(runtime_observation.runtime, "_request_json", failing_request)
+    monkeypatch.setattr(runtime, "_request_json", failing_request)
 
     fields = runtime_observation._goodwe_fields("token", observed_at=OBSERVED_AT)
 
@@ -30,12 +30,12 @@ def test_telemetry_publishes_combined_observations(
     published_goodwe: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        runtime_observation.runtime,
+        runtime,
         "_grid_fields",
         lambda options, token: {"grid_power_w": -500.0},
     )
     monkeypatch.setattr(
-        runtime_observation.runtime,
+        runtime,
         "_solcast_fields",
         lambda token, observed_at: {
             "solcast_status": "available",
@@ -51,7 +51,7 @@ def test_telemetry_publishes_combined_observations(
         },
     )
     monkeypatch.setattr(
-        runtime_observation.runtime,
+        runtime_observation,
         "publish_dashboard_states",
         lambda event, token: published_main.append(event),
     )

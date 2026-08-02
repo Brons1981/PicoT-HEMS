@@ -18,6 +18,12 @@ from picot.domain.home_assistant import (
 
 IMPLEMENTATION_VERSION = "home-assistant-adapter-v1"
 SUPPORTED_SET_VALUE_DOMAINS = frozenset({"number", "input_number"})
+SUPPORTED_MODE_PRIMITIVES = frozenset(
+    {
+        ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+        ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+    }
+)
 
 
 class HomeAssistantTransport(Protocol):
@@ -38,34 +44,8 @@ class HomeAssistantAdapter:
         created_at: datetime,
         dispatch_mode: HomeAssistantDispatchMode = HomeAssistantDispatchMode.DRY_RUN,
     ) -> HomeAssistantServiceCall:
-        if created_at.tzinfo is None or created_at.utcoffset() is None:
-            raise ValueError("Service call creation time must be timezone-aware.")
-        if not mapping.enabled:
-            raise ValueError("Home Assistant command mapping is disabled.")
-        if request.capability_id != mapping.capability_id:
-            raise ValueError("Capability ID does not match Home Assistant mapping.")
-        if request.execution_scope_id != mapping.execution_scope_id:
-            raise ValueError("Execution scope does not match Home Assistant mapping.")
-        if request.primitive is not mapping.primitive:
-            raise ValueError("Execution Primitive is not supported by this mapping.")
-        if request.primitive is not ExecutionPrimitive.CHARGE_AT_POWER:
-            raise ValueError("Adapter v1 supports only CHARGE_AT_POWER.")
-        if (
-            mapping.domain not in SUPPORTED_SET_VALUE_DOMAINS
-            or mapping.service != "set_value"
-        ):
-            raise ValueError(
-                "Adapter v1 requires number.set_value or input_number.set_value."
-            )
-        if request.requested_power_w is None:
-            raise ValueError("CHARGE_AT_POWER requires requested power.")
-
-        value = request.requested_power_w * mapping.scale_factor
-        if mapping.minimum_value is not None and value < mapping.minimum_value:
-            raise ValueError("Translated value is below the mapping minimum.")
-        if mapping.maximum_value is not None and value > mapping.maximum_value:
-            raise ValueError("Translated value exceeds the mapping maximum.")
-
+        self._validate_common(request, mapping, created_at)
+        value = self._service_value(request, mapping)
         command_id = self._command_id(request, mapping, value)
         return HomeAssistantServiceCall(
             command_id=command_id,
@@ -87,10 +67,75 @@ class HomeAssistantAdapter:
         )
 
     @staticmethod
+    def _validate_common(
+        request: ExecutionPrimitiveRequest,
+        mapping: HomeAssistantCommandMapping,
+        created_at: datetime,
+    ) -> None:
+        if created_at.tzinfo is None or created_at.utcoffset() is None:
+            raise ValueError("Service call creation time must be timezone-aware.")
+        if not mapping.enabled:
+            raise ValueError("Home Assistant command mapping is disabled.")
+        if request.capability_id != mapping.capability_id:
+            raise ValueError("Capability ID does not match Home Assistant mapping.")
+        if request.execution_scope_id != mapping.execution_scope_id:
+            raise ValueError("Execution scope does not match Home Assistant mapping.")
+        if request.primitive is not mapping.primitive:
+            raise ValueError("Execution Primitive is not supported by this mapping.")
+
+    @staticmethod
+    def _service_value(
+        request: ExecutionPrimitiveRequest,
+        mapping: HomeAssistantCommandMapping,
+    ) -> str | float:
+        if request.primitive is ExecutionPrimitive.CHARGE_AT_POWER:
+            return HomeAssistantAdapter._power_value(request, mapping)
+        if request.primitive in SUPPORTED_MODE_PRIMITIVES:
+            return HomeAssistantAdapter._mode_value(mapping)
+        raise ValueError("Adapter v1 does not support this Execution Primitive.")
+
+    @staticmethod
+    def _power_value(
+        request: ExecutionPrimitiveRequest,
+        mapping: HomeAssistantCommandMapping,
+    ) -> float:
+        if (
+            mapping.domain not in SUPPORTED_SET_VALUE_DOMAINS
+            or mapping.service != "set_value"
+        ):
+            raise ValueError(
+                "CHARGE_AT_POWER requires number.set_value or input_number.set_value."
+            )
+        if mapping.fixed_value is not None:
+            raise ValueError("CHARGE_AT_POWER mapping may not define a fixed value.")
+        if request.requested_power_w is None:
+            raise ValueError("CHARGE_AT_POWER requires requested power.")
+        value = request.requested_power_w * mapping.scale_factor
+        if mapping.minimum_value is not None and value < mapping.minimum_value:
+            raise ValueError("Translated value is below the mapping minimum.")
+        if mapping.maximum_value is not None and value > mapping.maximum_value:
+            raise ValueError("Translated value exceeds the mapping maximum.")
+        return value
+
+    @staticmethod
+    def _mode_value(mapping: HomeAssistantCommandMapping) -> str:
+        if mapping.domain != "input_select" or mapping.service != "select_option":
+            raise ValueError(
+                "Balance mode primitives require input_select.select_option."
+            )
+        if mapping.value_key != "option":
+            raise ValueError("Balance mode mappings require service data key 'option'.")
+        if mapping.fixed_value is None:
+            raise ValueError("Balance mode mappings require an explicit fixed option.")
+        if mapping.minimum_value is not None or mapping.maximum_value is not None:
+            raise ValueError("Balance mode mappings may not define numeric bounds.")
+        return mapping.fixed_value
+
+    @staticmethod
     def _command_id(
         request: ExecutionPrimitiveRequest,
         mapping: HomeAssistantCommandMapping,
-        value: float,
+        value: str | float,
     ) -> str:
         source = (
             f"{request.request_id}|{mapping.mapping_id}|{mapping.mapping_version}|"

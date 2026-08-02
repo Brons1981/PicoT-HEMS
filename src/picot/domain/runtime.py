@@ -62,20 +62,20 @@ class RuntimeObservation:
     actively_required: bool = False
 
     def __post_init__(self) -> None:
-        for value, label in (
+        for required_value, label in (
             (self.observation_id, "Observation ID"),
             (self.source_reference, "Source reference"),
         ):
-            if not value.strip():
+            if not required_value.strip():
                 raise ValueError(f"{label} must not be empty.")
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
             raise ValueError("Observation timestamp must be timezone-aware.")
-        for value, label in (
+        for optional_value, label in (
             (self.unit, "Unit"),
             (self.execution_scope_id, "Execution scope ID"),
             (self.capability_id, "Capability ID"),
         ):
-            if value is not None and not value.strip():
+            if optional_value is not None and not optional_value.strip():
                 raise ValueError(f"{label} must not be empty when provided.")
         if self.source_version is not None and self.source_version < 1:
             raise ValueError("Source version must be at least 1 when provided.")

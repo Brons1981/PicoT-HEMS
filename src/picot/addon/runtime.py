@@ -168,6 +168,13 @@ def _grid_fields(
 
     grid_power_w = household.grid_power_w
     assert grid_power_w is not None
+    if grid_power_w > 0:
+        grid_direction = "import"
+    elif grid_power_w < 0:
+        grid_direction = "export"
+    else:
+        grid_direction = "balanced"
+
     return {
         "p1_status": "available",
         "p1_entity": entity,
@@ -175,7 +182,7 @@ def _grid_fields(
         "grid_power_w": grid_power_w,
         "grid_import_w": max(0.0, grid_power_w),
         "grid_export_w": max(0.0, -grid_power_w),
-        "grid_direction": "import" if grid_power_w > 0 else "export" if grid_power_w < 0 else "balanced",
+        "grid_direction": grid_direction,
         "p1_measured_at": household.measured_at.isoformat(),
     }
 

@@ -36,6 +36,13 @@ def test_dashboard_states_expose_runtime_price_and_grid_data() -> None:
     assert states["sensor.picot_grid_import"]["state"] == 0.0
     assert states["sensor.picot_grid_export"]["state"] == 1385.223
     assert states["sensor.picot_current_price"]["state"] == 0.104
+    assert states["sensor.picot_operating_mode"]["state"] == "Nul op de meter"
+    assert states["sensor.picot_desired_mode"]["state"] == "Nul op de meter"
+    assert (
+        states["sensor.picot_dispatch_status"]["state"]
+        == "skipped_already_active"
+    )
+    assert states["sensor.picot_active_price_window"]["state"] == "active"
 
     status_attributes = states["sensor.picot_hems_status"]["attributes"]
     assert isinstance(status_attributes, dict)
@@ -47,3 +54,8 @@ def test_dashboard_states_expose_runtime_price_and_grid_data() -> None:
     assert isinstance(grid_attributes, dict)
     assert grid_attributes["direction"] == "export"
     assert grid_attributes["source_entity"] == "sensor.ct_shelly_pro_3em_api"
+
+    window_attributes = states["sensor.picot_active_price_window"]["attributes"]
+    assert isinstance(window_attributes, dict)
+    assert window_attributes["starts_at"] == "2026-08-02T10:30:00+02:00"
+    assert window_attributes["ends_at"] == "2026-08-02T16:30:00+02:00"

@@ -95,6 +95,9 @@ class RuntimeMonitor:
             active_planner_run_id=planner_run_id,
             last_planner_run_started_at=started_at,
             stabilisation_deadline=None,
+            replan_required=False,
+            replan_reasons=(),
+            source_observation_ids=(),
             state_version=state.state_version + 1,
         )
 
@@ -121,9 +124,6 @@ class RuntimeMonitor:
             active_planner_run_id=None,
             last_planner_run_ended_at=ended_at,
             stabilisation_deadline=ended_at + STABILISATION_INTERVAL,
-            replan_required=False,
-            replan_reasons=(),
-            source_observation_ids=(),
             state_version=state.state_version + 1,
         )
 
@@ -267,14 +267,13 @@ class RuntimeMonitor:
             status = ReplanningSignalStatus.FRESH_SNAPSHOT_REQUIRED
         else:
             status = ReplanningSignalStatus.PENDING
+        has_signal = status is not ReplanningSignalStatus.NONE
         return ReplanningSignal(
             status=status,
             requested_at=now,
-            reasons=state.replan_reasons if status is not ReplanningSignalStatus.NONE else (),
+            reasons=state.replan_reasons if has_signal else (),
             source_observation_ids=(
-                state.source_observation_ids
-                if status is not ReplanningSignalStatus.NONE
-                else ()
+                state.source_observation_ids if has_signal else ()
             ),
             fresh_snapshot_required=(
                 status is ReplanningSignalStatus.FRESH_SNAPSHOT_REQUIRED

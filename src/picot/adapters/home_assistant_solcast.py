@@ -54,11 +54,11 @@ def _parse_datetime(value: object, field: str) -> datetime:
 
 
 def _number(value: object, field: str) -> float:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         raise SolcastSnapshotError(f"{field} is not numeric.")
     try:
         return float(value)
-    except (TypeError, ValueError) as exc:
+    except ValueError as exc:
         raise SolcastSnapshotError(f"{field} is not numeric.") from exc
 
 

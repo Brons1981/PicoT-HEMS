@@ -51,6 +51,38 @@ def _mapping(
     )
 
 
+def _mode_request(primitive: ExecutionPrimitive) -> ExecutionPrimitiveRequest:
+    return ExecutionPrimitiveRequest(
+        request_id=f"request-{primitive.value}",
+        plan_set_id="plan-set-1",
+        plan_id="plan-1",
+        plan_revision=1,
+        segment_id=f"segment-{primitive.value}",
+        execution_scope_id="zendure-2400-ac",
+        capability_id="zendure-operating-mode",
+        primitive=primitive,
+        requested_at=NOW,
+    )
+
+
+def _mode_mapping(
+    primitive: ExecutionPrimitive,
+    option: str,
+) -> HomeAssistantCommandMapping:
+    return HomeAssistantCommandMapping(
+        mapping_id=f"ha-zendure-mode-{primitive.value}-v1",
+        mapping_version=1,
+        capability_id="zendure-operating-mode",
+        execution_scope_id="zendure-2400-ac",
+        primitive=primitive,
+        domain="input_select",
+        service="select_option",
+        entity_id="input_select.zendure_2400_ac_modus_selecteren",
+        value_key="option",
+        fixed_value=option,
+    )
+
+
 def test_adapter_translates_charge_power_deterministically() -> None:
     adapter = HomeAssistantAdapter()
     first = adapter.translate(_request(), _mapping(), created_at=NOW)
@@ -76,6 +108,56 @@ def test_adapter_translates_input_number_charge_power() -> None:
         ("entity_id", "input_number.zendure_2400_ac_handmatig_vermogen"),
     )
     assert call.service_data == (("value", 1200.0),)
+
+
+@pytest.mark.parametrize(
+    ("primitive", "option"),
+    [
+        (ExecutionPrimitive.BALANCE_DISCHARGE_ONLY, "Alleen slim ontladen"),
+        (ExecutionPrimitive.BALANCE_BIDIRECTIONAL, "Nul op de meter"),
+    ],
+)
+def test_adapter_translates_initial_zendure_modes(
+    primitive: ExecutionPrimitive,
+    option: str,
+) -> None:
+    call = HomeAssistantAdapter().translate(
+        _mode_request(primitive),
+        _mode_mapping(primitive, option),
+        created_at=NOW,
+    )
+
+    assert call.domain == "input_select"
+    assert call.service == "select_option"
+    assert call.target == (
+        ("entity_id", "input_select.zendure_2400_ac_modus_selecteren"),
+    )
+    assert call.service_data == (("option", option),)
+
+
+def test_adapter_rejects_mode_mapping_without_explicit_option() -> None:
+    mapping = _mode_mapping(
+        ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+        "Alleen slim ontladen",
+    )
+    invalid = HomeAssistantCommandMapping(
+        mapping_id=mapping.mapping_id,
+        mapping_version=mapping.mapping_version,
+        capability_id=mapping.capability_id,
+        execution_scope_id=mapping.execution_scope_id,
+        primitive=mapping.primitive,
+        domain=mapping.domain,
+        service=mapping.service,
+        entity_id=mapping.entity_id,
+        value_key=mapping.value_key,
+    )
+
+    with pytest.raises(ValueError, match="explicit fixed option"):
+        HomeAssistantAdapter().translate(
+            _mode_request(ExecutionPrimitive.BALANCE_DISCHARGE_ONLY),
+            invalid,
+            created_at=NOW,
+        )
 
 
 def test_dry_run_never_requires_transport() -> None:

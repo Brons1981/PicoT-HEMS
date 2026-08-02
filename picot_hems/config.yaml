@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "0.1.6"
+version: "0.1.7"
 slug: picot_hems
 description: Deterministic PicoT HEMS live-validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -16,6 +16,8 @@ options:
   p1_power_entity: sensor.ct_shelly_pro_3em_api
   p1_import_is_positive: true
   window_points: 24
+  planner_interval_seconds: 60
+  telemetry_interval_seconds: 5
   interval_seconds: 60
 schema:
   mode: list(dry_run|live)
@@ -24,4 +26,6 @@ schema:
   p1_power_entity: str
   p1_import_is_positive: bool
   window_points: int(1,24)
+  planner_interval_seconds: int(30,3600)
+  telemetry_interval_seconds: int(1,60)
   interval_seconds: int(30,3600)

@@ -145,3 +145,8 @@ Detailed record: [`ADR-033-winning-energy-path-to-execution-plans.md`](ADR-033-w
 The Runtime Monitor classifies immutable observations, preserves one-active-Planner-Run discipline, enforces the five-second stabilisation interval and requests every replan from a fresh atomic snapshot.
 
 Detailed record: [`ADR-034-runtime-monitor-material-change-replanning-contract.md`](ADR-034-runtime-monitor-material-change-replanning-contract.md)
+
+### ADR-035 — Home Assistant Adapter and Controlled Dispatch Contract
+One validated Execution Primitive Request is translated through one explicit, versioned Home Assistant mapping. Dry-run and live use the same immutable service call.
+
+Detailed record: [`ADR-035-home-assistant-adapter-contract.md`](ADR-035-home-assistant-adapter-contract.md)

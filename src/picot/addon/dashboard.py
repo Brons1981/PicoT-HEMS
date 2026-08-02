@@ -1,4 +1,4 @@
-"""Publish compact PicoT runtime state for Home Assistant dashboards."""
+"""Publish structured PicoT runtime state for Home Assistant dashboards."""
 
 from __future__ import annotations
 
@@ -14,37 +14,68 @@ DashboardPayload = dict[str, object]
 DashboardStates = dict[str, DashboardPayload]
 
 
+def _power_attributes(
+    friendly_name: str,
+    icon: str,
+    event: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "friendly_name": friendly_name,
+        "device_class": "power",
+        "state_class": "measurement",
+        "unit_of_measurement": "W",
+        "icon": icon,
+        "direction": event.get("grid_direction"),
+        "measured_at": event.get("p1_measured_at"),
+        "source_entity": event.get("p1_entity"),
+        "source_status": event.get("p1_status"),
+        "telemetry_updated_at": event.get("telemetry_updated_at"),
+    }
+
+
 def dashboard_states(event: dict[str, object]) -> DashboardStates:
-    """Build the small set of HA states used by dashboard v1."""
+    """Build the semantic HA states used by the technical cockpit."""
 
     status_attributes: dict[str, object] = {
         "friendly_name": "PicoT HEMS status",
         "icon": "mdi:home-lightning-bolt",
-        "strategy": "Price Driven v1",
+        "strategy": event.get("strategy", "Price Driven v1"),
         "current_option": event.get("current_option"),
         "desired_option": event.get("desired_option"),
         "reason": event.get("reason"),
         "window_starts_at": event.get("window_starts_at"),
         "window_ends_at": event.get("window_ends_at"),
         "dispatch_status": event.get("dispatch_status"),
-        "last_run": event.get("evaluated_at"),
+        "last_planner_run": event.get("evaluated_at"),
+        "last_telemetry_update": event.get("telemetry_updated_at"),
+        "planner_interval_seconds": event.get("planner_interval_seconds"),
+        "telemetry_interval_seconds": event.get("telemetry_interval_seconds"),
         "p1_status": event.get("p1_status"),
         "p1_entity": event.get("p1_entity"),
+        "p1_error": event.get("p1_error"),
         "grid_direction": event.get("grid_direction"),
     }
-    grid_attributes: dict[str, object] = {
-        "friendly_name": "PicoT netvermogen",
-        "device_class": "power",
-        "state_class": "measurement",
-        "unit_of_measurement": "W",
-        "icon": "mdi:transmission-tower",
-        "direction": event.get("grid_direction"),
-        "import_w": event.get("grid_import_w"),
-        "export_w": event.get("grid_export_w"),
-        "measured_at": event.get("p1_measured_at"),
-        "source_entity": event.get("p1_entity"),
-        "source_status": event.get("p1_status"),
-    }
+    grid_attributes = _power_attributes(
+        "PicoT netvermogen",
+        "mdi:transmission-tower",
+        event,
+    )
+    grid_attributes.update(
+        {
+            "import_w": event.get("grid_import_w"),
+            "export_w": event.get("grid_export_w"),
+        }
+    )
+    import_attributes = _power_attributes(
+        "PicoT netimport",
+        "mdi:transmission-tower-import",
+        event,
+    )
+    export_attributes = _power_attributes(
+        "PicoT netexport",
+        "mdi:transmission-tower-export",
+        event,
+    )
     price_attributes: dict[str, object] = {
         "friendly_name": "PicoT actuele prijs",
         "state_class": "measurement",
@@ -53,6 +84,7 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
         "selected_window_average": event.get("average_price_eur_per_kwh"),
         "window_starts_at": event.get("window_starts_at"),
         "window_ends_at": event.get("window_ends_at"),
+        "planner_evaluated_at": event.get("evaluated_at"),
     }
 
     return {
@@ -63,6 +95,14 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
         "sensor.picot_grid_power": {
             "state": event.get("grid_power_w", "unknown"),
             "attributes": grid_attributes,
+        },
+        "sensor.picot_grid_import": {
+            "state": event.get("grid_import_w", "unknown"),
+            "attributes": import_attributes,
+        },
+        "sensor.picot_grid_export": {
+            "state": event.get("grid_export_w", "unknown"),
+            "attributes": export_attributes,
         },
         "sensor.picot_current_price": {
             "state": event.get("current_price_eur_per_kwh", "unknown"),
@@ -77,7 +117,7 @@ def publish_dashboard_states(
     *,
     opener: Callable[..., object] = urlopen,
 ) -> None:
-    """Publish dashboard v1 entities through the Home Assistant REST API."""
+    """Publish technical-cockpit entities through the Home Assistant REST API."""
 
     for entity_id, payload in dashboard_states(event).items():
         request = Request(

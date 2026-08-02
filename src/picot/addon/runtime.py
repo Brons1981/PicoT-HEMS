@@ -199,7 +199,9 @@ def run_once(options: dict[str, Any], token: str) -> None:
 def main() -> int:
     token = os.environ.get("SUPERVISOR_TOKEN", "")
     if not token:
-        raise RuntimeError("SUPERVISOR_TOKEN is unavailable; Home Assistant API access is required.")
+        raise RuntimeError(
+            "SUPERVISOR_TOKEN is unavailable; Home Assistant API access is required."
+        )
     with OPTIONS_PATH.open(encoding="utf-8") as handle:
         options = cast(dict[str, Any], json.load(handle))
 

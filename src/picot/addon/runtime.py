@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from picot.adapters.home_assistant import HomeAssistantAdapter, HomeAssistantDispatcher
 from picot.adapters.home_assistant_http import HomeAssistantHttpTransport
@@ -20,6 +21,7 @@ from picot.planner.price_driven_strategy import PriceDrivenStrategy, PriceDriven
 
 SUPERVISOR_BASE_URL = "http://supervisor/core"
 OPTIONS_PATH = Path("/data/options.json")
+LOCAL_TIMEZONE = ZoneInfo("Europe/Amsterdam")
 
 
 def _request_json(path: str, token: str) -> dict[str, Any]:
@@ -141,7 +143,7 @@ def _dispatch(
 
 
 def run_once(options: dict[str, Any], token: str) -> None:
-    now = datetime.now(UTC)
+    now = datetime.now(LOCAL_TIMEZONE)
     price_entity = str(options["price_entity"])
     target_entity = str(options["target_entity"])
     window_points = int(options["window_points"])

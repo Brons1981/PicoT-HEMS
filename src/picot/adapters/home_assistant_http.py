@@ -7,7 +7,10 @@ from collections.abc import Callable
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from picot.domain.home_assistant import HomeAssistantServiceCall
+from picot.domain.home_assistant import (
+    HomeAssistantDispatchMode,
+    HomeAssistantServiceCall,
+)
 
 HTTP_TIMEOUT_SECONDS = 10.0
 
@@ -20,6 +23,7 @@ class HomeAssistantHttpTransport:
         *,
         base_url: str,
         access_token: str,
+        transport_mode: HomeAssistantDispatchMode = HomeAssistantDispatchMode.DRY_RUN,
         timeout_seconds: float = HTTP_TIMEOUT_SECONDS,
         opener: Callable[..., object] = urlopen,
     ) -> None:
@@ -34,11 +38,17 @@ class HomeAssistantHttpTransport:
 
         self._base_url = normalized_url
         self._access_token = access_token
+        self._transport_mode = transport_mode
         self._timeout_seconds = timeout_seconds
         self._opener = opener
 
     def send(self, call: HomeAssistantServiceCall) -> int:
-        """POST one immutable service call and return the HTTP status code."""
+        """POST one immutable LIVE service call and return the HTTP status code."""
+        if self._transport_mode is not HomeAssistantDispatchMode.LIVE:
+            raise RuntimeError("Home Assistant HTTP transport is not enabled for LIVE dispatch.")
+        if call.dispatch_mode is not HomeAssistantDispatchMode.LIVE:
+            raise RuntimeError("Home Assistant HTTP transport accepts only LIVE service calls.")
+
         endpoint = f"{self._base_url}/api/services/{call.domain}/{call.service}"
         payload: dict[str, str | float] = dict(call.target)
         for key, value in call.service_data:

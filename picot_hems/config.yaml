@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "0.1.1"
+version: "0.1.2"
 slug: picot_hems
 description: Deterministic PicoT HEMS live-validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -11,9 +11,9 @@ init: false
 homeassistant_api: true
 options:
   mode: dry_run
-  price_entity: sensor.nordpool_kwh_nl_eur_2_10_021
+  price_entity: sensor.nordpool_kwh_nl_eur_3_095_0
   target_entity: input_select.zendure_2400_ac_modus_selecteren
-  window_points: 1
+  window_points: 24
   interval_seconds: 60
 schema:
   mode: list(dry_run|live)

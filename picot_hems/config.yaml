@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "0.1.10"
+version: "0.1.11"
 slug: picot_hems
 description: Deterministic PicoT HEMS live-validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS

@@ -17,6 +17,7 @@ from picot.domain.home_assistant import (
 )
 
 IMPLEMENTATION_VERSION = "home-assistant-adapter-v1"
+SUPPORTED_SET_VALUE_DOMAINS = frozenset({"number", "input_number"})
 
 
 class HomeAssistantTransport(Protocol):
@@ -49,8 +50,13 @@ class HomeAssistantAdapter:
             raise ValueError("Execution Primitive is not supported by this mapping.")
         if request.primitive is not ExecutionPrimitive.CHARGE_AT_POWER:
             raise ValueError("Adapter v1 supports only CHARGE_AT_POWER.")
-        if mapping.domain != "number" or mapping.service != "set_value":
-            raise ValueError("Adapter v1 requires number.set_value mapping.")
+        if (
+            mapping.domain not in SUPPORTED_SET_VALUE_DOMAINS
+            or mapping.service != "set_value"
+        ):
+            raise ValueError(
+                "Adapter v1 requires number.set_value or input_number.set_value."
+            )
         if request.requested_power_w is None:
             raise ValueError("CHARGE_AT_POWER requires requested power.")
 

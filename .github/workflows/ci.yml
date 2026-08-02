@@ -54,6 +54,7 @@ jobs:
           tests/test_morning_protection_strategy.py
           tests/test_price_driven_strategy.py
           tests/test_home_assistant_addon_runtime.py
+          tests/test_home_assistant_household_state.py
 
       - name: Run Mypy on PicoT Core slice
         run: >-
@@ -80,6 +81,7 @@ jobs:
           tests/test_morning_protection_strategy.py
           tests/test_price_driven_strategy.py
           tests/test_home_assistant_addon_runtime.py
+          tests/test_home_assistant_household_state.py
 
       - name: Run Pytest on PicoT Core slice
         run: >-
@@ -106,3 +108,4 @@ jobs:
           tests/test_morning_protection_strategy.py
           tests/test_price_driven_strategy.py
           tests/test_home_assistant_addon_runtime.py
+          tests/test_home_assistant_household_state.py

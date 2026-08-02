@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from picot.addon import runtime
+from picot.addon.dashboard import publish_dashboard_states
 from picot.addon.goodwe_dashboard import publish_goodwe_dashboard_states
 from picot.addon.goodwe_observer import (
     read_goodwe_observation,
@@ -43,7 +44,7 @@ def run_telemetry_once(
     event.update(_goodwe_fields(token, observed_at=observed_at))
     event["telemetry_updated_at"] = observed_at.isoformat()
     event["telemetry_interval_seconds"] = int(options["telemetry_interval_seconds"])
-    runtime.publish_dashboard_states(event, token)
+    publish_dashboard_states(event, token)
     publish_goodwe_dashboard_states(event, token)
     return event
 

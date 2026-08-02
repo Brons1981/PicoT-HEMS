@@ -32,6 +32,19 @@ def _power_attributes(
     }
 
 
+def _text_attributes(
+    friendly_name: str,
+    icon: str,
+    event: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "friendly_name": friendly_name,
+        "icon": icon,
+        "planner_evaluated_at": event.get("evaluated_at"),
+        "telemetry_updated_at": event.get("telemetry_updated_at"),
+    }
+
+
 def dashboard_states(event: dict[str, object]) -> DashboardStates:
     """Build the semantic HA states used by the technical cockpit."""
 
@@ -85,6 +98,38 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
         "window_ends_at": event.get("window_ends_at"),
         "planner_evaluated_at": event.get("evaluated_at"),
     }
+    operating_mode_attributes = _text_attributes(
+        "PicoT huidige modus",
+        "mdi:battery-sync",
+        event,
+    )
+    desired_mode_attributes = _text_attributes(
+        "PicoT gewenste modus",
+        "mdi:target",
+        event,
+    )
+    dispatch_attributes = _text_attributes(
+        "PicoT dispatchstatus",
+        "mdi:call-made",
+        event,
+    )
+    dispatch_attributes["reason"] = event.get("reason")
+    window_attributes = _text_attributes(
+        "PicoT actief prijsvenster",
+        "mdi:timeline-clock",
+        event,
+    )
+    window_attributes.update(
+        {
+            "starts_at": event.get("window_starts_at"),
+            "ends_at": event.get("window_ends_at"),
+            "average_price_eur_per_kwh": event.get("average_price_eur_per_kwh"),
+        }
+    )
+
+    window_state = "inactive"
+    if event.get("reason") == "The selected cheapest contiguous price window is active.":
+        window_state = "active"
 
     return {
         "sensor.picot_hems_status": {
@@ -106,6 +151,22 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
         "sensor.picot_current_price": {
             "state": event.get("current_price_eur_per_kwh", "unknown"),
             "attributes": price_attributes,
+        },
+        "sensor.picot_operating_mode": {
+            "state": event.get("current_option", "unknown"),
+            "attributes": operating_mode_attributes,
+        },
+        "sensor.picot_desired_mode": {
+            "state": event.get("desired_option", "unknown"),
+            "attributes": desired_mode_attributes,
+        },
+        "sensor.picot_dispatch_status": {
+            "state": event.get("dispatch_status", "unknown"),
+            "attributes": dispatch_attributes,
+        },
+        "sensor.picot_active_price_window": {
+            "state": window_state,
+            "attributes": window_attributes,
         },
     }
 

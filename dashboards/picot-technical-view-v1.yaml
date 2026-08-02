@@ -1,0 +1,185 @@
+title: PicoT
+path: picot
+icon: mdi:home-lightning-bolt
+type: sections
+max_columns: 3
+sections:
+  - type: grid
+    cards:
+      - type: heading
+        heading: Externe wereld
+        icon: mdi:earth
+      - type: entities
+        title: Markt en bronnen
+        state_color: true
+        entities:
+          - entity: sensor.picot_current_price
+            name: Actuele elektriciteitsprijs
+          - type: attribute
+            entity: sensor.picot_current_price
+            attribute: selected_window_average
+            name: Gemiddelde gekozen venster
+          - type: attribute
+            entity: sensor.picot_current_price
+            attribute: planner_evaluated_at
+            name: Laatste prijsbeoordeling
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: p1_status
+            name: Shelly/P1-bron
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: p1_entity
+            name: Actieve meetbron
+
+  - type: grid
+    cards:
+      - type: heading
+        heading: PicoT-brein
+        icon: mdi:brain
+      - type: entities
+        title: Planning en beslissing
+        state_color: true
+        entities:
+          - entity: sensor.picot_hems_status
+            name: PicoT-modus
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: strategy
+            name: Actieve strategie
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: current_option
+            name: Huidige Zendure-modus
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: desired_option
+            name: Gewenste Zendure-modus
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: reason
+            name: Reden
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: dispatch_status
+            name: Laatste dispatch
+      - type: entities
+        title: Geselecteerd prijsvenster
+        entities:
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: window_starts_at
+            name: Start
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: window_ends_at
+            name: Einde
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: last_planner_run
+            name: Laatste plannerrun
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: planner_interval_seconds
+            name: Plannerinterval
+
+  - type: grid
+    cards:
+      - type: heading
+        heading: Woning en net
+        icon: mdi:home-lightning-bolt-outline
+      - type: gauge
+        entity: sensor.picot_grid_power
+        name: Netto netvermogen
+        min: -5000
+        max: 5000
+        needle: true
+      - type: entities
+        title: Actuele energiestroom
+        state_color: true
+        entities:
+          - entity: sensor.picot_grid_power
+            name: Netto netvermogen
+          - entity: sensor.picot_grid_import
+            name: Netimport
+          - entity: sensor.picot_grid_export
+            name: Netexport
+          - type: attribute
+            entity: sensor.picot_grid_power
+            attribute: direction
+            name: Richting
+          - type: attribute
+            entity: sensor.picot_grid_power
+            attribute: measured_at
+            name: Brontijdstip
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: last_telemetry_update
+            name: Laatste dashboardupdate
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: telemetry_interval_seconds
+            name: Telemetrie-interval
+      - type: history-graph
+        title: Netvermogen laatste 2 uur
+        hours_to_show: 2
+        entities:
+          - entity: sensor.picot_grid_import
+            name: Import
+          - entity: sensor.picot_grid_export
+            name: Export
+
+  - type: grid
+    cards:
+      - type: heading
+        heading: Omgeving
+        icon: mdi:weather-partly-cloudy
+      - type: markdown
+        content: >-
+          **Voorbereid voor de Energy Scene**
+
+          Zonpositie, bewolking, regen, dag/nacht en PV-forecast worden in een
+          volgende fase als gestructureerde omgevingsdata toegevoegd.
+
+  - type: grid
+    cards:
+      - type: heading
+        heading: Assets
+        icon: mdi:battery-charging
+      - type: markdown
+        content: >-
+          **Voorbereid voor assets**
+
+          Batterij-SoC, batterijvermogen, PV-vermogen, huisverbruik, EV-status
+          en flexibele apparaten krijgen hier hun vaste plek.
+
+  - type: grid
+    cards:
+      - type: heading
+        heading: Runtime en lagen
+        icon: mdi:layers-triple
+      - type: entities
+        title: Bronnen en runtime
+        entities:
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: p1_status
+            name: P1-status
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: p1_error
+            name: Laatste P1-fout
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: planner_interval_seconds
+            name: Planner-cyclus
+          - type: attribute
+            entity: sensor.picot_hems_status
+            attribute: telemetry_interval_seconds
+            name: Telemetrie-cyclus
+      - type: markdown
+        content: >-
+          **Volgende lagen**
+
+          Runtime Monitor, Material Change Detection, Safety Layer en User Rules
+          worden hier zichtbaar zodra zij aan de live runtime zijn gekoppeld.

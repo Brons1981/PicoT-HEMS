@@ -61,6 +61,42 @@ def test_uses_bidirectional_mode_inside_selected_window() -> None:
     assert decision.next_evaluation_at == BASE + timedelta(hours=4)
 
 
+def test_active_window_does_not_shift_when_earlier_point_has_ended() -> None:
+    forecast = _forecast((0.30, 0.20, 0.10, 0.11, 0.12, 0.13, 0.25))
+    strategy = PriceDrivenStrategy()
+    config = PriceDrivenStrategyConfig(window_points=4)
+
+    first = strategy.evaluate(
+        config,
+        forecast,
+        evaluated_at=BASE + timedelta(hours=2, minutes=15),
+    )
+    second = strategy.evaluate(
+        config,
+        forecast,
+        evaluated_at=BASE + timedelta(hours=3, minutes=15),
+    )
+
+    assert first.window_starts_at == BASE + timedelta(hours=2)
+    assert first.window_ends_at == BASE + timedelta(hours=6)
+    assert second.window_starts_at == first.window_starts_at
+    assert second.window_ends_at == first.window_ends_at
+    assert second.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+
+
+def test_returns_discharge_only_after_selected_window_ends() -> None:
+    decision = PriceDrivenStrategy().evaluate(
+        PriceDrivenStrategyConfig(window_points=2),
+        _forecast((0.30, 0.20, 0.10, 0.11, 0.25, 0.30)),
+        evaluated_at=BASE + timedelta(hours=4, minutes=15),
+    )
+
+    assert decision.window_starts_at == BASE + timedelta(hours=2)
+    assert decision.window_ends_at == BASE + timedelta(hours=4)
+    assert decision.primitive is ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+    assert decision.reason == "The selected cheapest contiguous price window has ended."
+
+
 def test_equal_average_uses_earliest_window() -> None:
     decision = PriceDrivenStrategy().evaluate(
         PriceDrivenStrategyConfig(window_points=2),

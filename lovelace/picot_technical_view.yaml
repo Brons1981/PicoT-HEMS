@@ -1,106 +1,37 @@
-title: PicoT Technical View
+title: PicoT Cockpit v0.1
 views:
   - title: PicoT
     path: picot
     icon: mdi:home-lightning-bolt
     type: sections
-    max_columns: 3
+    max_columns: 4
     sections:
       - type: grid
-        title: Externe wereld
-        cards:
-          - type: entities
-            title: Prijs en bron
-            show_header_toggle: false
-            entities:
-              - entity: sensor.picot_current_price
-                name: Actuele prijs
-              - type: attribute
-                entity: sensor.picot_current_price
-                attribute: selected_window_average
-                name: Gemiddelde gekozen venster
-              - type: attribute
-                entity: sensor.picot_current_price
-                attribute: window_starts_at
-                name: Venster start
-              - type: attribute
-                entity: sensor.picot_current_price
-                attribute: window_ends_at
-                name: Venster einde
-              - type: attribute
-                entity: sensor.picot_hems_status
-                attribute: p1_status
-                name: P1-status
-
-      - type: grid
-        title: PicoT-brein
-        cards:
-          - type: entities
-            title: Actuele beslissing
-            show_header_toggle: false
-            entities:
-              - entity: sensor.picot_hems_status
-                name: PicoT-status
-              - entity: sensor.picot_operating_mode
-                name: Huidige modus
-              - entity: sensor.picot_desired_mode
-                name: Gewenste modus
-              - entity: sensor.picot_dispatch_status
-                name: Laatste dispatch
-              - entity: sensor.picot_active_price_window
-                name: Prijsvenster actief
-              - type: attribute
-                entity: sensor.picot_hems_status
-                attribute: strategy
-                name: Strategie
-              - type: attribute
-                entity: sensor.picot_hems_status
-                attribute: reason
-                name: Reden
-              - type: attribute
-                entity: sensor.picot_hems_status
-                attribute: last_planner_run
-                name: Laatste planner-run
-
-      - type: grid
-        title: Woning en net
+        title: Live energie
+        column_span: 4
         cards:
           - type: glance
-            title: Live energiestroom
+            title: Actuele vermogens
             columns: 4
+            show_name: true
+            show_state: true
             entities:
+              - entity: sensor.picot_grid_power
+                name: Net
+                icon: mdi:transmission-tower
+              - entity: sensor.picot_goodwe_power
+                name: PV
+                icon: mdi:solar-power
+              - entity: sensor.picot_zendure_power
+                name: Batterij
+                icon: mdi:battery-charging-medium
               - entity: sensor.picot_house_power
                 name: Huis
-              - entity: sensor.picot_grid_power
-                name: Netto
-              - entity: sensor.picot_grid_import
-                name: Import
-              - entity: sensor.picot_grid_export
-                name: Export
-          - type: entities
-            title: Telemetrie
-            show_header_toggle: false
-            entities:
-              - type: attribute
-                entity: sensor.picot_grid_power
-                attribute: direction
-                name: Richting
-              - type: attribute
-                entity: sensor.picot_grid_power
-                attribute: source_entity
-                name: Bron
-              - type: attribute
-                entity: sensor.picot_grid_power
-                attribute: measured_at
-                name: Gemeten om
-              - type: attribute
-                entity: sensor.picot_grid_power
-                attribute: telemetry_updated_at
-                name: Dashboard bijgewerkt
+                icon: mdi:home-lightning-bolt
 
       - type: grid
         title: Power Comparison
-        column_span: 3
+        column_span: 4
         cards:
           - type: custom:apexcharts-card
             header:
@@ -123,7 +54,7 @@ views:
                     text: Vermogen (W)
             apex_config:
               chart:
-                height: 420
+                height: 430
                 toolbar:
                   show: true
                 zoom:
@@ -155,7 +86,7 @@ views:
                 color: "#4caf50"
                 curve: smooth
                 stroke_width: 2
-                opacity: 0.28
+                opacity: 0.24
                 extend_to: false
                 group_by:
                   func: avg
@@ -166,7 +97,7 @@ views:
                 color: "#f5f5f5"
                 curve: smooth
                 stroke_width: 2
-                opacity: 0.32
+                opacity: 0.30
                 extend_to: false
                 group_by:
                   func: avg
@@ -191,100 +122,165 @@ views:
                 group_by:
                   func: avg
                   duration: 1min
-          - type: entities
-            title: Actuele vermogensstatus
-            show_header_toggle: false
-            entities:
-              - entity: sensor.picot_zendure_power
-                name: Zendure batterijvermogen
-              - entity: sensor.picot_zendure_soc
-                name: Zendure SoC
-              - entity: sensor.picot_zendure_actual_mode
-                name: Werkelijke batterijmodus
-              - entity: sensor.picot_grid_power
-                name: P1 netvermogen
-              - entity: sensor.picot_goodwe_power
-                name: GoodWe PV-vermogen
-              - entity: sensor.picot_house_power
-                name: Huisverbruik
 
       - type: grid
-        title: Historie vandaag
-        column_span: 3
+        title: Batterij
+        column_span: 2
         cards:
-          - type: history-graph
-            title: Netvermogen, import en export
-            hours_to_show: 24
+          - type: entities
+            title: Zendure
+            show_header_toggle: false
             entities:
-              - entity: sensor.picot_grid_power
-                name: Netto
-              - entity: sensor.picot_grid_import
-                name: Import
-              - entity: sensor.picot_grid_export
-                name: Export
-          - type: history-graph
-            title: Elektriciteitsprijs
-            hours_to_show: 24
+              - entity: sensor.picot_zendure_status
+                name: Status
+              - entity: sensor.picot_zendure_soc
+                name: Laadpercentage
+              - entity: sensor.picot_zendure_power
+                name: Batterijvermogen
+              - entity: sensor.picot_zendure_actual_mode
+                name: Werkelijke modus
+              - entity: sensor.picot_zendure_requested_mode
+                name: Aangevraagde modus
+              - entity: sensor.picot_zendure_soc_limit
+                name: SoC-limiet
+              - entity: sensor.picot_zendure_error
+                name: Foutstatus
+
+      - type: grid
+        title: Prijs en planner
+        column_span: 2
+        cards:
+          - type: entities
+            title: Actuele beslissing
+            show_header_toggle: false
             entities:
               - entity: sensor.picot_current_price
                 name: Actuele prijs
-          - type: history-graph
-            title: PicoT-modus en prijsvenster
-            hours_to_show: 24
-            entities:
+              - entity: sensor.picot_active_price_window
+                name: Prijsvenster actief
               - entity: sensor.picot_operating_mode
                 name: Huidige modus
               - entity: sensor.picot_desired_mode
                 name: Gewenste modus
-              - entity: sensor.picot_active_price_window
-                name: Prijsvenster actief
+              - entity: sensor.picot_dispatch_status
+                name: Laatste dispatch
+              - type: attribute
+                entity: sensor.picot_current_price
+                attribute: selected_window_average
+                name: Gemiddelde prijs venster
+              - type: attribute
+                entity: sensor.picot_current_price
+                attribute: window_starts_at
+                name: Venster start
+              - type: attribute
+                entity: sensor.picot_current_price
+                attribute: window_ends_at
+                name: Venster einde
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: reason
+                name: Reden
 
       - type: grid
-        title: Runtime en lagen
-        column_span: 3
+        title: Zon en forecast
+        column_span: 4
         cards:
+          - type: custom:apexcharts-card
+            header:
+              show: true
+              title: Solcast versus GoodWe
+              show_states: true
+              colorize_states: true
+            graph_span: 24h
+            span:
+              start: day
+            now:
+              show: true
+              label: Nu
+            yaxis:
+              - min: 0
+                decimals: 0
+                apex_config:
+                  title:
+                    text: Vermogen (W)
+            apex_config:
+              chart:
+                height: 320
+              stroke:
+                width: 3
+              legend:
+                show: true
+              tooltip:
+                shared: true
+                intersect: false
+            series:
+              - entity: sensor.picot_solcast_expected_power
+                name: Solcast verwacht
+                type: line
+                curve: smooth
+                stroke_width: 3
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 5min
+              - entity: sensor.picot_goodwe_power
+                name: GoodWe werkelijk
+                type: line
+                curve: smooth
+                stroke_width: 2
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 5min
           - type: entities
-            title: Runtime
-            show_header_toggle: false
-            entities:
-              - type: attribute
-                entity: sensor.picot_hems_status
-                attribute: planner_interval_seconds
-                name: Planner-interval
-              - type: attribute
-                entity: sensor.picot_hems_status
-                attribute: telemetry_interval_seconds
-                name: Telemetrie-interval
-              - type: attribute
-                entity: sensor.picot_hems_status
-                attribute: last_telemetry_update
-                name: Laatste telemetrie-update
-              - type: attribute
-                entity: sensor.picot_hems_status
-                attribute: p1_error
-                name: Laatste P1-fout
-          - type: entities
-            title: Gekoppelde cockpitlagen
+            title: PV-validatie
             show_header_toggle: false
             entities:
               - entity: sensor.picot_solcast_status
-                name: PV-forecast (Solcast)
+                name: Solcast status
               - entity: sensor.picot_goodwe_status
-                name: PV-opwek (GoodWe)
+                name: GoodWe status
+              - entity: sensor.picot_solcast_today
+                name: Forecast vandaag
+              - entity: sensor.picot_goodwe_generation_today
+                name: Werkelijk vandaag
+              - entity: sensor.picot_solcast_remaining_today
+                name: Resterende forecast
+              - entity: sensor.picot_solcast_confidence
+                name: Confidence
+
+      - type: grid
+        title: Bronstatus en runtime
+        column_span: 4
+        cards:
+          - type: entities
+            title: Databronnen
+            show_header_toggle: false
+            entities:
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: p1_status
+                name: P1-status
+              - entity: sensor.picot_solcast_status
+                name: Solcast
+              - entity: sensor.picot_goodwe_status
+                name: GoodWe
               - entity: sensor.picot_zendure_status
-                name: Batterij (Zendure)
-              - entity: sensor.picot_zendure_soc
-                name: Batterij-SoC
-              - entity: sensor.picot_zendure_power
-                name: Batterijvermogen
-              - entity: sensor.picot_grid_power
-                name: P1-netmeting
+                name: Zendure
+              - type: attribute
+                entity: sensor.picot_grid_power
+                attribute: telemetry_updated_at
+                name: Laatste telemetrie
+              - type: attribute
+                entity: sensor.picot_hems_status
+                attribute: last_planner_run
+                name: Laatste planner-run
           - type: markdown
             content: |
-              ## Nog voorbereid
-
-              - Omgeving en weer: nog niet gekoppeld
-              - EV-status en planning: nog niet gekoppeld
-              - Safety Layer en User Rules: volgen later
+              ## Cockpit v0.1
 
               **Nu actief:** prijs, P1, Solcast, GoodWe, Zendure en afgeleid huisvermogen.
+
+              **Nog voorbereid:** omgeving en weer, EV-status en planning, Safety Layer en User Rules.
+
+              Positief P1-vermogen betekent import; negatief betekent export. Positief Zendure-vermogen betekent laden; negatief betekent ontladen.

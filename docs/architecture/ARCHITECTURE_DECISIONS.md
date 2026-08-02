@@ -140,3 +140,8 @@ Detailed record: [`ADR-032-candidate-evaluation-contract.md`](ADR-032-candidate-
 A successful Evaluation Result is converted deterministically into an atomic set of immutable, scope-specific Execution Plans without changing the Winning Energy Path.
 
 Detailed record: [`ADR-033-winning-energy-path-to-execution-plans.md`](ADR-033-winning-energy-path-to-execution-plans.md)
+
+### ADR-034 — Runtime Monitor, Material Change and Replanning Contract
+The Runtime Monitor classifies immutable observations, preserves one-active-Planner-Run discipline, enforces the five-second stabilisation interval and requests every replan from a fresh atomic snapshot.
+
+Detailed record: [`ADR-034-runtime-monitor-material-change-replanning-contract.md`](ADR-034-runtime-monitor-material-change-replanning-contract.md)

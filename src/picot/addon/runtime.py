@@ -18,6 +18,10 @@ from picot.adapters.home_assistant_household_state import (
 )
 from picot.adapters.home_assistant_http import HomeAssistantHttpTransport
 from picot.addon.dashboard import publish_dashboard_states
+from picot.addon.solcast_observer import (
+    read_solcast_observation,
+    unavailable_solcast_observation,
+)
 from picot.domain.execution import ExecutionPrimitiveRequest
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.forecast import ForecastKind, ForecastPoint, ForecastSeries
@@ -200,6 +204,19 @@ def _grid_fields(
     }
 
 
+def _solcast_fields(token: str, *, observed_at: datetime) -> dict[str, object]:
+    """Read Solcast independently so a source failure cannot stop PicoT."""
+
+    try:
+        return read_solcast_observation(
+            _request_json,
+            token,
+            observed_at=observed_at,
+        )
+    except Exception as exc:
+        return unavailable_solcast_observation(exc, observed_at=observed_at)
+
+
 def _scheduled_boundary(
     planner_event: dict[str, object],
     *,
@@ -334,14 +351,36 @@ def run_telemetry_once(
     token: str,
     planner_event: dict[str, object],
 ) -> dict[str, object]:
-    """Refresh live measurements without re-running or changing the plan."""
+    """Refresh read-only observations without re-running or changing the plan."""
 
+    observed_at = datetime.now(LOCAL_TIMEZONE)
     event = dict(planner_event)
     event.update(_grid_fields(options, token))
-    event["telemetry_updated_at"] = datetime.now(LOCAL_TIMEZONE).isoformat()
+    event.update(_solcast_fields(token, observed_at=observed_at))
+    event["telemetry_updated_at"] = observed_at.isoformat()
     event["telemetry_interval_seconds"] = int(options["telemetry_interval_seconds"])
     publish_dashboard_states(event, token)
     return event
+
+
+def _solcast_log_event(event: dict[str, object]) -> dict[str, object]:
+    """Return a compact dedicated log event for Solcast observation."""
+
+    return {
+        "event": "picot_solcast_snapshot",
+        "status": event.get("solcast_status"),
+        "error": event.get("solcast_error"),
+        "forecast_today_kwh": event.get("solcast_forecast_today_kwh"),
+        "forecast_tomorrow_kwh": event.get("solcast_forecast_tomorrow_kwh"),
+        "remaining_today_kwh": event.get("solcast_remaining_today_kwh"),
+        "expected_power_w": event.get("solcast_current_expected_power_w"),
+        "today_confidence": event.get("solcast_today_confidence"),
+        "tomorrow_confidence": event.get("solcast_tomorrow_confidence"),
+        "api_used": event.get("solcast_api_used"),
+        "api_limit": event.get("solcast_api_limit"),
+        "observed_at": event.get("solcast_observed_at"),
+        "last_api_update": event.get("solcast_last_api_update"),
+    }
 
 
 def _log_event(event: dict[str, object]) -> None:
@@ -411,7 +450,8 @@ def main() -> int:
 
         if planner_event is not None and monotonic_now >= next_telemetry_run:
             try:
-                run_telemetry_once(options, token, planner_event)
+                telemetry_event = run_telemetry_once(options, token, planner_event)
+                _log_event(_solcast_log_event(telemetry_event))
             except Exception as exc:
                 _log_runtime_error("telemetry", exc)
             next_telemetry_run = monotonic_now + telemetry_interval

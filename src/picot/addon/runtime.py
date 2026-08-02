@@ -16,6 +16,7 @@ from picot.adapters.home_assistant_household_state import (
     household_state_from_grid_power_entity,
 )
 from picot.adapters.home_assistant_http import HomeAssistantHttpTransport
+from picot.addon.dashboard import publish_dashboard_states
 from picot.domain.execution import ExecutionPrimitiveRequest
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.forecast import ForecastKind, ForecastPoint, ForecastSeries
@@ -236,6 +237,7 @@ def run_once(options: dict[str, Any], token: str) -> None:
         "dispatch_status": dispatch_status,
     }
     event.update(_grid_fields(options, token))
+    publish_dashboard_states(event, token)
     print(json.dumps(event, separators=(",", ":")), flush=True)
 
 

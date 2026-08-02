@@ -45,6 +45,23 @@ def _text_attributes(
     }
 
 
+def _solcast_energy_attributes(
+    friendly_name: str,
+    event: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "friendly_name": friendly_name,
+        "device_class": "energy",
+        "state_class": "measurement",
+        "unit_of_measurement": "kWh",
+        "icon": "mdi:solar-power",
+        "source": event.get("solcast_source"),
+        "source_status": event.get("solcast_status"),
+        "observed_at": event.get("solcast_observed_at"),
+        "last_api_update": event.get("solcast_last_api_update"),
+    }
+
+
 def dashboard_states(event: dict[str, object]) -> DashboardStates:
     """Build the semantic HA states used by the technical cockpit."""
 
@@ -66,6 +83,8 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
         "p1_entity": event.get("p1_entity"),
         "p1_error": event.get("p1_error"),
         "grid_direction": event.get("grid_direction"),
+        "solcast_status": event.get("solcast_status"),
+        "solcast_error": event.get("solcast_error"),
     }
     grid_attributes = _power_attributes(
         "PicoT netvermogen",
@@ -131,6 +150,68 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
     if event.get("reason") == "The selected cheapest contiguous price window is active.":
         window_state = "active"
 
+    solcast_status_attributes: dict[str, object] = {
+        "friendly_name": "PicoT Solcast status",
+        "icon": "mdi:weather-sunny-alert",
+        "source": event.get("solcast_source"),
+        "error": event.get("solcast_error"),
+        "observed_at": event.get("solcast_observed_at"),
+        "last_api_update": event.get("solcast_last_api_update"),
+        "api_used": event.get("solcast_api_used"),
+        "api_limit": event.get("solcast_api_limit"),
+        "forecast_point_count": event.get("solcast_forecast_point_count"),
+    }
+    solcast_today_attributes = _solcast_energy_attributes(
+        "PicoT Solcast vandaag",
+        event,
+    )
+    solcast_today_attributes.update(
+        {
+            "estimate10_kwh": event.get("solcast_today_estimate10_kwh"),
+            "estimate90_kwh": event.get("solcast_today_estimate90_kwh"),
+            "confidence": event.get("solcast_today_confidence"),
+        }
+    )
+    solcast_tomorrow_attributes = _solcast_energy_attributes(
+        "PicoT Solcast morgen",
+        event,
+    )
+    solcast_tomorrow_attributes.update(
+        {
+            "estimate10_kwh": event.get("solcast_tomorrow_estimate10_kwh"),
+            "estimate90_kwh": event.get("solcast_tomorrow_estimate90_kwh"),
+            "confidence": event.get("solcast_tomorrow_confidence"),
+        }
+    )
+    solcast_remaining_attributes = _solcast_energy_attributes(
+        "PicoT Solcast resterend vandaag",
+        event,
+    )
+    solcast_power_attributes: dict[str, object] = {
+        "friendly_name": "PicoT Solcast verwacht vermogen",
+        "device_class": "power",
+        "state_class": "measurement",
+        "unit_of_measurement": "W",
+        "icon": "mdi:solar-power-variant",
+        "source": event.get("solcast_source"),
+        "source_status": event.get("solcast_status"),
+        "observed_at": event.get("solcast_observed_at"),
+        "last_api_update": event.get("solcast_last_api_update"),
+    }
+    solcast_confidence_attributes: dict[str, object] = {
+        "friendly_name": "PicoT Solcast confidence",
+        "state_class": "measurement",
+        "unit_of_measurement": "%",
+        "icon": "mdi:chart-bell-curve-cumulative",
+        "tomorrow_confidence": event.get("solcast_tomorrow_confidence"),
+        "source_status": event.get("solcast_status"),
+        "observed_at": event.get("solcast_observed_at"),
+    }
+    today_confidence = event.get("solcast_today_confidence")
+    confidence_percent: object = "unknown"
+    if isinstance(today_confidence, (int, float)) and not isinstance(today_confidence, bool):
+        confidence_percent = round(float(today_confidence) * 100.0, 1)
+
     return {
         "sensor.picot_hems_status": {
             "state": event.get("mode", "unknown"),
@@ -167,6 +248,39 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
         "sensor.picot_active_price_window": {
             "state": window_state,
             "attributes": window_attributes,
+        },
+        "sensor.picot_solcast_status": {
+            "state": event.get("solcast_status", "unknown"),
+            "attributes": solcast_status_attributes,
+        },
+        "sensor.picot_solcast_today": {
+            "state": event.get("solcast_forecast_today_kwh", "unknown"),
+            "attributes": solcast_today_attributes,
+        },
+        "sensor.picot_solcast_tomorrow": {
+            "state": event.get("solcast_forecast_tomorrow_kwh", "unknown"),
+            "attributes": solcast_tomorrow_attributes,
+        },
+        "sensor.picot_solcast_remaining_today": {
+            "state": event.get("solcast_remaining_today_kwh", "unknown"),
+            "attributes": solcast_remaining_attributes,
+        },
+        "sensor.picot_solcast_expected_power": {
+            "state": event.get("solcast_current_expected_power_w", "unknown"),
+            "attributes": solcast_power_attributes,
+        },
+        "sensor.picot_solcast_confidence": {
+            "state": confidence_percent,
+            "attributes": solcast_confidence_attributes,
+        },
+        "sensor.picot_solcast_last_update": {
+            "state": event.get("solcast_last_api_update", "unknown"),
+            "attributes": {
+                "friendly_name": "PicoT Solcast laatste update",
+                "device_class": "timestamp",
+                "icon": "mdi:update",
+                "source_status": event.get("solcast_status"),
+            },
         },
     }
 

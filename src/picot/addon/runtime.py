@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -27,6 +28,16 @@ SUPERVISOR_BASE_URL = "http://supervisor/core"
 OPTIONS_PATH = Path("/data/options.json")
 LOCAL_TIMEZONE = ZoneInfo("Europe/Amsterdam")
 SCHEDULER_TICK_SECONDS = 0.25
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledBoundary:
+    """One exact start or end transition derived from the active price window."""
+
+    occurs_at: datetime
+    transition: str
+    primitive: ExecutionPrimitive
+    desired_option: str
 
 
 def _request_json(path: str, token: str) -> dict[str, Any]:
@@ -189,6 +200,81 @@ def _grid_fields(
     }
 
 
+def _scheduled_boundary(
+    planner_event: dict[str, object],
+    *,
+    now: datetime,
+) -> ScheduledBoundary | None:
+    """Return the next future transition for the selected price window."""
+
+    raw_start = planner_event.get("window_starts_at")
+    raw_end = planner_event.get("window_ends_at")
+    if not isinstance(raw_start, str) or not isinstance(raw_end, str):
+        return None
+
+    starts_at = _parse_datetime(raw_start)
+    ends_at = _parse_datetime(raw_end)
+    if now < starts_at:
+        primitive = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+        return ScheduledBoundary(
+            occurs_at=starts_at,
+            transition="window_start",
+            primitive=primitive,
+            desired_option=_desired_option(primitive),
+        )
+    if now < ends_at:
+        primitive = ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+        return ScheduledBoundary(
+            occurs_at=ends_at,
+            transition="window_end",
+            primitive=primitive,
+            desired_option=_desired_option(primitive),
+        )
+    return None
+
+
+def run_scheduled_boundary_once(
+    options: dict[str, Any],
+    token: str,
+    planner_event: dict[str, object],
+    boundary: ScheduledBoundary,
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Execute one planned transition without re-running the price planner."""
+
+    executed_at = now or datetime.now(LOCAL_TIMEZONE)
+    target_entity = str(options["target_entity"])
+    mode = HomeAssistantDispatchMode(str(options["mode"]))
+    target_state = _request_json(f"/api/states/{target_entity}", token)
+    current_option = str(target_state.get("state", "unknown"))
+    dispatch_status = "skipped_already_active"
+    if current_option != boundary.desired_option:
+        dispatch_status = _dispatch(
+            primitive=boundary.primitive,
+            desired_option=boundary.desired_option,
+            target_entity=target_entity,
+            mode=mode,
+            token=token,
+            now=executed_at,
+        )
+
+    event = dict(planner_event)
+    event.update(
+        {
+            "event": "picot_scheduled_transition",
+            "transition": boundary.transition,
+            "scheduled_for": boundary.occurs_at.isoformat(),
+            "executed_at": executed_at.isoformat(),
+            "current_option": current_option,
+            "desired_option": boundary.desired_option,
+            "reason": "The scheduled price-window boundary was reached.",
+            "dispatch_status": dispatch_status,
+        }
+    )
+    return event
+
+
 def run_planner_once(options: dict[str, Any], token: str) -> dict[str, object]:
     """Run the price planner and return a stable decision snapshot."""
 
@@ -286,15 +372,39 @@ def main() -> int:
     next_planner_run = 0.0
     next_telemetry_run = 0.0
     planner_event: dict[str, object] | None = None
+    scheduled_boundary: ScheduledBoundary | None = None
 
     print("PicoT HEMS add-on starting", flush=True)
     while True:
         monotonic_now = time.monotonic()
+        wall_clock_now = datetime.now(LOCAL_TIMEZONE)
+
+        if scheduled_boundary is not None and wall_clock_now >= scheduled_boundary.occurs_at:
+            try:
+                assert planner_event is not None
+                planner_event = run_scheduled_boundary_once(
+                    options,
+                    token,
+                    planner_event,
+                    scheduled_boundary,
+                    now=wall_clock_now,
+                )
+                _log_event(planner_event)
+                scheduled_boundary = _scheduled_boundary(
+                    planner_event,
+                    now=wall_clock_now,
+                )
+            except Exception as exc:
+                _log_runtime_error("scheduled_transition", exc)
 
         if monotonic_now >= next_planner_run:
             try:
                 planner_event = run_planner_once(options, token)
                 _log_event(planner_event)
+                scheduled_boundary = _scheduled_boundary(
+                    planner_event,
+                    now=wall_clock_now,
+                )
             except Exception as exc:
                 _log_runtime_error("planner", exc)
             next_planner_run = monotonic_now + planner_interval

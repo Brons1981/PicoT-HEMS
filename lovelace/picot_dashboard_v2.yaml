@@ -28,6 +28,116 @@ views:
                 name: Dispatch
 
       - type: grid
+        title: Vermogensvergelijking
+        column_span: 4
+        cards:
+          - type: custom:apexcharts-card
+            header:
+              show: true
+              title: Power Comparison
+              show_states: true
+              colorize_states: true
+            graph_span: 24h
+            span:
+              start: day
+            now:
+              show: true
+              label: Nu
+            update_interval: 5sec
+            yaxis:
+              - id: power
+                decimals: 0
+                apex_config:
+                  title:
+                    text: Vermogen (W)
+            apex_config:
+              chart:
+                height: 420
+                toolbar:
+                  show: true
+                zoom:
+                  enabled: true
+              dataLabels:
+                enabled: false
+              stroke:
+                curve: smooth
+              grid:
+                strokeDashArray: 4
+              fill:
+                type: solid
+              legend:
+                show: true
+              tooltip:
+                shared: true
+                intersect: false
+              annotations:
+                yaxis:
+                  - y: 0
+                    borderWidth: 2
+                    strokeDashArray: 0
+                    label:
+                      show: false
+            series:
+              - entity: sensor.picot_zendure_power
+                name: Zendure batterijvermogen
+                type: area
+                color: "#4caf50"
+                curve: smooth
+                stroke_width: 2
+                opacity: 0.28
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 1min
+              - entity: sensor.picot_grid_power
+                name: P1 netvermogen
+                type: area
+                color: "#f5f5f5"
+                curve: smooth
+                stroke_width: 2
+                opacity: 0.32
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 1min
+              - entity: sensor.picot_goodwe_power
+                name: GoodWe PV-vermogen
+                type: line
+                color: "#ffb300"
+                curve: smooth
+                stroke_width: 2
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 1min
+              - entity: sensor.picot_house_power
+                name: Huisverbruik (afgeleid)
+                type: line
+                color: "#1e88e5"
+                curve: smooth
+                stroke_width: 2
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 1min
+          - type: entities
+            title: Batterij en vermogensstatus
+            show_header_toggle: false
+            entities:
+              - entity: sensor.picot_zendure_status
+                name: Zendure status
+              - entity: sensor.picot_zendure_soc
+                name: Laadpercentage
+              - entity: sensor.picot_zendure_actual_mode
+                name: Werkelijke modus
+              - entity: sensor.picot_zendure_requested_mode
+                name: Aangevraagde modus
+              - entity: sensor.picot_zendure_power
+                name: Batterijvermogen
+              - entity: sensor.picot_house_power
+                name: Huisverbruik
+
+      - type: grid
         title: Zon en werkelijkheid
         column_span: 4
         cards:
@@ -206,6 +316,8 @@ views:
                 name: Solcast
               - entity: sensor.picot_goodwe_status
                 name: GoodWe
+              - entity: sensor.picot_zendure_status
+                name: Zendure
               - type: attribute
                 entity: sensor.picot_grid_power
                 attribute: telemetry_updated_at
@@ -229,4 +341,4 @@ views:
 
               **Prijsvenster:** {{ state_attr('sensor.picot_current_price', 'window_starts_at') }} tot {{ state_attr('sensor.picot_current_price', 'window_ends_at') }}
 
-              Dit dashboard is een technische observatie- en validatielaag. Solcast en GoodWe hebben nog geen invloed op de planner.
+              Dit dashboard is een technische observatie- en validatielaag. Solcast, GoodWe en Zendure-observatie hebben nog geen invloed op de planner.

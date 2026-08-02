@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import cast
 from urllib.request import Request
 
 import pytest
@@ -70,7 +71,8 @@ def test_transport_posts_exact_home_assistant_service_call() -> None:
     assert opener.request.method == "POST"
     assert opener.request.get_header("Authorization") == "Bearer secret-token"
     assert opener.request.get_header("Content-type") == "application/json"
-    assert json.loads(opener.request.data or b"{}") == {
+    request_data = cast(bytes, opener.request.data)
+    assert json.loads(request_data) == {
         "entity_id": "input_number.zendure_2400_ac_handmatig_vermogen",
         "value": 1200.0,
     }

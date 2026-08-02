@@ -50,6 +50,7 @@ jobs:
           tests/test_home_assistant_adapter.py
           tests/test_home_assistant_http_transport.py
           tests/test_home_assistant_dry_run.py
+          tests/test_home_assistant_commissioning.py
 
       - name: Run Mypy on PicoT Core slice
         run: >-
@@ -72,6 +73,7 @@ jobs:
           tests/test_home_assistant_adapter.py
           tests/test_home_assistant_http_transport.py
           tests/test_home_assistant_dry_run.py
+          tests/test_home_assistant_commissioning.py
 
       - name: Run Pytest on PicoT Core slice
         run: >-
@@ -94,3 +96,4 @@ jobs:
           tests/test_home_assistant_adapter.py
           tests/test_home_assistant_http_transport.py
           tests/test_home_assistant_dry_run.py
+          tests/test_home_assistant_commissioning.py

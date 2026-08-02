@@ -54,8 +54,6 @@ def _price_forecast(state: dict[str, Any], *, now: datetime) -> ForecastSeries:
             continue
         starts_at = _parse_datetime(start_value)
         ends_at = _parse_datetime(end_value)
-        if ends_at <= now:
-            continue
         points.append(
             ForecastPoint(
                 starts_at=starts_at,
@@ -68,6 +66,8 @@ def _price_forecast(state: dict[str, Any], *, now: datetime) -> ForecastSeries:
     points.sort(key=lambda point: point.starts_at)
     if not points:
         raise ValueError("Price entity has no usable raw_today/raw_tomorrow forecast points.")
+    if points[-1].ends_at <= now:
+        raise ValueError("Price entity has no forecast coverage after the current time.")
     return ForecastSeries(
         forecast_id=f"ha-price-{now.isoformat()}",
         kind=ForecastKind.ENERGY_PRICE,

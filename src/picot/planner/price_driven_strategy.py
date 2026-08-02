@@ -72,9 +72,15 @@ class PriceDrivenStrategy:
                 next_evaluation_at=None,
             )
 
-        eligible = tuple(point for point in price_forecast.points if point.ends_at > evaluated_at)
+        forecast_timezone = price_forecast.points[0].starts_at.tzinfo
+        planning_date = evaluated_at.astimezone(forecast_timezone).date()
+        eligible = tuple(
+            point
+            for point in price_forecast.points
+            if point.starts_at.astimezone(forecast_timezone).date() == planning_date
+        )
         if len(eligible) < config.window_points:
-            raise ValueError("Price forecast does not contain enough future points.")
+            raise ValueError("Price forecast does not contain enough points for today.")
 
         windows = tuple(
             eligible[index : index + config.window_points]
@@ -89,7 +95,7 @@ class PriceDrivenStrategy:
             )
         )
         if not windows:
-            raise ValueError("Price forecast has no contiguous candidate window.")
+            raise ValueError("Price forecast has no contiguous candidate window for today.")
 
         selected = min(
             windows,

@@ -144,7 +144,7 @@ views:
           - type: custom:apexcharts-card
             header:
               show: true
-              title: Solcast versus GoodWe
+              title: Solcast forecast versus GoodWe
               show_states: true
               colorize_states: true
             graph_span: 24h
@@ -153,6 +153,7 @@ views:
             now:
               show: true
               label: Nu
+            update_interval: 5min
             yaxis:
               - min: 0
                 decimals: 0
@@ -166,16 +167,48 @@ views:
                 width: 3
               legend:
                 show: true
+              tooltip:
+                shared: true
+                intersect: false
             series:
-              - entity: sensor.picot_solcast_expected_power
+              - entity: sensor.picot_solcast_today
                 name: Solcast verwacht
                 type: line
                 curve: smooth
                 stroke_width: 3
                 extend_to: false
-                group_by:
-                  func: avg
-                  duration: 5min
+                data_generator: |
+                  const points = entity.attributes.detailedForecast || [];
+                  return points.map((point) => [
+                    new Date(point.period_start).getTime(),
+                    Number(point.pv_estimate) * 1000
+                  ]);
+              - entity: sensor.picot_solcast_today
+                name: Solcast conservatief (P10)
+                type: line
+                curve: smooth
+                stroke_width: 1
+                opacity: 0.45
+                extend_to: false
+                data_generator: |
+                  const points = entity.attributes.detailedForecast || [];
+                  return points.map((point) => [
+                    new Date(point.period_start).getTime(),
+                    Number(point.pv_estimate10) * 1000
+                  ]);
+              - entity: sensor.picot_solcast_today
+                name: Solcast optimistisch (P90)
+                type: line
+                curve: smooth
+                stroke_width: 1
+                opacity: 0.45
+                extend_to: false
+                data_generator: |
+                  const points = entity.attributes.detailedForecast || [];
+                  return points.map((point) => [
+                    new Date(point.period_start).getTime(),
+                    Number(point.pv_estimate90) * 1000
+                  ]);
               - entity: sensor.picot_goodwe_power
                 name: GoodWe werkelijk
                 type: line

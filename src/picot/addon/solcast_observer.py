@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from picot.adapters.home_assistant_solcast import solcast_snapshot_from_entities
+from picot.adapters.home_assistant_solcast import (
+    SolarForecastPoint,
+    solcast_snapshot_from_entities,
+)
 
 SOLCAST_ENTITY_IDS = (
     "sensor.solcast_pv_forecast_voorspelling_vandaag",
@@ -19,6 +22,17 @@ SOLCAST_ENTITY_IDS = (
 )
 
 RequestJson = Callable[[str, str], dict[str, Any]]
+
+
+def _serialize_forecast_point(point: SolarForecastPoint) -> dict[str, object]:
+    """Convert one normalized point to a Home Assistant-safe attribute value."""
+
+    return {
+        "period_start": point.starts_at.isoformat(),
+        "pv_estimate": point.estimate_kw,
+        "pv_estimate10": point.estimate10_kw,
+        "pv_estimate90": point.estimate90_kw,
+    }
 
 
 def read_solcast_observation(
@@ -34,6 +48,18 @@ def read_solcast_observation(
         states[entity_id] = request_json(f"/api/states/{entity_id}", token)
 
     snapshot = solcast_snapshot_from_entities(states, observed_at=observed_at)
+    today = snapshot.measured_at.date()
+    tomorrow = today + timedelta(days=1)
+    today_points: list[dict[str, object]] = []
+    tomorrow_points: list[dict[str, object]] = []
+
+    for point in snapshot.forecast_points:
+        local_date = point.starts_at.astimezone(snapshot.measured_at.tzinfo).date()
+        if local_date == today:
+            today_points.append(_serialize_forecast_point(point))
+        elif local_date == tomorrow:
+            tomorrow_points.append(_serialize_forecast_point(point))
+
     return {
         "solcast_status": snapshot.status,
         "solcast_source": snapshot.source,
@@ -53,6 +79,8 @@ def read_solcast_observation(
         "solcast_api_used": snapshot.api_used,
         "solcast_api_limit": snapshot.api_limit,
         "solcast_forecast_point_count": len(snapshot.forecast_points),
+        "solcast_today_forecast_points": today_points,
+        "solcast_tomorrow_forecast_points": tomorrow_points,
     }
 
 
@@ -82,4 +110,6 @@ def unavailable_solcast_observation(
         "solcast_api_used": None,
         "solcast_api_limit": None,
         "solcast_forecast_point_count": 0,
+        "solcast_today_forecast_points": [],
+        "solcast_tomorrow_forecast_points": [],
     }

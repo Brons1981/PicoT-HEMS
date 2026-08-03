@@ -77,6 +77,22 @@ def test_read_solcast_observation_normalizes_runtime_fields() -> None:
     assert observation["solcast_current_expected_power_w"] == 933.0
     assert observation["solcast_today_confidence"] == 0.84
     assert observation["solcast_forecast_point_count"] == 2
+    assert observation["solcast_today_forecast_points"] == [
+        {
+            "period_start": "2026-08-02T18:30:00+02:00",
+            "pv_estimate": 0.8,
+            "pv_estimate10": 0.6,
+            "pv_estimate90": 0.9,
+        }
+    ]
+    assert observation["solcast_tomorrow_forecast_points"] == [
+        {
+            "period_start": "2026-08-03T12:00:00+02:00",
+            "pv_estimate": 2.7,
+            "pv_estimate10": 1.9,
+            "pv_estimate90": 2.8,
+        }
+    ]
 
 
 def test_unavailable_solcast_observation_keeps_failure_isolated() -> None:
@@ -89,3 +105,5 @@ def test_unavailable_solcast_observation_keeps_failure_isolated() -> None:
     assert observation["solcast_error"] == "Solcast unavailable"
     assert observation["solcast_forecast_today_kwh"] is None
     assert observation["solcast_forecast_point_count"] == 0
+    assert observation["solcast_today_forecast_points"] == []
+    assert observation["solcast_tomorrow_forecast_points"] == []

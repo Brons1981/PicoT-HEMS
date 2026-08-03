@@ -32,6 +32,9 @@ views:
         column_span: 4
         cards:
           - type: custom:apexcharts-card
+            grid_options:
+              columns: full
+              rows: 8
             header:
               show: true
               title: Power Comparison
@@ -52,7 +55,7 @@ views:
                     text: Vermogen (W)
             apex_config:
               chart:
-                height: 420
+                height: 430
                 toolbar:
                   show: true
                 zoom:

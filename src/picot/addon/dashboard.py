@@ -170,6 +170,7 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
             "estimate10_kwh": event.get("solcast_today_estimate10_kwh"),
             "estimate90_kwh": event.get("solcast_today_estimate90_kwh"),
             "confidence": event.get("solcast_today_confidence"),
+            "detailedForecast": event.get("solcast_today_forecast_points", []),
         }
     )
     solcast_tomorrow_attributes = _solcast_energy_attributes(
@@ -181,6 +182,7 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
             "estimate10_kwh": event.get("solcast_tomorrow_estimate10_kwh"),
             "estimate90_kwh": event.get("solcast_tomorrow_estimate90_kwh"),
             "confidence": event.get("solcast_tomorrow_confidence"),
+            "detailedForecast": event.get("solcast_tomorrow_forecast_points", []),
         }
     )
     solcast_remaining_attributes = _solcast_energy_attributes(

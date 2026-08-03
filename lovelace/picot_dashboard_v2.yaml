@@ -76,15 +76,18 @@ views:
                     borderWidth: 2
                     strokeDashArray: 0
                     label:
-                      show: false
+                      show: true
+                      text: Nul
+                      position: left
             series:
               - entity: sensor.picot_zendure_power
                 name: Zendure batterijvermogen
                 type: area
+                transform: return -x;
                 color: "#4caf50"
                 curve: smooth
                 stroke_width: 2
-                opacity: 0.28
+                opacity: 0.24
                 extend_to: false
                 group_by:
                   func: avg
@@ -95,7 +98,7 @@ views:
                 color: "#f5f5f5"
                 curve: smooth
                 stroke_width: 2
-                opacity: 0.32
+                opacity: 0.3
                 extend_to: false
                 group_by:
                   func: avg
@@ -103,6 +106,7 @@ views:
               - entity: sensor.picot_goodwe_power
                 name: GoodWe PV-vermogen
                 type: line
+                transform: return -x;
                 color: "#ffb300"
                 curve: smooth
                 stroke_width: 2

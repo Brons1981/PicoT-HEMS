@@ -44,7 +44,23 @@ def test_dashboard_states_expose_runtime_price_grid_and_solcast_data() -> None:
         "solcast_tomorrow_confidence": 0.62,
         "solcast_api_used": 10,
         "solcast_api_limit": 10,
-        "solcast_forecast_point_count": 96,
+        "solcast_forecast_point_count": 2,
+        "solcast_today_forecast_points": [
+            {
+                "period_start": "2026-08-02T18:30:00+02:00",
+                "pv_estimate": 0.8,
+                "pv_estimate10": 0.6,
+                "pv_estimate90": 0.9,
+            }
+        ],
+        "solcast_tomorrow_forecast_points": [
+            {
+                "period_start": "2026-08-03T12:00:00+02:00",
+                "pv_estimate": 2.7,
+                "pv_estimate10": 1.9,
+                "pv_estimate90": 2.8,
+            }
+        ],
     }
 
     states = dashboard_states(event)
@@ -56,10 +72,7 @@ def test_dashboard_states_expose_runtime_price_grid_and_solcast_data() -> None:
     assert states["sensor.picot_current_price"]["state"] == 0.104
     assert states["sensor.picot_operating_mode"]["state"] == "Nul op de meter"
     assert states["sensor.picot_desired_mode"]["state"] == "Nul op de meter"
-    assert (
-        states["sensor.picot_dispatch_status"]["state"]
-        == "skipped_already_active"
-    )
+    assert states["sensor.picot_dispatch_status"]["state"] == "skipped_already_active"
     assert states["sensor.picot_active_price_window"]["state"] == "active"
     assert states["sensor.picot_solcast_status"]["state"] == "available"
     assert states["sensor.picot_solcast_today"]["state"] == 25.7
@@ -67,10 +80,7 @@ def test_dashboard_states_expose_runtime_price_grid_and_solcast_data() -> None:
     assert states["sensor.picot_solcast_remaining_today"]["state"] == 1.5
     assert states["sensor.picot_solcast_expected_power"]["state"] == 933.0
     assert states["sensor.picot_solcast_confidence"]["state"] == 84.0
-    assert (
-        states["sensor.picot_solcast_last_update"]["state"]
-        == "2026-08-02T10:23:59+00:00"
-    )
+    assert states["sensor.picot_solcast_last_update"]["state"] == "2026-08-02T10:23:59+00:00"
 
     status_attributes = states["sensor.picot_hems_status"]["attributes"]
     assert isinstance(status_attributes, dict)
@@ -94,6 +104,11 @@ def test_dashboard_states_expose_runtime_price_grid_and_solcast_data() -> None:
     assert today_attributes["estimate10_kwh"] == 22.3
     assert today_attributes["estimate90_kwh"] == 26.5
     assert today_attributes["confidence"] == 0.84
+    assert today_attributes["detailedForecast"] == event["solcast_today_forecast_points"]
+
+    tomorrow_attributes = states["sensor.picot_solcast_tomorrow"]["attributes"]
+    assert isinstance(tomorrow_attributes, dict)
+    assert tomorrow_attributes["detailedForecast"] == event["solcast_tomorrow_forecast_points"]
 
 
 def test_dashboard_states_keep_solcast_unavailable_explicit() -> None:
@@ -111,3 +126,7 @@ def test_dashboard_states_keep_solcast_unavailable_explicit() -> None:
     attributes = states["sensor.picot_solcast_status"]["attributes"]
     assert isinstance(attributes, dict)
     assert attributes["error"] == "Solcast unavailable"
+
+    today_attributes = states["sensor.picot_solcast_today"]["attributes"]
+    assert isinstance(today_attributes, dict)
+    assert today_attributes["detailedForecast"] == []

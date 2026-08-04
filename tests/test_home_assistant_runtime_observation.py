@@ -108,6 +108,8 @@ def test_telemetry_publishes_combined_observations(
     assert event["zendure_signed_power_w"] == -300.0
     assert event["house_power_w"] == 900.0
     assert event["house_power_status"] == "derived"
+    assert event["self_supply_power_w"] == 900.0
+    assert event["self_supply_power_status"] == "derived"
     assert published_main == [event]
     assert published_goodwe == [event]
     assert published_zendure == [event]

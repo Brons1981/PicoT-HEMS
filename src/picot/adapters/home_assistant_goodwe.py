@@ -52,16 +52,19 @@ def goodwe_snapshot_from_entities(
     if observed_at.tzinfo is None:
         raise GoodWeSnapshotError("observed_at must be timezone-aware.")
 
-    solar_power = _entity(states, "sensor.0_energie_inverter_goodwe_solar_power")
+    solar_power = _entity(states, "sensor.inverter_54200dsn211r0265_vermogen")
     generation_today = _entity(
         states,
-        "sensor.0_energie_inverter_goodwe_generation_today",
+        "sensor.inverter_54200dsn211r0265_energy_today",
     )
     generation_total = _entity(
         states,
-        "sensor.0_energie_inverter_goodwe_generation_total",
+        "sensor.inverter_54200dsn211r0265_energie",
     )
-    temperature = _entity(states, "sensor.0_energie_inverter_goodwe_temperature")
+    temperature = _entity(
+        states,
+        "sensor.inverter_54200dsn211r0265_temperatuur",
+    )
 
     return GoodWeSnapshot(
         status="available",

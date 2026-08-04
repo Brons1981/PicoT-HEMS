@@ -19,10 +19,10 @@ def _state(value: object) -> dict[str, Any]:
 
 def _goodwe_states() -> dict[str, dict[str, Any]]:
     return {
-        "sensor.0_energie_inverter_goodwe_solar_power": _state(273.0),
-        "sensor.0_energie_inverter_goodwe_generation_today": _state(26.7),
-        "sensor.0_energie_inverter_goodwe_generation_total": _state(23349.1),
-        "sensor.0_energie_inverter_goodwe_temperature": _state(35.0),
+        "sensor.inverter_54200dsn211r0265_vermogen": _state(273.0),
+        "sensor.inverter_54200dsn211r0265_energy_today": _state(26.7),
+        "sensor.inverter_54200dsn211r0265_energie": _state(23349.1),
+        "sensor.inverter_54200dsn211r0265_temperatuur": _state(35.0),
     }
 
 
@@ -43,7 +43,7 @@ def test_goodwe_snapshot_normalizes_selected_read_only_fields() -> None:
 
 def test_goodwe_snapshot_rejects_unavailable_required_entity() -> None:
     states = _goodwe_states()
-    states["sensor.0_energie_inverter_goodwe_solar_power"] = _state("unavailable")
+    states["sensor.inverter_54200dsn211r0265_vermogen"] = _state("unavailable")
 
     with pytest.raises(GoodWeSnapshotError, match="GoodWe entity is unavailable"):
         goodwe_snapshot_from_entities(states, observed_at=OBSERVED_AT)
@@ -51,7 +51,7 @@ def test_goodwe_snapshot_rejects_unavailable_required_entity() -> None:
 
 def test_goodwe_snapshot_rejects_non_numeric_value() -> None:
     states = _goodwe_states()
-    states["sensor.0_energie_inverter_goodwe_temperature"] = _state("invalid")
+    states["sensor.inverter_54200dsn211r0265_temperatuur"] = _state("invalid")
 
     with pytest.raises(GoodWeSnapshotError, match="temperature_c is not numeric"):
         goodwe_snapshot_from_entities(states, observed_at=OBSERVED_AT)

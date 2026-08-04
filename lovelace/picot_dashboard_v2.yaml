@@ -7,9 +7,10 @@ views:
     max_columns: 4
     sections:
       - type: grid
-        title: Overzicht
         column_span: 4
         cards:
+          - type: heading
+            heading: Overzicht
           - type: glance
             title: PicoT in één oogopslag
             columns: 6
@@ -26,18 +27,18 @@ views:
                 name: Modus
               - entity: sensor.picot_dispatch_status
                 name: Dispatch
-
       - type: grid
-        title: Vermogensvergelijking
         column_span: 4
         cards:
+          - type: heading
+            heading: Energiestromen
           - type: custom:apexcharts-card
             grid_options:
               columns: full
               rows: 8
             header:
               show: true
-              title: Power Comparison
+              title: Energiestromen
               show_states: true
               colorize_states: true
             graph_span: 24h
@@ -46,7 +47,7 @@ views:
             now:
               show: true
               label: Nu
-            update_interval: 5sec
+            update_interval: 1min
             yaxis:
               - id: power
                 decimals: 0
@@ -58,8 +59,14 @@ views:
                 height: 430
                 toolbar:
                   show: true
+                  autoSelected: pan
                 zoom:
                   enabled: true
+                  type: x
+                  autoScaleYaxis: true
+                  allowMouseWheelZoom: false
+                animations:
+                  enabled: false
               dataLabels:
                 enabled: false
               stroke:
@@ -70,88 +77,77 @@ views:
                 type: solid
               legend:
                 show: true
+                onItemClick:
+                  toggleDataSeries: true
+                onItemHover:
+                  highlightDataSeries: true
               tooltip:
                 shared: true
                 intersect: false
               annotations:
                 yaxis:
-                  - y: 0
-                    borderWidth: 2
-                    strokeDashArray: 0
+                  - "y": 0
+                    borderWidth: 1
+                    strokeDashArray: 2
                     label:
-                      show: true
-                      text: Nul
-                      position: left
+                      show: false
             series:
+              - entity: sensor.picot_grid_power
+                name: P1 netvermogen
+                type: area
+                color: "#9e9e9e"
+                curve: smooth
+                stroke_width: 0
+                opacity: 0.15
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 30sec
+              - entity: sensor.picot_house_power
+                name: Huisverbruik
+                type: line
+                color: "#1e88e5"
+                curve: smooth
+                stroke_width: 1.2
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 30sec
               - entity: sensor.picot_zendure_power
                 name: Zendure batterijvermogen
                 type: area
                 transform: return -x;
-                color: "#4caf50"
+                color: "#66bb6a"
                 curve: smooth
-                stroke_width: 2
-                opacity: 0.24
+                stroke_width: 1
                 extend_to: false
                 group_by:
                   func: avg
-                  duration: 1min
-              - entity: sensor.picot_grid_power
-                name: P1 netvermogen
-                type: area
-                color: "#f5f5f5"
-                curve: smooth
-                stroke_width: 2
-                opacity: 0.3
-                extend_to: false
-                group_by:
-                  func: avg
-                  duration: 1min
+                  duration: 30sec
+                opacity: 0.18
               - entity: sensor.picot_goodwe_power
                 name: GoodWe PV-vermogen
                 type: line
                 transform: return -x;
-                color: "#ffb300"
+                color: "#ffd600"
                 curve: smooth
-                stroke_width: 2
+                stroke_width: 3
                 extend_to: false
                 group_by:
                   func: avg
-                  duration: 1min
-              - entity: sensor.picot_house_power
-                name: Huisverbruik (afgeleid)
-                type: line
-                color: "#1e88e5"
-                curve: smooth
-                stroke_width: 2
-                extend_to: false
-                group_by:
-                  func: avg
-                  duration: 1min
-          - type: entities
-            title: Batterij en vermogensstatus
-            show_header_toggle: false
-            entities:
-              - entity: sensor.picot_zendure_status
-                name: Zendure status
-              - entity: sensor.picot_zendure_soc
-                name: Laadpercentage
-              - entity: sensor.picot_zendure_actual_mode
-                name: Werkelijke modus
-              - entity: sensor.picot_zendure_requested_mode
-                name: Aangevraagde modus
-              - entity: sensor.picot_zendure_power
-                name: Batterijvermogen
-              - entity: sensor.picot_house_power
-                name: Huisverbruik
-
+                  duration: 30sec
       - type: grid
-        title: Zon en werkelijkheid
         column_span: 4
         cards:
+          - type: heading
+            heading: Energiebalans
           - type: custom:apexcharts-card
+            grid_options:
+              columns: full
+              rows: 8
             header:
               show: true
-              title: Solcast forecast versus GoodWe
+              title: Energiebalans
               show_states: true
               colorize_states: true
             graph_span: 24h
@@ -160,7 +156,99 @@ views:
             now:
               show: true
               label: Nu
-            update_interval: 5min
+            update_interval: 1min
+            yaxis:
+              - id: balance
+                min: 0
+                decimals: 0
+                apex_config:
+                  title:
+                    text: Vermogen (W)
+            apex_config:
+              chart:
+                height: 430
+                toolbar:
+                  show: true
+                  autoSelected: pan
+                zoom:
+                  enabled: true
+                  type: x
+                  autoScaleYaxis: true
+                  allowMouseWheelZoom: false
+                animations:
+                  enabled: false
+              dataLabels:
+                enabled: false
+              stroke:
+                curve: smooth
+              grid:
+                strokeDashArray: 4
+              fill:
+                type: solid
+              legend:
+                show: true
+                onItemClick:
+                  toggleDataSeries: true
+                onItemHover:
+                  highlightDataSeries: true
+              tooltip:
+                shared: true
+                intersect: false
+            series:
+              - entity: sensor.picot_self_supply_power
+                name: Zelfverbruik
+                type: area
+                color: "#2e7d32"
+                curve: smooth
+                stroke_width: 2
+                opacity: 0.28
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 30sec
+              - entity: sensor.picot_grid_import
+                name: Energie uit het net
+                type: area
+                color: "#d32f2f"
+                curve: smooth
+                stroke_width: 1.5
+                opacity: 0.24
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 30sec
+              - entity: sensor.picot_grid_export
+                name: Export
+                type: area
+                color: "#8e24aa"
+                curve: smooth
+                stroke_width: 1.5
+                opacity: 0.24
+                extend_to: false
+                group_by:
+                  func: avg
+                  duration: 30sec
+      - type: grid
+        column_span: 4
+        cards:
+          - type: heading
+            heading: Zon en werkelijkheid
+          - type: custom:apexcharts-card
+            grid_options:
+              columns: full
+              rows: 8
+            header:
+              show: true
+              title: Solcast forecast versus GoodWe
+              show_states: false
+            graph_span: 19h
+            span:
+              start: day
+              offset: +4h
+            now:
+              show: true
+              label: Nu
+            update_interval: 30sec
             yaxis:
               - min: 0
                 decimals: 0
@@ -169,97 +257,79 @@ views:
                     text: Vermogen (W)
             apex_config:
               chart:
-                height: 340
+                height: 430
+                toolbar:
+                  show: true
+                  autoSelected: pan
+                zoom:
+                  enabled: true
+                  type: x
+                  autoScaleYaxis: true
+                  allowMouseWheelZoom: false
+                selection:
+                  enabled: false
+                animations:
+                  enabled: false
+              dataLabels:
+                enabled: false
               stroke:
-                width: 3
+                curve: smooth
+              grid:
+                strokeDashArray: 4
               legend:
                 show: true
+                onItemClick:
+                  toggleDataSeries: true
+                onItemHover:
+                  highlightDataSeries: true
               tooltip:
                 shared: true
                 intersect: false
             series:
               - entity: sensor.picot_solcast_today
                 name: Solcast verwacht
-                type: line
+                type: area
+                color: "#ff9800"
                 curve: smooth
-                stroke_width: 3
+                stroke_width: 2
+                opacity: 0.24
                 extend_to: false
-                data_generator: |
+                data_generator: |-
                   const points = entity.attributes.detailedForecast || [];
                   return points.map((point) => [
                     new Date(point.period_start).getTime(),
                     Number(point.pv_estimate) * 1000
                   ]);
-              - entity: sensor.picot_solcast_today
-                name: Solcast conservatief (P10)
-                type: line
-                curve: smooth
-                stroke_width: 1
-                opacity: 0.45
-                extend_to: false
-                data_generator: |
-                  const points = entity.attributes.detailedForecast || [];
-                  return points.map((point) => [
-                    new Date(point.period_start).getTime(),
-                    Number(point.pv_estimate10) * 1000
-                  ]);
-              - entity: sensor.picot_solcast_today
-                name: Solcast optimistisch (P90)
-                type: line
-                curve: smooth
-                stroke_width: 1
-                opacity: 0.45
-                extend_to: false
-                data_generator: |
-                  const points = entity.attributes.detailedForecast || [];
-                  return points.map((point) => [
-                    new Date(point.period_start).getTime(),
-                    Number(point.pv_estimate90) * 1000
-                  ]);
               - entity: sensor.picot_goodwe_power
                 name: GoodWe werkelijk
                 type: line
+                color: "#ffd600"
                 curve: smooth
-                stroke_width: 2
+                stroke_width: 3
                 extend_to: false
                 group_by:
                   func: avg
-                  duration: 5min
-          - type: entities
-            title: PV-validatie
-            show_header_toggle: false
-            entities:
-              - entity: sensor.picot_solcast_status
-                name: Solcast status
-              - entity: sensor.picot_goodwe_status
-                name: GoodWe status
-              - entity: sensor.picot_solcast_today
-                name: Forecast vandaag
-              - entity: sensor.picot_goodwe_generation_today
-                name: Werkelijk vandaag
-              - entity: sensor.picot_solcast_remaining_today
-                name: Resterende forecast
-              - entity: sensor.picot_solcast_confidence
-                name: Confidence
-              - entity: sensor.picot_goodwe_temperature
-                name: Omvormertemperatuur
-
+                  duration: 2min
       - type: grid
-        title: Prijs en planning
         column_span: 4
         cards:
+          - type: heading
+            heading: Dynamische prijzen
           - type: custom:apexcharts-card
+            grid_options:
+              columns: full
+              rows: 8
             header:
               show: true
-              title: Elektriciteitsprijs
-              show_states: true
-              colorize_states: true
-            graph_span: 24h
+              title: Dynamische elektriciteitsprijzen
+              show_states: false
+            graph_span: 48h
             span:
               start: day
             now:
               show: true
               label: Nu
+            update_interval: 5min
             yaxis:
               - decimals: 3
                 apex_config:
@@ -267,44 +337,85 @@ views:
                     text: EUR/kWh
             apex_config:
               chart:
-                height: 300
-              stroke:
-                width: 3
+                height: 430
+                toolbar:
+                  show: true
+                  autoSelected: pan
+                zoom:
+                  enabled: true
+                  type: x
+                  autoScaleYaxis: true
+                  allowMouseWheelZoom: false
+                selection:
+                  enabled: false
+                animations:
+                  enabled: false
+              dataLabels:
+                enabled: false
+              grid:
+                strokeDashArray: 4
+              legend:
+                show: true
+                onItemClick:
+                  toggleDataSeries: true
+              tooltip:
+                shared: true
+                intersect: false
               annotations:
-                yaxis: []
+                yaxis:
+                  - "y": 0
+                    borderWidth: 1
+                    strokeDashArray: 2
+                    label:
+                      show: false
             series:
               - entity: sensor.picot_current_price
-                name: Werkelijke prijs
-                type: line
+                name: PicoT kwartierprijzen
+                float_precision: 3
+                type: area
+                color: "#42a5f5"
                 curve: stepline
-                stroke_width: 3
+                stroke_width: 2
+                opacity: 0.22
                 extend_to: false
-                group_by:
-                  func: avg
-                  duration: 15min
-          - type: entities
-            title: Gekozen prijsvenster
-            show_header_toggle: false
-            entities:
-              - entity: sensor.picot_active_price_window
-                name: Venster actief
-              - type: attribute
-                entity: sensor.picot_current_price
-                attribute: selected_window_average
-                name: Gemiddelde prijs venster
-              - type: attribute
-                entity: sensor.picot_current_price
-                attribute: window_starts_at
-                name: Start
-              - type: attribute
-                entity: sensor.picot_current_price
-                attribute: window_ends_at
-                name: Einde
+                data_generator: |-
+                  // PicoT is de primaire bron van waarheid voor de prijsgrafiek.
+                  // Zodra PicoT price_points publiceert, wordt uitsluitend die reeks gebruikt.
+                  const picotAttributes = entity.attributes || {};
+                  const picotRows = picotAttributes.price_points || [];
 
+                  if (picotRows.length > 0) {
+                    return picotRows
+                      .map((row) => {
+                        const start = row.start || row.starts_at || row.time;
+                        const value = row.value ?? row.price;
+                        return [new Date(start).getTime(), Number(value)];
+                      })
+                      .filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]))
+                      .sort((a, b) => a[0] - b[0]);
+                  }
+
+                  // Tijdelijke fallback zolang sensor.picot_current_price nog geen
+                  // volledige kwartierreeks als price_points-attribuut publiceert.
+                  const source = hass.states['sensor.nordpool_kwh_nl_eur_3_095_0'];
+                  const attributes = source?.attributes || {};
+                  const rawToday = attributes.raw_today || [];
+                  const rawTomorrow = attributes.raw_tomorrow || [];
+                  const rawRows = [...rawToday, ...rawTomorrow];
+
+                  return rawRows
+                    .map((row) => {
+                      const start = row.start || row.starts_at || row.time;
+                      const value = row.value ?? row.price;
+                      return [new Date(start).getTime(), Number(value)];
+                    })
+                    .filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]))
+                    .sort((a, b) => a[0] - b[0]);
       - type: grid
-        title: PicoT-brein
         column_span: 2
         cards:
+          - type: heading
+            heading: PicoT-brein
           - type: entities
             title: Actuele beslissing
             show_header_toggle: false
@@ -329,11 +440,32 @@ views:
                 entity: sensor.picot_hems_status
                 attribute: last_planner_run
                 name: Laatste planner-run
-
       - type: grid
-        title: Woning en net
         column_span: 2
         cards:
+          - type: heading
+            heading: Batterij
+          - type: entities
+            title: Batterij en vermogensstatus
+            show_header_toggle: false
+            entities:
+              - entity: sensor.picot_zendure_status
+                name: Zendure status
+              - entity: sensor.picot_zendure_soc
+                name: Laadpercentage
+              - entity: sensor.picot_zendure_actual_mode
+                name: Werkelijke modus
+              - entity: sensor.picot_zendure_requested_mode
+                name: Aangevraagde modus
+              - entity: sensor.picot_zendure_power
+                name: Batterijvermogen
+              - entity: sensor.picot_house_power
+                name: Huisverbruik
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Woning en net
           - type: glance
             title: Live energiestroom
             columns: 3
@@ -344,8 +476,13 @@ views:
                 name: Import
               - entity: sensor.picot_grid_export
                 name: Export
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Bronstatus
           - type: entities
-            title: Bronstatus
+            title: Beschikbaarheid bronnen
             show_header_toggle: false
             entities:
               - type: attribute
@@ -362,23 +499,79 @@ views:
                 entity: sensor.picot_grid_power
                 attribute: telemetry_updated_at
                 name: Laatste telemetrie
-
       - type: grid
-        title: Uitleg
+        column_span: 2
+        cards:
+          - type: heading
+            heading: PV-validatie
+          - type: entities
+            title: Forecast en werkelijkheid
+            show_header_toggle: false
+            entities:
+              - entity: sensor.picot_solcast_today
+                name: Forecast vandaag
+              - entity: sensor.picot_solcast_tomorrow
+                name: Forecast morgen
+              - entity: sensor.picot_goodwe_generation_today
+                name: Werkelijk vandaag
+              - entity: sensor.picot_solcast_remaining_today
+                name: Resterende forecast
+              - entity: sensor.picot_solcast_confidence
+                name: Confidence
+              - entity: sensor.picot_goodwe_temperature
+                name: Omvormertemperatuur
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Prijsvenster
+          - type: entities
+            title: Gekozen prijsvenster
+            show_header_toggle: false
+            entities:
+              - entity: sensor.picot_current_price
+                name: Actuele prijs
+              - entity: sensor.picot_active_price_window
+                name: Venster actief
+              - type: attribute
+                entity: sensor.picot_current_price
+                attribute: selected_window_average
+                name: Gemiddelde prijs venster
+              - type: attribute
+                entity: sensor.picot_current_price
+                attribute: window_starts_at
+                name: Start
+              - type: attribute
+                entity: sensor.picot_current_price
+                attribute: window_ends_at
+                name: Einde
+      - type: grid
         column_span: 4
         cards:
+          - type: heading
+            heading: Uitleg
           - type: markdown
-            content: |
+            content: >-
               ## Waarom doet PicoT dit?
 
-              **Strategie:** {{ state_attr('sensor.picot_hems_status', 'strategy') }}
+
+              **Strategie:** {{ state_attr('sensor.picot_hems_status',
+              'strategy') }}
+
 
               **Reden:** {{ state_attr('sensor.picot_hems_status', 'reason') }}
 
+
               **Huidige modus:** {{ states('sensor.picot_operating_mode') }}
+
 
               **Gewenste modus:** {{ states('sensor.picot_desired_mode') }}
 
-              **Prijsvenster:** {{ state_attr('sensor.picot_current_price', 'window_starts_at') }} tot {{ state_attr('sensor.picot_current_price', 'window_ends_at') }}
 
-              Dit dashboard is een technische observatie- en validatielaag. Solcast, GoodWe en Zendure-observatie hebben nog geen invloed op de planner.
+              **Prijsvenster:** {{ state_attr('sensor.picot_current_price',
+              'window_starts_at') }} tot {{
+              state_attr('sensor.picot_current_price', 'window_ends_at') }}
+
+
+              Dit dashboard is de technische observatie- en validatielaag van
+              PicoT HEMS.

@@ -18,10 +18,10 @@ def _state(value: object) -> dict[str, Any]:
 
 def test_read_goodwe_observation_normalizes_runtime_fields() -> None:
     states: dict[str, dict[str, Any]] = {
-        "sensor.0_energie_inverter_goodwe_solar_power": _state(273),
-        "sensor.0_energie_inverter_goodwe_generation_today": _state(26.7),
-        "sensor.0_energie_inverter_goodwe_generation_total": _state(23349.1),
-        "sensor.0_energie_inverter_goodwe_temperature": _state(35.0),
+        "sensor.inverter_54200dsn211r0265_vermogen": _state(273),
+        "sensor.inverter_54200dsn211r0265_energy_today": _state(26.7),
+        "sensor.inverter_54200dsn211r0265_energie": _state(23349.1),
+        "sensor.inverter_54200dsn211r0265_temperatuur": _state(35.0),
     }
 
     def request_json(path: str, token: str) -> dict[str, Any]:

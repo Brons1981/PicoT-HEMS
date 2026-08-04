@@ -9,10 +9,10 @@ from typing import Any
 from picot.adapters.home_assistant_goodwe import goodwe_snapshot_from_entities
 
 GOODWE_ENTITY_IDS = (
-    "sensor.0_energie_inverter_goodwe_solar_power",
-    "sensor.0_energie_inverter_goodwe_generation_today",
-    "sensor.0_energie_inverter_goodwe_generation_total",
-    "sensor.0_energie_inverter_goodwe_temperature",
+    "sensor.inverter_54200dsn211r0265_vermogen",
+    "sensor.inverter_54200dsn211r0265_energy_today",
+    "sensor.inverter_54200dsn211r0265_energie",
+    "sensor.inverter_54200dsn211r0265_temperatuur",
 )
 
 RequestJson = Callable[[str, str], dict[str, Any]]

@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from picot.addon.goodwe_observer import (
-    GOODWE_ENTITY_IDS,
+    DEFAULT_GOODWE_POWER_ENTITY,
+    goodwe_entity_ids,
     read_goodwe_observation,
     unavailable_goodwe_observation,
 )
@@ -18,7 +19,7 @@ def _state(value: object) -> dict[str, Any]:
 
 def test_read_goodwe_observation_normalizes_runtime_fields() -> None:
     states: dict[str, dict[str, Any]] = {
-        "sensor.inverter_54200dsn211r0265_vermogen": _state(273),
+        DEFAULT_GOODWE_POWER_ENTITY: _state(273),
         "sensor.inverter_54200dsn211r0265_energy_today": _state(26.7),
         "sensor.inverter_54200dsn211r0265_energie": _state(23349.1),
         "sensor.inverter_54200dsn211r0265_temperatuur": _state(35.0),
@@ -27,16 +28,18 @@ def test_read_goodwe_observation_normalizes_runtime_fields() -> None:
     def request_json(path: str, token: str) -> dict[str, Any]:
         assert token == "token"
         entity_id = path.removeprefix("/api/states/")
-        assert entity_id in GOODWE_ENTITY_IDS
+        assert entity_id in goodwe_entity_ids(DEFAULT_GOODWE_POWER_ENTITY)
         return states[entity_id]
 
     observation = read_goodwe_observation(
         request_json,
         "token",
         observed_at=OBSERVED_AT,
+        power_entity=DEFAULT_GOODWE_POWER_ENTITY,
     )
 
     assert observation["goodwe_status"] == "available"
+    assert observation["goodwe_power_entity"] == DEFAULT_GOODWE_POWER_ENTITY
     assert observation["goodwe_solar_power_w"] == 273.0
     assert observation["goodwe_generation_today_kwh"] == 26.7
     assert observation["goodwe_generation_total_kwh"] == 23349.1

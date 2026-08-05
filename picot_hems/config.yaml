@@ -15,6 +15,9 @@ options:
   target_entity: input_select.zendure_2400_ac_modus_selecteren
   p1_power_entity: sensor.ct_shelly_pro_3em_api
   p1_import_is_positive: true
+  pv_power_entity: sensor.inverter_54200dsn211r0265_vermogen
+  battery_power_entity: sensor.zendure_2400_ac_vermogen_aansturing
+  battery_charge_is_positive: true
   window_points: 24
   planner_interval_seconds: 60
   telemetry_interval_seconds: 5
@@ -25,6 +28,9 @@ schema:
   target_entity: str
   p1_power_entity: str
   p1_import_is_positive: bool
+  pv_power_entity: str
+  battery_power_entity: str
+  battery_charge_is_positive: bool
   window_points: int(1,24)
   planner_interval_seconds: int(30,3600)
   telemetry_interval_seconds: int(1,60)

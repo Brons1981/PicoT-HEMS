@@ -1,4 +1,4 @@
-"""Read selected Zendure entities through Home Assistant without influencing planning."""
+"""Read selected Zendure entities directly through Home Assistant."""
 
 from __future__ import annotations
 
@@ -8,18 +8,31 @@ from typing import Any
 
 from picot.adapters.home_assistant_zendure import zendure_snapshot_from_entities
 
-ZENDURE_ENTITY_IDS = (
-    "sensor.zendure_2400_ac_laadpercentage",
-    "sensor.zendure_2400_ac_modus",
-    "input_select.zendure_2400_ac_modus_selecteren",
-    "sensor.zendure_2400_ac_vermogen_aansturing",
-    "sensor.zendure_2400_ac_vermogen_naar_huis",
-    "sensor.zendure_2400_ac_vermogen_van_huis",
-    "sensor.zendure_2400_ac_soc_limiet_status",
-    "sensor.zendure_2400_ac_error",
-)
+DEFAULT_ZENDURE_POWER_ENTITY = "sensor.zendure_2400_ac_vermogen_aansturing"
+ZENDURE_SOC_ENTITY = "sensor.zendure_2400_ac_laadpercentage"
+ZENDURE_ACTUAL_MODE_ENTITY = "sensor.zendure_2400_ac_modus"
+ZENDURE_REQUESTED_MODE_ENTITY = "input_select.zendure_2400_ac_modus_selecteren"
+ZENDURE_POWER_TO_HOUSE_ENTITY = "sensor.zendure_2400_ac_vermogen_naar_huis"
+ZENDURE_POWER_FROM_HOUSE_ENTITY = "sensor.zendure_2400_ac_vermogen_van_huis"
+ZENDURE_SOC_LIMIT_ENTITY = "sensor.zendure_2400_ac_soc_limiet_status"
+ZENDURE_ERROR_ENTITY = "sensor.zendure_2400_ac_error"
 
 RequestJson = Callable[[str, str], dict[str, Any]]
+
+
+def zendure_entity_ids(power_entity: str) -> tuple[str, ...]:
+    """Return the direct Zendure source entities used for one observation."""
+
+    return (
+        ZENDURE_SOC_ENTITY,
+        ZENDURE_ACTUAL_MODE_ENTITY,
+        ZENDURE_REQUESTED_MODE_ENTITY,
+        power_entity,
+        ZENDURE_POWER_TO_HOUSE_ENTITY,
+        ZENDURE_POWER_FROM_HOUSE_ENTITY,
+        ZENDURE_SOC_LIMIT_ENTITY,
+        ZENDURE_ERROR_ENTITY,
+    )
 
 
 def read_zendure_observation(
@@ -27,17 +40,22 @@ def read_zendure_observation(
     token: str,
     *,
     observed_at: datetime,
+    power_entity: str = DEFAULT_ZENDURE_POWER_ENTITY,
 ) -> dict[str, object]:
-    """Return normalized dashboard fields from one atomic Zendure snapshot."""
+    """Return normalized fields read directly from configured HA sources."""
 
     states: dict[str, dict[str, Any]] = {}
-    for entity_id in ZENDURE_ENTITY_IDS:
+    for entity_id in zendure_entity_ids(power_entity):
         states[entity_id] = request_json(f"/api/states/{entity_id}", token)
+
+    if power_entity != DEFAULT_ZENDURE_POWER_ENTITY:
+        states[DEFAULT_ZENDURE_POWER_ENTITY] = states[power_entity]
 
     snapshot = zendure_snapshot_from_entities(states, observed_at=observed_at)
     return {
         "zendure_status": snapshot.status,
         "zendure_source": snapshot.source,
+        "zendure_power_entity": power_entity,
         "zendure_error": None,
         "zendure_observed_at": snapshot.observed_at.isoformat(),
         "zendure_soc_percent": snapshot.soc_percent,
@@ -58,12 +76,14 @@ def unavailable_zendure_observation(
     error: Exception,
     *,
     observed_at: datetime,
+    power_entity: str = DEFAULT_ZENDURE_POWER_ENTITY,
 ) -> dict[str, object]:
     """Return an explicit unavailable observation without stopping PicoT."""
 
     return {
         "zendure_status": "unavailable",
         "zendure_source": "Home Assistant Zendure HA ZenSDK",
+        "zendure_power_entity": power_entity,
         "zendure_error": str(error) or error.__class__.__name__,
         "zendure_observed_at": observed_at.isoformat(),
         "zendure_soc_percent": None,

@@ -4,9 +4,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from picot.addon.zendure_observer import (
-    ZENDURE_ENTITY_IDS,
+    DEFAULT_ZENDURE_POWER_ENTITY,
     read_zendure_observation,
     unavailable_zendure_observation,
+    zendure_entity_ids,
 )
 
 OBSERVED_AT = datetime(2026, 8, 2, 18, 0, tzinfo=UTC)
@@ -19,7 +20,7 @@ def _states() -> dict[str, dict[str, Any]]:
         "input_select.zendure_2400_ac_modus_selecteren": {
             "state": "Alleen slim ontladen"
         },
-        "sensor.zendure_2400_ac_vermogen_aansturing": {"state": "-86"},
+        DEFAULT_ZENDURE_POWER_ENTITY: {"state": "-86"},
         "sensor.zendure_2400_ac_vermogen_naar_huis": {"state": "86"},
         "sensor.zendure_2400_ac_vermogen_van_huis": {"state": "0"},
         "sensor.zendure_2400_ac_soc_limiet_status": {"state": "Binnen limiet"},
@@ -36,10 +37,19 @@ def test_read_zendure_observation_normalizes_all_selected_entities() -> None:
         requested_paths.append(path)
         return states[path.removeprefix("/api/states/")]
 
-    event = read_zendure_observation(request_json, "token", observed_at=OBSERVED_AT)
+    event = read_zendure_observation(
+        request_json,
+        "token",
+        observed_at=OBSERVED_AT,
+        power_entity=DEFAULT_ZENDURE_POWER_ENTITY,
+    )
 
-    assert requested_paths == [f"/api/states/{entity_id}" for entity_id in ZENDURE_ENTITY_IDS]
+    assert requested_paths == [
+        f"/api/states/{entity_id}"
+        for entity_id in zendure_entity_ids(DEFAULT_ZENDURE_POWER_ENTITY)
+    ]
     assert event["zendure_status"] == "available"
+    assert event["zendure_power_entity"] == DEFAULT_ZENDURE_POWER_ENTITY
     assert event["zendure_soc_percent"] == 82.0
     assert event["zendure_actual_mode"] == "Ontladen"
     assert event["zendure_requested_mode"] == "Alleen slim ontladen"

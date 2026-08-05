@@ -1,4 +1,4 @@
-"""Runtime entry point with isolated read-only observation streams."""
+"""Runtime entry point with isolated direct-source observation streams."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from picot.addon import runtime
 from picot.addon.dashboard import publish_dashboard_states
 from picot.addon.goodwe_dashboard import publish_goodwe_dashboard_states
 from picot.addon.goodwe_observer import (
+    DEFAULT_GOODWE_POWER_ENTITY,
     read_goodwe_observation,
     unavailable_goodwe_observation,
 )
@@ -21,35 +22,72 @@ from picot.addon.power_comparison import (
 )
 from picot.addon.zendure_dashboard import publish_zendure_dashboard_states
 from picot.addon.zendure_observer import (
+    DEFAULT_ZENDURE_POWER_ENTITY,
     read_zendure_observation,
     unavailable_zendure_observation,
 )
 
 
-def _goodwe_fields(token: str, *, observed_at: datetime) -> dict[str, object]:
-    """Read GoodWe independently so a source failure cannot stop PicoT."""
+def _goodwe_fields(
+    options: dict[str, Any],
+    token: str,
+    *,
+    observed_at: datetime,
+) -> dict[str, object]:
+    """Read the configured physical GoodWe source directly."""
 
+    power_entity = str(options.get("pv_power_entity", DEFAULT_GOODWE_POWER_ENTITY))
     try:
         return read_goodwe_observation(
             runtime._request_json,
             token,
             observed_at=observed_at,
+            power_entity=power_entity,
         )
     except Exception as exc:
-        return unavailable_goodwe_observation(exc, observed_at=observed_at)
+        return unavailable_goodwe_observation(
+            exc,
+            observed_at=observed_at,
+            power_entity=power_entity,
+        )
 
 
-def _zendure_fields(token: str, *, observed_at: datetime) -> dict[str, object]:
-    """Read Zendure independently so a source failure cannot stop PicoT."""
+def _zendure_fields(
+    options: dict[str, Any],
+    token: str,
+    *,
+    observed_at: datetime,
+) -> dict[str, object]:
+    """Read the configured physical Zendure source directly."""
 
+    power_entity = str(
+        options.get("battery_power_entity", DEFAULT_ZENDURE_POWER_ENTITY)
+    )
     try:
-        return read_zendure_observation(
+        fields = read_zendure_observation(
             runtime._request_json,
             token,
             observed_at=observed_at,
+            power_entity=power_entity,
         )
     except Exception as exc:
-        return unavailable_zendure_observation(exc, observed_at=observed_at)
+        return unavailable_zendure_observation(
+            exc,
+            observed_at=observed_at,
+            power_entity=power_entity,
+        )
+
+    signed_power = fields.get("zendure_signed_power_w")
+    if (
+        isinstance(signed_power, (int, float))
+        and not isinstance(signed_power, bool)
+        and not bool(options.get("battery_charge_is_positive", True))
+    ):
+        normalized = -float(signed_power)
+        fields["zendure_signed_power_w"] = normalized
+        fields["zendure_charge_power_w"] = max(0.0, normalized)
+        fields["zendure_discharge_power_w"] = max(0.0, -normalized)
+    return fields
 
 
 def run_telemetry_once(
@@ -57,18 +95,20 @@ def run_telemetry_once(
     token: str,
     planner_event: dict[str, object],
 ) -> dict[str, object]:
-    """Refresh P1, Solcast, GoodWe and Zendure without changing the plan."""
+    """Refresh direct P1, Solcast, GoodWe and Zendure observations."""
 
     observed_at = datetime.now(runtime.LOCAL_TIMEZONE)
     event = dict(planner_event)
     event.update(runtime._grid_fields(options, token))
     event.update(runtime._solcast_fields(token, observed_at=observed_at))
-    event.update(_goodwe_fields(token, observed_at=observed_at))
-    event.update(_zendure_fields(token, observed_at=observed_at))
+    event.update(_goodwe_fields(options, token, observed_at=observed_at))
+    event.update(_zendure_fields(options, token, observed_at=observed_at))
     event["telemetry_updated_at"] = observed_at.isoformat()
     event["telemetry_interval_seconds"] = int(options["telemetry_interval_seconds"])
     add_power_comparison_fields(event)
 
+    # Mirror entities remain temporarily for migration and diagnostics only.
+    # Planner and runtime input use the physical entities above directly.
     publish_dashboard_states(event, token)
     publish_goodwe_dashboard_states(event, token)
     publish_zendure_dashboard_states(event, token)
@@ -82,6 +122,7 @@ def _goodwe_log_event(event: dict[str, object]) -> dict[str, object]:
     return {
         "event": "picot_goodwe_snapshot",
         "status": event.get("goodwe_status"),
+        "source_entity": event.get("goodwe_power_entity"),
         "error": event.get("goodwe_error"),
         "solar_power_w": event.get("goodwe_solar_power_w"),
         "generation_today_kwh": event.get("goodwe_generation_today_kwh"),
@@ -97,6 +138,7 @@ def _zendure_log_event(event: dict[str, object]) -> dict[str, object]:
     return {
         "event": "picot_zendure_snapshot",
         "status": event.get("zendure_status"),
+        "source_entity": event.get("zendure_power_entity"),
         "error": event.get("zendure_error"),
         "soc_percent": event.get("zendure_soc_percent"),
         "actual_mode": event.get("zendure_actual_mode"),
@@ -110,7 +152,7 @@ def _zendure_log_event(event: dict[str, object]) -> dict[str, object]:
 
 
 def main() -> int:
-    """Run the existing planner with the expanded read-only observation loop."""
+    """Run the existing planner with direct physical observation inputs."""
 
     token = os.environ.get("SUPERVISOR_TOKEN", "")
     if not token:

@@ -16,9 +16,14 @@ def test_goodwe_fields_isolates_source_failure(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(runtime, "_request_json", failing_request)
 
-    fields = runtime_observation._goodwe_fields("token", observed_at=OBSERVED_AT)
+    fields = runtime_observation._goodwe_fields(
+        {"pv_power_entity": "sensor.test_pv"},
+        "token",
+        observed_at=OBSERVED_AT,
+    )
 
     assert fields["goodwe_status"] == "unavailable"
+    assert fields["goodwe_power_entity"] == "sensor.test_pv"
     assert fields["goodwe_error"] == "GoodWe unavailable"
     assert fields["goodwe_solar_power_w"] is None
 
@@ -31,9 +36,14 @@ def test_zendure_fields_isolates_source_failure(
 
     monkeypatch.setattr(runtime, "_request_json", failing_request)
 
-    fields = runtime_observation._zendure_fields("token", observed_at=OBSERVED_AT)
+    fields = runtime_observation._zendure_fields(
+        {"battery_power_entity": "sensor.test_battery"},
+        "token",
+        observed_at=OBSERVED_AT,
+    )
 
     assert fields["zendure_status"] == "unavailable"
+    assert fields["zendure_power_entity"] == "sensor.test_battery"
     assert fields["zendure_error"] == "Zendure unavailable"
     assert fields["zendure_signed_power_w"] is None
 
@@ -62,7 +72,7 @@ def test_telemetry_publishes_combined_observations(
     monkeypatch.setattr(
         runtime_observation,
         "_goodwe_fields",
-        lambda token, observed_at: {
+        lambda options, token, observed_at: {
             "goodwe_status": "available",
             "goodwe_solar_power_w": 1100.0,
         },
@@ -70,7 +80,7 @@ def test_telemetry_publishes_combined_observations(
     monkeypatch.setattr(
         runtime_observation,
         "_zendure_fields",
-        lambda token, observed_at: {
+        lambda options, token, observed_at: {
             "zendure_status": "available",
             "zendure_signed_power_w": -300.0,
         },
@@ -97,7 +107,12 @@ def test_telemetry_publishes_combined_observations(
     )
 
     event = runtime_observation.run_telemetry_once(
-        {"telemetry_interval_seconds": 5},
+        {
+            "telemetry_interval_seconds": 5,
+            "pv_power_entity": "sensor.test_pv",
+            "battery_power_entity": "sensor.test_battery",
+            "battery_charge_is_positive": True,
+        },
         "token",
         {"event": "picot_price_decision"},
     )
@@ -120,6 +135,7 @@ def test_goodwe_log_event_is_compact() -> None:
     event = runtime_observation._goodwe_log_event(
         {
             "goodwe_status": "available",
+            "goodwe_power_entity": "sensor.test_pv",
             "goodwe_error": None,
             "goodwe_solar_power_w": 273.0,
             "goodwe_generation_today_kwh": 26.7,
@@ -130,6 +146,7 @@ def test_goodwe_log_event_is_compact() -> None:
     )
 
     assert event["event"] == "picot_goodwe_snapshot"
+    assert event["source_entity"] == "sensor.test_pv"
     assert event["solar_power_w"] == 273.0
     assert event["generation_today_kwh"] == 26.7
 
@@ -138,6 +155,7 @@ def test_zendure_log_event_is_compact() -> None:
     event = runtime_observation._zendure_log_event(
         {
             "zendure_status": "available",
+            "zendure_power_entity": "sensor.test_battery",
             "zendure_error": None,
             "zendure_soc_percent": 63.0,
             "zendure_actual_mode": "Ontladen",
@@ -151,5 +169,6 @@ def test_zendure_log_event_is_compact() -> None:
     )
 
     assert event["event"] == "picot_zendure_snapshot"
+    assert event["source_entity"] == "sensor.test_battery"
     assert event["signed_power_w"] == -812.0
     assert event["power_consistent"] is True

@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from typing import Any, cast
 
-from picot.addon import runtime
+from picot.addon import price_runtime_v2, runtime
 from picot.addon.dashboard import publish_dashboard_states
 from picot.addon.goodwe_dashboard import publish_goodwe_dashboard_states
 from picot.addon.goodwe_observer import (
@@ -90,6 +90,20 @@ def _zendure_fields(
     return fields
 
 
+def _run_price_planner_once(
+    options: dict[str, Any],
+    token: str,
+) -> dict[str, object]:
+    """Run the explicitly configured price strategy, defaulting safely to v1."""
+
+    strategy = str(options.get("price_strategy", "v1"))
+    if strategy == "v1":
+        return runtime.run_planner_once(options, token)
+    if strategy == "v2":
+        return price_runtime_v2.run_planner_once(options, token)
+    raise ValueError(f"Unsupported price_strategy: {strategy}")
+
+
 def run_telemetry_once(
     options: dict[str, Any],
     token: str,
@@ -152,7 +166,7 @@ def _zendure_log_event(event: dict[str, object]) -> dict[str, object]:
 
 
 def main() -> int:
-    """Run the existing planner with direct physical observation inputs."""
+    """Run the selected planner with direct physical observation inputs."""
 
     token = os.environ.get("SUPERVISOR_TOKEN", "")
     if not token:
@@ -194,7 +208,7 @@ def main() -> int:
 
         if monotonic_now >= next_planner_run:
             try:
-                planner_event = runtime.run_planner_once(options, token)
+                planner_event = _run_price_planner_once(options, token)
                 runtime._log_event(planner_event)
                 scheduled_boundary = runtime._scheduled_boundary(
                     planner_event,

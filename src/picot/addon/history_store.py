@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Mapping
 
 DEFAULT_HISTORY_PATH = Path("/data/picot_history.jsonl")
 RAW_RETENTION_DAYS = 7
@@ -51,7 +51,11 @@ class HistoryStore:
                 timestamp = _event_timestamp(event)
             except (json.JSONDecodeError, TypeError, ValueError):
                 continue
-            cutoff = long_cutoff if event.get("event") in LONG_RETENTION_EVENTS else raw_cutoff
+            cutoff = (
+                long_cutoff
+                if event.get("event") in LONG_RETENTION_EVENTS
+                else raw_cutoff
+            )
             if timestamp >= cutoff:
                 kept.append(line)
         content = "\n".join(kept)

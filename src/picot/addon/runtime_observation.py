@@ -17,6 +17,7 @@ from picot.addon.goodwe_observer import (
     unavailable_goodwe_observation,
 )
 from picot.addon.history_store import HistoryStore
+from picot.addon.plan_review import evaluate_plan_review, plan_review_log_event
 from picot.addon.power_comparison import (
     add_power_comparison_fields,
     publish_power_comparison_states,
@@ -110,6 +111,7 @@ def run_telemetry_once(
     add_pv_forecast_comparison_fields(event)
     if pv_deviation_evaluator is not None:
         event.update(pv_deviation_evaluator.evaluate(event))
+    event.update(evaluate_plan_review(event))
     publish_dashboard_states(event, token)
     publish_goodwe_dashboard_states(event, token)
     publish_zendure_dashboard_states(event, token)
@@ -220,6 +222,7 @@ def main() -> int:
                     _zendure_log_event(telemetry_event),
                     pv_forecast_comparison_log_event(telemetry_event),
                     pv_deviation_evaluator_log_event(telemetry_event),
+                    plan_review_log_event(telemetry_event),
                 ]
                 for event in events:
                     _log_and_persist(history, event)

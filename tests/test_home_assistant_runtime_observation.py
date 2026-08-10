@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from picot.addon import runtime, runtime_observation
+from picot.addon import price_runtime_v2, runtime, runtime_observation
 
 OBSERVED_AT = datetime(2026, 8, 2, 18, 0, tzinfo=UTC)
 
@@ -172,3 +172,38 @@ def test_zendure_log_event_is_compact() -> None:
     assert event["source_entity"] == "sensor.test_battery"
     assert event["signed_power_w"] == -812.0
     assert event["power_consistent"] is True
+
+
+def test_price_strategy_defaults_to_v1(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "run_planner_once",
+        lambda options, token: {"strategy": "Price Driven v1"},
+    )
+
+    event = runtime_observation._run_price_planner_once({}, "token")
+
+    assert event["strategy"] == "Price Driven v1"
+
+
+def test_price_strategy_routes_to_v2(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        price_runtime_v2,
+        "run_planner_once",
+        lambda options, token: {"strategy": "Price Driven v2"},
+    )
+
+    event = runtime_observation._run_price_planner_once(
+        {"price_strategy": "v2"},
+        "token",
+    )
+
+    assert event["strategy"] == "Price Driven v2"
+
+
+def test_price_strategy_rejects_unknown_value() -> None:
+    with pytest.raises(ValueError, match="Unsupported price_strategy"):
+        runtime_observation._run_price_planner_once(
+            {"price_strategy": "v3"},
+            "token",
+        )

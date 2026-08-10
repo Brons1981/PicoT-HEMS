@@ -11,6 +11,10 @@ from typing import Any, cast
 from picot.addon import price_runtime_v2, runtime
 from picot.addon.dashboard import publish_dashboard_states
 from picot.addon.diagnostics_dashboard import publish_diagnostics_dashboard_states
+from picot.addon.diagnostics_timeline import DiagnosticsTimeline
+from picot.addon.diagnostics_timeline_dashboard import (
+    publish_diagnostics_timeline_state,
+)
 from picot.addon.goodwe_dashboard import publish_goodwe_dashboard_states
 from picot.addon.goodwe_observer import (
     DEFAULT_GOODWE_POWER_ENTITY,
@@ -99,6 +103,7 @@ def run_telemetry_once(
     planner_event: dict[str, object],
     *,
     pv_deviation_evaluator: PvDeviationEvaluator | None = None,
+    diagnostics_timeline: DiagnosticsTimeline | None = None,
 ) -> dict[str, object]:
     observed_at = datetime.now(runtime.LOCAL_TIMEZONE)
     event = dict(planner_event)
@@ -113,11 +118,14 @@ def run_telemetry_once(
     if pv_deviation_evaluator is not None:
         event.update(pv_deviation_evaluator.evaluate(event))
     event.update(evaluate_plan_review(event))
+    if diagnostics_timeline is not None:
+        event.update(diagnostics_timeline.evaluate(event))
     publish_dashboard_states(event, token)
     publish_goodwe_dashboard_states(event, token)
     publish_zendure_dashboard_states(event, token)
     publish_power_comparison_states(event, token)
     publish_diagnostics_dashboard_states(event, token)
+    publish_diagnostics_timeline_state(event, token)
     return event
 
 
@@ -152,6 +160,33 @@ def _zendure_log_event(event: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _timeline_log_event(event: dict[str, object]) -> dict[str, object] | None:
+    timeline_event = event.get("diagnostics_timeline_event")
+    if not isinstance(timeline_event, str) or not timeline_event:
+        return None
+    return {
+        "event": "picot_diagnostics_timeline",
+        "timeline_event": timeline_event,
+        "rolling_deviation_percent": event.get(
+            "diagnostics_timeline_rolling_deviation_percent"
+        ),
+        "evaluator_status": event.get("diagnostics_timeline_evaluator_status"),
+        "plan_review_status": event.get(
+            "diagnostics_timeline_plan_review_status"
+        ),
+        "plan_review_outcome": event.get(
+            "diagnostics_timeline_plan_review_outcome"
+        ),
+        "plan_review_action": event.get(
+            "diagnostics_timeline_plan_review_action"
+        ),
+        "control_change_allowed": event.get(
+            "diagnostics_timeline_control_change_allowed"
+        ),
+        "observed_at": event.get("diagnostics_timeline_observed_at"),
+    }
+
+
 def _log_and_persist(history: HistoryStore, event: dict[str, object]) -> None:
     """Write the same structured evidence to console and persistent history."""
 
@@ -175,6 +210,7 @@ def main() -> int:
     planner_event: dict[str, object] | None = None
     scheduled_boundary: runtime.ScheduledBoundary | None = None
     pv_deviation_evaluator = PvDeviationEvaluator()
+    diagnostics_timeline = DiagnosticsTimeline()
     history = HistoryStore()
 
     print("PicoT HEMS add-on starting", flush=True)
@@ -217,6 +253,7 @@ def main() -> int:
                     token,
                     planner_event,
                     pv_deviation_evaluator=pv_deviation_evaluator,
+                    diagnostics_timeline=diagnostics_timeline,
                 )
                 events = [
                     runtime._solcast_log_event(telemetry_event),
@@ -226,6 +263,9 @@ def main() -> int:
                     pv_deviation_evaluator_log_event(telemetry_event),
                     plan_review_log_event(telemetry_event),
                 ]
+                timeline_event = _timeline_log_event(telemetry_event)
+                if timeline_event is not None:
+                    events.append(timeline_event)
                 for event in events:
                     _log_and_persist(history, event)
             except Exception as exc:

@@ -1,0 +1,31 @@
+PicoT HEMS — Proprietary Rights Notice
+
+Copyright (c) 2026 Alex Brons. All rights reserved.
+
+This repository is publicly visible for development, review and the current
+Home Assistant distribution workflow. Public visibility does not grant an
+open-source licence or any general permission to use the software.
+
+Except where applicable law or GitHub's platform terms require otherwise, no
+permission is granted to copy, modify, adapt, merge, publish, distribute,
+redistribute, sublicense, sell, commercially exploit, create derivative works
+from, or otherwise use the source code, documentation, architecture, designs,
+project materials or substantial portions thereof without prior written
+permission from the copyright holder.
+
+Viewing the repository through GitHub does not transfer ownership or waive any
+copyright or other intellectual-property rights.
+
+The name "PicoT HEMS", associated branding, logos and project identifiers are
+not licensed for use in a way that suggests endorsement, affiliation or origin
+without prior written permission.
+
+THE SOFTWARE AND PROJECT MATERIALS ARE EXPERIMENTAL AND ARE PROVIDED "AS IS",
+WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY ARISING FROM USE OF, OR RELIANCE ON, THE SOFTWARE OR
+PROJECT MATERIALS.
+
+For licensing or permission requests, contact the repository owner through the
+GitHub repository.

@@ -4,7 +4,11 @@ on:
   push:
     branches:
       - main
+      - "feature/**"
+      - "price-driven-*"
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:

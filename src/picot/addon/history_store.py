@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 DEFAULT_HISTORY_PATH = Path("/data/picot_history.jsonl")
@@ -21,7 +21,7 @@ class HistoryStore:
 
     def __init__(self, path: Path = DEFAULT_HISTORY_PATH) -> None:
         self.path = path
-        self._last_prune_date = None
+        self._last_prune_date: date | None = None
 
     def append(self, event: Mapping[str, object]) -> None:
         """Persist one structured event as a JSON line."""

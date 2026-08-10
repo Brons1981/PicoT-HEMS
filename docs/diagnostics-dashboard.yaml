@@ -1,0 +1,66 @@
+title: PicoT Diagnostics
+views:
+  - title: Planner
+    path: planner
+    icon: mdi:chart-timeline-variant
+    cards:
+      - type: entities
+        title: Planner status
+        entities:
+          - entity: binary_sensor.picot_replan_candidate
+            name: Replan candidate
+          - entity: sensor.picot_pv_deviation_status
+            name: PV deviation status
+          - entity: sensor.picot_plan_review_status
+            name: Plan Review
+          - entity: binary_sensor.picot_plan_review_control_change_allowed
+            name: Control change allowed
+          - entity: sensor.picot_operating_mode
+            name: Huidige planner-modus
+          - entity: sensor.picot_desired_mode
+            name: Gewenste planner-modus
+
+      - type: history-graph
+        title: PV forecast versus werkelijk
+        hours_to_show: 1
+        entities:
+          - entity: sensor.picot_solcast_expected_power
+            name: Solcast verwacht
+          - entity: sensor.picot_goodwe_power
+            name: Werkelijke PV
+
+      - type: history-graph
+        title: PV deviation
+        hours_to_show: 1
+        entities:
+          - entity: sensor.picot_pv_deviation_current
+            name: Actueel %
+          - entity: sensor.picot_pv_deviation_rolling
+            name: Rolling %
+
+      - type: history-graph
+        title: Net en batterij
+        hours_to_show: 1
+        entities:
+          - entity: sensor.picot_grid_import
+            name: Netimport
+          - entity: sensor.picot_grid_export
+            name: Netexport
+          - entity: sensor.picot_zendure_power
+            name: Batterijvermogen
+
+      - type: history-graph
+        title: Batterij SoC
+        hours_to_show: 1
+        entities:
+          - entity: sensor.picot_zendure_soc
+            name: SoC
+
+      - type: entities
+        title: Laatste Plan Review evidence
+        show_header_toggle: false
+        entities:
+          - entity: sensor.picot_plan_review_status
+            name: Plan Review details
+          - entity: sensor.picot_pv_deviation_rolling
+            name: Rolling deviation details

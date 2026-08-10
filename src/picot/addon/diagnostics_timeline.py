@@ -21,22 +21,27 @@ class DiagnosticsTimeline:
         outcome = event.get("plan_review_outcome")
         action = event.get("plan_review_action")
         observed_at = event.get("telemetry_updated_at")
+        review_signature = (review_status, outcome, action)
 
         timeline_event: str | None = None
         if replan and not self.previous_replan_candidate:
             timeline_event = "replan_start"
+            # A completed review may already be present on the same telemetry
+            # sample as the transition. Remember that signature immediately so
+            # the next unchanged sample is not emitted again as plan_kept.
+            if review_status == "completed":
+                self.previous_review_signature = review_signature
         elif not replan and self.previous_replan_candidate:
             timeline_event = "replan_cleared"
         elif replan and review_status == "completed":
-            signature = (review_status, outcome, action)
-            if signature != self.previous_review_signature:
+            if review_signature != self.previous_review_signature:
                 if action == "keep_current_plan":
                     timeline_event = "plan_kept"
                 elif action in {"replan", "change_plan"}:
                     timeline_event = "replan_required"
                 else:
                     timeline_event = "plan_review"
-            self.previous_review_signature = signature
+            self.previous_review_signature = review_signature
 
         if not replan:
             self.previous_review_signature = None

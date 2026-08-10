@@ -2,7 +2,10 @@ name: PicoT Core CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "feature/**"
+      - "price-driven-*"
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -53,6 +56,7 @@ jobs:
           tests/test_home_assistant_commissioning.py
           tests/test_morning_protection_strategy.py
           tests/test_price_driven_strategy.py
+          tests/test_price_opportunity.py
           tests/test_home_assistant_addon_runtime.py
           tests/test_home_assistant_household_state.py
           tests/test_home_assistant_dashboard.py
@@ -90,6 +94,7 @@ jobs:
           tests/test_home_assistant_commissioning.py
           tests/test_morning_protection_strategy.py
           tests/test_price_driven_strategy.py
+          tests/test_price_opportunity.py
           tests/test_home_assistant_addon_runtime.py
           tests/test_home_assistant_household_state.py
           tests/test_home_assistant_dashboard.py
@@ -127,6 +132,7 @@ jobs:
           tests/test_home_assistant_commissioning.py
           tests/test_morning_protection_strategy.py
           tests/test_price_driven_strategy.py
+          tests/test_price_opportunity.py
           tests/test_home_assistant_addon_runtime.py
           tests/test_home_assistant_household_state.py
           tests/test_home_assistant_dashboard.py

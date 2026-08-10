@@ -16,6 +16,7 @@ from picot.addon.goodwe_observer import (
     read_goodwe_observation,
     unavailable_goodwe_observation,
 )
+from picot.addon.history_store import HistoryStore
 from picot.addon.power_comparison import (
     add_power_comparison_fields,
     publish_power_comparison_states,
@@ -37,13 +38,8 @@ from picot.addon.zendure_observer import (
 
 
 def _goodwe_fields(
-    options: dict[str, Any],
-    token: str,
-    *,
-    observed_at: datetime,
+    options: dict[str, Any], token: str, *, observed_at: datetime
 ) -> dict[str, object]:
-    """Read the configured physical GoodWe source directly."""
-
     power_entity = str(options.get("pv_power_entity", DEFAULT_GOODWE_POWER_ENTITY))
     try:
         return read_goodwe_observation(
@@ -54,23 +50,14 @@ def _goodwe_fields(
         )
     except Exception as exc:
         return unavailable_goodwe_observation(
-            exc,
-            observed_at=observed_at,
-            power_entity=power_entity,
+            exc, observed_at=observed_at, power_entity=power_entity
         )
 
 
 def _zendure_fields(
-    options: dict[str, Any],
-    token: str,
-    *,
-    observed_at: datetime,
+    options: dict[str, Any], token: str, *, observed_at: datetime
 ) -> dict[str, object]:
-    """Read the configured physical Zendure source directly."""
-
-    power_entity = str(
-        options.get("battery_power_entity", DEFAULT_ZENDURE_POWER_ENTITY)
-    )
+    power_entity = str(options.get("battery_power_entity", DEFAULT_ZENDURE_POWER_ENTITY))
     try:
         fields = read_zendure_observation(
             runtime._request_json,
@@ -80,11 +67,8 @@ def _zendure_fields(
         )
     except Exception as exc:
         return unavailable_zendure_observation(
-            exc,
-            observed_at=observed_at,
-            power_entity=power_entity,
+            exc, observed_at=observed_at, power_entity=power_entity
         )
-
     signed_power = fields.get("zendure_signed_power_w")
     if (
         isinstance(signed_power, (int, float))
@@ -98,12 +82,7 @@ def _zendure_fields(
     return fields
 
 
-def _run_price_planner_once(
-    options: dict[str, Any],
-    token: str,
-) -> dict[str, object]:
-    """Run the explicitly configured price strategy, defaulting safely to v1."""
-
+def _run_price_planner_once(options: dict[str, Any], token: str) -> dict[str, object]:
     strategy = str(options.get("price_strategy", "v1"))
     if strategy == "v1":
         return runtime.run_planner_once(options, token)
@@ -119,8 +98,6 @@ def run_telemetry_once(
     *,
     pv_deviation_evaluator: PvDeviationEvaluator | None = None,
 ) -> dict[str, object]:
-    """Refresh direct P1, Solcast, GoodWe and Zendure observations."""
-
     observed_at = datetime.now(runtime.LOCAL_TIMEZONE)
     event = dict(planner_event)
     event.update(runtime._grid_fields(options, token))
@@ -133,9 +110,6 @@ def run_telemetry_once(
     add_pv_forecast_comparison_fields(event)
     if pv_deviation_evaluator is not None:
         event.update(pv_deviation_evaluator.evaluate(event))
-
-    # Mirror entities remain temporarily for migration and diagnostics only.
-    # Planner and runtime input use the physical entities above directly.
     publish_dashboard_states(event, token)
     publish_goodwe_dashboard_states(event, token)
     publish_zendure_dashboard_states(event, token)
@@ -144,8 +118,6 @@ def run_telemetry_once(
 
 
 def _goodwe_log_event(event: dict[str, object]) -> dict[str, object]:
-    """Return a compact dedicated log event for GoodWe observation."""
-
     return {
         "event": "picot_goodwe_snapshot",
         "status": event.get("goodwe_status"),
@@ -160,8 +132,6 @@ def _goodwe_log_event(event: dict[str, object]) -> dict[str, object]:
 
 
 def _zendure_log_event(event: dict[str, object]) -> dict[str, object]:
-    """Return a compact dedicated log event for Zendure observation."""
-
     return {
         "event": "picot_zendure_snapshot",
         "status": event.get("zendure_status"),
@@ -178,9 +148,14 @@ def _zendure_log_event(event: dict[str, object]) -> dict[str, object]:
     }
 
 
-def main() -> int:
-    """Run the selected planner with direct physical observation inputs."""
+def _log_and_persist(history: HistoryStore, event: dict[str, object]) -> None:
+    """Write the same structured evidence to console and persistent history."""
 
+    runtime._log_event(event)
+    history.append(event)
+
+
+def main() -> int:
     token = os.environ.get("SUPERVISOR_TOKEN", "")
     if not token:
         raise RuntimeError(
@@ -196,6 +171,7 @@ def main() -> int:
     planner_event: dict[str, object] | None = None
     scheduled_boundary: runtime.ScheduledBoundary | None = None
     pv_deviation_evaluator = PvDeviationEvaluator()
+    history = HistoryStore()
 
     print("PicoT HEMS add-on starting", flush=True)
     while True:
@@ -212,10 +188,9 @@ def main() -> int:
                     scheduled_boundary,
                     now=wall_clock_now,
                 )
-                runtime._log_event(planner_event)
+                _log_and_persist(history, planner_event)
                 scheduled_boundary = runtime._scheduled_boundary(
-                    planner_event,
-                    now=wall_clock_now,
+                    planner_event, now=wall_clock_now
                 )
             except Exception as exc:
                 runtime._log_runtime_error("scheduled_transition", exc)
@@ -223,10 +198,9 @@ def main() -> int:
         if monotonic_now >= next_planner_run:
             try:
                 planner_event = _run_price_planner_once(options, token)
-                runtime._log_event(planner_event)
+                _log_and_persist(history, planner_event)
                 scheduled_boundary = runtime._scheduled_boundary(
-                    planner_event,
-                    now=wall_clock_now,
+                    planner_event, now=wall_clock_now
                 )
             except Exception as exc:
                 runtime._log_runtime_error("planner", exc)
@@ -240,15 +214,15 @@ def main() -> int:
                     planner_event,
                     pv_deviation_evaluator=pv_deviation_evaluator,
                 )
-                runtime._log_event(runtime._solcast_log_event(telemetry_event))
-                runtime._log_event(_goodwe_log_event(telemetry_event))
-                runtime._log_event(_zendure_log_event(telemetry_event))
-                runtime._log_event(
-                    pv_forecast_comparison_log_event(telemetry_event)
-                )
-                runtime._log_event(
-                    pv_deviation_evaluator_log_event(telemetry_event)
-                )
+                events = [
+                    runtime._solcast_log_event(telemetry_event),
+                    _goodwe_log_event(telemetry_event),
+                    _zendure_log_event(telemetry_event),
+                    pv_forecast_comparison_log_event(telemetry_event),
+                    pv_deviation_evaluator_log_event(telemetry_event),
+                ]
+                for event in events:
+                    _log_and_persist(history, event)
             except Exception as exc:
                 runtime._log_runtime_error("telemetry", exc)
             next_telemetry_run = monotonic_now + telemetry_interval

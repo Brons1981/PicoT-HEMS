@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, TypeGuard
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,5 +168,5 @@ def pv_deviation_evaluator_log_event(event: dict[str, Any]) -> dict[str, object]
     }
 
 
-def _number(value: object) -> bool:
+def _number(value: object) -> TypeGuard[int | float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool)

@@ -55,6 +55,7 @@ def test_telemetry_publishes_combined_observations(
     published_goodwe: list[dict[str, object]] = []
     published_zendure: list[dict[str, object]] = []
     published_power: list[dict[str, object]] = []
+    published_diagnostics: list[dict[str, object]] = []
 
     monkeypatch.setattr(
         runtime,
@@ -105,6 +106,11 @@ def test_telemetry_publishes_combined_observations(
         "publish_power_comparison_states",
         lambda event, token: published_power.append(event),
     )
+    monkeypatch.setattr(
+        runtime_observation,
+        "publish_diagnostics_dashboard_states",
+        lambda event, token: published_diagnostics.append(event),
+    )
 
     event = runtime_observation.run_telemetry_once(
         {
@@ -129,6 +135,7 @@ def test_telemetry_publishes_combined_observations(
     assert published_goodwe == [event]
     assert published_zendure == [event]
     assert published_power == [event]
+    assert published_diagnostics == [event]
 
 
 def test_goodwe_log_event_is_compact() -> None:

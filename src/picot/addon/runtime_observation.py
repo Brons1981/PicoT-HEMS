@@ -13,6 +13,7 @@ from picot.addon.dashboard import publish_dashboard_states
 from picot.addon.diagnostics_dashboard import publish_diagnostics_dashboard_states
 from picot.addon.diagnostics_timeline import DiagnosticsTimeline
 from picot.addon.diagnostics_timeline_dashboard import (
+    publish_diagnostics_timeline_idle,
     publish_diagnostics_timeline_state,
 )
 from picot.addon.goodwe_dashboard import publish_goodwe_dashboard_states
@@ -214,6 +215,7 @@ def main() -> int:
     history = HistoryStore()
 
     print("PicoT HEMS add-on starting", flush=True)
+    publish_diagnostics_timeline_idle(token)
     while True:
         monotonic_now = time.monotonic()
         wall_clock_now = datetime.now(runtime.LOCAL_TIMEZONE)

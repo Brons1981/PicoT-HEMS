@@ -1,8 +1,7 @@
 """Publish semantic PicoT planner timeline transitions to Home Assistant.
 
-Only real timeline transitions are posted. The entity therefore changes state
-only when PicoT enters a new diagnostic phase, allowing Home Assistant Recorder
-to preserve an uncluttered historical event trail.
+Real timeline transitions update the entity. A one-time idle state can also be
+published at add-on startup so the entity exists before the first transition.
 """
 
 from __future__ import annotations
@@ -51,18 +50,31 @@ def timeline_payload(event: dict[str, object]) -> dict[str, object] | None:
     }
 
 
-def publish_diagnostics_timeline_state(
-    event: dict[str, object],
+def idle_payload() -> dict[str, object]:
+    """Build the stable startup state used before the first timeline event."""
+
+    return {
+        "state": "idle",
+        "attributes": {
+            "friendly_name": "PicoT planner tijdlijn",
+            "icon": "mdi:timeline-clock-outline",
+            "observed_at": None,
+            "rolling_deviation_percent": None,
+            "evaluator_status": None,
+            "plan_review_status": None,
+            "plan_review_outcome": None,
+            "plan_review_action": None,
+            "control_change_allowed": False,
+        },
+    }
+
+
+def _publish_payload(
+    payload: dict[str, object],
     token: str,
     *,
     opener: Callable[..., object] = urlopen,
 ) -> None:
-    """Publish a timeline transition; do nothing when no transition occurred."""
-
-    payload = timeline_payload(event)
-    if payload is None:
-        return
-
     request = Request(
         f"{SUPERVISOR_BASE_URL}/api/states/{ENTITY_ID}",
         data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
@@ -78,3 +90,27 @@ def publish_diagnostics_timeline_state(
         raise RuntimeError(
             f"Home Assistant rejected diagnostics timeline state {ENTITY_ID}: {status}."
         )
+
+
+def publish_diagnostics_timeline_idle(
+    token: str,
+    *,
+    opener: Callable[..., object] = urlopen,
+) -> None:
+    """Create the timeline entity at startup without inventing a planner event."""
+
+    _publish_payload(idle_payload(), token, opener=opener)
+
+
+def publish_diagnostics_timeline_state(
+    event: dict[str, object],
+    token: str,
+    *,
+    opener: Callable[..., object] = urlopen,
+) -> None:
+    """Publish a timeline transition; do nothing when no transition occurred."""
+
+    payload = timeline_payload(event)
+    if payload is None:
+        return
+    _publish_payload(payload, token, opener=opener)

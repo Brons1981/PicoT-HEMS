@@ -8,8 +8,7 @@ import time
 from datetime import datetime
 from typing import Any, cast
 
-from picot.addon import runtime
-from picot.addon import price_runtime_v2
+from picot.addon import price_runtime_v2, runtime
 from picot.addon.dashboard import publish_dashboard_states
 from picot.addon.goodwe_dashboard import publish_goodwe_dashboard_states
 from picot.addon.goodwe_observer import (

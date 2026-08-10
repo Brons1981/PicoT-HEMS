@@ -10,6 +10,7 @@ from typing import Any, cast
 
 from picot.addon import price_runtime_v2, runtime
 from picot.addon.dashboard import publish_dashboard_states
+from picot.addon.diagnostics_dashboard import publish_diagnostics_dashboard_states
 from picot.addon.goodwe_dashboard import publish_goodwe_dashboard_states
 from picot.addon.goodwe_observer import (
     DEFAULT_GOODWE_POWER_ENTITY,
@@ -116,6 +117,7 @@ def run_telemetry_once(
     publish_goodwe_dashboard_states(event, token)
     publish_zendure_dashboard_states(event, token)
     publish_power_comparison_states(event, token)
+    publish_diagnostics_dashboard_states(event, token)
     return event
 
 

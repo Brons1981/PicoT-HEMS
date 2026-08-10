@@ -20,6 +20,10 @@ from picot.addon.power_comparison import (
     add_power_comparison_fields,
     publish_power_comparison_states,
 )
+from picot.addon.pv_deviation_evaluator import (
+    PvDeviationEvaluator,
+    pv_deviation_evaluator_log_event,
+)
 from picot.addon.pv_forecast_comparison import (
     add_pv_forecast_comparison_fields,
     pv_forecast_comparison_log_event,
@@ -112,6 +116,8 @@ def run_telemetry_once(
     options: dict[str, Any],
     token: str,
     planner_event: dict[str, object],
+    *,
+    pv_deviation_evaluator: PvDeviationEvaluator | None = None,
 ) -> dict[str, object]:
     """Refresh direct P1, Solcast, GoodWe and Zendure observations."""
 
@@ -125,6 +131,8 @@ def run_telemetry_once(
     event["telemetry_interval_seconds"] = int(options["telemetry_interval_seconds"])
     add_power_comparison_fields(event)
     add_pv_forecast_comparison_fields(event)
+    if pv_deviation_evaluator is not None:
+        event.update(pv_deviation_evaluator.evaluate(event))
 
     # Mirror entities remain temporarily for migration and diagnostics only.
     # Planner and runtime input use the physical entities above directly.
@@ -187,6 +195,7 @@ def main() -> int:
     next_telemetry_run = 0.0
     planner_event: dict[str, object] | None = None
     scheduled_boundary: runtime.ScheduledBoundary | None = None
+    pv_deviation_evaluator = PvDeviationEvaluator()
 
     print("PicoT HEMS add-on starting", flush=True)
     while True:
@@ -225,12 +234,20 @@ def main() -> int:
 
         if planner_event is not None and monotonic_now >= next_telemetry_run:
             try:
-                telemetry_event = run_telemetry_once(options, token, planner_event)
+                telemetry_event = run_telemetry_once(
+                    options,
+                    token,
+                    planner_event,
+                    pv_deviation_evaluator=pv_deviation_evaluator,
+                )
                 runtime._log_event(runtime._solcast_log_event(telemetry_event))
                 runtime._log_event(_goodwe_log_event(telemetry_event))
                 runtime._log_event(_zendure_log_event(telemetry_event))
                 runtime._log_event(
                     pv_forecast_comparison_log_event(telemetry_event)
+                )
+                runtime._log_event(
+                    pv_deviation_evaluator_log_event(telemetry_event)
                 )
             except Exception as exc:
                 runtime._log_runtime_error("telemetry", exc)

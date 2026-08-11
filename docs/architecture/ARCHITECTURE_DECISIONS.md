@@ -160,3 +160,8 @@ Detailed record: [`ADR-036-price-opportunity-detection-contract.md`](ADR-036-pri
 For normal storage operation PicoT chooses balance intent and timing while the battery integration controls instantaneous power. PicoT still projects expected NOM energy flow, SoC trajectory and time-to-target. Explicit wattage is reserved for accepted power-controlled scenarios, initially Dynamic Trading.
 
 Detailed record: [`ADR-037-storage-control-intent-and-trading-power-contract.md`](ADR-037-storage-control-intent-and-trading-power-contract.md)
+
+### ADR-038 — Layer Single Responsibility Contract
+Every PicoT planning/runtime layer has exactly one primary responsibility. Price Driven remains price-only, Candidate Generation constructs scenarios, Simulation/Projection calculates energy consequences, Evaluation compares Candidates and Execution performs validated plans.
+
+Detailed record: [`ADR-038-layer-single-responsibility-contract.md`](ADR-038-layer-single-responsibility-contract.md)

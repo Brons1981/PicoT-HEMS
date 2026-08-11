@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -38,7 +38,10 @@ def _page(start_value: str, end_value: str, *, error: str | None = None) -> byte
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PicoT historische data</title>
 <style>
-body{{font-family:system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;background:#111;color:#eee}}
+body{{
+ font-family:system-ui,sans-serif;max-width:760px;margin:40px auto;
+ padding:0 20px;background:#111;color:#eee
+}}
 .card{{background:#1d1d1d;border-radius:12px;padding:24px}}
 .grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}
 label{{display:flex;flex-direction:column;gap:6px;font-weight:600}}
@@ -51,24 +54,32 @@ small{{color:#aaa}} .error{{color:#ff8a80}}
 <body>
 <div class="card">
 <h1>PicoT historische data</h1>
-<p>Kies een periode. PicoT exporteert de persistente runtime-evidence uit <code>/data/picot_history.jsonl</code>.</p>
+<p>Kies een periode. PicoT exporteert de persistente runtime-evidence uit
+<code>/data/picot_history.jsonl</code>.</p>
 {message}
 <form id="export-form" action="download" method="get">
 <div class="grid">
-<label>Van<input id="from-local" type="datetime-local" value="{escape(start_value)}" required></label>
-<label>Tot<input id="to-local" type="datetime-local" value="{escape(end_value)}" required></label>
+<label>Van
+<input id="from-local" type="datetime-local" value="{escape(start_value)}" required>
+</label>
+<label>Tot
+<input id="to-local" type="datetime-local" value="{escape(end_value)}" required>
+</label>
 </div>
 <input id="from" name="from" type="hidden">
 <input id="to" name="to" type="hidden">
 <button type="submit">Download historische data</button>
 </form>
-<p><small>Ruwe telemetry wordt 7 dagen bewaard. Price decisions en PV-deviation evaluator evidence 90 dagen.</small></p>
+<p><small>Ruwe telemetry wordt 7 dagen bewaard. Price decisions en PV-deviation
+ evaluator evidence 90 dagen.</small></p>
 </div>
 <script>
 const form=document.getElementById('export-form');
 form.addEventListener('submit',()=>{{
- document.getElementById('from').value=new Date(document.getElementById('from-local').value).toISOString();
- document.getElementById('to').value=new Date(document.getElementById('to-local').value).toISOString();
+ const fromLocal=document.getElementById('from-local').value;
+ const toLocal=document.getElementById('to-local').value;
+ document.getElementById('from').value=new Date(fromLocal).toISOString();
+ document.getElementById('to').value=new Date(toLocal).toISOString();
 }});
 </script>
 </body></html>"""
@@ -108,17 +119,22 @@ def make_handler(history: HistoryStore) -> type[BaseHTTPRequestHandler]:
 
                 records = list(history.iter_range(start, end))
                 body = b"".join(
-                    (json.dumps(record, separators=(",", ":"), default=str) + "\n").encode("utf-8")
+                    (
+                        json.dumps(record, separators=(",", ":"), default=str) + "\n"
+                    ).encode("utf-8")
                     for record in records
                 )
                 filename = (
                     "picot_history_"
-                    f"{start.astimezone(timezone.utc):%Y%m%dT%H%MZ}_"
-                    f"{end.astimezone(timezone.utc):%Y%m%dT%H%MZ}.jsonl"
+                    f"{start.astimezone(UTC):%Y%m%dT%H%MZ}_"
+                    f"{end.astimezone(UTC):%Y%m%dT%H%MZ}.jsonl"
                 )
                 self.send_response(200)
                 self.send_header("Content-Type", "application/x-ndjson")
-                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header(
+                    "Content-Disposition",
+                    f'attachment; filename="{filename}"',
+                )
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -142,15 +158,25 @@ def start_history_export_server(
     """Start the history export web UI in a daemon thread."""
 
     server = ThreadingHTTPServer((host, port), make_handler(history))
-    thread = Thread(target=server.serve_forever, name="picot-history-export", daemon=True)
+    thread = Thread(
+        target=server.serve_forever,
+        name="picot-history-export",
+        daemon=True,
+    )
     thread.start()
     return server
 
 
 def main() -> int:
     history = HistoryStore()
-    server = ThreadingHTTPServer(("0.0.0.0", DEFAULT_EXPORT_PORT), make_handler(history))
-    print(f"PicoT history export UI listening on port {DEFAULT_EXPORT_PORT}", flush=True)
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", DEFAULT_EXPORT_PORT),
+        make_handler(history),
+    )
+    print(
+        f"PicoT history export UI listening on port {DEFAULT_EXPORT_PORT}",
+        flush=True,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

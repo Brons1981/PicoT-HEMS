@@ -8,16 +8,23 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 DEFAULT_HISTORY_PATH = Path("/data/picot_history.jsonl")
-RAW_RETENTION_DAYS = 7
+FULL_RETENTION_HOURS = 72
+MEDIUM_RETENTION_DAYS = 30
 LONG_RETENTION_DAYS = 90
-LONG_RETENTION_EVENTS = {
+MEDIUM_BUCKET_SECONDS = 60
+LONG_BUCKET_SECONDS = 900
+FORENSIC_EVENTS = {
     "picot_price_decision",
     "picot_pv_deviation_evaluator",
+    "picot_plan_review",
+    "picot_diagnostics_timeline",
+    "picot_scheduled_transition",
+    "picot_runtime_error",
 }
 
 
 class HistoryStore:
-    """Append runtime evidence and periodically prune expired records."""
+    """Append runtime evidence and periodically compact expired raw detail."""
 
     def __init__(self, path: Path = DEFAULT_HISTORY_PATH) -> None:
         self.path = path
@@ -55,37 +62,85 @@ class HistoryStore:
                     yield event
 
     def prune(self, now: datetime | None = None) -> None:
-        """Keep raw telemetry 7 days and decision/deviation evidence 90 days."""
+        """Keep 72h full detail, then progressively downsample through 90 days."""
 
         if not self.path.exists():
             return
+
         current = now or datetime.now().astimezone()
-        raw_cutoff = current - timedelta(days=RAW_RETENTION_DAYS)
+        full_cutoff = current - timedelta(hours=FULL_RETENTION_HOURS)
+        medium_cutoff = current - timedelta(days=MEDIUM_RETENTION_DAYS)
         long_cutoff = current - timedelta(days=LONG_RETENTION_DAYS)
+
         kept: list[str] = []
+        seen_medium: set[tuple[str, str, int]] = set()
+        seen_long: set[tuple[str, str, int]] = set()
+
         for line in self.path.read_text(encoding="utf-8").splitlines():
             try:
                 event = json.loads(line)
                 timestamp = _event_timestamp(event)
             except (json.JSONDecodeError, TypeError, ValueError):
                 continue
-            cutoff = (
-                long_cutoff
-                if event.get("event") in LONG_RETENTION_EVENTS
-                else raw_cutoff
-            )
-            if timestamp >= cutoff:
+
+            if timestamp >= full_cutoff:
                 kept.append(line)
+                continue
+
+            event_name = str(event.get("event", "unknown"))
+            if event_name in FORENSIC_EVENTS and timestamp >= long_cutoff:
+                kept.append(line)
+                continue
+
+            source = _event_source(event)
+            epoch_seconds = int(timestamp.timestamp())
+
+            if timestamp >= medium_cutoff:
+                key = (
+                    event_name,
+                    source,
+                    epoch_seconds // MEDIUM_BUCKET_SECONDS,
+                )
+                if key not in seen_medium:
+                    seen_medium.add(key)
+                    kept.append(line)
+                continue
+
+            if timestamp >= long_cutoff:
+                key = (
+                    event_name,
+                    source,
+                    epoch_seconds // LONG_BUCKET_SECONDS,
+                )
+                if key not in seen_long:
+                    seen_long.add(key)
+                    kept.append(line)
+
         content = "\n".join(kept)
         if content:
             content += "\n"
         self.path.write_text(content, encoding="utf-8")
 
 
+def _event_source(event: Mapping[str, object]) -> str:
+    """Return a stable source key so each layer/entity downsamples independently."""
+
+    for key in ("source_entity", "p1_entity", "stream", "layer"):
+        value = event.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return "default"
+
+
 def _event_timestamp(event: Mapping[str, object]) -> datetime:
     """Resolve the timestamp used for retention and range export."""
 
-    value = event.get("observed_at") or event.get("evaluated_at")
+    value = (
+        event.get("observed_at")
+        or event.get("evaluated_at")
+        or event.get("executed_at")
+        or event.get("telemetry_updated_at")
+    )
     if not isinstance(value, str):
         raise ValueError("history event has no timestamp")
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))

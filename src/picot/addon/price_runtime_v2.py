@@ -111,7 +111,11 @@ def _price_entry_observation(
 
     entry = points[0]
     later_points = points[1:]
-    best_later = min(later_points, key=lambda point: (point.value, point.starts_at)) if later_points else None
+    best_later = (
+        min(later_points, key=lambda point: (point.value, point.starts_at))
+        if later_points
+        else None
+    )
     better_later = best_later is not None and best_later.value < entry.value
 
     alternatives: list[dict[str, object]] = []

@@ -74,20 +74,54 @@ def _price_entry_observation(
     first point. This observation records whether later points inside that same
     opportunity were cheaper, so the next-day forensic review can distinguish
     opportunity detection from optimal action placement.
+
+    Diagnostics retain the most recently completed opportunity when no active or
+    future opportunity remains. This keeps today's planner choice visible after
+    the window has ended without changing planner control.
     """
 
-    rank = decision.active_opportunity_rank or decision.next_opportunity_rank
-    opportunity = next(
-        (item for item in decision.opportunities if item.rank == rank),
-        None,
-    )
+    opportunity = None
+    opportunity_context = "none"
+
+    if decision.active_opportunity_rank is not None:
+        opportunity = next(
+            (
+                item
+                for item in decision.opportunities
+                if item.rank == decision.active_opportunity_rank
+            ),
+            None,
+        )
+        opportunity_context = "active"
+    elif decision.next_opportunity_rank is not None:
+        opportunity = next(
+            (
+                item
+                for item in decision.opportunities
+                if item.rank == decision.next_opportunity_rank
+            ),
+            None,
+        )
+        opportunity_context = "next"
+    else:
+        completed = tuple(
+            item
+            for item in decision.opportunities
+            if item.ends_at <= decision.evaluated_at
+        )
+        if completed:
+            opportunity = max(completed, key=lambda item: item.ends_at)
+            opportunity_context = "most_recent_completed"
+
     if opportunity is None:
         return {
             "price_entry_observation_status": "no_opportunity",
             "price_entry_observation_only": True,
             "price_entry_replan_input": False,
+            "price_entry_opportunity_context": opportunity_context,
             "price_entry_limitation": (
-                "No active or next price opportunity is available for entry comparison."
+                "No active, next or completed price opportunity is available "
+                "for entry comparison."
             ),
         }
 
@@ -101,6 +135,7 @@ def _price_entry_observation(
             "price_entry_observation_status": "insufficient_price_points",
             "price_entry_observation_only": True,
             "price_entry_replan_input": False,
+            "price_entry_opportunity_context": opportunity_context,
             "price_entry_opportunity_rank": opportunity.rank,
             "price_entry_opportunity_starts_at": opportunity.starts_at.isoformat(),
             "price_entry_opportunity_ends_at": opportunity.ends_at.isoformat(),
@@ -148,6 +183,7 @@ def _price_entry_observation(
         ),
         "price_entry_observation_only": True,
         "price_entry_replan_input": False,
+        "price_entry_opportunity_context": opportunity_context,
         "price_entry_opportunity_rank": opportunity.rank,
         "price_entry_opportunity_starts_at": opportunity.starts_at.isoformat(),
         "price_entry_opportunity_ends_at": opportunity.ends_at.isoformat(),

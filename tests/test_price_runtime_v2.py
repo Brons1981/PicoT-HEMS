@@ -75,3 +75,32 @@ def test_observation_reports_when_entry_is_already_lowest() -> None:
     assert observation["price_entry_observation_status"] == "entry_is_lowest_so_far"
     assert observation["price_entry_better_later_price_exists"] is False
     assert observation["price_entry_best_later_saving_eur_per_kwh"] <= 0.0
+
+
+def test_observation_keeps_most_recent_completed_opportunity_visible() -> None:
+    forecast = _forecast((0.20, 0.158, 0.164, 0.143, 0.134, 0.131, 0.127, 0.18))
+    # The qualifying opportunity has ended at 11:45 UTC, while the price forecast
+    # remains valid until 12:00 UTC. Test the completed-opportunity fallback inside
+    # that valid forensic review interval rather than exactly at forecast expiry.
+    evaluated_at = BASE + timedelta(minutes=119)
+    decision = PriceDrivenStrategyV2().evaluate(
+        PriceDrivenStrategyV2Config(max_price_above_daily_min_eur_per_kwh=0.04),
+        forecast,
+        evaluated_at=evaluated_at,
+    )
+
+    assert decision.active_opportunity_rank is None
+    assert decision.next_opportunity_rank is None
+
+    observation = _price_entry_observation(decision, forecast)
+
+    assert observation["price_entry_opportunity_context"] == "most_recent_completed"
+    assert observation["price_entry_observation_status"] == "better_later_price_exists"
+    assert observation["price_entry_opportunity_starts_at"] == (
+        BASE + timedelta(minutes=15)
+    ).isoformat()
+    assert observation["price_entry_opportunity_ends_at"] == (
+        BASE + timedelta(minutes=105)
+    ).isoformat()
+    assert observation["price_entry_best_later_price_eur_per_kwh"] == pytest.approx(0.127)
+    assert observation["price_entry_best_later_saving_eur_per_kwh"] == pytest.approx(0.031)

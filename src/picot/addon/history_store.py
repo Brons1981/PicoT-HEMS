@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -36,6 +36,24 @@ class HistoryStore:
             self.prune(now)
             self._last_prune_date = now.date()
 
+    def iter_range(self, start: datetime, end: datetime) -> Iterator[dict[str, object]]:
+        """Yield persisted events whose event timestamp falls inside [start, end]."""
+
+        if end < start:
+            raise ValueError("end must not be before start")
+        if not self.path.exists():
+            return
+
+        with self.path.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                    timestamp = _event_timestamp(event)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+                if start <= timestamp <= end:
+                    yield event
+
     def prune(self, now: datetime | None = None) -> None:
         """Keep raw telemetry 7 days and decision/deviation evidence 90 days."""
 
@@ -65,12 +83,12 @@ class HistoryStore:
 
 
 def _event_timestamp(event: Mapping[str, object]) -> datetime:
-    """Resolve the timestamp used for retention."""
+    """Resolve the timestamp used for retention and range export."""
 
     value = event.get("observed_at") or event.get("evaluated_at")
     if not isinstance(value, str):
         raise ValueError("history event has no timestamp")
-    parsed = datetime.fromisoformat(value)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         return parsed.astimezone()
     return parsed

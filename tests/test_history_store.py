@@ -26,3 +26,28 @@ def test_history_store_prunes_raw_after_seven_days_but_keeps_decisions(tmp_path)
     content = path.read_text(encoding="utf-8")
     assert "picot_goodwe_snapshot" not in content
     assert "picot_price_decision" in content
+
+
+def test_history_store_iter_range_returns_only_selected_period(tmp_path):
+    path = tmp_path / "history.jsonl"
+    store = HistoryStore(path)
+    before = datetime(2026, 8, 10, 18, 0, tzinfo=timezone.utc)
+    inside = datetime(2026, 8, 10, 22, 0, tzinfo=timezone.utc)
+    after = datetime(2026, 8, 11, 8, 0, tzinfo=timezone.utc)
+    for timestamp in (before, inside, after):
+        store.append(
+            {
+                "event": "picot_goodwe_snapshot",
+                "observed_at": timestamp.isoformat(),
+                "marker": timestamp.hour,
+            }
+        )
+
+    records = list(
+        store.iter_range(
+            datetime(2026, 8, 10, 20, 0, tzinfo=timezone.utc),
+            datetime(2026, 8, 11, 6, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert [record["marker"] for record in records] == [22]

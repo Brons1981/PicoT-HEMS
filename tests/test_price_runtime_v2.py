@@ -79,7 +79,10 @@ def test_observation_reports_when_entry_is_already_lowest() -> None:
 
 def test_observation_keeps_most_recent_completed_opportunity_visible() -> None:
     forecast = _forecast((0.20, 0.158, 0.164, 0.143, 0.134, 0.131, 0.127, 0.18))
-    evaluated_at = BASE + timedelta(hours=2)
+    # The qualifying opportunity has ended at 11:45 UTC, while the price forecast
+    # remains valid until 12:00 UTC. Test the completed-opportunity fallback inside
+    # that valid forensic review interval rather than exactly at forecast expiry.
+    evaluated_at = BASE + timedelta(minutes=119)
     decision = PriceDrivenStrategyV2().evaluate(
         PriceDrivenStrategyV2Config(max_price_above_daily_min_eur_per_kwh=0.04),
         forecast,

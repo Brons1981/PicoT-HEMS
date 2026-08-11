@@ -1,0 +1,144 @@
+# PicoT HEMS - dynamic price chart with Price Driven v2 opportunity overlay
+# Observation/visualisation only. This card does not influence planner control.
+type: custom:apexcharts-card
+header:
+  show: true
+  title: Dynamische elektriciteitsprijzen
+  show_states: false
+graph_span: 48h
+span:
+  start: day
+now:
+  show: true
+  label: Nu
+update_interval: 5min
+yaxis:
+  - decimals: 3
+    apex_config:
+      title:
+        text: EUR/kWh
+apex_config:
+  chart:
+    height: 430
+    toolbar:
+      show: true
+      autoSelected: pan
+    zoom:
+      enabled: true
+      type: x
+      autoScaleYaxis: true
+      allowMouseWheelZoom: false
+    selection:
+      enabled: false
+    animations:
+      enabled: false
+  dataLabels:
+    enabled: false
+  grid:
+    strokeDashArray: 4
+  legend:
+    show: true
+    onItemClick:
+      toggleDataSeries: true
+  tooltip:
+    shared: true
+    intersect: false
+  annotations:
+    yaxis:
+      - y: 0
+        borderWidth: 1
+        strokeDashArray: 2
+        label:
+          show: false
+series:
+  - entity: sensor.picot_current_price
+    name: PicoT kwartierprijzen
+    float_precision: 3
+    type: area
+    color: "#42a5f5"
+    curve: stepline
+    stroke_width: 2
+    opacity: 0.22
+    extend_to: false
+    data_generator: |-
+      const picotAttributes = entity.attributes || {};
+      const picotRows = picotAttributes.price_points || [];
+
+      if (picotRows.length > 0) {
+        return picotRows
+          .map((row) => {
+            const start = row.start || row.starts_at || row.time;
+            const value = row.value ?? row.price;
+            return [new Date(start).getTime(), Number(value)];
+          })
+          .filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]))
+          .sort((a, b) => a[0] - b[0]);
+      }
+
+      const source = hass.states['sensor.nordpool_kwh_nl_eur_3_095_0'];
+      const attributes = source?.attributes || {};
+      const rawRows = [
+        ...(attributes.raw_today || []),
+        ...(attributes.raw_tomorrow || []),
+      ];
+
+      return rawRows
+        .map((row) => {
+          const start = row.start || row.starts_at || row.time;
+          const value = row.value ?? row.price;
+          return [new Date(start).getTime(), Number(value)];
+        })
+        .filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]))
+        .sort((a, b) => a[0] - b[0]);
+
+  - entity: sensor.picot_current_price
+    name: PicoT price opportunity
+    float_precision: 3
+    type: area
+    color: "#66bb6a"
+    curve: stepline
+    stroke_width: 0
+    opacity: 0.35
+    extend_to: false
+    data_generator: |-
+      const attrs = entity.attributes || {};
+      const start = new Date(attrs.window_starts_at || '').getTime();
+      const end = new Date(attrs.window_ends_at || '').getTime();
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+
+      let rows = attrs.price_points || [];
+      if (rows.length === 0) {
+        const source = hass.states['sensor.nordpool_kwh_nl_eur_3_095_0'];
+        const sourceAttrs = source?.attributes || {};
+        rows = [
+          ...(sourceAttrs.raw_today || []),
+          ...(sourceAttrs.raw_tomorrow || []),
+        ];
+      }
+
+      return rows
+        .map((row) => {
+          const rowStart = row.start || row.starts_at || row.time;
+          const value = row.value ?? row.price;
+          return [new Date(rowStart).getTime(), Number(value)];
+        })
+        .filter((point) =>
+          Number.isFinite(point[0]) &&
+          Number.isFinite(point[1]) &&
+          point[0] >= start &&
+          point[0] < end
+        )
+        .sort((a, b) => a[0] - b[0]);
+
+  - entity: sensor.picot_price_entry_observation
+    name: Beste latere prijs
+    type: scatter
+    color: "#ff9800"
+    stroke_width: 0
+    extend_to: false
+    data_generator: |-
+      const attrs = entity.attributes || {};
+      const start = new Date(attrs.best_later_starts_at || '').getTime();
+      const price = Number(attrs.best_later_price_eur_per_kwh);
+      if (!Number.isFinite(start) || !Number.isFinite(price)) return [];
+      return [[start, price]];

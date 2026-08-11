@@ -30,63 +30,28 @@ from picot.domain.planning_input_snapshot import (
     PlanningInputVersions,
     RuntimePressureState,
 )
-from picot.domain.storage_planning import StoragePlanningState
 from picot.planner.candidate_engine import CandidateEngine
 
 BASE = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
 
 
-def _snapshot(*, with_projection: bool = False) -> PlanningInputSnapshot:
-    series: list[ForecastSeries] = [
-        ForecastSeries(
-            forecast_id="pv-1",
-            kind=ForecastKind.PV_POWER,
-            source="test",
-            created_at=BASE,
-            expires_at=BASE + timedelta(hours=36),
-            unit="W",
-            points=(
-                ForecastPoint(
-                    starts_at=BASE,
-                    ends_at=BASE + timedelta(hours=3),
-                    value=3000.0,
-                    confidence=0.9,
-                ),
+def _snapshot() -> PlanningInputSnapshot:
+    forecast = ForecastSeries(
+        forecast_id="pv-1",
+        kind=ForecastKind.PV_POWER,
+        source="test",
+        created_at=BASE,
+        expires_at=BASE + timedelta(hours=36),
+        unit="W",
+        points=(
+            ForecastPoint(
+                starts_at=BASE,
+                ends_at=BASE + timedelta(hours=3),
+                value=3000.0,
+                confidence=0.9,
             ),
-        )
-    ]
-    storage_states = ()
-    if with_projection:
-        series.append(
-            ForecastSeries(
-                forecast_id="load-1",
-                kind=ForecastKind.HOUSEHOLD_LOAD,
-                source="test",
-                created_at=BASE,
-                expires_at=BASE + timedelta(hours=36),
-                unit="W",
-                points=(
-                    ForecastPoint(
-                        starts_at=BASE,
-                        ends_at=BASE + timedelta(hours=3),
-                        value=1000.0,
-                        confidence=0.85,
-                    ),
-                ),
-            )
-        )
-        storage_states = (
-            StoragePlanningState(
-                capability_id="battery-charge",
-                current_soc=0.64,
-                usable_capacity_wh=8000.0,
-                measured_at=BASE,
-                confidence=0.98,
-                source_version="test-v1",
-                charge_efficiency=1.0,
-            ),
-        )
-
+        ),
+    )
     return PlanningInputSnapshot(
         snapshot_id="snapshot-1",
         captured_at=BASE,
@@ -99,7 +64,7 @@ def _snapshot(*, with_projection: bool = False) -> PlanningInputSnapshot:
             objectives=(),
         ),
         household_state=HouseholdState(measured_at=BASE, phases=()),
-        forecasts=ForecastSet(series=tuple(series)),
+        forecasts=ForecastSet(series=(forecast,)),
         runtime_state=RuntimePressureState.NORMAL,
         versions=PlanningInputVersions(
             capability_mapping=3,
@@ -109,7 +74,6 @@ def _snapshot(*, with_projection: bool = False) -> PlanningInputSnapshot:
             forecasts=1,
         ),
         replan_reasons=("test",),
-        storage_states=storage_states,
     )
 
 
@@ -182,10 +146,11 @@ def test_candidate_engine_builds_balance_pv_first_path_without_commanded_power()
     pv_path = result.energy_paths[1]
     assert pv_path.segments[0].primitive is ExecutionPrimitive.BALANCE_CHARGE_ONLY
     assert pv_path.segments[0].requested_power_w is None
+    assert pv_path.projected_states == ()
     assert pv_path.opportunity_ids == ("pv-surplus-1",)
 
 
-def test_candidate_engine_builds_cost_first_balance_candidate_without_pv_projection() -> None:
+def test_candidate_engine_builds_cost_first_balance_candidate_without_projection() -> None:
     result = CandidateEngine().generate(_snapshot(), _price_opportunities(), _capabilities())
 
     assert len(result.candidates) == 2
@@ -194,21 +159,7 @@ def test_candidate_engine_builds_cost_first_balance_candidate_without_pv_project
     assert cost_path.segments[0].primitive is ExecutionPrimitive.BALANCE_CHARGE_ONLY
     assert cost_path.segments[0].requested_power_w is None
     assert cost_path.projected_states == ()
-    assert "projection unavailable" in cost_path.assumptions[1].lower()
-
-
-def test_candidate_engine_projects_nom_soc_from_pv_surplus() -> None:
-    result = CandidateEngine().generate(
-        _snapshot(with_projection=True),
-        _price_opportunities(),
-        _capabilities(),
-    )
-
-    cost_path = result.energy_paths[1]
-    assert len(cost_path.projected_states) == 2
-    assert cost_path.projected_states[0].battery_soc == pytest.approx(0.64)
-    assert cost_path.projected_states[-1].battery_soc == pytest.approx(0.89)
-    assert cost_path.segments[0].requested_power_w is None
+    assert "simulation owns projection" in cost_path.assumptions[1].lower()
 
 
 def test_candidate_engine_keeps_baseline_and_explains_unavailable_storage() -> None:

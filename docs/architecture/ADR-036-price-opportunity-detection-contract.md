@@ -1,6 +1,6 @@
 # ADR-036 — Price Opportunity Detection Contract
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-11
 
 ## Context

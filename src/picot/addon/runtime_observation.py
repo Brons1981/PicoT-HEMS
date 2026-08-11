@@ -36,6 +36,7 @@ from picot.addon.pv_forecast_comparison import (
     add_pv_forecast_comparison_fields,
     pv_forecast_comparison_log_event,
 )
+from picot.addon.runtime_notifications import RuntimeFailureNotifier
 from picot.addon.zendure_dashboard import publish_zendure_dashboard_states
 from picot.addon.zendure_observer import (
     DEFAULT_ZENDURE_POWER_ENTITY,
@@ -98,6 +99,17 @@ def _run_price_planner_once(options: dict[str, Any], token: str) -> dict[str, ob
     raise ValueError(f"Unsupported price_strategy: {strategy}")
 
 
+def _publish_telemetry_states(event: dict[str, object], token: str) -> None:
+    """Publish presentation states after evidence has already been persisted."""
+
+    publish_dashboard_states(event, token)
+    publish_goodwe_dashboard_states(event, token)
+    publish_zendure_dashboard_states(event, token)
+    publish_power_comparison_states(event, token)
+    publish_diagnostics_dashboard_states(event, token)
+    publish_diagnostics_timeline_state(event, token)
+
+
 def run_telemetry_once(
     options: dict[str, Any],
     token: str,
@@ -105,12 +117,15 @@ def run_telemetry_once(
     *,
     pv_deviation_evaluator: PvDeviationEvaluator | None = None,
     diagnostics_timeline: DiagnosticsTimeline | None = None,
+    publish: bool = True,
 ) -> dict[str, object]:
-    """Read and publish observation data even when no planner context exists."""
+    """Read observation data independently of planner and publication health."""
 
     observed_at = datetime.now(runtime.LOCAL_TIMEZONE)
     event = dict(planner_event or {})
-    event["planner_context_status"] = "available" if planner_event is not None else "unavailable"
+    event["planner_context_status"] = (
+        "available" if planner_event is not None else "unavailable"
+    )
     event.update(runtime._grid_fields(options, token))
     event.update(runtime._solcast_fields(token, observed_at=observed_at))
     event.update(_goodwe_fields(options, token, observed_at=observed_at))
@@ -124,12 +139,8 @@ def run_telemetry_once(
     event.update(evaluate_plan_review(event))
     if diagnostics_timeline is not None:
         event.update(diagnostics_timeline.evaluate(event))
-    publish_dashboard_states(event, token)
-    publish_goodwe_dashboard_states(event, token)
-    publish_zendure_dashboard_states(event, token)
-    publish_power_comparison_states(event, token)
-    publish_diagnostics_dashboard_states(event, token)
-    publish_diagnostics_timeline_state(event, token)
+    if publish:
+        _publish_telemetry_states(event, token)
     return event
 
 
@@ -193,15 +204,9 @@ def _timeline_log_event(event: dict[str, object]) -> dict[str, object] | None:
             "diagnostics_timeline_rolling_deviation_percent"
         ),
         "evaluator_status": event.get("diagnostics_timeline_evaluator_status"),
-        "plan_review_status": event.get(
-            "diagnostics_timeline_plan_review_status"
-        ),
-        "plan_review_outcome": event.get(
-            "diagnostics_timeline_plan_review_outcome"
-        ),
-        "plan_review_action": event.get(
-            "diagnostics_timeline_plan_review_action"
-        ),
+        "plan_review_status": event.get("diagnostics_timeline_plan_review_status"),
+        "plan_review_outcome": event.get("diagnostics_timeline_plan_review_outcome"),
+        "plan_review_action": event.get("diagnostics_timeline_plan_review_action"),
         "control_change_allowed": event.get(
             "diagnostics_timeline_control_change_allowed"
         ),
@@ -210,24 +215,46 @@ def _timeline_log_event(event: dict[str, object]) -> dict[str, object] | None:
 
 
 def _runtime_error_event(stream: str, exc: Exception) -> dict[str, object]:
-    return {
+    record: dict[str, object] = {
         "event": "picot_runtime_error",
         "layer": stream,
         "stream": stream,
         "error": str(exc) or exc.__class__.__name__,
+        "error_type": exc.__class__.__name__,
         "observed_at": datetime.now(runtime.LOCAL_TIMEZONE).isoformat(),
     }
+    for name in ("entity_id", "endpoint", "status", "payload_state"):
+        value = getattr(exc, name, None)
+        if value is not None:
+            record[name if name != "status" else "http_status"] = value
+    return record
 
 
 def _log_and_persist(history: HistoryStore, event: dict[str, object]) -> None:
-    """Write the same structured evidence to console and persistent history."""
-
     runtime._log_event(event)
     history.append(event)
 
 
 def _log_error_and_persist(history: HistoryStore, stream: str, exc: Exception) -> None:
     _log_and_persist(history, _runtime_error_event(stream, exc))
+
+
+def _telemetry_evidence_events(
+    telemetry_event: dict[str, object],
+) -> list[dict[str, object]]:
+    events = [
+        _p1_log_event(telemetry_event),
+        runtime._solcast_log_event(telemetry_event),
+        _goodwe_log_event(telemetry_event),
+        _zendure_log_event(telemetry_event),
+        pv_forecast_comparison_log_event(telemetry_event),
+        pv_deviation_evaluator_log_event(telemetry_event),
+        plan_review_log_event(telemetry_event),
+    ]
+    timeline_event = _timeline_log_event(telemetry_event)
+    if timeline_event is not None:
+        events.append(timeline_event)
+    return events
 
 
 def main() -> int:
@@ -248,6 +275,7 @@ def main() -> int:
     pv_deviation_evaluator = PvDeviationEvaluator()
     diagnostics_timeline = DiagnosticsTimeline()
     history = HistoryStore()
+    failure_notifier = RuntimeFailureNotifier()
 
     print("PicoT HEMS add-on starting", flush=True)
     publish_diagnostics_timeline_idle(token)
@@ -291,23 +319,40 @@ def main() -> int:
                     planner_event,
                     pv_deviation_evaluator=pv_deviation_evaluator,
                     diagnostics_timeline=diagnostics_timeline,
+                    publish=False,
                 )
-                events = [
-                    _p1_log_event(telemetry_event),
-                    runtime._solcast_log_event(telemetry_event),
-                    _goodwe_log_event(telemetry_event),
-                    _zendure_log_event(telemetry_event),
-                    pv_forecast_comparison_log_event(telemetry_event),
-                    pv_deviation_evaluator_log_event(telemetry_event),
-                    plan_review_log_event(telemetry_event),
-                ]
-                timeline_event = _timeline_log_event(telemetry_event)
-                if timeline_event is not None:
-                    events.append(timeline_event)
-                for event in events:
-                    _log_and_persist(history, event)
+                for evidence_event in _telemetry_evidence_events(telemetry_event):
+                    _log_and_persist(history, evidence_event)
             except Exception as exc:
-                _log_error_and_persist(history, "telemetry", exc)
+                _log_error_and_persist(history, "telemetry_collection", exc)
+            else:
+                try:
+                    _publish_telemetry_states(telemetry_event, token)
+                except Exception as exc:
+                    _log_error_and_persist(history, "telemetry_publish", exc)
+                    fingerprint = (
+                        f"{exc.__class__.__name__}:"
+                        f"{getattr(exc, 'entity_id', '')}:"
+                        f"{getattr(exc, 'status', '')}"
+                    )
+                    try:
+                        failure_notifier.failure(
+                            token,
+                            now=wall_clock_now,
+                            fingerprint=fingerprint,
+                            message=str(exc),
+                        )
+                    except Exception as notify_exc:
+                        _log_error_and_persist(
+                            history, "runtime_notification", notify_exc
+                        )
+                else:
+                    try:
+                        failure_notifier.recovered(token, now=wall_clock_now)
+                    except Exception as notify_exc:
+                        _log_error_and_persist(
+                            history, "runtime_notification", notify_exc
+                        )
             next_telemetry_run = monotonic_now + telemetry_interval
 
         time.sleep(runtime.SCHEDULER_TICK_SECONDS)

@@ -155,3 +155,8 @@ Detailed record: [`ADR-035-home-assistant-adapter-contract.md`](ADR-035-home-ass
 Price Opportunity Detection is part of the canonical Opportunity Engine and deterministically describes low-price, negative-price and high-export-value windows across the rolling planning horizon without ranking, selecting devices or bypassing Candidate Generation and Evaluation.
 
 Detailed record: [`ADR-036-price-opportunity-detection-contract.md`](ADR-036-price-opportunity-detection-contract.md)
+
+### ADR-037 — Storage Control Intent, Projection and Trading Power Contract
+For normal storage operation PicoT chooses balance intent and timing while the battery integration controls instantaneous power. PicoT still projects expected NOM energy flow, SoC trajectory and time-to-target. Explicit wattage is reserved for accepted power-controlled scenarios, initially Dynamic Trading.
+
+Detailed record: [`ADR-037-storage-control-intent-and-trading-power-contract.md`](ADR-037-storage-control-intent-and-trading-power-contract.md)

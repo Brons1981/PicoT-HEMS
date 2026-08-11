@@ -1,6 +1,6 @@
 # ADR-037 — Storage Control Intent, Projection and Trading Power Contract
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-11
 
 ## Context

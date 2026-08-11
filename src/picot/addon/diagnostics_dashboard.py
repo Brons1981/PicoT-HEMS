@@ -172,6 +172,35 @@ def diagnostics_dashboard_states(event: dict[str, object]) -> DashboardStates:
                 "telemetry_updated_at": event.get("telemetry_updated_at"),
             },
         },
+        "sensor.picot_price_entry_observation": {
+            "state": _safe_state(event.get("price_entry_observation_status")),
+            "attributes": {
+                "friendly_name": "PicoT prijs-start observatie",
+                "icon": "mdi:clock-check-outline",
+                "observation_only": True,
+                "replan_input": False,
+                "opportunity_rank": event.get("price_entry_opportunity_rank"),
+                "opportunity_starts_at": event.get("price_entry_opportunity_starts_at"),
+                "opportunity_ends_at": event.get("price_entry_opportunity_ends_at"),
+                "reference_starts_at": event.get("price_entry_reference_starts_at"),
+                "reference_price_eur_per_kwh": event.get(
+                    "price_entry_reference_price_eur_per_kwh"
+                ),
+                "better_later_price_exists": event.get(
+                    "price_entry_better_later_price_exists"
+                ),
+                "best_later_starts_at": event.get("price_entry_best_later_starts_at"),
+                "best_later_price_eur_per_kwh": event.get(
+                    "price_entry_best_later_price_eur_per_kwh"
+                ),
+                "best_later_saving_eur_per_kwh": event.get(
+                    "price_entry_best_later_saving_eur_per_kwh"
+                ),
+                "alternatives": event.get("price_entry_alternatives", []),
+                "limitation": event.get("price_entry_limitation"),
+                "telemetry_updated_at": event.get("telemetry_updated_at"),
+            },
+        },
     }
     for minutes in ENERGY_WINDOWS_MINUTES:
         states[f"sensor.picot_pv_energy_deviation_{minutes}m"] = _energy_window_state(

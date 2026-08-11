@@ -13,6 +13,7 @@ from enum import StrEnum
 from picot.domain.forecast import ForecastSet
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import PlannerStrategy
+from picot.domain.storage_planning import EnergyRequirement, StoragePlanningState
 
 
 class RuntimePressureState(StrEnum):
@@ -58,6 +59,8 @@ class PlanningInputSnapshot:
     runtime_state: RuntimePressureState
     versions: PlanningInputVersions
     replan_reasons: tuple[str, ...]
+    storage_states: tuple[StoragePlanningState, ...] = ()
+    energy_requirements: tuple[EnergyRequirement, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.snapshot_id.strip():
@@ -78,3 +81,13 @@ class PlanningInputSnapshot:
             raise ValueError("A Planning Input Snapshot requires a replan reason.")
         if any(not reason.strip() for reason in self.replan_reasons):
             raise ValueError("Replan reasons must not be empty.")
+
+        storage_ids = [state.capability_id for state in self.storage_states]
+        if len(storage_ids) != len(set(storage_ids)):
+            raise ValueError("Each storage capability may have only one planning state.")
+        if any(state.measured_at > self.captured_at for state in self.storage_states):
+            raise ValueError("Storage state cannot be measured after snapshot capture time.")
+
+        requirement_ids = [item.requirement_id for item in self.energy_requirements]
+        if len(requirement_ids) != len(set(requirement_ids)):
+            raise ValueError("Each energy requirement ID may appear only once.")

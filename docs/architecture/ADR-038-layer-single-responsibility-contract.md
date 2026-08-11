@@ -79,6 +79,17 @@ Its output is price evidence, not battery behaviour.
 
 Battery charging calculations, SoC projection, PV/load interaction and expected NOM behaviour are owned by the appropriate planning/simulation responsibilities elsewhere in the pipeline.
 
+## Ownership precedence
+
+ADR-038 is authoritative for **layer ownership**.
+
+Where wording in an earlier ADR can be read as assigning a downstream calculation to the wrong layer, this ADR clarifies the ownership without changing the underlying functional requirement. In particular:
+
+- ADR-031 still requires complete, technically supported Candidate scenarios, but Candidate Generation does not itself perform storage Simulation;
+- ADR-037 still requires PicoT to project expected NOM behaviour, SoC trajectory and time-to-target, but that calculation belongs to Simulation / Projection rather than Price Opportunity Detection or Candidate Generation.
+
+The older ADRs remain authoritative for their functional contracts; ADR-038 is authoritative for which layer owns the calculation.
+
 ## Pull-request traceability rule
 
 Every PR that changes planner behaviour must state:

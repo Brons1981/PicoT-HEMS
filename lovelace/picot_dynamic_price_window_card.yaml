@@ -1,11 +1,14 @@
 # PicoT HEMS - dynamic price chart with Price Driven v2 opportunity overlay
 # Observation/visualisation only. This card does not influence planner control.
 type: custom:apexcharts-card
+grid_options:
+  columns: full
+  rows: 8
 header:
   show: true
   title: Dynamische elektriciteitsprijzen
   show_states: false
-graph_span: 48h
+graph_span: 24h
 span:
   start: day
 now:
@@ -49,13 +52,6 @@ apex_config:
   tooltip:
     shared: true
     intersect: false
-  annotations:
-    yaxis:
-      - y: 0
-        borderWidth: 1
-        strokeDashArray: 2
-        label:
-          show: false
 series:
   - entity: sensor.picot_current_price
     name: PicoT kwartierprijzen
@@ -103,9 +99,9 @@ series:
     yaxis_id: overlay
     type: area
     color: "#66bb6a"
-    curve: stepline
+    curve: straight
     stroke_width: 0
-    opacity: 0.18
+    opacity: 0.22
     extend_to: false
     show:
       legend_value: false
@@ -115,23 +111,28 @@ series:
       const end = new Date(attrs.ends_at || '').getTime();
       if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
       return [
-        [start, 1],
-        [end, 1]
+        [start, 0],
+        [start + 1000, 1],
+        [end - 1000, 1],
+        [end, 0]
       ];
 
   - entity: sensor.picot_best_later_price
-    name: Beste latere prijs
-    yaxis_id: price
-    float_precision: 3
-    type: column
+    name: Beste latere start
+    yaxis_id: overlay
+    type: line
     color: "#ff9800"
-    opacity: 0.95
+    curve: straight
+    stroke_width: 3
+    opacity: 1
     extend_to: false
     show:
       legend_value: false
     data_generator: |-
       const attrs = entity.attributes || {};
       const start = new Date(attrs.starts_at || '').getTime();
-      const price = Number(entity.state);
-      if (!Number.isFinite(start) || !Number.isFinite(price)) return [];
-      return [[start, price]];
+      if (!Number.isFinite(start)) return [];
+      return [
+        [start, 0],
+        [start + 1000, 1]
+      ];

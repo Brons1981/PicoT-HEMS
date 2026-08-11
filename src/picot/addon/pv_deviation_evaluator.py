@@ -266,10 +266,13 @@ class PvDeviationEvaluator:
 
 
 def pv_deviation_evaluator_log_event(event: dict[str, Any]) -> dict[str, object]:
-    """Return a compact log record for rolling PV-deviation evidence."""
+    """Return persistent rolling PV and energy-window observation evidence."""
 
     record: dict[str, object] = {
         "event": "picot_pv_deviation_evaluator",
+        "layer": "pv_forecast_validation",
+        "observation_only": True,
+        "energy_windows_replan_input": False,
         "status": event.get("pv_deviation_evaluator_status"),
         "rolling_deviation_percent": event.get("pv_rolling_deviation_percent"),
         "history_seconds": event.get("pv_deviation_history_seconds"),

@@ -1,4 +1,4 @@
-"""Small authenticated-by-Home-Assistant-ingress UI for exporting PicoT history."""
+"""Small Home Assistant add-on web UI for exporting PicoT history."""
 
 from __future__ import annotations
 
@@ -145,3 +145,20 @@ def start_history_export_server(
     thread = Thread(target=server.serve_forever, name="picot-history-export", daemon=True)
     thread.start()
     return server
+
+
+def main() -> int:
+    history = HistoryStore()
+    server = ThreadingHTTPServer(("0.0.0.0", DEFAULT_EXPORT_PORT), make_handler(history))
+    print(f"PicoT history export UI listening on port {DEFAULT_EXPORT_PORT}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

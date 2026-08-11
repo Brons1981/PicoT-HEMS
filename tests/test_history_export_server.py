@@ -1,13 +1,13 @@
 from datetime import datetime, timezone
 from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 from threading import Thread
 
 from picot.addon.history_export_server import make_handler
 from picot.addon.history_store import HistoryStore
-from http.server import ThreadingHTTPServer
 
 
-def _serve(store: HistoryStore):
+def _serve(store: HistoryStore) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(store))
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -58,7 +58,9 @@ def test_history_export_download_filters_selected_range(tmp_path):
         assert response.status == 200
         assert '"marker":"inside"' in body
         assert '"marker":"outside"' not in body
-        assert response.getheader("Content-Disposition").startswith("attachment;")
+        disposition = response.getheader("Content-Disposition")
+        assert disposition is not None
+        assert disposition.startswith("attachment;")
     finally:
         server.shutdown()
         server.server_close()

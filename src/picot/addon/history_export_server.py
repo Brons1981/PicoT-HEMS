@@ -91,8 +91,8 @@ def make_handler(history: HistoryStore) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             if parsed.path in {"/", ""}:
-                start, end = _default_window()
-                payload = _page(start, end)
+                default_start, default_end = _default_window()
+                payload = _page(default_start, default_end)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(payload)))
@@ -103,13 +103,13 @@ def make_handler(history: HistoryStore) -> type[BaseHTTPRequestHandler]:
             if parsed.path.rstrip("/") == "/download":
                 params = parse_qs(parsed.query)
                 try:
-                    start = _parse_datetime(params["from"][0])
-                    end = _parse_datetime(params["to"][0])
-                    if end < start:
+                    range_start = _parse_datetime(params["from"][0])
+                    range_end = _parse_datetime(params["to"][0])
+                    if range_end < range_start:
                         raise ValueError("'Tot' moet na 'Van' liggen.")
                 except (KeyError, IndexError, ValueError) as exc:
-                    start_value, end_value = _default_window()
-                    payload = _page(start_value, end_value, error=str(exc))
+                    default_start, default_end = _default_window()
+                    payload = _page(default_start, default_end, error=str(exc))
                     self.send_response(400)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(payload)))
@@ -117,7 +117,7 @@ def make_handler(history: HistoryStore) -> type[BaseHTTPRequestHandler]:
                     self.wfile.write(payload)
                     return
 
-                records = list(history.iter_range(start, end))
+                records = list(history.iter_range(range_start, range_end))
                 body = b"".join(
                     (
                         json.dumps(record, separators=(",", ":"), default=str) + "\n"
@@ -126,8 +126,8 @@ def make_handler(history: HistoryStore) -> type[BaseHTTPRequestHandler]:
                 )
                 filename = (
                     "picot_history_"
-                    f"{start.astimezone(UTC):%Y%m%dT%H%MZ}_"
-                    f"{end.astimezone(UTC):%Y%m%dT%H%MZ}.jsonl"
+                    f"{range_start.astimezone(UTC):%Y%m%dT%H%MZ}_"
+                    f"{range_end.astimezone(UTC):%Y%m%dT%H%MZ}.jsonl"
                 )
                 self.send_response(200)
                 self.send_header("Content-Type", "application/x-ndjson")

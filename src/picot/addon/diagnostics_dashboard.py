@@ -1,15 +1,10 @@
-"""Publish read-only PicoT planner diagnostics for Home Assistant.
-
-The diagnostics view is deliberately observation-only. It exposes current and
-rolling PV deviation, experimental 15/30/60-minute PV energy comparisons,
-replan state and Plan Review evidence as semantic Home Assistant entities so HA
-history can render them on a shared timeline.
-"""
+"""Publish read-only PicoT planner diagnostics for Home Assistant."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 SUPERVISOR_BASE_URL = "http://supervisor/core"
@@ -18,6 +13,34 @@ ENERGY_WINDOWS_MINUTES = (15, 30, 60)
 
 DashboardPayload = dict[str, object]
 DashboardStates = dict[str, DashboardPayload]
+
+
+class DiagnosticsPublishError(RuntimeError):
+    """Context-rich Home Assistant diagnostics publication failure."""
+
+    def __init__(
+        self,
+        *,
+        entity_id: str,
+        endpoint: str,
+        payload_state: object,
+        status: int | None,
+        cause: Exception | None = None,
+    ) -> None:
+        self.entity_id = entity_id
+        self.endpoint = endpoint
+        self.payload_state = payload_state
+        self.status = status
+        self.cause = cause
+        detail = str(cause) if cause is not None else "Home Assistant rejected state update"
+        super().__init__(
+            f"HA diagnostics publish failed entity_id={entity_id} endpoint={endpoint} "
+            f"http_status={status} payload_state={payload_state!r}: {detail}"
+        )
+
+
+def _safe_state(value: object) -> object:
+    return "unknown" if value is None else value
 
 
 def _measurement_attributes(
@@ -35,9 +58,7 @@ def _measurement_attributes(
     }
 
 
-def _energy_window_state(
-    event: dict[str, object], minutes: int
-) -> DashboardPayload:
+def _energy_window_state(event: dict[str, object], minutes: int) -> DashboardPayload:
     prefix = f"pv_energy_{minutes}m"
     attributes = _measurement_attributes(
         f"PicoT PV energie afwijking {minutes} min",
@@ -49,7 +70,7 @@ def _energy_window_state(
         {
             "observation_only": True,
             "window_minutes": minutes,
-            "status": event.get(f"{prefix}_status", "unknown"),
+            "status": _safe_state(event.get(f"{prefix}_status")),
             "solcast_expected_kwh": event.get(f"{prefix}_expected_kwh"),
             "goodwe_actual_kwh": event.get(f"{prefix}_actual_kwh"),
             "coverage_seconds": event.get(f"{prefix}_coverage_seconds"),
@@ -57,7 +78,7 @@ def _energy_window_state(
         }
     )
     return {
-        "state": event.get(f"{prefix}_deviation_percent", "unknown"),
+        "state": _safe_state(event.get(f"{prefix}_deviation_percent")),
         "attributes": attributes,
     }
 
@@ -66,14 +87,11 @@ def diagnostics_dashboard_states(event: dict[str, object]) -> DashboardStates:
     """Build semantic states for the Developer/Diagnostics View."""
 
     replan_candidate = event.get("pv_deviation_replan_candidate") is True
-    evaluator_status = event.get("pv_deviation_evaluator_status", "unknown")
-    plan_review_status = event.get("plan_review_status", "unknown")
+    evaluator_status = _safe_state(event.get("pv_deviation_evaluator_status"))
+    plan_review_status = _safe_state(event.get("plan_review_status"))
 
     deviation_attributes = _measurement_attributes(
-        "PicoT PV afwijking actueel",
-        "mdi:chart-line-variant",
-        "%",
-        event,
+        "PicoT PV afwijking actueel", "mdi:chart-line-variant", "%", event
     )
     deviation_attributes.update(
         {
@@ -85,18 +103,13 @@ def diagnostics_dashboard_states(event: dict[str, object]) -> DashboardStates:
     )
 
     rolling_attributes = _measurement_attributes(
-        "PicoT PV afwijking rolling",
-        "mdi:chart-bell-curve-cumulative",
-        "%",
-        event,
+        "PicoT PV afwijking rolling", "mdi:chart-bell-curve-cumulative", "%", event
     )
     rolling_attributes.update(
         {
             "threshold_percent": event.get("pv_deviation_threshold_percent"),
             "window_seconds": event.get("pv_deviation_window_seconds"),
-            "minimum_history_seconds": event.get(
-                "pv_deviation_minimum_history_seconds"
-            ),
+            "minimum_history_seconds": event.get("pv_deviation_minimum_history_seconds"),
             "history_seconds": event.get("pv_deviation_history_seconds"),
             "sample_count": event.get("pv_deviation_sample_count"),
             "evaluator_status": evaluator_status,
@@ -104,46 +117,13 @@ def diagnostics_dashboard_states(event: dict[str, object]) -> DashboardStates:
         }
     )
 
-    replan_attributes: dict[str, object] = {
-        "friendly_name": "PicoT replan candidate",
-        "icon": "mdi:source-branch-refresh",
-        "evaluator_status": evaluator_status,
-        "rolling_deviation_percent": event.get("pv_rolling_deviation_percent"),
-        "threshold_percent": event.get("pv_deviation_threshold_percent"),
-        "telemetry_updated_at": event.get("telemetry_updated_at"),
-    }
-
-    review_attributes: dict[str, object] = {
-        "friendly_name": "PicoT Plan Review",
-        "icon": "mdi:clipboard-search-outline",
-        "outcome": event.get("plan_review_outcome"),
-        "action": event.get("plan_review_action"),
-        "trigger": event.get("plan_review_trigger"),
-        "feasibility_scope": event.get("plan_review_feasibility_scope"),
-        "control_change_allowed": event.get(
-            "plan_review_control_change_allowed"
-        ),
-        "limitation": event.get("plan_review_limitation"),
-        "grid_import_w": event.get("plan_review_grid_import_w"),
-        "grid_export_w": event.get("plan_review_grid_export_w"),
-        "battery_soc_percent": event.get("plan_review_battery_soc_percent"),
-        "battery_charge_power_w": event.get(
-            "plan_review_battery_charge_power_w"
-        ),
-        "battery_discharge_power_w": event.get(
-            "plan_review_battery_discharge_power_w"
-        ),
-        "telemetry_updated_at": event.get("telemetry_updated_at"),
-    }
-
-    control_allowed = event.get("plan_review_control_change_allowed") is True
     states: DashboardStates = {
         "sensor.picot_pv_deviation_current": {
-            "state": event.get("pv_power_deviation_percent", "unknown"),
+            "state": _safe_state(event.get("pv_power_deviation_percent")),
             "attributes": deviation_attributes,
         },
         "sensor.picot_pv_deviation_rolling": {
-            "state": event.get("pv_rolling_deviation_percent", "unknown"),
+            "state": _safe_state(event.get("pv_rolling_deviation_percent")),
             "attributes": rolling_attributes,
         },
         "sensor.picot_pv_deviation_status": {
@@ -156,14 +136,36 @@ def diagnostics_dashboard_states(event: dict[str, object]) -> DashboardStates:
         },
         "binary_sensor.picot_replan_candidate": {
             "state": "on" if replan_candidate else "off",
-            "attributes": replan_attributes,
+            "attributes": {
+                "friendly_name": "PicoT replan candidate",
+                "icon": "mdi:source-branch-refresh",
+                "evaluator_status": evaluator_status,
+                "rolling_deviation_percent": event.get("pv_rolling_deviation_percent"),
+                "threshold_percent": event.get("pv_deviation_threshold_percent"),
+                "telemetry_updated_at": event.get("telemetry_updated_at"),
+            },
         },
         "sensor.picot_plan_review_status": {
             "state": plan_review_status,
-            "attributes": review_attributes,
+            "attributes": {
+                "friendly_name": "PicoT Plan Review",
+                "icon": "mdi:clipboard-search-outline",
+                "outcome": event.get("plan_review_outcome"),
+                "action": event.get("plan_review_action"),
+                "trigger": event.get("plan_review_trigger"),
+                "feasibility_scope": event.get("plan_review_feasibility_scope"),
+                "control_change_allowed": event.get("plan_review_control_change_allowed"),
+                "limitation": event.get("plan_review_limitation"),
+                "grid_import_w": event.get("plan_review_grid_import_w"),
+                "grid_export_w": event.get("plan_review_grid_export_w"),
+                "battery_soc_percent": event.get("plan_review_battery_soc_percent"),
+                "battery_charge_power_w": event.get("plan_review_battery_charge_power_w"),
+                "battery_discharge_power_w": event.get("plan_review_battery_discharge_power_w"),
+                "telemetry_updated_at": event.get("telemetry_updated_at"),
+            },
         },
         "binary_sensor.picot_plan_review_control_change_allowed": {
-            "state": "on" if control_allowed else "off",
+            "state": "on" if event.get("plan_review_control_change_allowed") is True else "off",
             "attributes": {
                 "friendly_name": "PicoT Plan Review control change allowed",
                 "icon": "mdi:toggle-switch-outline",
@@ -187,8 +189,9 @@ def publish_diagnostics_dashboard_states(
     """Publish diagnostics entities through the Home Assistant REST API."""
 
     for entity_id, payload in diagnostics_dashboard_states(event).items():
+        endpoint = f"/api/states/{entity_id}"
         request = Request(
-            f"{SUPERVISOR_BASE_URL}/api/states/{entity_id}",
+            f"{SUPERVISOR_BASE_URL}{endpoint}",
             data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {token}",
@@ -196,9 +199,21 @@ def publish_diagnostics_dashboard_states(
             },
             method="POST",
         )
-        response = opener(request, timeout=HTTP_TIMEOUT_SECONDS)
+        try:
+            response = opener(request, timeout=HTTP_TIMEOUT_SECONDS)
+        except HTTPError as exc:
+            raise DiagnosticsPublishError(
+                entity_id=entity_id,
+                endpoint=endpoint,
+                payload_state=payload.get("state"),
+                status=exc.code,
+                cause=exc,
+            ) from exc
         status = getattr(response, "status", None)
         if not isinstance(status, int) or status not in {200, 201}:
-            raise RuntimeError(
-                f"Home Assistant rejected diagnostics dashboard state {entity_id}: {status}."
+            raise DiagnosticsPublishError(
+                entity_id=entity_id,
+                endpoint=endpoint,
+                payload_state=payload.get("state"),
+                status=status if isinstance(status, int) else None,
             )

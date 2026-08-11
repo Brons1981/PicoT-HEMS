@@ -88,3 +88,39 @@ def test_unavailable_comparison_cannot_become_replan_candidate() -> None:
 
     assert result["pv_deviation_evaluator_status"] == "unavailable"
     assert result["pv_deviation_replan_candidate"] is False
+
+
+def test_energy_windows_integrate_expected_and_actual_energy() -> None:
+    evaluator = PvDeviationEvaluator()
+
+    result: dict[str, object] = {}
+    for minute in range(0, 61, 5):
+        result = evaluator.evaluate(
+            _event(minute, expected_w=4000.0, actual_w=3800.0)
+        )
+
+    assert result["pv_energy_15m_status"] == "available"
+    assert result["pv_energy_30m_status"] == "available"
+    assert result["pv_energy_60m_status"] == "available"
+    assert round(float(result["pv_energy_15m_expected_kwh"]), 3) == 1.0
+    assert round(float(result["pv_energy_30m_expected_kwh"]), 3) == 2.0
+    assert round(float(result["pv_energy_60m_expected_kwh"]), 3) == 4.0
+    assert round(float(result["pv_energy_60m_actual_kwh"]), 3) == 3.8
+    assert round(float(result["pv_energy_60m_deviation_percent"]), 2) == -5.0
+
+
+def test_energy_windows_are_observation_only_for_replan_logic() -> None:
+    evaluator = PvDeviationEvaluator()
+
+    result: dict[str, object] = {}
+    for minute in range(0, 61, 5):
+        actual = 0.0 if minute < 30 else 6000.0
+        result = evaluator.evaluate(_event(minute, expected_w=3000.0, actual_w=actual))
+
+    assert result["pv_energy_60m_status"] == "available"
+    assert result["pv_energy_60m_deviation_percent"] is not None
+    assert result["pv_deviation_evaluator_status"] == "persistent_over_forecast"
+    assert result["pv_deviation_replan_candidate"] is True
+    # Replan remains driven by the existing 15-minute rolling evaluator, not
+    # by any of the new 15/30/60-minute energy-window fields.
+    assert "pv_energy_replan_candidate" not in result

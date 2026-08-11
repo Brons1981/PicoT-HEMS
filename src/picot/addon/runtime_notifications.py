@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.request import Request, urlopen
@@ -33,7 +34,7 @@ class RuntimeFailureNotifier:
         fingerprint: str,
         message: str,
         severity: str = "warning",
-        opener=urlopen,
+        opener: Callable[..., object] = urlopen,
     ) -> None:
         if self._active is not None and self._active.fingerprint == fingerprint:
             self._active.count += 1
@@ -50,7 +51,13 @@ class RuntimeFailureNotifier:
             opener=opener,
         )
 
-    def recovered(self, token: str, *, now: datetime, opener=urlopen) -> None:
+    def recovered(
+        self,
+        token: str,
+        *,
+        now: datetime,
+        opener: Callable[..., object] = urlopen,
+    ) -> None:
         if self._active is None:
             return
         active = self._active
@@ -70,7 +77,13 @@ class RuntimeFailureNotifier:
         )
 
     @staticmethod
-    def _publish(token: str, *, title: str, message: str, opener=urlopen) -> None:
+    def _publish(
+        token: str,
+        *,
+        title: str,
+        message: str,
+        opener: Callable[..., object] = urlopen,
+    ) -> None:
         endpoint = "/api/services/persistent_notification/create"
         payload = {
             "title": title,

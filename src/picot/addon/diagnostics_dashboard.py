@@ -1,8 +1,9 @@
 """Publish read-only PicoT planner diagnostics for Home Assistant.
 
 The diagnostics view is deliberately observation-only. It exposes current and
-rolling PV deviation, replan state and Plan Review evidence as semantic Home
-Assistant entities so HA history can render them on a shared timeline.
+rolling PV deviation, experimental 15/30/60-minute PV energy comparisons,
+replan state and Plan Review evidence as semantic Home Assistant entities so HA
+history can render them on a shared timeline.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from urllib.request import Request, urlopen
 
 SUPERVISOR_BASE_URL = "http://supervisor/core"
 HTTP_TIMEOUT_SECONDS = 10.0
+ENERGY_WINDOWS_MINUTES = (15, 30, 60)
 
 DashboardPayload = dict[str, object]
 DashboardStates = dict[str, DashboardPayload]
@@ -30,6 +32,33 @@ def _measurement_attributes(
         "state_class": "measurement",
         "unit_of_measurement": unit,
         "telemetry_updated_at": event.get("telemetry_updated_at"),
+    }
+
+
+def _energy_window_state(
+    event: dict[str, object], minutes: int
+) -> DashboardPayload:
+    prefix = f"pv_energy_{minutes}m"
+    attributes = _measurement_attributes(
+        f"PicoT PV energie afwijking {minutes} min",
+        "mdi:solar-power-variant-outline",
+        "%",
+        event,
+    )
+    attributes.update(
+        {
+            "observation_only": True,
+            "window_minutes": minutes,
+            "status": event.get(f"{prefix}_status", "unknown"),
+            "solcast_expected_kwh": event.get(f"{prefix}_expected_kwh"),
+            "goodwe_actual_kwh": event.get(f"{prefix}_actual_kwh"),
+            "coverage_seconds": event.get(f"{prefix}_coverage_seconds"),
+            "replan_input": False,
+        }
+    )
+    return {
+        "state": event.get(f"{prefix}_deviation_percent", "unknown"),
+        "attributes": attributes,
     }
 
 
@@ -108,7 +137,7 @@ def diagnostics_dashboard_states(event: dict[str, object]) -> DashboardStates:
     }
 
     control_allowed = event.get("plan_review_control_change_allowed") is True
-    return {
+    states: DashboardStates = {
         "sensor.picot_pv_deviation_current": {
             "state": event.get("pv_power_deviation_percent", "unknown"),
             "attributes": deviation_attributes,
@@ -142,6 +171,11 @@ def diagnostics_dashboard_states(event: dict[str, object]) -> DashboardStates:
             },
         },
     }
+    for minutes in ENERGY_WINDOWS_MINUTES:
+        states[f"sensor.picot_pv_energy_deviation_{minutes}m"] = _energy_window_state(
+            event, minutes
+        )
+    return states
 
 
 def publish_diagnostics_dashboard_states(

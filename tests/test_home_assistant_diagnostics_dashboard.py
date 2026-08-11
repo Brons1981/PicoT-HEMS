@@ -94,3 +94,22 @@ def test_diagnostics_dashboard_exposes_recovery_state() -> None:
     assert states["sensor.picot_pv_deviation_status"]["state"] == "within_tolerance"
     assert states["sensor.picot_plan_review_status"]["state"] == "not_requested"
     assert states["sensor.picot_pv_energy_deviation_15m"]["state"] == "unknown"
+
+
+def test_energy_window_none_state_is_published_as_unknown() -> None:
+    event: dict[str, object] = {
+        "telemetry_updated_at": "2026-08-11T12:32:07+02:00",
+        "pv_energy_60m_status": "insufficient_history",
+        "pv_energy_60m_deviation_percent": None,
+        "pv_energy_60m_expected_kwh": 0.0,
+        "pv_energy_60m_actual_kwh": 0.0,
+        "pv_energy_60m_coverage_seconds": 60.0,
+    }
+
+    states = diagnostics_dashboard_states(event)
+    state = states["sensor.picot_pv_energy_deviation_60m"]
+
+    assert state["state"] == "unknown"
+    attributes = state["attributes"]
+    assert isinstance(attributes, dict)
+    assert attributes["status"] == "insufficient_history"

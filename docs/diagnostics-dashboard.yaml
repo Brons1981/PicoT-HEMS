@@ -6,6 +6,7 @@ views:
     cards:
       - type: entities
         title: Planner status
+        show_header_toggle: false
         entities:
           - entity: binary_sensor.picot_replan_candidate
             name: Replan candidate
@@ -19,42 +20,231 @@ views:
             name: Huidige planner-modus
           - entity: sensor.picot_desired_mode
             name: Gewenste planner-modus
+          - entity: sensor.picot_planner_timeline
+            name: Laatste planner-event
 
-      - type: history-graph
-        title: PV forecast versus werkelijk
-        hours_to_show: 1
-        entities:
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: PV forecast versus werkelijk
+          show_states: true
+        graph_span: 6h
+        now:
+          show: true
+          label: Nu
+        update_interval: 30sec
+        apex_config:
+          chart:
+            height: 360
+            toolbar:
+              show: true
+          stroke:
+            curve: smooth
+          tooltip:
+            shared: true
+            intersect: false
+        yaxis:
+          - min: 0
+            decimals: 0
+            apex_config:
+              title:
+                text: Vermogen (W)
+        series:
           - entity: sensor.picot_solcast_expected_power
             name: Solcast verwacht
+            type: area
+            opacity: 0.20
+            stroke_width: 1
+            group_by:
+              func: avg
+              duration: 2min
           - entity: sensor.picot_goodwe_power
             name: Werkelijke PV
+            type: line
+            stroke_width: 2
+            group_by:
+              func: avg
+              duration: 2min
 
-      - type: history-graph
-        title: PV deviation
-        hours_to_show: 1
-        entities:
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: PV deviation actueel en rolling
+          show_states: true
+        graph_span: 6h
+        now:
+          show: true
+          label: Nu
+        update_interval: 30sec
+        apex_config:
+          chart:
+            height: 320
+            toolbar:
+              show: true
+          stroke:
+            curve: smooth
+          annotations:
+            yaxis:
+              - y: 25
+                label:
+                  text: +25% grens
+              - y: -25
+                label:
+                  text: -25% grens
+          tooltip:
+            shared: true
+            intersect: false
+        yaxis:
+          - decimals: 1
+            apex_config:
+              title:
+                text: Afwijking (%)
+        series:
           - entity: sensor.picot_pv_deviation_current
             name: Actueel %
+            type: line
+            stroke_width: 1
+            group_by:
+              func: avg
+              duration: 1min
           - entity: sensor.picot_pv_deviation_rolling
             name: Rolling %
+            type: line
+            stroke_width: 2
+            group_by:
+              func: avg
+              duration: 1min
 
-      - type: history-graph
-        title: Net en batterij
-        hours_to_show: 1
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: PV energie-afwijking per venster
+          show_states: true
+        graph_span: 6h
+        now:
+          show: true
+          label: Nu
+        update_interval: 30sec
+        apex_config:
+          chart:
+            height: 320
+            toolbar:
+              show: true
+          stroke:
+            curve: smooth
+          annotations:
+            yaxis:
+              - y: 25
+                label:
+                  text: +25% referentie
+              - y: -25
+                label:
+                  text: -25% referentie
+          tooltip:
+            shared: true
+            intersect: false
+        yaxis:
+          - decimals: 1
+            apex_config:
+              title:
+                text: Energie-afwijking (%)
+        series:
+          - entity: sensor.picot_pv_energy_deviation_15m
+            name: 15 min
+            type: line
+            stroke_width: 1
+          - entity: sensor.picot_pv_energy_deviation_30m
+            name: 30 min
+            type: line
+            stroke_width: 2
+          - entity: sensor.picot_pv_energy_deviation_60m
+            name: 60 min
+            type: line
+            stroke_width: 3
+
+      - type: entities
+        title: Energievensters evidence
+        show_header_toggle: false
         entities:
+          - entity: sensor.picot_pv_energy_deviation_15m
+            name: 15 min afwijking
+          - entity: sensor.picot_pv_energy_deviation_30m
+            name: 30 min afwijking
+          - entity: sensor.picot_pv_energy_deviation_60m
+            name: 60 min afwijking
+
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Net en batterij
+          show_states: true
+        graph_span: 6h
+        now:
+          show: true
+          label: Nu
+        update_interval: 30sec
+        apex_config:
+          chart:
+            height: 320
+            toolbar:
+              show: true
+          stroke:
+            curve: smooth
+          tooltip:
+            shared: true
+            intersect: false
+        yaxis:
+          - decimals: 0
+            apex_config:
+              title:
+                text: Vermogen (W)
+        series:
           - entity: sensor.picot_grid_import
             name: Netimport
+            type: line
+            stroke_width: 1
           - entity: sensor.picot_grid_export
             name: Netexport
+            type: line
+            stroke_width: 1
           - entity: sensor.picot_zendure_power
             name: Batterijvermogen
+            type: line
+            stroke_width: 2
 
-      - type: history-graph
-        title: Batterij SoC
-        hours_to_show: 1
-        entities:
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Batterij SoC
+          show_states: true
+        graph_span: 6h
+        now:
+          show: true
+          label: Nu
+        update_interval: 30sec
+        apex_config:
+          chart:
+            height: 240
+            toolbar:
+              show: true
+        yaxis:
+          - min: 0
+            max: 100
+            decimals: 0
+            apex_config:
+              title:
+                text: SoC (%)
+        series:
           - entity: sensor.picot_zendure_soc
             name: SoC
+            type: line
+            stroke_width: 2
+
+      - type: logbook
+        title: Planner events
+        hours_to_show: 24
+        entities:
+          - sensor.picot_planner_timeline
 
       - type: entities
         title: Laatste Plan Review evidence
@@ -64,3 +254,5 @@ views:
             name: Plan Review details
           - entity: sensor.picot_pv_deviation_rolling
             name: Rolling deviation details
+          - entity: sensor.picot_planner_timeline
+            name: Planner timeline details

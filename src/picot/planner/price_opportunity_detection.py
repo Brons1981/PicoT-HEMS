@@ -8,7 +8,7 @@ See ADR-036.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, tzinfo
 from math import isfinite
 
 from picot.domain.forecast import ForecastPoint, ForecastSeries
@@ -145,7 +145,7 @@ class PriceOpportunityDetector:
         kind: OpportunityKind,
         points: tuple[tuple[int, ForecastPoint], ...],
         market_date: date,
-        market_timezone: object,
+        market_timezone: tzinfo | None,
         reference_price: float,
         boundary_price: float,
         snapshot: PlanningInputSnapshot,

@@ -10,7 +10,7 @@ from picot.domain.forecast import (
 )
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import OptimisationProfile, PlannerStrategy
-from picot.domain.opportunity import OpportunityKind, OpportunityMetricKind
+from picot.domain.opportunity import Opportunity, OpportunityKind, OpportunityMetricKind
 from picot.domain.planning_input_snapshot import (
     PlanningInputSnapshot,
     PlanningInputVersions,
@@ -71,7 +71,7 @@ def _snapshot(points: tuple[ForecastPoint, ...], unit: str = "EUR/kWh") -> Plann
     )
 
 
-def _highest(snapshot: PlanningInputSnapshot):
+def _highest(snapshot: PlanningInputSnapshot) -> tuple[Opportunity, ...]:
     return tuple(
         item
         for item in OpportunityEngine().detect(snapshot, price_config=CONFIG).opportunities

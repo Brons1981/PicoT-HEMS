@@ -48,19 +48,19 @@ def test_zendure_fields_isolates_source_failure(
     assert fields["zendure_signed_power_w"] is None
 
 
-def test_telemetry_publishes_combined_observations(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    published_main: list[dict[str, object]] = []
-    published_goodwe: list[dict[str, object]] = []
-    published_zendure: list[dict[str, object]] = []
-    published_power: list[dict[str, object]] = []
-    published_diagnostics: list[dict[str, object]] = []
-
+def _patch_telemetry_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         runtime,
         "_grid_fields",
-        lambda options, token: {"grid_power_w": -500.0},
+        lambda options, token: {
+            "p1_status": "available",
+            "p1_entity": "sensor.test_grid",
+            "grid_power_w": -500.0,
+            "grid_import_w": 0.0,
+            "grid_export_w": 500.0,
+            "grid_direction": "export",
+            "p1_measured_at": OBSERVED_AT.isoformat(),
+        },
     )
     monkeypatch.setattr(
         runtime,
@@ -86,6 +86,44 @@ def test_telemetry_publishes_combined_observations(
             "zendure_signed_power_w": -300.0,
         },
     )
+    monkeypatch.setattr(runtime_observation, "publish_dashboard_states", lambda event, token: None)
+    monkeypatch.setattr(
+        runtime_observation,
+        "publish_goodwe_dashboard_states",
+        lambda event, token: None,
+    )
+    monkeypatch.setattr(
+        runtime_observation,
+        "publish_zendure_dashboard_states",
+        lambda event, token: None,
+    )
+    monkeypatch.setattr(
+        runtime_observation,
+        "publish_power_comparison_states",
+        lambda event, token: None,
+    )
+    monkeypatch.setattr(
+        runtime_observation,
+        "publish_diagnostics_dashboard_states",
+        lambda event, token: None,
+    )
+    monkeypatch.setattr(
+        runtime_observation,
+        "publish_diagnostics_timeline_state",
+        lambda event, token: None,
+    )
+
+
+def test_telemetry_publishes_combined_observations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published_main: list[dict[str, object]] = []
+    published_goodwe: list[dict[str, object]] = []
+    published_zendure: list[dict[str, object]] = []
+    published_power: list[dict[str, object]] = []
+    published_diagnostics: list[dict[str, object]] = []
+
+    _patch_telemetry_sources(monkeypatch)
     monkeypatch.setattr(
         runtime_observation,
         "publish_dashboard_states",
@@ -123,6 +161,7 @@ def test_telemetry_publishes_combined_observations(
         {"event": "picot_price_decision"},
     )
 
+    assert event["planner_context_status"] == "available"
     assert event["grid_power_w"] == -500.0
     assert event["solcast_current_expected_power_w"] == 1200.0
     assert event["goodwe_solar_power_w"] == 1100.0
@@ -136,6 +175,46 @@ def test_telemetry_publishes_combined_observations(
     assert published_zendure == [event]
     assert published_power == [event]
     assert published_diagnostics == [event]
+
+
+def test_telemetry_runs_without_planner_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_telemetry_sources(monkeypatch)
+
+    event = runtime_observation.run_telemetry_once(
+        {
+            "telemetry_interval_seconds": 5,
+            "pv_power_entity": "sensor.test_pv",
+            "battery_power_entity": "sensor.test_battery",
+            "battery_charge_is_positive": True,
+        },
+        "token",
+        None,
+    )
+
+    assert event["planner_context_status"] == "unavailable"
+    assert event["grid_power_w"] == -500.0
+    assert event["goodwe_solar_power_w"] == 1100.0
+    assert event["zendure_signed_power_w"] == -300.0
+
+
+def test_p1_log_event_preserves_entity_and_layer_status() -> None:
+    event = runtime_observation._p1_log_event(
+        {
+            "p1_status": "available",
+            "p1_entity": "sensor.test_grid",
+            "p1_error": None,
+            "grid_power_w": 412.0,
+            "grid_import_w": 412.0,
+            "grid_export_w": 0.0,
+            "grid_direction": "import",
+            "p1_measured_at": "2026-08-02T20:00:00+02:00",
+        }
+    )
+
+    assert event["event"] == "picot_p1_snapshot"
+    assert event["layer"] == "p1_grid"
+    assert event["source_entity"] == "sensor.test_grid"
+    assert event["grid_import_w"] == 412.0
 
 
 def test_goodwe_log_event_is_compact() -> None:
@@ -153,6 +232,7 @@ def test_goodwe_log_event_is_compact() -> None:
     )
 
     assert event["event"] == "picot_goodwe_snapshot"
+    assert event["layer"] == "pv_actual"
     assert event["source_entity"] == "sensor.test_pv"
     assert event["solar_power_w"] == 273.0
     assert event["generation_today_kwh"] == 26.7
@@ -176,9 +256,19 @@ def test_zendure_log_event_is_compact() -> None:
     )
 
     assert event["event"] == "picot_zendure_snapshot"
+    assert event["layer"] == "battery"
     assert event["source_entity"] == "sensor.test_battery"
     assert event["signed_power_w"] == -812.0
     assert event["power_consistent"] is True
+
+
+def test_runtime_error_event_is_timestamped() -> None:
+    event = runtime_observation._runtime_error_event("planner", RuntimeError("boom"))
+
+    assert event["event"] == "picot_runtime_error"
+    assert event["layer"] == "planner"
+    assert event["stream"] == "planner"
+    assert isinstance(event["observed_at"], str)
 
 
 def test_price_strategy_defaults_to_v1(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -101,13 +101,16 @@ def _run_price_planner_once(options: dict[str, Any], token: str) -> dict[str, ob
 def run_telemetry_once(
     options: dict[str, Any],
     token: str,
-    planner_event: dict[str, object],
+    planner_event: dict[str, object] | None,
     *,
     pv_deviation_evaluator: PvDeviationEvaluator | None = None,
     diagnostics_timeline: DiagnosticsTimeline | None = None,
 ) -> dict[str, object]:
+    """Read and publish observation data even when no planner context exists."""
+
     observed_at = datetime.now(runtime.LOCAL_TIMEZONE)
-    event = dict(planner_event)
+    event = dict(planner_event or {})
+    event["planner_context_status"] = "available" if planner_event is not None else "unavailable"
     event.update(runtime._grid_fields(options, token))
     event.update(runtime._solcast_fields(token, observed_at=observed_at))
     event.update(_goodwe_fields(options, token, observed_at=observed_at))
@@ -130,9 +133,25 @@ def run_telemetry_once(
     return event
 
 
+def _p1_log_event(event: dict[str, object]) -> dict[str, object]:
+    return {
+        "event": "picot_p1_snapshot",
+        "layer": "p1_grid",
+        "status": event.get("p1_status"),
+        "source_entity": event.get("p1_entity"),
+        "error": event.get("p1_error"),
+        "grid_power_w": event.get("grid_power_w"),
+        "grid_import_w": event.get("grid_import_w"),
+        "grid_export_w": event.get("grid_export_w"),
+        "grid_direction": event.get("grid_direction"),
+        "observed_at": event.get("p1_measured_at") or event.get("telemetry_updated_at"),
+    }
+
+
 def _goodwe_log_event(event: dict[str, object]) -> dict[str, object]:
     return {
         "event": "picot_goodwe_snapshot",
+        "layer": "pv_actual",
         "status": event.get("goodwe_status"),
         "source_entity": event.get("goodwe_power_entity"),
         "error": event.get("goodwe_error"),
@@ -147,6 +166,7 @@ def _goodwe_log_event(event: dict[str, object]) -> dict[str, object]:
 def _zendure_log_event(event: dict[str, object]) -> dict[str, object]:
     return {
         "event": "picot_zendure_snapshot",
+        "layer": "battery",
         "status": event.get("zendure_status"),
         "source_entity": event.get("zendure_power_entity"),
         "error": event.get("zendure_error"),
@@ -167,6 +187,7 @@ def _timeline_log_event(event: dict[str, object]) -> dict[str, object] | None:
         return None
     return {
         "event": "picot_diagnostics_timeline",
+        "layer": "planner_timeline",
         "timeline_event": timeline_event,
         "rolling_deviation_percent": event.get(
             "diagnostics_timeline_rolling_deviation_percent"
@@ -188,11 +209,25 @@ def _timeline_log_event(event: dict[str, object]) -> dict[str, object] | None:
     }
 
 
+def _runtime_error_event(stream: str, exc: Exception) -> dict[str, object]:
+    return {
+        "event": "picot_runtime_error",
+        "layer": stream,
+        "stream": stream,
+        "error": str(exc) or exc.__class__.__name__,
+        "observed_at": datetime.now(runtime.LOCAL_TIMEZONE).isoformat(),
+    }
+
+
 def _log_and_persist(history: HistoryStore, event: dict[str, object]) -> None:
     """Write the same structured evidence to console and persistent history."""
 
     runtime._log_event(event)
     history.append(event)
+
+
+def _log_error_and_persist(history: HistoryStore, stream: str, exc: Exception) -> None:
+    _log_and_persist(history, _runtime_error_event(stream, exc))
 
 
 def main() -> int:
@@ -235,7 +270,7 @@ def main() -> int:
                     planner_event, now=wall_clock_now
                 )
             except Exception as exc:
-                runtime._log_runtime_error("scheduled_transition", exc)
+                _log_error_and_persist(history, "scheduled_transition", exc)
 
         if monotonic_now >= next_planner_run:
             try:
@@ -245,10 +280,10 @@ def main() -> int:
                     planner_event, now=wall_clock_now
                 )
             except Exception as exc:
-                runtime._log_runtime_error("planner", exc)
+                _log_error_and_persist(history, "planner", exc)
             next_planner_run = monotonic_now + planner_interval
 
-        if planner_event is not None and monotonic_now >= next_telemetry_run:
+        if monotonic_now >= next_telemetry_run:
             try:
                 telemetry_event = run_telemetry_once(
                     options,
@@ -258,6 +293,7 @@ def main() -> int:
                     diagnostics_timeline=diagnostics_timeline,
                 )
                 events = [
+                    _p1_log_event(telemetry_event),
                     runtime._solcast_log_event(telemetry_event),
                     _goodwe_log_event(telemetry_event),
                     _zendure_log_event(telemetry_event),
@@ -271,7 +307,7 @@ def main() -> int:
                 for event in events:
                     _log_and_persist(history, event)
             except Exception as exc:
-                runtime._log_runtime_error("telemetry", exc)
+                _log_error_and_persist(history, "telemetry", exc)
             next_telemetry_run = monotonic_now + telemetry_interval
 
         time.sleep(runtime.SCHEDULER_TICK_SECONDS)

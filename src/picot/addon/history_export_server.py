@@ -70,8 +70,10 @@ small{{color:#aaa}} .error{{color:#ff8a80}}
 <input id="to" name="to" type="hidden">
 <button type="submit">Download historische data</button>
 </form>
-<p><small>Ruwe telemetry wordt 7 dagen bewaard. Price decisions en PV-deviation
- evaluator evidence 90 dagen.</small></p>
+<p><small>Alle lagen en bron-entiteiten blijven 72 uur op volledige resolutie
+beschikbaar. Daarna wordt telemetry per bron teruggebracht naar 1 minuut tot
+30 dagen en 15 minuten tot 90 dagen. Plannerbeslissingen, replans, Plan Review,
+timeline-events en runtime-fouten blijven 90 dagen volledig bewaard.</small></p>
 </div>
 <script>
 const form=document.getElementById('export-form');

@@ -10,15 +10,21 @@ from picot.domain.forecast import (
 )
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import OptimisationProfile, PlannerStrategy
-from picot.domain.opportunity import OpportunityKind, OpportunityMetricKind
+from picot.domain.opportunity import Opportunity, OpportunityKind, OpportunityMetricKind
 from picot.domain.planning_input_snapshot import (
     PlanningInputSnapshot,
     PlanningInputVersions,
     RuntimePressureState,
 )
 from picot.planner.opportunity_engine import OpportunityEngine
+from picot.planner.price_opportunity_detection import PriceOpportunityDetectionConfig
 
 BASE = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
+CONFIG = PriceOpportunityDetectionConfig(
+    config_version=1,
+    low_price_margin_eur_per_kwh=0.0,
+    high_price_margin_eur_per_kwh=0.0,
+)
 
 
 def _point(hour: int, value: float, confidence: float = 0.9) -> ForecastPoint:
@@ -65,6 +71,14 @@ def _snapshot(points: tuple[ForecastPoint, ...], unit: str = "EUR/kWh") -> Plann
     )
 
 
+def _lowest(snapshot: PlanningInputSnapshot) -> tuple[Opportunity, ...]:
+    return tuple(
+        item
+        for item in OpportunityEngine().detect(snapshot, price_config=CONFIG).opportunities
+        if item.kind is OpportunityKind.LOWEST_PRICE_WINDOW
+    )
+
+
 def test_engine_detects_contiguous_lowest_price_window() -> None:
     snapshot = _snapshot(
         (
@@ -75,10 +89,7 @@ def test_engine_detects_contiguous_lowest_price_window() -> None:
         )
     )
 
-    result = OpportunityEngine().detect(snapshot)
-    lowest = tuple(
-        item for item in result.opportunities if item.kind is OpportunityKind.LOWEST_PRICE_WINDOW
-    )
+    lowest = _lowest(snapshot)
 
     assert len(lowest) == 1
     opportunity = lowest[0]
@@ -86,8 +97,14 @@ def test_engine_detects_contiguous_lowest_price_window() -> None:
     assert opportunity.ends_at == BASE + timedelta(hours=3)
     assert opportunity.confidence == 0.80
     assert opportunity.evidence[0].point_indexes == (1, 2)
-    assert opportunity.metrics[0].kind is OpportunityMetricKind.ENERGY_PRICE_EUR_PER_KWH
-    assert opportunity.metrics[0].value == 0.07
+    metrics = {metric.kind: metric.value for metric in opportunity.metrics}
+    assert metrics[OpportunityMetricKind.AVERAGE_ENERGY_PRICE_EUR_PER_KWH] == 0.07
+    assert metrics[OpportunityMetricKind.MINIMUM_ENERGY_PRICE_EUR_PER_KWH] == 0.07
+    assert metrics[OpportunityMetricKind.MAXIMUM_ENERGY_PRICE_EUR_PER_KWH] == 0.07
+    assert metrics[OpportunityMetricKind.PRICE_BOUNDARY_EUR_PER_KWH] == 0.07
+    assert metrics[OpportunityMetricKind.SOURCE_INTERVAL_COUNT] == 2.0
+    assert metrics[OpportunityMetricKind.BRIDGED_INTERVAL_COUNT] == 0.0
+    assert metrics[OpportunityMetricKind.PRICE_DETECTION_CONFIG_VERSION] == 1.0
 
 
 def test_engine_creates_separate_windows_for_equal_non_contiguous_minima() -> None:
@@ -99,18 +116,24 @@ def test_engine_creates_separate_windows_for_equal_non_contiguous_minima() -> No
         )
     )
 
-    result = OpportunityEngine().detect(snapshot)
-    lowest = tuple(
-        item for item in result.opportunities if item.kind is OpportunityKind.LOWEST_PRICE_WINDOW
-    )
+    assert len(_lowest(snapshot)) == 2
 
-    assert len(lowest) == 2
+
+def test_engine_requires_explicit_config_for_relative_price_windows() -> None:
+    snapshot = _snapshot((_point(0, 0.10), _point(1, 0.05)))
+
+    result = OpportunityEngine().detect(snapshot)
+
+    assert all(
+        item.kind is not OpportunityKind.LOWEST_PRICE_WINDOW
+        for item in result.opportunities
+    )
 
 
 def test_engine_skips_lowest_price_detection_for_unknown_unit() -> None:
     snapshot = _snapshot((_point(0, 10.0), _point(1, 5.0)), unit="ct/kWh")
 
-    result = OpportunityEngine().detect(snapshot)
+    result = OpportunityEngine().detect(snapshot, price_config=CONFIG)
 
     assert all(
         item.kind is not OpportunityKind.LOWEST_PRICE_WINDOW

@@ -34,6 +34,15 @@ class OpportunityMetricKind(StrEnum):
     """Objective metrics that may describe an opportunity."""
 
     ENERGY_PRICE_EUR_PER_KWH = "energy_price_eur_per_kwh"
+    AVERAGE_ENERGY_PRICE_EUR_PER_KWH = "average_energy_price_eur_per_kwh"
+    MINIMUM_ENERGY_PRICE_EUR_PER_KWH = "minimum_energy_price_eur_per_kwh"
+    MAXIMUM_ENERGY_PRICE_EUR_PER_KWH = "maximum_energy_price_eur_per_kwh"
+    PRICE_REFERENCE_EUR_PER_KWH = "price_reference_eur_per_kwh"
+    PRICE_BOUNDARY_EUR_PER_KWH = "price_boundary_eur_per_kwh"
+    DURATION_SECONDS = "duration_seconds"
+    SOURCE_INTERVAL_COUNT = "source_interval_count"
+    BRIDGED_INTERVAL_COUNT = "bridged_interval_count"
+    PRICE_DETECTION_CONFIG_VERSION = "price_detection_config_version"
     MINIMUM_EXPECTED_POWER_W = "minimum_expected_power_w"
 
 
@@ -47,6 +56,16 @@ class OpportunityMetric:
     def __post_init__(self) -> None:
         if self.kind is OpportunityMetricKind.MINIMUM_EXPECTED_POWER_W and self.value <= 0:
             raise ValueError("Minimum expected power must be greater than zero.")
+        if self.kind in {
+            OpportunityMetricKind.DURATION_SECONDS,
+            OpportunityMetricKind.SOURCE_INTERVAL_COUNT,
+        } and self.value <= 0:
+            raise ValueError(f"{self.kind.value} must be greater than zero.")
+        if self.kind in {
+            OpportunityMetricKind.BRIDGED_INTERVAL_COUNT,
+            OpportunityMetricKind.PRICE_DETECTION_CONFIG_VERSION,
+        } and self.value < 0:
+            raise ValueError(f"{self.kind.value} must not be negative.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +104,7 @@ class Opportunity:
         if not self.opportunity_id.strip():
             raise ValueError("Opportunity ID must not be empty.")
         if not self.snapshot_id.strip():
-            raise ValueError("Snapshot ID must not be empty.")
+            raise ValueError("Opportunity snapshot ID must not be empty.")
         if self.starts_at.tzinfo is None or self.starts_at.utcoffset() is None:
             raise ValueError("Opportunity start must be timezone-aware.")
         if self.ends_at.tzinfo is None or self.ends_at.utcoffset() is None:

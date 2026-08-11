@@ -31,6 +31,21 @@ def test_diagnostics_dashboard_exposes_replan_and_review_evidence() -> None:
         "plan_review_battery_soc_percent": 98.0,
         "plan_review_battery_charge_power_w": 0.0,
         "plan_review_battery_discharge_power_w": 218.0,
+        "pv_energy_15m_status": "available",
+        "pv_energy_15m_expected_kwh": 0.52,
+        "pv_energy_15m_actual_kwh": 0.49,
+        "pv_energy_15m_deviation_percent": -5.77,
+        "pv_energy_15m_coverage_seconds": 900.0,
+        "pv_energy_30m_status": "available",
+        "pv_energy_30m_expected_kwh": 1.02,
+        "pv_energy_30m_actual_kwh": 1.00,
+        "pv_energy_30m_deviation_percent": -1.96,
+        "pv_energy_30m_coverage_seconds": 1800.0,
+        "pv_energy_60m_status": "available",
+        "pv_energy_60m_expected_kwh": 2.01,
+        "pv_energy_60m_actual_kwh": 1.98,
+        "pv_energy_60m_deviation_percent": -1.49,
+        "pv_energy_60m_coverage_seconds": 3600.0,
     }
 
     states = diagnostics_dashboard_states(event)
@@ -51,6 +66,15 @@ def test_diagnostics_dashboard_exposes_replan_and_review_evidence() -> None:
     assert review_attributes["grid_export_w"] == 4.9
     assert review_attributes["battery_soc_percent"] == 98.0
 
+    energy_state = states["sensor.picot_pv_energy_deviation_30m"]
+    assert energy_state["state"] == -1.96
+    energy_attributes = energy_state["attributes"]
+    assert isinstance(energy_attributes, dict)
+    assert energy_attributes["solcast_expected_kwh"] == 1.02
+    assert energy_attributes["goodwe_actual_kwh"] == 1.00
+    assert energy_attributes["observation_only"] is True
+    assert energy_attributes["replan_input"] is False
+
 
 def test_diagnostics_dashboard_exposes_recovery_state() -> None:
     event: dict[str, object] = {
@@ -69,3 +93,4 @@ def test_diagnostics_dashboard_exposes_recovery_state() -> None:
     assert states["binary_sensor.picot_replan_candidate"]["state"] == "off"
     assert states["sensor.picot_pv_deviation_status"]["state"] == "within_tolerance"
     assert states["sensor.picot_plan_review_status"]["state"] == "not_requested"
+    assert states["sensor.picot_pv_energy_deviation_15m"]["state"] == "unknown"

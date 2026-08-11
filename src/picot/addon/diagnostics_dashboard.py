@@ -83,6 +83,47 @@ def _energy_window_state(event: dict[str, object], minutes: int) -> DashboardPay
     }
 
 
+def _price_opportunity_overlay_state(event: dict[str, object]) -> DashboardPayload:
+    starts_at = event.get("price_entry_opportunity_starts_at")
+    ends_at = event.get("price_entry_opportunity_ends_at")
+    available = starts_at is not None and ends_at is not None
+    return {
+        "state": 1 if available else "unknown",
+        "attributes": {
+            "friendly_name": "PicoT price opportunity overlay",
+            "icon": "mdi:selection-clock",
+            "state_class": "measurement",
+            "observation_only": True,
+            "replan_input": False,
+            "starts_at": starts_at,
+            "ends_at": ends_at,
+            "opportunity_rank": event.get("price_entry_opportunity_rank"),
+            "telemetry_updated_at": event.get("telemetry_updated_at"),
+        },
+    }
+
+
+def _best_later_price_state(event: dict[str, object]) -> DashboardPayload:
+    return {
+        "state": _safe_state(event.get("price_entry_best_later_price_eur_per_kwh")),
+        "attributes": {
+            "friendly_name": "PicoT beste latere prijs",
+            "icon": "mdi:clock-check-outline",
+            "state_class": "measurement",
+            "unit_of_measurement": "EUR/kWh",
+            "observation_only": True,
+            "replan_input": False,
+            "starts_at": event.get("price_entry_best_later_starts_at"),
+            "saving_eur_per_kwh": event.get("price_entry_best_later_saving_eur_per_kwh"),
+            "reference_starts_at": event.get("price_entry_reference_starts_at"),
+            "reference_price_eur_per_kwh": event.get(
+                "price_entry_reference_price_eur_per_kwh"
+            ),
+            "telemetry_updated_at": event.get("telemetry_updated_at"),
+        },
+    }
+
+
 def diagnostics_dashboard_states(event: dict[str, object]) -> DashboardStates:
     """Build semantic states for the Developer/Diagnostics View."""
 
@@ -201,6 +242,8 @@ def diagnostics_dashboard_states(event: dict[str, object]) -> DashboardStates:
                 "telemetry_updated_at": event.get("telemetry_updated_at"),
             },
         },
+        "sensor.picot_price_opportunity_overlay": _price_opportunity_overlay_state(event),
+        "sensor.picot_best_later_price": _best_later_price_state(event),
     }
     for minutes in ENERGY_WINDOWS_MINUTES:
         states[f"sensor.picot_pv_energy_deviation_{minutes}m"] = _energy_window_state(

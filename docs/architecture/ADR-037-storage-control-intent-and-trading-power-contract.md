@@ -158,10 +158,57 @@ For a balance-mode Candidate:
 
 - the Path Segment expresses the supported balance primitive;
 - no explicit wattage is attached;
-- Simulation / projected-state logic uses accepted PV, load, storage and observed-control assumptions to estimate the resulting SoC trajectory;
+- Simulation / projected-state logic estimates the energy that the integration-managed controller can absorb or release from the expected household energy balance;
 - if the required future state cannot be proven with sufficient support, the Candidate is invalid or excluded rather than converted into `CHARGE_AT_POWER` as a fallback.
 
 Thus a storage target is a feasibility fact, not permission to seize low-level power control.
+
+## Integration-managed NOM projection
+
+PicoT **must** be able to project the expected effect of a NOM-controlled battery segment without commanding the battery power itself.
+
+For charging under `BALANCE_BIDIRECTIONAL` or `BALANCE_CHARGE_ONLY`, PicoT derives an **expected available charging flow** from forecast household balance. For example:
+
+```text
+expected_pv_surplus_w
+= max(0, expected_pv_power_w - expected_household_load_w)
+```
+
+The projected battery charge flow is then bounded by all explicitly known technical constraints, such as supported charge capability and SoC limits. This value is a planning estimate only. It is never sent to the battery integration as `requested_power_w`.
+
+Where a constant expected PV surplus `X` is used for a simple projection:
+
+```text
+required_stored_energy_wh
+= usable_capacity_wh × max(0, target_soc - current_soc)
+
+expected_stored_power_w
+= expected_available_charge_power_w × charge_efficiency
+
+expected_charge_time_hours
+= required_stored_energy_wh / expected_stored_power_w
+```
+
+For the actual planner horizon, PV surplus will normally vary over time. PicoT therefore integrates the expected available charge energy interval by interval until the target SoC is projected to be reached.
+
+Example reasoning:
+
+```text
+current SoC = 64%
+target SoC = explicit target from the planning input
+expected PV surplus = forecast-derived per interval
+control intent = BALANCE_CHARGE_ONLY or BALANCE_BIDIRECTIONAL
+
+PicoT projects:
+“if the Zendure integration continues to apply its configured NOM logic to this expected surplus,
+when should the target SoC be reached?”
+```
+
+This distinction is fundamental:
+
+> PicoT predicts the power that NOM is expected to use; PicoT does not prescribe that power.
+
+Projection assumptions remain explicit and traceable. A forecast change, unexpected household load, actual battery power deviation or SoC-trajectory deviation may trigger replanning under ADR-017 / PEP-RP-001.
 
 ## Projected storage state
 
@@ -172,10 +219,13 @@ Projected state may include:
 - battery SoC;
 - expected household import/export;
 - expected PV and load;
+- expected integration-managed battery charge/discharge flow;
 - confidence;
 - explicit assumptions about integration-managed balance behaviour where applicable.
 
-For explicit-power trading segments, quantitative energy projection uses explicit one-way efficiency:
+For NOM-controlled paths, the expected battery flow is derived from the forecast energy balance and known control/capability limits. It is not a commanded setpoint.
+
+For explicit-power trading segments, quantitative energy projection instead uses the committed trading power and explicit one-way efficiency:
 
 ```text
 input_energy_wh × charge_efficiency = stored_energy_added_wh
@@ -239,6 +289,7 @@ ADR-027 currently states generally that PicoT may adjust battery charge/discharg
 This ADR narrows that rule for storage:
 
 - for integration-managed `BALANCE_*` commitments, the local integration controls instantaneous battery power and PicoT does not continuously set watts;
+- PicoT may still project the expected instantaneous/interval energy flow for planning and feasibility;
 - for explicit-power commitments such as Dynamic Trading, the Execution Engine may apply the committed explicit power within the accepted trading policy and hard constraints;
 - any future automatic optimisation of explicit trading power requires an accepted extension rather than hidden runtime behaviour.
 
@@ -251,6 +302,7 @@ The requirement for `CHARGE_AT_POWER` is **not** universal for low-price storage
 Instead:
 
 - normal storage Candidates use supported `BALANCE_*` primitives without requested power;
+- their expected SoC trajectory and expected time-to-target are projected from forecast available energy under the assumed integration-managed NOM behaviour;
 - Dynamic Trading Candidates may use `CHARGE_AT_POWER` / `DISCHARGE_AT_POWER` under this explicit trading contract;
 - a missing quantitative projection may invalidate a Candidate, but may not silently change its control intent.
 
@@ -263,6 +315,7 @@ Candidate Generation emits an explainable exclusion when, for example:
 - the required balance primitive is unsupported;
 - the storage capability is unavailable or unhealthy;
 - a hard future SoC requirement cannot be proven under the selected control intent;
+- required PV/load information is unavailable for a NOM projection that depends on it;
 - Dynamic Trading requests explicit power but no valid trading-power policy exists;
 - `FIXED_W` violates capability, phase, grid or system limits;
 - required quantitative trading projection lacks SoC, capacity or one-way efficiency;
@@ -277,6 +330,7 @@ For identical immutable planning inputs and the same selected control/power poli
 - control intent;
 - Path Segments;
 - explicit trading power where applicable;
+- expected NOM energy-flow projection where applicable;
 - projected-state assumptions;
 - Candidate identifiers and ordering;
 - exclusions and reasons.
@@ -288,11 +342,12 @@ After acceptance, implementation will proceed in this order:
 1. amend ADR-031 to distinguish balance-control Candidates from explicit-power trading Candidates;
 2. clarify ADR-027 so integration-managed balance commitments do not imply PicoT watt control;
 3. represent storage planning state / Energy Requirements needed for projected feasibility;
-4. allow normal storage Candidate templates to use `BALANCE_*` primitives with no `requested_power_w`;
-5. keep direct Home Assistant/vendor modes confined to the Device Adapter;
-6. add explicit Dynamic Trading power policy with `MAX_SUPPORTED` and `FIXED_W`;
-7. keep automatic planner-selected trading power out of scope until a later accepted extension;
-8. preserve Evaluation → Winning Energy Path → Execution Plan → Execution Engine before any physical command.
+4. implement NOM projection from expected PV/load balance to projected battery energy and SoC, including expected time-to-target;
+5. allow normal storage Candidate templates to use `BALANCE_*` primitives with no `requested_power_w`;
+6. keep direct Home Assistant/vendor modes confined to the Device Adapter;
+7. add explicit Dynamic Trading power policy with `MAX_SUPPORTED` and `FIXED_W`;
+8. keep automatic planner-selected trading power out of scope until a later accepted extension;
+9. preserve Evaluation → Winning Energy Path → Execution Plan → Execution Engine before any physical command.
 
 ## Relationship to existing ADRs and PEPs
 
@@ -311,6 +366,7 @@ After acceptance, implementation will proceed in this order:
 
 - PicoT does not duplicate the battery integration's working NOM power controller.
 - Normal storage control remains behaviour-based and vendor-independent.
+- PicoT can still predict how much energy a NOM-controlled battery is expected to absorb or release, and therefore project SoC and time-to-target.
 - Dynamic Trading can deliberately request a configurable power level.
 - Maximum trading power remains available as the simple/default policy, while fixed lower power is possible when useful.
 - A future PicoT-native battery adapter can implement the same generic control intents without changing Planner architecture.
@@ -318,4 +374,4 @@ After acceptance, implementation will proceed in this order:
 
 ## Core principle
 
-> For normal household storage control, PicoT chooses intent and timing while the battery integration controls instantaneous power. Explicit battery wattage is an intentional power-controlled action, initially reserved for Dynamic Trading and bounded by an explicit trading-power policy.
+> For normal household storage control, PicoT chooses intent and timing while the battery integration controls instantaneous power. PicoT may project the expected energy flow and SoC trajectory produced by that integration-managed behaviour, but it does not command the watts. Explicit battery wattage is an intentional power-controlled action, initially reserved for Dynamic Trading and bounded by an explicit trading-power policy.

@@ -11,12 +11,18 @@ span:
 now:
   show: true
   label: Nu
-update_interval: 5min
+update_interval: 30sec
 yaxis:
-  - decimals: 3
+  - id: price
+    decimals: 3
     apex_config:
       title:
         text: EUR/kWh
+  - id: overlay
+    min: 0
+    max: 1
+    decimals: 0
+    show: false
 apex_config:
   chart:
     height: 430
@@ -53,6 +59,7 @@ apex_config:
 series:
   - entity: sensor.picot_current_price
     name: PicoT kwartierprijzen
+    yaxis_id: price
     float_precision: 3
     type: area
     color: "#42a5f5"
@@ -91,54 +98,40 @@ series:
         .filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]))
         .sort((a, b) => a[0] - b[0]);
 
-  - entity: sensor.picot_current_price
+  - entity: sensor.picot_price_opportunity_overlay
     name: PicoT price opportunity
-    float_precision: 3
+    yaxis_id: overlay
     type: area
     color: "#66bb6a"
     curve: stepline
     stroke_width: 0
-    opacity: 0.35
+    opacity: 0.18
     extend_to: false
+    show:
+      legend_value: false
     data_generator: |-
       const attrs = entity.attributes || {};
-      const start = new Date(attrs.window_starts_at || '').getTime();
-      const end = new Date(attrs.window_ends_at || '').getTime();
-      if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+      const start = new Date(attrs.starts_at || '').getTime();
+      const end = new Date(attrs.ends_at || '').getTime();
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+      return [
+        [start, 1],
+        [end, 1]
+      ];
 
-      let rows = attrs.price_points || [];
-      if (rows.length === 0) {
-        const source = hass.states['sensor.nordpool_kwh_nl_eur_3_095_0'];
-        const sourceAttrs = source?.attributes || {};
-        rows = [
-          ...(sourceAttrs.raw_today || []),
-          ...(sourceAttrs.raw_tomorrow || []),
-        ];
-      }
-
-      return rows
-        .map((row) => {
-          const rowStart = row.start || row.starts_at || row.time;
-          const value = row.value ?? row.price;
-          return [new Date(rowStart).getTime(), Number(value)];
-        })
-        .filter((point) =>
-          Number.isFinite(point[0]) &&
-          Number.isFinite(point[1]) &&
-          point[0] >= start &&
-          point[0] < end
-        )
-        .sort((a, b) => a[0] - b[0]);
-
-  - entity: sensor.picot_price_entry_observation
+  - entity: sensor.picot_best_later_price
     name: Beste latere prijs
-    type: scatter
+    yaxis_id: price
+    float_precision: 3
+    type: column
     color: "#ff9800"
-    stroke_width: 0
+    opacity: 0.95
     extend_to: false
+    show:
+      legend_value: false
     data_generator: |-
       const attrs = entity.attributes || {};
-      const start = new Date(attrs.best_later_starts_at || '').getTime();
-      const price = Number(attrs.best_later_price_eur_per_kwh);
+      const start = new Date(attrs.starts_at || '').getTime();
+      const price = Number(entity.state);
       if (!Number.isFinite(start) || !Number.isFinite(price)) return [];
       return [[start, price]];

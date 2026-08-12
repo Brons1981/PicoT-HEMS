@@ -114,11 +114,7 @@ def adr037_readiness_log_event(
             capabilities=capabilities,
         )
 
-    winner = (
-        planning_result.evaluation.winning_candidate
-        if planning_result is not None
-        else None
-    )
+    winner = planning_result.evaluation.winning_candidate if planning_result is not None else None
     storage_state = snapshot.current_storage_states[0] if snapshot.current_storage_states else None
     live_min_soc = _context_value(planner_context, "zendure_allowed_min_soc_percent")
     live_max_soc = _context_value(planner_context, "zendure_allowed_max_soc_percent")
@@ -137,21 +133,19 @@ def adr037_readiness_log_event(
             / 100.0,
         )
 
-    recoverability = (
-        planning_result.technical_recoverability if planning_result is not None else None
-    )
-    remaining_charge_wh = (
-        recoverability.extra_energy_required_wh if recoverability is not None else None
-    )
-    latest_charge_start = (
-        recoverability.latest_full_power_charge_start if recoverability is not None else None
+    recoverability = planning_result.technical_recoverability if planning_result is not None else None
+    remaining_charge_wh = recoverability.extra_energy_required_wh if recoverability is not None else None
+    latest_charge_start = recoverability.latest_full_power_charge_start if recoverability is not None else None
+    acquisition_required = (
+        recoverability.additional_acquisition_required if recoverability is not None else None
     )
     recovery_start_due = (
-        remaining_charge_wh is not None
-        and remaining_charge_wh > 0.0
+        acquisition_required is True
         and latest_charge_start is not None
         and snapshot.captured_at >= latest_charge_start
     )
+    requirement = planning_result.requirement if planning_result is not None else None
+
     return {
         "event": "picot_live_adr037_readiness",
         "layer": "planner",
@@ -182,41 +176,19 @@ def adr037_readiness_log_event(
         "live_storage_operating_window_wh": operating_window_wh,
         "effective_storage_limit_available": effective_limit is not None,
         "effective_storage_max_soc": effective_limit.max_soc if effective_limit else None,
-        "effective_storage_max_energy_wh": (
-            effective_limit.max_energy_wh if effective_limit else None
-        ),
+        "effective_storage_max_energy_wh": effective_limit.max_energy_wh if effective_limit else None,
         "evidence_confidence_available": confidence_assessment is not None,
-        "evidence_confidence_current": (
-            confidence_assessment.current_confidence if confidence_assessment else None
-        ),
-        "evidence_confidence_own_mean": (
-            confidence_assessment.baseline_mean_confidence if confidence_assessment else None
-        ),
-        "evidence_confidence_decision": (
-            confidence_assessment.decision.value if confidence_assessment else None
-        ),
-        "evidence_confidence_reason": (
-            confidence_assessment.reason if confidence_assessment else None
-        ),
+        "evidence_confidence_current": confidence_assessment.current_confidence if confidence_assessment else None,
+        "evidence_confidence_own_mean": confidence_assessment.baseline_mean_confidence if confidence_assessment else None,
+        "evidence_confidence_decision": confidence_assessment.decision.value if confidence_assessment else None,
+        "evidence_confidence_reason": confidence_assessment.reason if confidence_assessment else None,
         "canonical_price_opportunities_available": opportunities is not None,
-        "canonical_price_opportunity_count": (
-            len(opportunities.opportunities) if opportunities is not None else 0
-        ),
-        "price_window_context": _context_value(
-            planner_context, "price_entry_opportunity_context"
-        ),
-        "price_window_starts_at": _context_value(
-            planner_context, "price_entry_opportunity_starts_at"
-        ),
-        "price_window_ends_at": _context_value(
-            planner_context, "price_entry_opportunity_ends_at"
-        ),
-        "price_window_best_later_starts_at": _context_value(
-            planner_context, "price_entry_best_later_starts_at"
-        ),
-        "price_window_best_later_price_eur_per_kwh": _context_value(
-            planner_context, "price_entry_best_later_price_eur_per_kwh"
-        ),
+        "canonical_price_opportunity_count": len(opportunities.opportunities) if opportunities is not None else 0,
+        "price_window_context": _context_value(planner_context, "price_entry_opportunity_context"),
+        "price_window_starts_at": _context_value(planner_context, "price_entry_opportunity_starts_at"),
+        "price_window_ends_at": _context_value(planner_context, "price_entry_opportunity_ends_at"),
+        "price_window_best_later_starts_at": _context_value(planner_context, "price_entry_best_later_starts_at"),
+        "price_window_best_later_price_eur_per_kwh": _context_value(planner_context, "price_entry_best_later_price_eur_per_kwh"),
         "adr037_pipeline_stage_reached": (
             "evaluation"
             if planning_result is not None
@@ -226,36 +198,26 @@ def adr037_readiness_log_event(
         ),
         "adr037_live_ready": not blockers,
         "adr037_live_blockers": blockers,
-        "adr037_requirement_energy_wh": (
-            planning_result.requirement.required_energy_wh if planning_result else None
+        "adr037_requirement_energy_wh": requirement.required_energy_wh if requirement else None,
+        "adr037_requirement_protection_starts_at": (
+            requirement.protection_starts_at.isoformat() if requirement else None
         ),
-        "adr037_requirement_required_by": (
-            planning_result.requirement.required_by.isoformat() if planning_result else None
+        "adr037_requirement_protected_through": (
+            requirement.protected_through.isoformat() if requirement else None
         ),
         "adr037_remaining_charge_energy_wh": remaining_charge_wh,
+        "adr037_additional_acquisition_required": acquisition_required,
         "adr037_latest_full_power_charge_start": (
             latest_charge_start.isoformat() if latest_charge_start is not None else None
         ),
         "adr037_recovery_start_due": recovery_start_due,
-        "adr037_technically_recoverable": (
-            recoverability.technically_recoverable if recoverability is not None else None
-        ),
-        "adr037_charge_needed_now": (
-            remaining_charge_wh > 0.0 if remaining_charge_wh is not None else None
-        ),
-        "adr037_pv_only_sufficient": (
-            planning_result.pv_only_feasibility.energy_sufficient if planning_result else None
-        ),
-        "adr037_candidate_count": (
-            len(planning_result.candidate_set.candidates) if planning_result else 0
-        ),
-        "adr037_evaluation_status": (
-            planning_result.evaluation.status.value if planning_result else None
-        ),
+        "adr037_technically_recoverable": recoverability.technically_recoverable if recoverability is not None else None,
+        "adr037_charge_needed_now": acquisition_required,
+        "adr037_pv_only_sufficient": planning_result.pv_only_feasibility.energy_sufficient if planning_result else None,
+        "adr037_candidate_count": len(planning_result.candidate_set.candidates) if planning_result else 0,
+        "adr037_evaluation_status": planning_result.evaluation.status.value if planning_result else None,
         "adr037_winning_candidate_id": winner.candidate_id if winner is not None else None,
-        "adr037_winning_candidate_family": (
-            winner.family.value if winner is not None else None
-        ),
+        "adr037_winning_candidate_family": winner.family.value if winner is not None else None,
         "control_change_allowed": False,
         "observer_only": True,
     }

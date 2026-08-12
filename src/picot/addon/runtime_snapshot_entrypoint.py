@@ -34,6 +34,7 @@ _storage_max_charge_power_w: float | None = None
 _storage_power_step_w: float | None = None
 _target_entity: str | None = None
 _price_entity: str | None = None
+_price_opportunity_margin_eur_per_kwh = 0.04
 _dispatch_mode = HomeAssistantDispatchMode.DRY_RUN
 _supervisor_token = ""
 _load_forecaster = HouseholdLoadForecaster()
@@ -182,6 +183,7 @@ def telemetry_evidence_events_with_snapshot(
         effective_limit=effective_limit,
         confidence_tracker=_confidence_tracker,
         planner_context=telemetry_event,
+        price_margin_eur_per_kwh=_price_opportunity_margin_eur_per_kwh,
     )
     events.append(readiness)
     telemetry_event.update(readiness)
@@ -206,6 +208,7 @@ def main() -> int:
 
     global _dispatch_mode
     global _price_entity
+    global _price_opportunity_margin_eur_per_kwh
     global _storage_max_charge_power_w
     global _storage_max_soc
     global _storage_power_step_w
@@ -223,6 +226,9 @@ def main() -> int:
     _storage_power_step_w = configured_step if configured_step > 0 else None
     _target_entity = str(options["target_entity"])
     _price_entity = str(options["price_entity"])
+    _price_opportunity_margin_eur_per_kwh = float(
+        options["price_opportunity_margin_eur_per_kwh"]
+    )
     _dispatch_mode = HomeAssistantDispatchMode(str(options["mode"]))
     _supervisor_token = os.environ.get("SUPERVISOR_TOKEN", "")
 

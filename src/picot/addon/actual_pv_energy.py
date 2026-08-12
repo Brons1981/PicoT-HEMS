@@ -51,6 +51,99 @@ def _current_sample(event: dict[str, object], captured_at: datetime) -> ActualPV
     return ActualPVSample(observed_at=captured_at, power_w=max(0.0, float(raw_power)))
 
 
+def actual_pv_energy_for_interval(
+    *,
+    history: HistoryStore,
+    starts_at: datetime,
+    ends_at: datetime,
+    telemetry_interval_seconds: int = 5,
+) -> PVEnergyTimelineInterval | None:
+    """Integrate validated persisted GoodWe power over one explicit interval.
+
+    Uses the same sample-and-hold semantics as current-quarter integration and
+    fails closed when boundary coverage is missing or a measurement gap exceeds
+    three telemetry periods (with a 30-second minimum tolerance).
+    """
+
+    if ends_at <= starts_at:
+        raise ValueError("Actual PV interval must end after it starts.")
+    if starts_at.tzinfo is None or ends_at.tzinfo is None:
+        raise ValueError("Actual PV interval boundaries must be timezone-aware.")
+    cadence_s = telemetry_interval_seconds if telemetry_interval_seconds > 0 else 5
+    max_gap_s = max(30, cadence_s * 3)
+    lookup_start = starts_at - timedelta(seconds=max_gap_s)
+    lookup_end = ends_at
+
+    samples: list[ActualPVSample] = []
+    for record in history.iter_range(lookup_start, lookup_end):
+        if record.get("event") != "picot_goodwe_snapshot":
+            continue
+        sample = _sample_from_event(record)
+        if sample is not None:
+            samples.append(sample)
+    if not samples:
+        return None
+    samples.sort(key=lambda sample: sample.observed_at)
+
+    deduplicated: list[ActualPVSample] = []
+    for sample in samples:
+        if deduplicated and deduplicated[-1].observed_at == sample.observed_at:
+            deduplicated[-1] = sample
+        else:
+            deduplicated.append(sample)
+
+    anchor_index: int | None = None
+    for index, sample in enumerate(deduplicated):
+        if sample.observed_at <= starts_at:
+            anchor_index = index
+        else:
+            break
+    if anchor_index is None:
+        return None
+    anchor = deduplicated[anchor_index]
+    if (starts_at - anchor.observed_at).total_seconds() > max_gap_s:
+        return None
+
+    relevant = [anchor, *deduplicated[anchor_index + 1 :]]
+    previous_time = starts_at
+    previous_power = anchor.power_w
+    energy_wh = 0.0
+    evidence_ids: list[str] = [f"goodwe-pv:{anchor.observed_at.isoformat()}"]
+
+    for sample in relevant[1:]:
+        if sample.observed_at <= previous_time:
+            continue
+        sample_time = min(sample.observed_at, ends_at)
+        gap_s = (sample_time - previous_time).total_seconds()
+        if gap_s > max_gap_s:
+            return None
+        energy_wh += previous_power * gap_s / 3600.0
+        previous_time = sample_time
+        previous_power = sample.power_w
+        evidence_ids.append(f"goodwe-pv:{sample.observed_at.isoformat()}")
+        if previous_time == ends_at:
+            break
+
+    if previous_time < ends_at:
+        tail_gap_s = (ends_at - previous_time).total_seconds()
+        if tail_gap_s > max_gap_s:
+            return None
+        energy_wh += previous_power * tail_gap_s / 3600.0
+        previous_time = ends_at
+    if previous_time != ends_at:
+        return None
+
+    return PVEnergyTimelineInterval(
+        starts_at=starts_at,
+        ends_at=ends_at,
+        energy_wh=energy_wh,
+        evidence_type=PVEnergyEvidenceType.ACTUAL,
+        confidence=1.0,
+        evidence_ids=tuple(dict.fromkeys(evidence_ids)),
+        method_version=ACTUAL_PV_METHOD_VERSION,
+    )
+
+
 def actual_pv_interval_from_history(
     *,
     history: HistoryStore,
@@ -58,12 +151,7 @@ def actual_pv_interval_from_history(
     captured_at: datetime,
     sequence: int,
 ) -> PVEnergyTimelineInterval | None:
-    """Integrate reliable current-quarter PV samples using versioned sample-and-hold.
-
-    The integration is deliberately fail-closed. A sample at/before the quarter
-    boundary is required and no gap may exceed three telemetry periods (with a
-    30-second minimum tolerance). Long source outages are never interpolated.
-    """
+    """Integrate reliable current-quarter PV samples using versioned sample-and-hold."""
 
     starts_at = _quarter_start(captured_at)
     if starts_at == captured_at:

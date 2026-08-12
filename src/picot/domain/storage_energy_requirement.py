@@ -1,10 +1,12 @@
-"""Storage-energy requirement and charge-source policy from ADR-037."""
+"""Storage-energy requirement contract from ADR-037."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+
+from picot.domain.charge_source_policy import ChargeSourcePolicy
 
 
 class StorageRequirementReason(StrEnum):
@@ -14,13 +16,6 @@ class StorageRequirementReason(StrEnum):
     CONSERVATIVE_RESERVE = "conservative_reserve"
     BATTERY_HEALTH = "battery_health"
     USER_REQUIREMENT = "user_requirement"
-
-
-class ChargeSourcePolicy(StrEnum):
-    """Explicit energy-source permission for an active charging path."""
-
-    PV_ONLY = "pv_only"
-    PV_PREFERRED_GRID_ALLOWED = "pv_preferred_grid_allowed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,3 +50,10 @@ class StorageEnergyRequirement:
             raise ValueError("Reserve energy must not be negative.")
         if any(not evidence_id.strip() for evidence_id in self.evidence_ids):
             raise ValueError("Storage requirement evidence IDs must not be empty.")
+
+
+__all__ = [
+    "ChargeSourcePolicy",
+    "StorageEnergyRequirement",
+    "StorageRequirementReason",
+]

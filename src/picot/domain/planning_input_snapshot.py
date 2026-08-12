@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+from picot.domain.current_flow_observation import CurrentFlowObservation
 from picot.domain.current_storage_state import CurrentStorageState
 from picot.domain.forecast import ForecastSet
 from picot.domain.household_load_forecast import HouseholdLoadForecast
@@ -64,6 +65,7 @@ class PlanningInputSnapshot:
     household_load_forecast: HouseholdLoadForecast | None = None
     current_storage_states: tuple[CurrentStorageState, ...] = ()
     pv_energy_timeline: PVEnergyTimeline | None = None
+    current_flow_observation: CurrentFlowObservation | None = None
 
     def __post_init__(self) -> None:
         if not self.snapshot_id.strip():
@@ -123,3 +125,9 @@ class PlanningInputSnapshot:
                 raise ValueError(
                     "PV energy timeline must cover the complete planning horizon end."
                 )
+
+        flow_observation = self.current_flow_observation
+        if flow_observation is not None and flow_observation.observed_at > self.captured_at:
+            raise ValueError(
+                "Current flow observation cannot be measured after snapshot capture time."
+            )

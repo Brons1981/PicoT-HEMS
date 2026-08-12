@@ -30,8 +30,8 @@ from picot.domain.storage_technical_recoverability import (
     StorageTechnicalRecoverabilityEvaluator,
 )
 from picot.planner.adr037_candidate_outcome_derivation import ADR037CandidateOutcomeDeriver
-from picot.planner.candidate_engine import CandidateEngine
 from picot.planner.evaluation_engine import EvaluationEngine
+from picot.planner.flow_aware_candidate_engine import FlowAwareCandidateEngine
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +57,7 @@ class ADR037PlannerPipeline:
     recoverability_evaluator: StorageTechnicalRecoverabilityEvaluator = (
         StorageTechnicalRecoverabilityEvaluator()
     )
-    candidate_engine: CandidateEngine = CandidateEngine()
+    candidate_engine: FlowAwareCandidateEngine = FlowAwareCandidateEngine()
     outcome_deriver: ADR037CandidateOutcomeDeriver = ADR037CandidateOutcomeDeriver()
     evaluation_engine: EvaluationEngine = EvaluationEngine()
 

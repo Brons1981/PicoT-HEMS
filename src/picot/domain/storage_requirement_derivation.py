@@ -22,9 +22,10 @@ from picot.domain.storage_reserve_decision import (
 
 @dataclass(frozen=True, slots=True)
 class BalanceStorageTargetProposal:
-    """Balance-derived lower storage target and the time it must remain available through."""
+    """Balance-derived lower storage target and when it must be available."""
 
     required_by: datetime
+    protected_through: datetime
     target_energy_wh: float
     projected_drawdown_wh: float
     evidence_ids: tuple[str, ...]
@@ -34,7 +35,7 @@ class BalanceStorageTargetProposal:
 class StorageRequirementDeriver:
     """Map canonical balance and reserve evidence to one storage requirement."""
 
-    method_version: str = "storage-requirement-derivation-v2"
+    method_version: str = "storage-requirement-derivation-v3"
 
     def propose_lower_target(
         self,
@@ -51,17 +52,19 @@ class StorageRequirementDeriver:
         )
 
         best_required_by = balance.horizon_end
+        best_protected_through = balance.horizon_end
         best_drawdown = 0.0
-        for index, (_, energy_wh) in enumerate(positions[:-1]):
+        for index, (start_at, energy_wh) in enumerate(positions[:-1]):
             future_positions = positions[index + 1 :]
             minimum_at, minimum_after = min(future_positions, key=lambda item: item[1])
             drawdown = max(0.0, energy_wh - minimum_after)
             if drawdown > best_drawdown:
                 best_drawdown = drawdown
-                # The target energy protects the household through the drawdown.  The
-                # deadline is therefore the point where that drawdown bottoms out,
-                # not the point where it starts.
-                best_required_by = minimum_at
+                # The required energy must already be available when the protected
+                # drawdown starts. The minimum timestamp is retained separately as
+                # evidence for how long that energy is expected to protect demand.
+                best_required_by = start_at
+                best_protected_through = minimum_at
 
         target_energy_wh = min(best_drawdown, effective_limit.max_energy_wh)
         evidence_ids = tuple(
@@ -77,6 +80,7 @@ class StorageRequirementDeriver:
         )
         return BalanceStorageTargetProposal(
             required_by=best_required_by,
+            protected_through=best_protected_through,
             target_energy_wh=target_energy_wh,
             projected_drawdown_wh=best_drawdown,
             evidence_ids=evidence_ids,

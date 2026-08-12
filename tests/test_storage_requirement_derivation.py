@@ -90,13 +90,14 @@ def _assessment(*, lower_allowed: bool) -> EvidenceConfidenceAssessment:
     )
 
 
-def test_lower_target_is_largest_future_drawdown_and_deadline_is_its_end() -> None:
+def test_lower_target_is_largest_future_drawdown_available_before_it_starts() -> None:
     proposal = StorageRequirementDeriver().propose_lower_target(
         balance=_balance(),
         effective_limit=_limit(),
     )
 
-    assert proposal.required_by == START + timedelta(hours=6)
+    assert proposal.required_by == START + timedelta(hours=2)
+    assert proposal.protected_through == START + timedelta(hours=6)
     assert proposal.projected_drawdown_wh == pytest.approx(5000.0)
     assert proposal.target_energy_wh == pytest.approx(5000.0)
 
@@ -109,7 +110,7 @@ def test_reliable_evidence_maps_lower_balance_target_to_storage_requirement() ->
         confidence_assessment=_assessment(lower_allowed=True),
     )
 
-    assert requirement.required_by == START + timedelta(hours=6)
+    assert requirement.required_by == START + timedelta(hours=2)
     assert requirement.required_energy_wh == pytest.approx(5000.0)
     assert requirement.required_soc_percent == pytest.approx(62.5)
     assert requirement.reserve_energy_wh == 0.0
@@ -124,29 +125,65 @@ def test_degraded_evidence_keeps_same_deadline_but_raises_target_to_effective_ma
         confidence_assessment=_assessment(lower_allowed=False),
     )
 
-    assert requirement.required_by == START + timedelta(hours=6)
+    assert requirement.required_by == START + timedelta(hours=2)
     assert requirement.required_energy_wh == pytest.approx(7600.0)
     assert requirement.required_soc_percent == pytest.approx(95.0)
     assert requirement.reserve_energy_wh == pytest.approx(2600.0)
     assert requirement.reason is StorageRequirementReason.CONSERVATIVE_RESERVE
 
 
-def test_maximum_target_keeps_drawdown_end_deadline() -> None:
-    lower = StorageRequirementDeriver().derive(
-        requirement_id="req-lower",
-        balance=_balance(),
-        effective_limit=_limit(),
-        confidence_assessment=_assessment(lower_allowed=True),
+def test_fresh_later_snapshot_recomputes_only_remaining_future_drawdown() -> None:
+    earlier = ProjectedHouseholdEnergyBalance(
+        balance_id="balance-earlier",
+        created_at=START,
+        horizon_end=START + timedelta(hours=6),
+        execution_scope_id="battery-1",
+        starting_storage_energy_wh=6000.0,
+        points=(
+            ProjectedHouseholdEnergyBalancePoint(
+                at=START + timedelta(hours=2),
+                projected_storage_energy_wh=6000.0,
+                cumulative_pv_energy_wh=0.0,
+                cumulative_household_load_wh=0.0,
+            ),
+            ProjectedHouseholdEnergyBalancePoint(
+                at=START + timedelta(hours=6),
+                projected_storage_energy_wh=4000.0,
+                cumulative_pv_energy_wh=0.0,
+                cumulative_household_load_wh=2000.0,
+            ),
+        ),
+        confidence=0.8,
+        evidence_ids=("snapshot:earlier",),
     )
-    conservative = StorageRequirementDeriver().derive(
-        requirement_id="req-max",
-        balance=_balance(),
-        effective_limit=_limit(),
-        confidence_assessment=_assessment(lower_allowed=False),
+    later_start = START + timedelta(hours=3)
+    later = ProjectedHouseholdEnergyBalance(
+        balance_id="balance-later",
+        created_at=later_start,
+        horizon_end=START + timedelta(hours=6),
+        execution_scope_id="battery-1",
+        starting_storage_energy_wh=5500.0,
+        points=(
+            ProjectedHouseholdEnergyBalancePoint(
+                at=START + timedelta(hours=6),
+                projected_storage_energy_wh=4000.0,
+                cumulative_pv_energy_wh=0.0,
+                cumulative_household_load_wh=1500.0,
+            ),
+        ),
+        confidence=0.8,
+        evidence_ids=("snapshot:later",),
     )
 
-    assert conservative.required_by == lower.required_by
-    assert conservative.required_by == START + timedelta(hours=6)
+    deriver = StorageRequirementDeriver()
+    earlier_proposal = deriver.propose_lower_target(balance=earlier, effective_limit=_limit())
+    later_proposal = deriver.propose_lower_target(balance=later, effective_limit=_limit())
+
+    assert earlier_proposal.target_energy_wh == pytest.approx(2000.0)
+    assert later_proposal.target_energy_wh == pytest.approx(1500.0)
+    assert later_proposal.target_energy_wh < earlier_proposal.target_energy_wh
+    assert later_proposal.required_by == later_start
+    assert later_proposal.protected_through == START + timedelta(hours=6)
 
 
 def test_target_is_capped_at_effective_storage_limit_but_drawdown_remains_visible() -> None:
@@ -179,7 +216,8 @@ def test_target_is_capped_at_effective_storage_limit_but_drawdown_remains_visibl
         effective_limit=_limit(),
     )
 
-    assert proposal.required_by == START + timedelta(hours=2)
+    assert proposal.required_by == START + timedelta(hours=1)
+    assert proposal.protected_through == START + timedelta(hours=2)
     assert proposal.projected_drawdown_wh == pytest.approx(10000.0)
     assert proposal.target_energy_wh == pytest.approx(7600.0)
 
@@ -215,5 +253,6 @@ def test_flat_or_rising_balance_uses_horizon_end_with_zero_requirement() -> None
     )
 
     assert proposal.required_by == balance.horizon_end
+    assert proposal.protected_through == balance.horizon_end
     assert proposal.projected_drawdown_wh == 0.0
     assert proposal.target_energy_wh == 0.0

@@ -51,10 +51,14 @@ def _limit() -> EffectiveStorageLimit:
     )
 
 
-def _requirement(*, required_energy_wh: float = 7000.0, hours: float = 2.0) -> StorageEnergyRequirement:
+def _requirement(
+    *, required_energy_wh: float = 7000.0, hours: float = 2.0
+) -> StorageEnergyRequirement:
+    protection_starts_at = NOW + timedelta(hours=hours)
     return StorageEnergyRequirement(
         requirement_id="requirement-1",
-        required_by=NOW + timedelta(hours=hours),
+        protection_starts_at=protection_starts_at,
+        protected_through=protection_starts_at + timedelta(hours=2),
         required_energy_wh=required_energy_wh,
         required_soc_percent=None,
         reason=StorageRequirementReason.HOUSEHOLD_DEMAND,
@@ -90,12 +94,13 @@ def test_recoverable_when_power_and_time_can_supply_required_extra_energy() -> N
     )
 
     assert result.extra_energy_required_wh == pytest.approx(3000.0)
-    assert result.maximum_charge_energy_before_deadline_wh == pytest.approx(4000.0)
+    assert result.additional_acquisition_required is True
+    assert result.maximum_charge_energy_before_protection_wh == pytest.approx(4000.0)
     assert result.latest_full_power_charge_start == NOW + timedelta(minutes=30)
     assert result.technically_recoverable is True
 
 
-def test_not_recoverable_when_charge_power_is_too_low_before_deadline() -> None:
+def test_not_recoverable_when_charge_power_is_too_low_before_protection_start() -> None:
     result = StorageTechnicalRecoverabilityEvaluator().evaluate(
         evaluated_at=NOW,
         requirement=_requirement(),
@@ -104,12 +109,12 @@ def test_not_recoverable_when_charge_power_is_too_low_before_deadline() -> None:
         capability=_capability(max_power_w=1000.0),
     )
 
-    assert result.maximum_charge_energy_before_deadline_wh == pytest.approx(2000.0)
+    assert result.maximum_charge_energy_before_protection_wh == pytest.approx(2000.0)
     assert result.latest_full_power_charge_start == NOW - timedelta(hours=1)
     assert result.technically_recoverable is False
 
 
-def test_no_extra_energy_allows_recovery_start_at_requirement_deadline() -> None:
+def test_no_extra_energy_has_no_acquisition_deadline() -> None:
     result = StorageTechnicalRecoverabilityEvaluator().evaluate(
         evaluated_at=NOW,
         requirement=_requirement(required_energy_wh=4000.0),
@@ -119,7 +124,9 @@ def test_no_extra_energy_allows_recovery_start_at_requirement_deadline() -> None
     )
 
     assert result.extra_energy_required_wh == 0.0
-    assert result.latest_full_power_charge_start == result.required_by
+    assert result.additional_acquisition_required is False
+    assert result.latest_full_power_charge_start is None
+    assert result.technically_recoverable is True
 
 
 def test_effective_storage_limit_caps_physical_charge_headroom() -> None:
@@ -141,7 +148,7 @@ def test_effective_storage_limit_caps_physical_charge_headroom() -> None:
     )
 
     assert result.extra_energy_required_wh == pytest.approx(2000.0)
-    assert result.maximum_charge_energy_before_deadline_wh == pytest.approx(2000.0)
+    assert result.maximum_charge_energy_before_protection_wh == pytest.approx(2000.0)
     assert result.latest_full_power_charge_start == NOW + timedelta(hours=3, minutes=30)
     assert result.technically_recoverable is True
 

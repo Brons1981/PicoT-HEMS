@@ -8,7 +8,7 @@ choose or permit an energy source; PV/grid source policy remains separate.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from picot.domain.capability_snapshot import (
     CapabilityAvailability,
@@ -33,6 +33,7 @@ class StorageTechnicalRecoverability:
     required_by: datetime
     extra_energy_required_wh: float
     maximum_charge_energy_before_deadline_wh: float
+    latest_full_power_charge_start: datetime
     technically_recoverable: bool
     confidence: float
     evidence_ids: tuple[str, ...]
@@ -42,8 +43,15 @@ class StorageTechnicalRecoverability:
             raise ValueError("Technical recoverability evaluation time must be timezone-aware.")
         if self.required_by.tzinfo is None or self.required_by.utcoffset() is None:
             raise ValueError("Technical recoverability deadline must be timezone-aware.")
+        if (
+            self.latest_full_power_charge_start.tzinfo is None
+            or self.latest_full_power_charge_start.utcoffset() is None
+        ):
+            raise ValueError("Latest full-power charge start must be timezone-aware.")
         if self.required_by < self.evaluated_at:
             raise ValueError("Technical recoverability deadline must not be in the past.")
+        if self.latest_full_power_charge_start > self.required_by:
+            raise ValueError("Latest full-power charge start must not be after the deadline.")
         if self.extra_energy_required_wh < 0:
             raise ValueError("Extra required storage energy must not be negative.")
         if self.maximum_charge_energy_before_deadline_wh < 0:
@@ -58,7 +66,7 @@ class StorageTechnicalRecoverability:
 class StorageTechnicalRecoverabilityEvaluator:
     """Evaluate physical charge recoverability without energy-source assumptions."""
 
-    method_version: str = "storage-technical-recoverability-v1"
+    method_version: str = "storage-technical-recoverability-v2"
 
     def evaluate(
         self,
@@ -89,6 +97,10 @@ class StorageTechnicalRecoverabilityEvaluator:
         available_hours = (requirement.required_by - evaluated_at).total_seconds() / 3600.0
         power_limited_energy_wh = maximum_power_w * available_hours
         maximum_charge_energy_wh = min(headroom_wh, power_limited_energy_wh)
+        required_charge_hours = extra_required_wh / maximum_power_w
+        latest_full_power_charge_start = requirement.required_by - timedelta(
+            hours=required_charge_hours
+        )
 
         evidence_ids = tuple(
             dict.fromkeys(
@@ -110,6 +122,7 @@ class StorageTechnicalRecoverabilityEvaluator:
             required_by=requirement.required_by,
             extra_energy_required_wh=extra_required_wh,
             maximum_charge_energy_before_deadline_wh=maximum_charge_energy_wh,
+            latest_full_power_charge_start=latest_full_power_charge_start,
             technically_recoverable=maximum_charge_energy_wh >= extra_required_wh,
             confidence=min(
                 requirement.confidence,

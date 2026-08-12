@@ -52,6 +52,8 @@ def _percentage_state(states: dict[str, dict[str, Any]], entity_id: str) -> floa
     if not isinstance(payload, dict):
         return None
     raw = payload.get("state")
+    if raw is None:
+        return None
     try:
         value = float(raw)
     except (TypeError, ValueError):

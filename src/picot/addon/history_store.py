@@ -137,6 +137,7 @@ def _event_timestamp(event: Mapping[str, object]) -> datetime:
 
     value = (
         event.get("observed_at")
+        or event.get("captured_at")
         or event.get("evaluated_at")
         or event.get("executed_at")
         or event.get("telemetry_updated_at")

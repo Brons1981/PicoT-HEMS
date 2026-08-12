@@ -11,7 +11,11 @@ from picot.domain.household_load_forecast import (
 )
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import OptimisationProfile, PlannerStrategy
-from picot.domain.planning_input_snapshot import PlanningInputSnapshot, PlanningInputVersions
+from picot.domain.planning_input_snapshot import (
+    PlanningInputSnapshot,
+    PlanningInputVersions,
+    RuntimePressureState,
+)
 from picot.domain.pv_energy_timeline import (
     PVEnergyEvidenceType,
     PVEnergyTimeline,
@@ -78,6 +82,7 @@ def _snapshot() -> PlanningInputSnapshot:
         ),
         household_state=HouseholdState(measured_at=BASE, phases=()),
         forecasts=ForecastSet(series=()),
+        runtime_state=RuntimePressureState.NORMAL,
         versions=PlanningInputVersions(
             capability_mapping=1,
             user_rules=1,

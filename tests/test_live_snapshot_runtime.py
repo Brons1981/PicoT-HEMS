@@ -43,7 +43,7 @@ def test_missing_source_dimension_remains_unknown_instead_of_invented() -> None:
 def test_snapshot_log_contains_domain_values_not_source_entities() -> None:
     record = snapshot_log_event(build_live_planning_snapshot(_event(), sequence=1))
 
-    assert record["status"] == "observation_only"
+    assert record["status"] == "observation_plus_storage_pv"
     assert record["grid_power_w"] == 500.0
     assert "entity_id" not in record
     assert "source_entity" not in record

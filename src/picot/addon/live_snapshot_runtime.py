@@ -88,34 +88,40 @@ def current_flow_observation_from_telemetry(
     grid_export_w = _number(event, "flow_observer_grid_export_w")
     discharge_w = _number(event, "flow_observer_battery_discharge_w")
     pv_power_w = _number(event, "flow_observer_pv_power_w")
-    raw_mismatch = event.get("flow_observer_raw_mismatch")
     persistent = event.get("flow_observer_persistent_mismatch")
-    consecutive = event.get("flow_observer_consecutive_samples")
-    required = event.get("flow_observer_required_samples")
+    discharge_while_exporting = event.get("flow_observer_discharge_while_exporting")
+    consecutive = event.get("flow_observer_consecutive_samples", 0)
+    required = event.get("flow_observer_required_samples", 0)
     if (
         grid_export_w is None
         or discharge_w is None
         or pv_power_w is None
-        or not isinstance(raw_mismatch, bool)
         or not isinstance(persistent, bool)
+        or not isinstance(discharge_while_exporting, bool)
         or isinstance(consecutive, bool)
         or not isinstance(consecutive, int)
         or isinstance(required, bool)
         or not isinstance(required, int)
     ):
         return None
-    observation_id = f"live-flow-{sequence}"
+    regime = event.get("flow_observer_control_regime")
+    band = event.get("flow_observer_validation_band")
     return CurrentFlowObservation(
-        observation_id=observation_id,
+        observation_id=f"live-flow-{sequence}",
         observed_at=captured_at,
         grid_export_w=grid_export_w,
         battery_discharge_w=discharge_w,
         pv_power_w=pv_power_w,
-        discharge_while_exporting=raw_mismatch,
+        discharge_while_exporting=discharge_while_exporting,
         persistent_mismatch=persistent,
         consecutive_samples=consecutive,
         required_samples=required,
         evidence_ids=(f"flow-observer-sample-{sequence}",),
+        control_regime=regime if isinstance(regime, str) else None,
+        validation_band=band if isinstance(band, str) else None,
+        tracking_deviation_w=_number(event, "flow_observer_tracking_deviation_w"),
+        grey_elapsed_s=_number(event, "flow_observer_grey_elapsed_s") or 0.0,
+        red_elapsed_s=_number(event, "flow_observer_red_elapsed_s") or 0.0,
     )
 
 
@@ -258,59 +264,34 @@ def build_live_planning_snapshot(
             current_storage_states=((storage_state,) if storage_state is not None else ()),
             household_load_forecast=household_load_forecast,
             pv_energy_timeline=pv_timeline,
+            current_flow_observation=flow_observation,
         ),
         versions=PlanningInputVersions(
             capability_mapping=1,
             user_rules=1,
             commitments=1,
-            household_state=sequence,
+            household_state=1,
             forecasts=1,
         ),
         replan_reasons=("live_observation",),
     )
-    return replace(snapshot, current_flow_observation=flow_observation)
+    if pv_timeline is not None and pv_timeline.horizon_end != horizon_end:
+        snapshot = replace(snapshot, horizon_end=pv_timeline.horizon_end)
+    return snapshot
 
 
 def snapshot_log_event(snapshot: PlanningInputSnapshot) -> dict[str, object]:
-    state = snapshot.household_state
-    storage = snapshot.current_storage_states[0] if snapshot.current_storage_states else None
-    pv_timeline = snapshot.pv_energy_timeline
-    load_forecast = snapshot.household_load_forecast
-    flow = snapshot.current_flow_observation
-    status = (
-        "observation_plus_storage_pv_load"
-        if load_forecast is not None
-        else "observation_plus_storage_pv"
-    )
+    """Return an explainable persisted event for the atomic planning snapshot."""
+
     return {
-        "event": "picot_live_planning_snapshot",
+        "event": "planning_input_snapshot",
         "layer": "planning_input",
         "snapshot_id": snapshot.snapshot_id,
         "captured_at": snapshot.captured_at.isoformat(),
         "horizon_end": snapshot.horizon_end.isoformat(),
-        "grid_power_w": state.grid_power_w,
-        "pv_power_w": state.pv_power_w,
-        "battery_power_w": state.battery_power_w,
-        "household_load_w": state.household_load_w,
-        "current_soc": storage.current_soc if storage is not None else None,
-        "usable_capacity_wh": storage.usable_capacity_wh if storage is not None else None,
-        "pv_timeline_energy_wh": (
-            pv_timeline.total_energy_wh if pv_timeline is not None else None
-        ),
-        "household_load_forecast_wh": (
-            load_forecast.expected_energy_wh if load_forecast is not None else None
-        ),
-        "household_load_forecast_confidence": (
-            load_forecast.confidence if load_forecast is not None else None
-        ),
-        "household_load_forecast_method": (
-            load_forecast.method_version if load_forecast is not None else None
-        ),
-        "household_load_history_source": (
-            load_forecast.historical_source_reference if load_forecast is not None else None
-        ),
-        "flow_observation_id": flow.observation_id if flow is not None else None,
-        "flow_persistent_mismatch": flow.persistent_mismatch if flow is not None else None,
-        "household_state_version": snapshot.versions.household_state,
-        "status": status,
+        "storage_state_count": len(snapshot.current_storage_states),
+        "has_pv_energy_timeline": snapshot.pv_energy_timeline is not None,
+        "has_household_load_forecast": snapshot.household_load_forecast is not None,
+        "has_current_flow_observation": snapshot.current_flow_observation is not None,
+        "replan_reasons": list(snapshot.replan_reasons),
     }

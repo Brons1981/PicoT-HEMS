@@ -7,9 +7,17 @@ from datetime import datetime
 
 from picot.domain.effective_storage_limit import EffectiveStorageLimit
 from picot.domain.evidence_confidence_policy import EvidenceConfidenceAssessment
-from picot.domain.projected_household_energy_balance import ProjectedHouseholdEnergyBalance
-from picot.domain.storage_energy_requirement import StorageEnergyRequirement, StorageRequirementReason
-from picot.domain.storage_reserve_decision import StorageReserveDecision, StorageReserveDecisionPolicy
+from picot.domain.projected_household_energy_balance import (
+    ProjectedHouseholdEnergyBalance,
+)
+from picot.domain.storage_energy_requirement import (
+    StorageEnergyRequirement,
+    StorageRequirementReason,
+)
+from picot.domain.storage_reserve_decision import (
+    StorageReserveDecision,
+    StorageReserveDecisionPolicy,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +44,9 @@ class StorageRequirementDeriver:
         effective_limit: EffectiveStorageLimit,
     ) -> BalanceStorageTargetProposal:
         if balance.execution_scope_id != effective_limit.execution_scope_id:
-            raise ValueError("Projected balance and effective storage limit must share a scope.")
+            raise ValueError(
+                "Projected balance and effective storage limit must share a scope."
+            )
 
         positions = (
             (balance.created_at, balance.starting_storage_energy_wh),
@@ -46,7 +56,9 @@ class StorageRequirementDeriver:
         best_end = balance.horizon_end
         best_drawdown = 0.0
         for index, (start_at, energy_wh) in enumerate(positions[:-1]):
-            minimum_at, minimum_after = min(positions[index + 1 :], key=lambda item: item[1])
+            minimum_at, minimum_after = min(
+                positions[index + 1 :], key=lambda item: item[1]
+            )
             drawdown = max(0.0, energy_wh - minimum_after)
             if drawdown > best_drawdown:
                 best_drawdown = drawdown
@@ -54,13 +66,17 @@ class StorageRequirementDeriver:
                 best_end = minimum_at
 
         target_energy_wh = min(best_drawdown, effective_limit.max_energy_wh)
-        evidence_ids = tuple(dict.fromkeys((
-            balance.balance_id,
-            *balance.evidence_ids,
-            effective_limit.limit_id,
-            *effective_limit.evidence_ids,
-            self.method_version,
-        )))
+        evidence_ids = tuple(
+            dict.fromkeys(
+                (
+                    balance.balance_id,
+                    *balance.evidence_ids,
+                    effective_limit.limit_id,
+                    *effective_limit.evidence_ids,
+                    self.method_version,
+                )
+            )
+        )
         return BalanceStorageTargetProposal(
             protection_starts_at=best_start,
             protected_through=best_end,
@@ -78,7 +94,10 @@ class StorageRequirementDeriver:
         confidence_assessment: EvidenceConfidenceAssessment,
         reserve_policy: StorageReserveDecisionPolicy | None = None,
     ) -> StorageEnergyRequirement:
-        proposal = self.propose_lower_target(balance=balance, effective_limit=effective_limit)
+        proposal = self.propose_lower_target(
+            balance=balance,
+            effective_limit=effective_limit,
+        )
         policy = reserve_policy or StorageReserveDecisionPolicy()
         reserve_decision: StorageReserveDecision = policy.decide(
             lower_target_energy_wh=proposal.target_energy_wh,
@@ -86,13 +105,19 @@ class StorageRequirementDeriver:
             effective_limit=effective_limit,
         )
         required_soc_percent = (
-            reserve_decision.target_energy_wh / effective_limit.usable_capacity_wh * 100.0
+            reserve_decision.target_energy_wh
+            / effective_limit.usable_capacity_wh
+            * 100.0
         )
-        evidence_ids = tuple(dict.fromkeys((
-            *proposal.evidence_ids,
-            *reserve_decision.evidence_ids,
-            self.method_version,
-        )))
+        evidence_ids = tuple(
+            dict.fromkeys(
+                (
+                    *proposal.evidence_ids,
+                    *reserve_decision.evidence_ids,
+                    self.method_version,
+                )
+            )
+        )
         reason = (
             StorageRequirementReason.CONSERVATIVE_RESERVE
             if reserve_decision.used_effective_maximum

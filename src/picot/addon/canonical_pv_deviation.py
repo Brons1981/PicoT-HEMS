@@ -87,7 +87,7 @@ def quarter_anchor_event(
         ),
         None,
     )
-    if interval is None:
+    if interval is None or not interval.method_version:
         return None
     return {
         "event": "picot_pv_forecast_quarter_anchor",
@@ -140,13 +140,17 @@ class CanonicalPVDeviationEvaluator:
         if expected_wh < self.minimum_expected_energy_wh:
             return None
 
+        forecast_method = anchor.get("forecast_method_version")
+        if not isinstance(forecast_method, str) or not forecast_method:
+            return None
+
         actual = actual_pv_energy_for_interval(
             history=self.history,
             starts_at=interval_start,
             ends_at=interval_end,
             telemetry_interval_seconds=telemetry_interval_seconds,
         )
-        if actual is None:
+        if actual is None or not actual.method_version:
             return None
 
         deviation_wh = actual.energy_wh - expected_wh
@@ -158,7 +162,6 @@ class CanonicalPVDeviationEvaluator:
             if isinstance(raw_forecast_ids, list)
             else ()
         )
-        forecast_method = anchor.get("forecast_method_version")
         return CanonicalPVDeviationResult(
             interval_start=interval_start,
             interval_end=interval_end,
@@ -170,11 +173,7 @@ class CanonicalPVDeviationEvaluator:
             threshold_crossed=threshold_crossed,
             forecast_evidence_ids=forecast_ids,
             actual_evidence_ids=actual.evidence_ids,
-            forecast_method_version=(
-                str(forecast_method)
-                if isinstance(forecast_method, str)
-                else "unknown"
-            ),
+            forecast_method_version=forecast_method,
             actual_method_version=actual.method_version,
         )
 

@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from picot.domain.candidate import CandidateSet
 from picot.domain.capability_snapshot import (
     CapabilityAvailability,
     CapabilityHealth,
@@ -15,7 +16,7 @@ from picot.domain.capability_snapshot import (
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.effective_storage_limit import EffectiveStorageLimit
 from picot.domain.execution_primitive import ExecutionPrimitive
-from picot.domain.forecast import ForecastSet
+from picot.domain.forecast import ForecastKind, ForecastPoint, ForecastSeries, ForecastSet
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import OptimisationProfile, PlannerStrategy
 from picot.domain.opportunity import (
@@ -47,6 +48,25 @@ PROTECTION_START = BASE + timedelta(hours=6)
 PROTECTED_THROUGH = BASE + timedelta(hours=10)
 
 
+def _price_forecast() -> ForecastSeries:
+    return ForecastSeries(
+        forecast_id="price-forecast-1",
+        kind=ForecastKind.ENERGY_PRICE,
+        source="test-price",
+        created_at=BASE,
+        expires_at=BASE + timedelta(hours=24),
+        unit="EUR/kWh",
+        points=(
+            ForecastPoint(
+                starts_at=BASE + timedelta(hours=1),
+                ends_at=BASE + timedelta(hours=2),
+                value=0.10,
+                confidence=1.0,
+            ),
+        ),
+    )
+
+
 def _snapshot() -> PlanningInputSnapshot:
     return PlanningInputSnapshot(
         snapshot_id="snapshot-grid",
@@ -60,7 +80,7 @@ def _snapshot() -> PlanningInputSnapshot:
             objectives=(),
         ),
         household_state=HouseholdState(measured_at=BASE, phases=()),
-        forecasts=ForecastSet(series=()),
+        forecasts=ForecastSet(series=(_price_forecast(),)),
         runtime_state=RuntimePressureState.NORMAL,
         versions=PlanningInputVersions(
             capability_mapping=3,
@@ -113,20 +133,23 @@ def _capabilities(*, maximum_power_w: float = 1500.0) -> CapabilitySnapshotSet:
 
 
 def _balance() -> ProjectedHouseholdEnergyBalance:
+    times = (1, 2, 6, 10, 24)
+    points = tuple(
+        ProjectedHouseholdEnergyBalancePoint(
+            at=BASE + timedelta(hours=hour),
+            projected_storage_energy_wh=(6000.0 if hour <= 10 else 5000.0),
+            cumulative_pv_energy_wh=0.0,
+            cumulative_household_load_wh=(0.0 if hour <= 10 else 1000.0),
+        )
+        for hour in times
+    )
     return ProjectedHouseholdEnergyBalance(
         balance_id="balance-1",
         created_at=BASE,
         horizon_end=BASE + timedelta(hours=24),
         execution_scope_id="battery-main",
         starting_storage_energy_wh=6000.0,
-        points=(
-            ProjectedHouseholdEnergyBalancePoint(
-                at=BASE + timedelta(hours=24),
-                projected_storage_energy_wh=5000.0,
-                cumulative_pv_energy_wh=1000.0,
-                cumulative_household_load_wh=2000.0,
-            ),
-        ),
+        points=points,
         confidence=0.8,
         evidence_ids=("balance-source",),
     )
@@ -144,12 +167,12 @@ def _limit() -> EffectiveStorageLimit:
     )
 
 
-def _requirement() -> StorageEnergyRequirement:
+def _requirement(*, required_energy_wh: float = 7000.0) -> StorageEnergyRequirement:
     return StorageEnergyRequirement(
         requirement_id="storage:req:evening",
         protection_starts_at=PROTECTION_START,
         protected_through=PROTECTED_THROUGH,
-        required_energy_wh=7000.0,
+        required_energy_wh=required_energy_wh,
         required_soc_percent=None,
         reason=StorageRequirementReason.HOUSEHOLD_DEMAND,
         confidence=0.85,
@@ -196,13 +219,14 @@ def _generate(
     *,
     sufficient: bool = False,
     extra_energy_wh: float = 1000.0,
+    required_energy_wh: float = 7000.0,
     maximum_power_w: float = 1500.0,
-) -> object:
+) -> CandidateSet:
     return CandidateEngine().generate(
         _snapshot(),
         _opportunities(),
         _capabilities(maximum_power_w=maximum_power_w),
-        storage_requirement=_requirement(),
+        storage_requirement=_requirement(required_energy_wh=required_energy_wh),
         pv_only_feasibility=_feasibility(sufficient=sufficient),
         storage_recoverability=_recoverability(extra_energy_wh=extra_energy_wh),
         projected_balance=_balance(),
@@ -216,8 +240,11 @@ def test_grid_supported_candidate_uses_explicit_source_policy() -> None:
     cost_paths = [path for path in result.energy_paths if path.family.value == "cost_first"]
     assert len(cost_paths) == 1
     segment = cost_paths[0].segments[0]
+    assert segment.starts_at == BASE + timedelta(hours=1)
+    assert segment.ends_at == BASE + timedelta(hours=2)
     assert segment.requested_power_w == pytest.approx(1000.0)
     assert segment.charge_source_policy is ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
+    assert "price-forecast-1:point:0" in segment.evidence_ids
     assert "storage:req:evening" in segment.evidence_ids
     assert "balance-1" in segment.evidence_ids
     assert "limit-1" in segment.evidence_ids
@@ -230,11 +257,15 @@ def test_grid_candidate_is_not_generated_when_pv_only_is_sufficient() -> None:
     assert any("grid supplementation is unnecessary" in item.reason for item in result.exclusions)
 
 
-def test_grid_candidate_is_rejected_when_price_window_cannot_deliver_target() -> None:
-    result = _generate(extra_energy_wh=2000.0, maximum_power_w=1500.0)
+def test_grid_candidate_is_rejected_when_exact_price_interval_cannot_deliver_target() -> None:
+    result = _generate(
+        extra_energy_wh=2000.0,
+        required_energy_wh=8000.0,
+        maximum_power_w=1500.0,
+    )
 
     assert all(path.family.value != "cost_first" for path in result.energy_paths)
-    assert any("cannot deliver" in item.reason for item in result.exclusions)
+    assert any("cannot provide" in item.reason for item in result.exclusions)
 
 
 def test_storage_candidate_evidence_must_be_supplied_atomically() -> None:

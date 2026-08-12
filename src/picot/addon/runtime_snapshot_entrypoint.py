@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from typing import Any, cast
 
 from picot.addon import price_runtime_v2, runtime, runtime_observation
@@ -21,6 +22,7 @@ from picot.addon.live_storage_constraints import (
     build_effective_storage_limit,
     build_live_storage_capabilities,
 )
+from picot.domain.forecast import ForecastSeries, ForecastSet
 from picot.domain.home_assistant import HomeAssistantDispatchMode
 
 _base_evidence_events = runtime_observation._telemetry_evidence_events
@@ -31,6 +33,7 @@ _storage_max_soc = 1.0
 _storage_max_charge_power_w: float | None = None
 _storage_power_step_w: float | None = None
 _target_entity: str | None = None
+_price_entity: str | None = None
 _dispatch_mode = HomeAssistantDispatchMode.DRY_RUN
 _supervisor_token = ""
 _load_forecaster = HouseholdLoadForecaster()
@@ -47,6 +50,20 @@ def _soc_fraction(event: dict[str, object], key: str) -> float | None:
     if not 0.0 <= percentage <= 100.0:
         return None
     return percentage / 100.0
+
+
+def _live_price_forecast(*, captured_at: Any) -> ForecastSeries | None:
+    """Read the authoritative HA price forecast for this live Planner Run."""
+
+    if _price_entity is None or not _supervisor_token:
+        return None
+    try:
+        raw_state = runtime._request_json(f"/api/states/{_price_entity}", _supervisor_token)
+        return runtime._price_forecast(raw_state, now=cast(Any, captured_at))
+    except Exception:
+        # Missing price evidence is represented by an empty ForecastSet and causes
+        # dependent ADR-044 candidate generation to fail closed. No fallback path.
+        return None
 
 
 def _apply_mode_control(
@@ -138,6 +155,9 @@ def telemetry_evidence_events_with_snapshot(
         sequence=_snapshot_sequence,
         load_forecaster=_load_forecaster,
     )
+    price_forecast = _live_price_forecast(captured_at=snapshot.captured_at)
+    if price_forecast is not None:
+        snapshot = replace(snapshot, forecasts=ForecastSet(series=(price_forecast,)))
     events.append(snapshot_log_event(snapshot))
 
     live_max_soc = _soc_fraction(telemetry_event, "zendure_allowed_max_soc_percent")
@@ -185,6 +205,7 @@ def main() -> int:
     """Run the canonical live telemetry/planner loop with snapshot evidence composed in."""
 
     global _dispatch_mode
+    global _price_entity
     global _storage_max_charge_power_w
     global _storage_max_soc
     global _storage_power_step_w
@@ -201,6 +222,7 @@ def main() -> int:
     configured_step = float(options.get("storage_power_step_w", 0))
     _storage_power_step_w = configured_step if configured_step > 0 else None
     _target_entity = str(options["target_entity"])
+    _price_entity = str(options["price_entity"])
     _dispatch_mode = HomeAssistantDispatchMode(str(options["mode"]))
     _supervisor_token = os.environ.get("SUPERVISOR_TOKEN", "")
 

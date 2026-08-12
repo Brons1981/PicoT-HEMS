@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, cast
 
 from picot.addon import runtime, runtime_observation
@@ -10,6 +11,7 @@ from picot.addon.adr037_dashboard import publish_adr037_dashboard_states
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
 from picot.addon.live_adr037_readiness import adr037_readiness_log_event
 from picot.addon.live_flow_observer import LiveFlowObserver
+from picot.addon.live_mode_control import LiveModeControl
 from picot.addon.live_planner_context import LiveEvidenceConfidenceTracker
 from picot.addon.live_snapshot_runtime import (
     build_live_planning_snapshot,
@@ -19,6 +21,7 @@ from picot.addon.live_storage_constraints import (
     build_effective_storage_limit,
     build_live_storage_capabilities,
 )
+from picot.domain.home_assistant import HomeAssistantDispatchMode
 
 _base_evidence_events = runtime_observation._telemetry_evidence_events
 _base_publish_telemetry_states = runtime_observation._publish_telemetry_states
@@ -27,9 +30,13 @@ _storage_usable_capacity_wh: float | None = None
 _storage_max_soc = 1.0
 _storage_max_charge_power_w: float | None = None
 _storage_power_step_w: float | None = None
+_target_entity: str | None = None
+_dispatch_mode = HomeAssistantDispatchMode.DRY_RUN
+_supervisor_token = ""
 _load_forecaster = HouseholdLoadForecaster()
 _confidence_tracker = LiveEvidenceConfidenceTracker()
 _flow_observer = LiveFlowObserver()
+_mode_control = LiveModeControl()
 
 
 def _soc_fraction(event: dict[str, object], key: str) -> float | None:
@@ -40,6 +47,54 @@ def _soc_fraction(event: dict[str, object], key: str) -> float | None:
     if not 0.0 <= percentage <= 100.0:
         return None
     return percentage / 100.0
+
+
+def _apply_mode_control(
+    telemetry_event: dict[str, object], *, captured_at: object
+) -> dict[str, object]:
+    if _target_entity is None or not _supervisor_token:
+        return {
+            "event": "picot_live_mode_control",
+            "layer": "execution",
+            "adr037_control_status": "execution_context_unavailable",
+            "adr037_control_dispatch_status": "not_attempted",
+            "control_change_allowed": False,
+            "observer_only": True,
+        }
+    if not hasattr(captured_at, "tzinfo"):
+        return {
+            "event": "picot_live_mode_control",
+            "layer": "execution",
+            "adr037_control_status": "invalid_snapshot_time",
+            "adr037_control_dispatch_status": "not_attempted",
+            "control_change_allowed": False,
+            "observer_only": True,
+        }
+    try:
+        fields = _mode_control.apply(
+            telemetry_event,
+            target_entity=_target_entity,
+            mode=_dispatch_mode,
+            token=_supervisor_token,
+            now=cast(Any, captured_at),
+            dispatch=runtime._dispatch,
+        )
+    except Exception as exc:
+        fields = {
+            "adr037_control_status": "dispatch_failed_closed",
+            "adr037_control_requested_option": None,
+            "adr037_control_dispatch_status": "failed",
+            "adr037_control_error": str(exc) or exc.__class__.__name__,
+            "control_change_allowed": False,
+            "observer_only": _dispatch_mode is HomeAssistantDispatchMode.DRY_RUN,
+        }
+    return {
+        "event": "picot_live_mode_control",
+        "layer": "execution",
+        "snapshot_id": telemetry_event.get("snapshot_id"),
+        "captured_at": telemetry_event.get("captured_at"),
+        **fields,
+    }
 
 
 def telemetry_evidence_events_with_snapshot(
@@ -110,6 +165,10 @@ def telemetry_evidence_events_with_snapshot(
     )
     events.append(readiness)
     telemetry_event.update(readiness)
+
+    control_event = _apply_mode_control(telemetry_event, captured_at=snapshot.captured_at)
+    events.append(control_event)
+    telemetry_event.update(control_event)
     return events
 
 
@@ -125,10 +184,13 @@ def publish_telemetry_states_with_adr037(
 def main() -> int:
     """Run the existing telemetry loop with snapshot evidence composed in."""
 
+    global _dispatch_mode
     global _storage_max_charge_power_w
     global _storage_max_soc
     global _storage_power_step_w
     global _storage_usable_capacity_wh
+    global _supervisor_token
+    global _target_entity
 
     with runtime.OPTIONS_PATH.open(encoding="utf-8") as handle:
         options = cast(dict[str, Any], json.load(handle))
@@ -138,6 +200,9 @@ def main() -> int:
     _storage_max_charge_power_w = configured_max_power if configured_max_power > 0 else None
     configured_step = float(options.get("storage_power_step_w", 0))
     _storage_power_step_w = configured_step if configured_step > 0 else None
+    _target_entity = str(options["target_entity"])
+    _dispatch_mode = HomeAssistantDispatchMode(str(options["mode"]))
+    _supervisor_token = os.environ.get("SUPERVISOR_TOKEN", "")
     runtime_observation._telemetry_evidence_events = telemetry_evidence_events_with_snapshot
     runtime_observation._publish_telemetry_states = publish_telemetry_states_with_adr037
     return runtime_observation.main()

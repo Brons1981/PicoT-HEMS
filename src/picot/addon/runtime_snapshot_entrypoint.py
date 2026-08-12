@@ -6,7 +6,7 @@ import json
 import os
 from typing import Any, cast
 
-from picot.addon import runtime, runtime_observation
+from picot.addon import price_runtime_v2, runtime, runtime_observation
 from picot.addon.adr037_dashboard import publish_adr037_dashboard_states
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
 from picot.addon.live_adr037_readiness import adr037_readiness_log_event
@@ -182,7 +182,7 @@ def publish_telemetry_states_with_adr037(
 
 
 def main() -> int:
-    """Run the existing telemetry loop with snapshot evidence composed in."""
+    """Run the canonical live telemetry/planner loop with snapshot evidence composed in."""
 
     global _dispatch_mode
     global _storage_max_charge_power_w
@@ -203,6 +203,11 @@ def main() -> int:
     _target_entity = str(options["target_entity"])
     _dispatch_mode = HomeAssistantDispatchMode(str(options["mode"]))
     _supervisor_token = os.environ.get("SUPERVISOR_TOKEN", "")
+
+    # The old Price Driven v1 runtime selected Zendure modes from a fixed
+    # contiguous window. It is intentionally unreachable from the live add-on.
+    # Price runtime v2 produces canonical price opportunities/evidence only.
+    runtime_observation._run_price_planner_once = price_runtime_v2.run_planner_once
     runtime_observation._telemetry_evidence_events = telemetry_evidence_events_with_snapshot
     runtime_observation._publish_telemetry_states = publish_telemetry_states_with_adr037
     return runtime_observation.main()

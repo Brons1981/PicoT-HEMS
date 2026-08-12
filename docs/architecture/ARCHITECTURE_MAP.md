@@ -144,39 +144,72 @@ Safety, phase-current limits, voltage limits, fuse limits, capability health and
 - ADR-031 — Candidate Scenario Construction Contract
 - ADR-032 — Candidate Evaluation Contract
 - ADR-033 — Winning Energy Path to Execution Plans
+- ADR-034 — Runtime Monitor, Material Change and Replanning Contract
+- ADR-035 — Home Assistant Adapter and Controlled Dispatch Contract
+- ADR-036 — Price Opportunity Detection Contract
+- ADR-037 — Household Energy Requirement, Storage Reserve and Grid Use Contract
+- ADR-038 — Current Storage State Contract
+- ADR-039 — PV Energy Timeline Contract
+
+ADR-040 — Authoritative Observation Source Ingestion Contract is currently **Proposed** and is therefore not yet part of the accepted architecture.
 
 See [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) for the complete accepted ADR index.
 
 ## Current implementation status
 
-Implemented and covered by CI:
+Implemented and covered by CI include:
 
-- Planning Input Snapshot contracts
-- Forecast and Household State contracts
-- Planner Strategy Model
-- Opportunity Engine
-- Capability Snapshot and Energy Path contracts
-- Candidate Engine v1
-- Evaluation Engine v1
-- Execution Plan Builder v1
-- Execution Engine v1
-- Ruff, Mypy and Pytest quality checks
+- Planning Input Snapshot contracts;
+- Forecast and Household State contracts;
+- Planner Strategy Model;
+- Opportunity Engine;
+- Capability Snapshot and Energy Path contracts;
+- Candidate Engine and Evaluation Engine;
+- Execution Plan Builder and Execution Engine;
+- Runtime Monitor and replanning-state contracts;
+- Home Assistant adapter/dispatcher with explicit dry-run/live gating;
+- ADR-037/038/039 storage, household-balance and PV-energy planning chain;
+- direct Home Assistant adapters/observers for selected physical sources;
+- Ruff, Mypy and Pytest quality checks.
 
-## Next implementation area
+## Current integration boundary
 
-The next planned area is the Runtime Monitor:
+The main remaining distance to a real closed loop is integration wiring rather than another planner redesign:
 
 ```text
+Authoritative physical HA sources
+        │
+        ▼
+validated input adapters / mappings
+        │
+        ▼
+Fresh atomic PlanningInputSnapshot
+        │
+        ▼
+existing Planner pipeline
+        │
+        ▼
+Winning Energy Path
+        │
+        ▼
+ExecutionPlanSet
+        │
+        ▼
 Execution Engine
+        │
+        ▼
+Home Assistant adapter / dispatcher
+        │
+        ▼
+observed execution result
         │
         ▼
 Runtime Monitor
         │
-        ├── runtime observations
-        ├── material-change detection
-        ├── commitment awareness
-        └── REPLAN_REQUIRED
-        │
         ▼
-Fresh PlanningInputSnapshot
+REPLAN_REQUIRED → fresh snapshot
 ```
+
+The Runtime Monitor is no longer the next missing component; it exists. The next implementation focus is authoritative observation ingestion, atomic live snapshot construction and complete Home Assistant closed-loop wiring/validation.
+
+See [`CLOSED_LOOP_READINESS_AUDIT_2026-08-12.md`](CLOSED_LOOP_READINESS_AUDIT_2026-08-12.md).

@@ -27,14 +27,17 @@ See [`LICENSE`](LICENSE) for the applicable rights notice.
 
 ## Current phase
 
-Phase 3 — Discovery, Canonical Data Model and dependency-risk analysis.
+Late Phase 3 — Core architecture implemented; authoritative observation ingestion and closed-loop Home Assistant integration remain the primary validation focus.
 
 ## Active work
 
-- Home Assistant Discovery Tool
-- Canonical Data Model
-- Integration and dependency health assessment
-- Architecture review and fallback design
+- authoritative direct-source observation design and validation;
+- atomic Home Assistant planning-input snapshot wiring;
+- integrated observe → plan → execute → observe/replan flow;
+- controlled dry-run/live Home Assistant execution validation;
+- architecture consistency, diagnostics and traceability review.
+
+See [`docs/architecture/CLOSED_LOOP_READINESS_AUDIT_2026-08-12.md`](docs/architecture/CLOSED_LOOP_READINESS_AUDIT_2026-08-12.md) for the current readiness assessment.
 
 ## Core principles
 
@@ -59,7 +62,7 @@ The real `.env` file is ignored by Git and must never be committed. Generated Di
 
 ## Security and secrets
 
-Never commit Home Assistant access tokens, `.env` files, `secrets.yaml`, Home Assistant runtime databases, logs containing secrets, or other credentials. The repository `.gitignore` excludes the main known local secret and runtime files, but contributors remain responsible for reviewing changes before publishing them.
+Never commit Home Assistant access tokens, `.env` files, `secrets.yaml`, Home Assistant runtime databases, logs containing secrets, or other credentials. The repository `.gitignore` excludes the main known local secret and runtime files, but contributors remain responsible for reviewing changes before publishing.
 
 ## Disclaimer
 

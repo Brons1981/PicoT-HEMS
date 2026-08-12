@@ -5,11 +5,17 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import replace
+from datetime import datetime
 from typing import Any, cast
 
 from picot.addon import price_runtime_v2, runtime, runtime_observation
 from picot.addon.actual_pv_energy import prepend_actual_pv_evidence
 from picot.addon.adr037_dashboard import publish_adr037_dashboard_states
+from picot.addon.canonical_pv_deviation import (
+    CanonicalPVDeviationEvaluator,
+    quarter_anchor_event,
+    runtime_monitor_fields,
+)
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
 from picot.addon.live_adr037_readiness import adr037_readiness_log_event
 from picot.addon.live_flow_observer import LiveFlowObserver
@@ -42,6 +48,7 @@ _load_forecaster = HouseholdLoadForecaster()
 _confidence_tracker = LiveEvidenceConfidenceTracker()
 _flow_observer = LiveFlowObserver()
 _mode_control = LiveModeControl()
+_canonical_pv_deviation = CanonicalPVDeviationEvaluator(history=_load_forecaster.history)
 
 
 def _soc_fraction(event: dict[str, object], key: str) -> float | None:
@@ -63,8 +70,6 @@ def _live_price_forecast(*, captured_at: Any) -> ForecastSeries | None:
         raw_state = runtime._request_json(f"/api/states/{_price_entity}", _supervisor_token)
         return runtime._price_forecast(raw_state, now=cast(Any, captured_at))
     except Exception:
-        # Missing price evidence is represented by an empty ForecastSet and causes
-        # dependent ADR-044 candidate generation to fail closed. No fallback path.
         return None
 
 
@@ -116,10 +121,20 @@ def _apply_mode_control(
     }
 
 
+def _captured_at(event: dict[str, object]) -> datetime:
+    raw = event.get("telemetry_updated_at")
+    if not isinstance(raw, str):
+        raise ValueError("Telemetry event requires telemetry_updated_at.")
+    captured = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if captured.tzinfo is None or captured.utcoffset() is None:
+        raise ValueError("Telemetry timestamp must be timezone-aware.")
+    return captured
+
+
 def telemetry_evidence_events_with_snapshot(
     telemetry_event: dict[str, object],
 ) -> list[dict[str, object]]:
-    """Append one enriched PlanningInputSnapshot and live planner evidence per poll."""
+    """Append canonical runtime evidence and one fresh PlanningInputSnapshot per poll."""
 
     global _snapshot_sequence
     events = _base_evidence_events(telemetry_event)
@@ -133,20 +148,38 @@ def telemetry_evidence_events_with_snapshot(
             **flow_fields,
             "zendure_available_energy": telemetry_event.get("zendure_available_energy"),
             "zendure_required_energy": telemetry_event.get("zendure_required_energy"),
-            "zendure_remaining_discharge_time": telemetry_event.get(
-                "zendure_remaining_discharge_time"
-            ),
-            "zendure_remaining_charge_time": telemetry_event.get(
-                "zendure_remaining_charge_time"
-            ),
-            "zendure_configured_discharge_power_w": telemetry_event.get(
-                "zendure_configured_discharge_power_w"
-            ),
-            "zendure_configured_charge_power_w": telemetry_event.get(
-                "zendure_configured_charge_power_w"
-            ),
+            "zendure_remaining_discharge_time": telemetry_event.get("zendure_remaining_discharge_time"),
+            "zendure_remaining_charge_time": telemetry_event.get("zendure_remaining_charge_time"),
+            "zendure_configured_discharge_power_w": telemetry_event.get("zendure_configured_discharge_power_w"),
+            "zendure_configured_charge_power_w": telemetry_event.get("zendure_configured_charge_power_w"),
         }
     )
+
+    captured_at = _captured_at(telemetry_event)
+    cadence = telemetry_event.get("telemetry_interval_seconds", 5)
+    cadence_seconds = int(cadence) if isinstance(cadence, int) and not isinstance(cadence, bool) else 5
+    deviation = _canonical_pv_deviation.evaluate(
+        captured_at=captured_at,
+        telemetry_interval_seconds=cadence_seconds,
+    )
+    canonical_replan_required = False
+    if deviation is not None:
+        deviation_fields = deviation.as_fields()
+        monitor_fields = runtime_monitor_fields(deviation, observed_at=captured_at)
+        telemetry_event.update(deviation_fields)
+        telemetry_event.update(monitor_fields)
+        canonical_replan_required = bool(
+            monitor_fields.get("canonical_pv_fresh_snapshot_required")
+        )
+        events.append(
+            {
+                "event": "picot_canonical_pv_deviation",
+                "layer": "pv_forecast_validation",
+                "observed_at": captured_at.isoformat(),
+                **deviation_fields,
+                **monitor_fields,
+            }
+        )
 
     _snapshot_sequence += 1
     snapshot_input = dict(telemetry_event)
@@ -157,7 +190,19 @@ def telemetry_evidence_events_with_snapshot(
         sequence=_snapshot_sequence,
         load_forecaster=_load_forecaster,
     )
+    if canonical_replan_required:
+        snapshot = replace(
+            snapshot,
+            replan_reasons=tuple(dict.fromkeys((*snapshot.replan_reasons, "canonical_pv_deviation"))),
+        )
+
     if snapshot.pv_energy_timeline is not None:
+        anchor = quarter_anchor_event(
+            timeline=snapshot.pv_energy_timeline,
+            captured_at=snapshot.captured_at,
+        )
+        if anchor is not None:
+            events.append(anchor)
         canonical_pv = prepend_actual_pv_evidence(
             timeline=snapshot.pv_energy_timeline,
             history=_load_forecaster.history,
@@ -166,6 +211,7 @@ def telemetry_evidence_events_with_snapshot(
             sequence=_snapshot_sequence,
         )
         snapshot = replace(snapshot, pv_energy_timeline=canonical_pv)
+
     price_forecast = _live_price_forecast(captured_at=snapshot.captured_at)
     if price_forecast is not None:
         snapshot = replace(snapshot, forecasts=ForecastSet(series=(price_forecast,)))
@@ -245,15 +291,10 @@ def main() -> int:
     _storage_power_step_w = configured_step if configured_step > 0 else None
     _target_entity = str(options["target_entity"])
     _price_entity = str(options["price_entity"])
-    _price_opportunity_margin_eur_per_kwh = float(
-        options["price_opportunity_margin_eur_per_kwh"]
-    )
+    _price_opportunity_margin_eur_per_kwh = float(options["price_opportunity_margin_eur_per_kwh"])
     _dispatch_mode = HomeAssistantDispatchMode(str(options["mode"]))
     _supervisor_token = os.environ.get("SUPERVISOR_TOKEN", "")
 
-    # The old Price Driven v1 runtime selected Zendure modes from a fixed
-    # contiguous window. It is intentionally unreachable from the live add-on.
-    # Price runtime v2 produces canonical price opportunities/evidence only.
     runtime_observation._run_price_planner_once = price_runtime_v2.run_planner_once
     runtime_observation._telemetry_evidence_events = telemetry_evidence_events_with_snapshot
     runtime_observation._publish_telemetry_states = publish_telemetry_states_with_adr037

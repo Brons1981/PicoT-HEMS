@@ -14,7 +14,7 @@ DashboardStates = dict[str, DashboardPayload]
 
 
 def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
-    """Build one read-only sensor for the live ADR-037 observer pipeline."""
+    """Build one sensor for the live ADR-037 planner and execution pipeline."""
 
     ready = event.get("adr037_live_ready")
     state = "ready" if ready is True else "blocked"
@@ -50,10 +50,20 @@ def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
             "zendure_configured_charge_power_w"
         ),
         "flow_observer_status": event.get("flow_observer_status"),
+        "flow_observer_control_regime": event.get("flow_observer_control_regime"),
+        "flow_observer_responsibility": event.get("flow_observer_responsibility"),
+        "flow_observer_validation_band": event.get("flow_observer_validation_band"),
+        "flow_observer_tracking_deviation_w": event.get(
+            "flow_observer_tracking_deviation_w"
+        ),
         "flow_observer_raw_mismatch": event.get("flow_observer_raw_mismatch"),
         "flow_observer_persistent_mismatch": event.get(
             "flow_observer_persistent_mismatch"
         ),
+        "flow_observer_grey_elapsed_s": event.get("flow_observer_grey_elapsed_s"),
+        "flow_observer_grey_limit_s": event.get("flow_observer_grey_limit_s"),
+        "flow_observer_red_elapsed_s": event.get("flow_observer_red_elapsed_s"),
+        "flow_observer_red_limit_s": event.get("flow_observer_red_limit_s"),
         "flow_observer_consecutive_samples": event.get(
             "flow_observer_consecutive_samples"
         ),
@@ -91,6 +101,10 @@ def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
         "evaluation_status": event.get("adr037_evaluation_status"),
         "winning_candidate_id": event.get("adr037_winning_candidate_id"),
         "winning_candidate_family": event.get("adr037_winning_candidate_family"),
+        "control_status": event.get("adr037_control_status"),
+        "control_requested_option": event.get("adr037_control_requested_option"),
+        "control_dispatch_status": event.get("adr037_control_dispatch_status"),
+        "control_error": event.get("adr037_control_error"),
     }
     return {
         "sensor.picot_adr037_observer": {

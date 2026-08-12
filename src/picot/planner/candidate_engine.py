@@ -523,7 +523,7 @@ class CandidateEngine:
             requested = max(requested, capability.minimum_power_w)
         if requested <= 0.0 or requested > maximum:
             return None
-        return requested
+        return float(requested)
 
     @staticmethod
     def _metric_value(

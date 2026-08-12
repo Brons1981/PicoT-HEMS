@@ -15,6 +15,7 @@ from picot.domain.forecast import ForecastSet
 from picot.domain.household_load_forecast import HouseholdLoadForecast
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import PlannerStrategy
+from picot.domain.pv_energy_timeline import PVEnergyTimeline
 
 
 class RuntimePressureState(StrEnum):
@@ -62,6 +63,7 @@ class PlanningInputSnapshot:
     replan_reasons: tuple[str, ...]
     household_load_forecast: HouseholdLoadForecast | None = None
     current_storage_states: tuple[CurrentStorageState, ...] = ()
+    pv_energy_timeline: PVEnergyTimeline | None = None
 
     def __post_init__(self) -> None:
         if not self.snapshot_id.strip():
@@ -104,3 +106,14 @@ class PlanningInputSnapshot:
             raise ValueError("Each storage execution scope may appear only once per snapshot.")
         if any(state.measured_at > self.captured_at for state in self.current_storage_states):
             raise ValueError("Storage state cannot be measured after snapshot capture time.")
+
+        pv_timeline = self.pv_energy_timeline
+        if pv_timeline is not None:
+            if pv_timeline.created_at > self.captured_at:
+                raise ValueError(
+                    "PV energy timeline cannot be created after snapshot capture time."
+                )
+            if pv_timeline.horizon_start != self.captured_at:
+                raise ValueError("PV energy timeline must start at snapshot capture time.")
+            if pv_timeline.horizon_end != self.horizon_end:
+                raise ValueError("PV energy timeline must cover the complete planning horizon.")

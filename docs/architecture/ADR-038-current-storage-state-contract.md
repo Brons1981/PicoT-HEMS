@@ -56,6 +56,8 @@ current_stored_energy_wh = current_soc × usable_capacity_wh
 
 This derived value does not need to be stored independently unless a later contract requires it.
 
+The derivation of current stored energy is canonical. Downstream planning layers must consume that canonical result or use the same domain-owned derivation; they must not implement independent variants of the SoC-to-energy calculation.
+
 ## Atomic Planning Input
 
 Current storage state belongs to the same atomic temporal input envelope as the other state used by one Planner Run.
@@ -66,6 +68,10 @@ A `PlanningInputSnapshot` may contain zero or more `CurrentStorageState` records
 - reference one logical storage capability/execution scope used by the matching capability snapshot;
 - preserve its own confidence and evidence references;
 - remain immutable for the duration of the Planner Run.
+
+For one Planner Run, `CurrentStorageState` is assembled and normalized exactly once as part of the atomic Planning Input Snapshot. All downstream planning layers consume that same immutable state. They must not independently re-read the source, reconstruct a second current storage state or recalculate a competing version of the current state.
+
+The same immutable state may be referenced by multiple downstream calculations. Reuse of the snapshot is required; duplicate state acquisition or reconstruction is not.
 
 Zero storage-state records is valid for households without controllable storage. Missing required storage state for a storage-dependent Candidate does not invalidate the complete Planner Run; it prevents that Candidate/requirement calculation from assuming unknown storage energy.
 
@@ -162,6 +168,8 @@ Positive consequences:
 
 - ADR-037 requirement calculations can use explicit current storage energy instead of inferred or vendor-specific values.
 - Measured storage state remains separate from technical capability limits.
+- One Planner Run has exactly one normalized current storage truth per logical storage state; downstream layers reuse it instead of reconstructing it.
+- The SoC-to-current-energy derivation has one canonical domain definition rather than multiple layer-specific calculations.
 - Multiple storage devices remain independently traceable.
 - Missing storage data causes explicit degradation/exclusion rather than invented defaults.
 - The contract remains vendor-independent and testable.
@@ -174,4 +182,4 @@ Costs and risks:
 
 ## Core principle
 
-> Capability data describes what storage can do. Current Storage State describes where storage is now. PicoT must know both before it can calculate how much stored energy is still required.
+> Capability data describes what storage can do. Current Storage State describes where storage is now. For one Planner Run that state is normalized once and reused everywhere. PicoT must know both capability and current state before it can calculate how much stored energy is still required.

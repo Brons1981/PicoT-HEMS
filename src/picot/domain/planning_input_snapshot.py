@@ -110,7 +110,9 @@ class PlanningInputSnapshot:
         pv_timeline = self.pv_energy_timeline
         if pv_timeline is not None:
             if pv_timeline.created_at > self.captured_at:
-                raise ValueError("PV energy timeline cannot be created after snapshot capture time.")
+                raise ValueError(
+                    "PV energy timeline cannot be created after snapshot capture time."
+                )
             if pv_timeline.horizon_start != self.captured_at:
                 raise ValueError("PV energy timeline must start at snapshot capture time.")
             if pv_timeline.horizon_end != self.horizon_end:

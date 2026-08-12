@@ -44,4 +44,12 @@ def test_goodwe_dashboard_states_expose_unavailable_status() -> None:
     states = goodwe_dashboard_states(event)
 
     assert states["sensor.picot_goodwe_status"]["state"] == "unavailable"
-    assert states["sensor.picot_goodwe_power"]["state"] is None
+    assert states["sensor.picot_goodwe_power"]["state"] == "unavailable"
+    assert states["sensor.picot_goodwe_generation_today"]["state"] == "unavailable"
+    assert states["sensor.picot_goodwe_generation_total"]["state"] == "unavailable"
+    assert states["sensor.picot_goodwe_temperature"]["state"] == "unavailable"
+
+    power_attributes = states["sensor.picot_goodwe_power"]["attributes"]
+    assert isinstance(power_attributes, dict)
+    assert power_attributes["source_status"] == "unavailable"
+    assert power_attributes["source_error"] == "GoodWe unavailable"

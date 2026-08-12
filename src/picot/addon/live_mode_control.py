@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
 
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.home_assistant import HomeAssistantDispatchMode

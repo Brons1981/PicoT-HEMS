@@ -39,6 +39,12 @@ def assemble_live_projected_balance(
     )
 
 
+def _context_value(
+    planner_context: Mapping[str, object] | None, key: str
+) -> object | None:
+    return planner_context.get(key) if planner_context is not None else None
+
+
 def adr037_readiness_log_event(
     snapshot: PlanningInputSnapshot,
     *,
@@ -113,6 +119,29 @@ def adr037_readiness_log_event(
         if planning_result is not None
         else None
     )
+    storage_state = snapshot.current_storage_states[0] if snapshot.current_storage_states else None
+    live_min_soc = _context_value(planner_context, "zendure_allowed_min_soc_percent")
+    live_max_soc = _context_value(planner_context, "zendure_allowed_max_soc_percent")
+    operating_window_wh = None
+    if (
+        isinstance(live_min_soc, (int, float))
+        and not isinstance(live_min_soc, bool)
+        and isinstance(live_max_soc, (int, float))
+        and not isinstance(live_max_soc, bool)
+        and storage_state is not None
+    ):
+        operating_window_wh = max(
+            0.0,
+            storage_state.usable_capacity_wh
+            * (float(live_max_soc) - float(live_min_soc))
+            / 100.0,
+        )
+
+    remaining_charge_wh = (
+        planning_result.technical_recoverability.extra_energy_required_wh
+        if planning_result is not None
+        else None
+    )
     return {
         "event": "picot_live_adr037_readiness",
         "layer": "planner",
@@ -134,6 +163,13 @@ def adr037_readiness_log_event(
         "storage_max_charge_power_w": (
             storage_capability.maximum_power_w if storage_capability is not None else None
         ),
+        "current_storage_soc": storage_state.current_soc if storage_state is not None else None,
+        "current_storage_energy_wh": (
+            storage_state.current_stored_energy_wh if storage_state is not None else None
+        ),
+        "live_storage_min_soc_percent": live_min_soc,
+        "live_storage_max_soc_percent": live_max_soc,
+        "live_storage_operating_window_wh": operating_window_wh,
         "effective_storage_limit_available": effective_limit is not None,
         "effective_storage_max_soc": effective_limit.max_soc if effective_limit else None,
         "effective_storage_max_energy_wh": (
@@ -156,6 +192,21 @@ def adr037_readiness_log_event(
         "canonical_price_opportunity_count": (
             len(opportunities.opportunities) if opportunities is not None else 0
         ),
+        "price_window_context": _context_value(
+            planner_context, "price_entry_opportunity_context"
+        ),
+        "price_window_starts_at": _context_value(
+            planner_context, "price_entry_opportunity_starts_at"
+        ),
+        "price_window_ends_at": _context_value(
+            planner_context, "price_entry_opportunity_ends_at"
+        ),
+        "price_window_best_later_starts_at": _context_value(
+            planner_context, "price_entry_best_later_starts_at"
+        ),
+        "price_window_best_later_price_eur_per_kwh": _context_value(
+            planner_context, "price_entry_best_later_price_eur_per_kwh"
+        ),
         "adr037_pipeline_stage_reached": (
             "evaluation"
             if planning_result is not None
@@ -167,6 +218,10 @@ def adr037_readiness_log_event(
         "adr037_live_blockers": blockers,
         "adr037_requirement_energy_wh": (
             planning_result.requirement.required_energy_wh if planning_result else None
+        ),
+        "adr037_remaining_charge_energy_wh": remaining_charge_wh,
+        "adr037_charge_needed_now": (
+            remaining_charge_wh > 0.0 if remaining_charge_wh is not None else None
         ),
         "adr037_pv_only_sufficient": (
             planning_result.pv_only_feasibility.energy_sufficient if planning_result else None

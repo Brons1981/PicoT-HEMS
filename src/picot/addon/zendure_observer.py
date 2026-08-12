@@ -16,6 +16,14 @@ ZENDURE_POWER_TO_HOUSE_ENTITY = "sensor.zendure_2400_ac_vermogen_naar_huis"
 ZENDURE_POWER_FROM_HOUSE_ENTITY = "sensor.zendure_2400_ac_vermogen_van_huis"
 ZENDURE_SOC_LIMIT_ENTITY = "sensor.zendure_2400_ac_soc_limiet_status"
 ZENDURE_ERROR_ENTITY = "sensor.zendure_2400_ac_error"
+ZENDURE_REPORTED_MIN_SOC_ENTITY = "sensor.zendure_2400_ac_minimale_laadpercentage"
+ZENDURE_REPORTED_MAX_SOC_ENTITY = "sensor.zendure_2400_ac_maximale_laadpercentage"
+ZENDURE_ALLOWED_MAX_SOC_ENTITY = (
+    "input_number.zendure_2400_ac_maximaal_toegestaan_laadpercentage"
+)
+ZENDURE_ALLOWED_MIN_SOC_ENTITY = (
+    "input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage"
+)
 
 RequestJson = Callable[[str, str], dict[str, Any]]
 
@@ -32,7 +40,27 @@ def zendure_entity_ids(power_entity: str) -> tuple[str, ...]:
         ZENDURE_POWER_FROM_HOUSE_ENTITY,
         ZENDURE_SOC_LIMIT_ENTITY,
         ZENDURE_ERROR_ENTITY,
+        ZENDURE_REPORTED_MIN_SOC_ENTITY,
+        ZENDURE_REPORTED_MAX_SOC_ENTITY,
+        ZENDURE_ALLOWED_MAX_SOC_ENTITY,
+        ZENDURE_ALLOWED_MIN_SOC_ENTITY,
     )
+
+
+def _percentage_state(states: dict[str, dict[str, Any]], entity_id: str) -> float | None:
+    payload = states.get(entity_id)
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("state")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not 0.0 <= value <= 100.0:
+        return None
+    return value
 
 
 def read_zendure_observation(
@@ -52,6 +80,10 @@ def read_zendure_observation(
         states[DEFAULT_ZENDURE_POWER_ENTITY] = states[power_entity]
 
     snapshot = zendure_snapshot_from_entities(states, observed_at=observed_at)
+    allowed_min_soc = _percentage_state(states, ZENDURE_ALLOWED_MIN_SOC_ENTITY)
+    allowed_max_soc = _percentage_state(states, ZENDURE_ALLOWED_MAX_SOC_ENTITY)
+    reported_min_soc = _percentage_state(states, ZENDURE_REPORTED_MIN_SOC_ENTITY)
+    reported_max_soc = _percentage_state(states, ZENDURE_REPORTED_MAX_SOC_ENTITY)
     return {
         "zendure_status": snapshot.status,
         "zendure_source": snapshot.source,
@@ -69,6 +101,14 @@ def read_zendure_observation(
         "zendure_soc_limit_status": snapshot.soc_limit_status,
         "zendure_error_status": snapshot.error_status,
         "zendure_power_consistent": snapshot.power_consistent,
+        "zendure_allowed_min_soc_percent": allowed_min_soc,
+        "zendure_allowed_max_soc_percent": allowed_max_soc,
+        "zendure_reported_min_soc_percent": reported_min_soc,
+        "zendure_reported_max_soc_percent": reported_max_soc,
+        "zendure_allowed_min_soc_entity": ZENDURE_ALLOWED_MIN_SOC_ENTITY,
+        "zendure_allowed_max_soc_entity": ZENDURE_ALLOWED_MAX_SOC_ENTITY,
+        "zendure_reported_min_soc_entity": ZENDURE_REPORTED_MIN_SOC_ENTITY,
+        "zendure_reported_max_soc_entity": ZENDURE_REPORTED_MAX_SOC_ENTITY,
     }
 
 
@@ -97,4 +137,12 @@ def unavailable_zendure_observation(
         "zendure_soc_limit_status": None,
         "zendure_error_status": None,
         "zendure_power_consistent": None,
+        "zendure_allowed_min_soc_percent": None,
+        "zendure_allowed_max_soc_percent": None,
+        "zendure_reported_min_soc_percent": None,
+        "zendure_reported_max_soc_percent": None,
+        "zendure_allowed_min_soc_entity": ZENDURE_ALLOWED_MIN_SOC_ENTITY,
+        "zendure_allowed_max_soc_entity": ZENDURE_ALLOWED_MAX_SOC_ENTITY,
+        "zendure_reported_min_soc_entity": ZENDURE_REPORTED_MIN_SOC_ENTITY,
+        "zendure_reported_max_soc_entity": ZENDURE_REPORTED_MAX_SOC_ENTITY,
     }

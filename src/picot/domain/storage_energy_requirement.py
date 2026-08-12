@@ -1,4 +1,4 @@
-"""Storage-energy requirement contract from ADR-037."""
+"""Storage-energy requirement contract from ADR-037 and ADR-043."""
 
 from __future__ import annotations
 
@@ -20,14 +20,15 @@ class StorageRequirementReason(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class StorageEnergyRequirement:
-    """Stored energy that must be available by a future time.
+    """Stored energy required across a protected future interval.
 
     This is planning evidence, not a charge command and not a grid-charging
-    instruction.
+    instruction. Acquisition urgency is derived separately from current storage.
     """
 
     requirement_id: str
-    required_by: datetime
+    protection_starts_at: datetime
+    protected_through: datetime
     required_energy_wh: float
     required_soc_percent: float | None
     reason: StorageRequirementReason
@@ -38,8 +39,14 @@ class StorageEnergyRequirement:
     def __post_init__(self) -> None:
         if not self.requirement_id.strip():
             raise ValueError("Storage requirement ID must not be empty.")
-        if self.required_by.tzinfo is None or self.required_by.utcoffset() is None:
-            raise ValueError("Storage requirement deadline must be timezone-aware.")
+        for name, value in (
+            ("protection start", self.protection_starts_at),
+            ("protected-through time", self.protected_through),
+        ):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError(f"Storage requirement {name} must be timezone-aware.")
+        if self.protected_through < self.protection_starts_at:
+            raise ValueError("Storage protection end must not precede its start.")
         if self.required_energy_wh < 0:
             raise ValueError("Required storage energy must not be negative.")
         if self.required_soc_percent is not None and not 0.0 <= self.required_soc_percent <= 100.0:

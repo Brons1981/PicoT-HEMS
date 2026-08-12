@@ -36,13 +36,21 @@ def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
         "current_storage_energy_wh": event.get("current_storage_energy_wh"),
         "live_storage_min_soc_percent": event.get("live_storage_min_soc_percent"),
         "live_storage_max_soc_percent": event.get("live_storage_max_soc_percent"),
-        "live_storage_operating_window_wh": event.get("live_storage_operating_window_wh"),
+        "live_storage_operating_window_wh": event.get(
+            "live_storage_operating_window_wh"
+        ),
         "effective_storage_max_soc": event.get("effective_storage_max_soc"),
-        "effective_storage_max_energy_wh": event.get("effective_storage_max_energy_wh"),
+        "effective_storage_max_energy_wh": event.get(
+            "effective_storage_max_energy_wh"
+        ),
         "zendure_available_energy": event.get("zendure_available_energy"),
         "zendure_required_energy": event.get("zendure_required_energy"),
-        "zendure_remaining_discharge_time": event.get("zendure_remaining_discharge_time"),
-        "zendure_remaining_charge_time": event.get("zendure_remaining_charge_time"),
+        "zendure_remaining_discharge_time": event.get(
+            "zendure_remaining_discharge_time"
+        ),
+        "zendure_remaining_charge_time": event.get(
+            "zendure_remaining_charge_time"
+        ),
         "zendure_configured_discharge_power_w": event.get(
             "zendure_configured_discharge_power_w"
         ),
@@ -52,7 +60,9 @@ def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
         "flow_observer_status": event.get("flow_observer_status"),
         "flow_observer_control_regime": event.get("flow_observer_control_regime"),
         "flow_observer_responsibility": event.get("flow_observer_responsibility"),
-        "flow_observer_validation_band": event.get("flow_observer_validation_band"),
+        "flow_observer_validation_band": event.get(
+            "flow_observer_validation_band"
+        ),
         "flow_observer_tracking_deviation_w": event.get(
             "flow_observer_tracking_deviation_w"
         ),
@@ -67,7 +77,9 @@ def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
         "flow_observer_consecutive_samples": event.get(
             "flow_observer_consecutive_samples"
         ),
-        "flow_observer_required_samples": event.get("flow_observer_required_samples"),
+        "flow_observer_required_samples": event.get(
+            "flow_observer_required_samples"
+        ),
         "flow_observer_recommendation": event.get("flow_observer_recommendation"),
         "flow_observer_grid_export_w": event.get("flow_observer_grid_export_w"),
         "flow_observer_battery_discharge_w": event.get(
@@ -88,8 +100,18 @@ def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
             "price_window_best_later_price_eur_per_kwh"
         ),
         "requirement_energy_wh": event.get("adr037_requirement_energy_wh"),
-        "requirement_required_by": event.get("adr037_requirement_required_by"),
-        "remaining_charge_energy_wh": event.get("adr037_remaining_charge_energy_wh"),
+        "requirement_protection_starts_at": event.get(
+            "adr037_requirement_protection_starts_at"
+        ),
+        "requirement_protected_through": event.get(
+            "adr037_requirement_protected_through"
+        ),
+        "remaining_charge_energy_wh": event.get(
+            "adr037_remaining_charge_energy_wh"
+        ),
+        "additional_acquisition_required": event.get(
+            "adr037_additional_acquisition_required"
+        ),
         "latest_full_power_charge_start": event.get(
             "adr037_latest_full_power_charge_start"
         ),

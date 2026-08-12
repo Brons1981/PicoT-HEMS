@@ -1,4 +1,4 @@
-"""Derive ADR-037 StorageEnergyRequirement from canonical planning evidence."""
+"""Derive ADR-037/ADR-043 StorageEnergyRequirement from canonical evidence."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from picot.domain.storage_reserve_decision import (
 
 @dataclass(frozen=True, slots=True)
 class BalanceStorageTargetProposal:
-    """Balance-derived lower storage target and when it must be available."""
+    """Balance-derived target and the interval it protects."""
 
-    required_by: datetime
+    protection_starts_at: datetime
     protected_through: datetime
     target_energy_wh: float
     projected_drawdown_wh: float
@@ -35,7 +35,7 @@ class BalanceStorageTargetProposal:
 class StorageRequirementDeriver:
     """Map canonical balance and reserve evidence to one storage requirement."""
 
-    method_version: str = "storage-requirement-derivation-v3"
+    method_version: str = "storage-requirement-derivation-v4"
 
     def propose_lower_target(
         self,
@@ -44,27 +44,26 @@ class StorageRequirementDeriver:
         effective_limit: EffectiveStorageLimit,
     ) -> BalanceStorageTargetProposal:
         if balance.execution_scope_id != effective_limit.execution_scope_id:
-            raise ValueError("Projected balance and effective storage limit must share a scope.")
+            raise ValueError(
+                "Projected balance and effective storage limit must share a scope."
+            )
 
         positions = (
             (balance.created_at, balance.starting_storage_energy_wh),
             *((point.at, point.projected_storage_energy_wh) for point in balance.points),
         )
-
-        best_required_by = balance.horizon_end
-        best_protected_through = balance.horizon_end
+        best_start = balance.horizon_end
+        best_end = balance.horizon_end
         best_drawdown = 0.0
         for index, (start_at, energy_wh) in enumerate(positions[:-1]):
-            future_positions = positions[index + 1 :]
-            minimum_at, minimum_after = min(future_positions, key=lambda item: item[1])
+            minimum_at, minimum_after = min(
+                positions[index + 1 :], key=lambda item: item[1]
+            )
             drawdown = max(0.0, energy_wh - minimum_after)
             if drawdown > best_drawdown:
                 best_drawdown = drawdown
-                # The required energy must already be available when the protected
-                # drawdown starts. The minimum timestamp is retained separately as
-                # evidence for how long that energy is expected to protect demand.
-                best_required_by = start_at
-                best_protected_through = minimum_at
+                best_start = start_at
+                best_end = minimum_at
 
         target_energy_wh = min(best_drawdown, effective_limit.max_energy_wh)
         evidence_ids = tuple(
@@ -79,8 +78,8 @@ class StorageRequirementDeriver:
             )
         )
         return BalanceStorageTargetProposal(
-            required_by=best_required_by,
-            protected_through=best_protected_through,
+            protection_starts_at=best_start,
+            protected_through=best_end,
             target_energy_wh=target_energy_wh,
             projected_drawdown_wh=best_drawdown,
             evidence_ids=evidence_ids,
@@ -105,9 +104,10 @@ class StorageRequirementDeriver:
             assessment=confidence_assessment,
             effective_limit=effective_limit,
         )
-
         required_soc_percent = (
-            reserve_decision.target_energy_wh / effective_limit.usable_capacity_wh * 100.0
+            reserve_decision.target_energy_wh
+            / effective_limit.usable_capacity_wh
+            * 100.0
         )
         evidence_ids = tuple(
             dict.fromkeys(
@@ -125,7 +125,8 @@ class StorageRequirementDeriver:
         )
         return StorageEnergyRequirement(
             requirement_id=requirement_id,
-            required_by=proposal.required_by,
+            protection_starts_at=proposal.protection_starts_at,
+            protected_through=proposal.protected_through,
             required_energy_wh=reserve_decision.target_energy_wh,
             required_soc_percent=required_soc_percent,
             reason=reason,

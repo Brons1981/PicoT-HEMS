@@ -1,4 +1,4 @@
-"""PV-only storage energy feasibility for ADR-037."""
+"""PV-only storage energy feasibility for ADR-037 and ADR-043."""
 
 from __future__ import annotations
 
@@ -21,21 +21,12 @@ class PVOnlyEnergyFeasibilityOutcome(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PVOnlyStorageEnergyFeasibility:
-    """Explainable energy-only feasibility for one storage requirement.
-
-    The calculation uses the canonical no-grid projected household balance and
-    enforces the effective storage ceiling interval by interval. It therefore
-    does not treat gross PV as battery-available energy and does not retain PV
-    that would have been spilled after storage reached its effective maximum.
-
-    This result deliberately does not claim technical recoverability. Charge
-    power, device limits and other capability constraints remain a later check.
-    """
+    """Explainable energy-only feasibility for one storage requirement."""
 
     requirement_id: str
     outcome: PVOnlyEnergyFeasibilityOutcome
-    projected_energy_at_deadline_wh: float
-    deadline_shortfall_wh: float
+    projected_energy_at_protection_start_wh: float
+    protection_start_shortfall_wh: float
     household_path_shortfall_wh: float
     confidence: float
     evidence_ids: tuple[str, ...]
@@ -43,8 +34,6 @@ class PVOnlyStorageEnergyFeasibility:
 
     @property
     def energy_sufficient(self) -> bool:
-        """Return whether PV/current storage cover the complete path and target."""
-
         return self.outcome is PVOnlyEnergyFeasibilityOutcome.ENERGY_SUFFICIENT
 
 
@@ -52,7 +41,7 @@ class PVOnlyStorageEnergyFeasibility:
 class PVOnlyStorageEnergyFeasibilityEvaluator:
     """Evaluate PV-only energy sufficiency from the canonical household balance."""
 
-    method_version: str = "pv-only-storage-energy-feasibility-v1"
+    method_version: str = "pv-only-storage-energy-feasibility-v2"
 
     def evaluate(
         self,
@@ -62,13 +51,23 @@ class PVOnlyStorageEnergyFeasibilityEvaluator:
         effective_limit: EffectiveStorageLimit,
     ) -> PVOnlyStorageEnergyFeasibility:
         if balance.execution_scope_id != effective_limit.execution_scope_id:
-            raise ValueError("Projected balance and effective storage limit must share a scope.")
-        if not balance.created_at <= requirement.required_by <= balance.horizon_end:
-            raise ValueError("Storage requirement deadline must be inside the projected balance.")
+            raise ValueError(
+                "Projected balance and effective storage limit must share a scope."
+            )
+        if not (
+            balance.created_at
+            <= requirement.protection_starts_at
+            <= balance.horizon_end
+        ):
+            raise ValueError(
+                "Storage protection start must be inside the projected balance."
+            )
 
-        deadline_boundaries = {balance.created_at, *(point.at for point in balance.points)}
-        if requirement.required_by not in deadline_boundaries:
-            raise ValueError("Storage requirement deadline must align with a balance boundary.")
+        boundaries = {balance.created_at, *(point.at for point in balance.points)}
+        if requirement.protection_starts_at not in boundaries:
+            raise ValueError(
+                "Storage protection start must align with a balance boundary."
+            )
 
         current_energy = min(
             max(balance.starting_storage_energy_wh, 0.0),
@@ -77,28 +76,27 @@ class PVOnlyStorageEnergyFeasibilityEvaluator:
         previous_unbounded_energy = balance.starting_storage_energy_wh
         household_path_shortfall_wh = 0.0
 
-        if requirement.required_by != balance.created_at:
+        if requirement.protection_starts_at != balance.created_at:
             for point in balance.points:
                 delta_wh = point.projected_storage_energy_wh - previous_unbounded_energy
                 previous_unbounded_energy = point.projected_storage_energy_wh
-
                 raw_next_energy = current_energy + delta_wh
                 if raw_next_energy < 0.0:
                     household_path_shortfall_wh += -raw_next_energy
-
                 current_energy = min(
                     max(raw_next_energy, 0.0),
                     effective_limit.max_energy_wh,
                 )
-                if point.at == requirement.required_by:
+                if point.at == requirement.protection_starts_at:
                     break
 
-        deadline_shortfall_wh = max(
+        protection_start_shortfall_wh = max(
             0.0,
             requirement.required_energy_wh - current_energy,
         )
         energy_sufficient = (
-            deadline_shortfall_wh == 0.0 and household_path_shortfall_wh == 0.0
+            protection_start_shortfall_wh == 0.0
+            and household_path_shortfall_wh == 0.0
         )
         outcome = (
             PVOnlyEnergyFeasibilityOutcome.ENERGY_SUFFICIENT
@@ -121,8 +119,8 @@ class PVOnlyStorageEnergyFeasibilityEvaluator:
         return PVOnlyStorageEnergyFeasibility(
             requirement_id=requirement.requirement_id,
             outcome=outcome,
-            projected_energy_at_deadline_wh=current_energy,
-            deadline_shortfall_wh=deadline_shortfall_wh,
+            projected_energy_at_protection_start_wh=current_energy,
+            protection_start_shortfall_wh=protection_start_shortfall_wh,
             household_path_shortfall_wh=household_path_shortfall_wh,
             confidence=min(
                 requirement.confidence,

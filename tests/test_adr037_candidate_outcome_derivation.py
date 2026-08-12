@@ -9,13 +9,13 @@ from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import EnergyPath, PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.storage_technical_recoverability import StorageTechnicalRecoverability
-from picot.planner.adr037_candidate_outcome_derivation import (
-    ADR037CandidateOutcomeDeriver,
-)
+from picot.planner.adr037_candidate_outcome_derivation import ADR037CandidateOutcomeDeriver
 from picot.planner.evaluation_engine import EvaluationEngine
 
 
 BASE = datetime(2026, 8, 12, 8, 0, tzinfo=UTC)
+PROTECTION_START = BASE + timedelta(hours=4)
+PROTECTED_THROUGH = BASE + timedelta(hours=8)
 
 
 def _candidate_set(*, grid_supported: bool) -> CandidateSet:
@@ -82,9 +82,11 @@ def _recoverability(*, technically_recoverable: bool = True) -> StorageTechnical
         evaluated_at=BASE,
         requirement_id="requirement-1",
         capability_id="battery-charge",
-        required_by=BASE + timedelta(hours=4),
+        protection_starts_at=PROTECTION_START,
+        protected_through=PROTECTED_THROUGH,
         extra_energy_required_wh=3000.0,
-        maximum_charge_energy_before_deadline_wh=4000.0,
+        additional_acquisition_required=True,
+        maximum_charge_energy_before_protection_wh=4000.0,
         latest_full_power_charge_start=BASE + timedelta(hours=2),
         technically_recoverable=technically_recoverable,
         confidence=0.84,

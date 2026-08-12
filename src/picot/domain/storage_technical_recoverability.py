@@ -1,8 +1,8 @@
-"""Technical storage recoverability for ADR-037.
+"""Technical storage recoverability for ADR-037 and ADR-043.
 
-This evaluator answers only whether a storage capability can physically absorb
-required extra energy before a StorageEnergyRequirement deadline. It does not
-choose or permit an energy source; PV/grid source policy remains separate.
+This evaluator answers only whether additional storage energy can physically be
+acquired before the protected interval starts. It does not choose or permit an
+energy source; PV/grid source policy remains separate.
 """
 
 from __future__ import annotations
@@ -25,39 +25,68 @@ from picot.domain.storage_energy_requirement import StorageEnergyRequirement
 
 @dataclass(frozen=True, slots=True)
 class StorageTechnicalRecoverability:
-    """Evidence whether the required extra storage energy is physically reachable."""
+    """Evidence whether additional required storage energy is physically reachable."""
 
     evaluated_at: datetime
     requirement_id: str
     capability_id: str
-    required_by: datetime
+    protection_starts_at: datetime
+    protected_through: datetime
     extra_energy_required_wh: float
-    maximum_charge_energy_before_deadline_wh: float
-    latest_full_power_charge_start: datetime
+    additional_acquisition_required: bool
+    maximum_charge_energy_before_protection_wh: float
+    latest_full_power_charge_start: datetime | None
     technically_recoverable: bool
     confidence: float
     evidence_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if self.evaluated_at.tzinfo is None or self.evaluated_at.utcoffset() is None:
-            raise ValueError("Technical recoverability evaluation time must be timezone-aware.")
-        if self.required_by.tzinfo is None or self.required_by.utcoffset() is None:
-            raise ValueError("Technical recoverability deadline must be timezone-aware.")
-        if (
-            self.latest_full_power_charge_start.tzinfo is None
-            or self.latest_full_power_charge_start.utcoffset() is None
+        for name, value in (
+            ("evaluation time", self.evaluated_at),
+            ("protection start", self.protection_starts_at),
+            ("protected-through time", self.protected_through),
         ):
-            raise ValueError("Latest full-power charge start must be timezone-aware.")
-        if self.required_by < self.evaluated_at:
-            raise ValueError("Technical recoverability deadline must not be in the past.")
-        if self.latest_full_power_charge_start > self.required_by:
-            raise ValueError("Latest full-power charge start must not be after the deadline.")
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError(
+                    f"Technical recoverability {name} must be timezone-aware."
+                )
+        if self.protected_through < self.protection_starts_at:
+            raise ValueError(
+                "Protected-through time must not precede protection start."
+            )
+        if self.latest_full_power_charge_start is not None:
+            if (
+                self.latest_full_power_charge_start.tzinfo is None
+                or self.latest_full_power_charge_start.utcoffset() is None
+            ):
+                raise ValueError(
+                    "Latest full-power charge start must be timezone-aware."
+                )
+            if self.latest_full_power_charge_start > self.protection_starts_at:
+                raise ValueError(
+                    "Latest full-power charge start must not be after protection starts."
+                )
         if self.extra_energy_required_wh < 0:
             raise ValueError("Extra required storage energy must not be negative.")
-        if self.maximum_charge_energy_before_deadline_wh < 0:
+        if self.maximum_charge_energy_before_protection_wh < 0:
             raise ValueError("Maximum charge energy must not be negative.")
+        if self.additional_acquisition_required != (
+            self.extra_energy_required_wh > 0.0
+        ):
+            raise ValueError(
+                "Additional-acquisition flag must match extra required energy."
+            )
+        if (
+            not self.additional_acquisition_required
+            and self.latest_full_power_charge_start is not None
+        ):
+            raise ValueError(
+                "No latest charge start exists when no additional energy is required."
+            )
         if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError("Technical recoverability confidence must be between 0.0 and 1.0.")
+            raise ValueError(
+                "Technical recoverability confidence must be between 0.0 and 1.0."
+            )
         if not self.evidence_ids:
             raise ValueError("Technical recoverability requires evidence IDs.")
 
@@ -66,7 +95,7 @@ class StorageTechnicalRecoverability:
 class StorageTechnicalRecoverabilityEvaluator:
     """Evaluate physical charge recoverability without energy-source assumptions."""
 
-    method_version: str = "storage-technical-recoverability-v2"
+    method_version: str = "storage-technical-recoverability-v3"
 
     def evaluate(
         self,
@@ -79,28 +108,42 @@ class StorageTechnicalRecoverabilityEvaluator:
     ) -> StorageTechnicalRecoverability:
         if evaluated_at.tzinfo is None or evaluated_at.utcoffset() is None:
             raise ValueError("Evaluation time must be timezone-aware.")
-        if requirement.required_by < evaluated_at:
-            raise ValueError("Storage requirement deadline must not be in the past.")
 
         storage_limit.validate_against(storage_state)
-        self._validate_capability(storage_state=storage_state, capability=capability)
+        self._validate_capability(
+            storage_state=storage_state,
+            capability=capability,
+        )
         maximum_power_w = capability.maximum_power_w
         if maximum_power_w is None:
             raise ValueError("Storage capability requires a maximum charge power.")
 
-        target_energy_wh = min(requirement.required_energy_wh, storage_limit.max_energy_wh)
-        extra_required_wh = max(0.0, target_energy_wh - storage_state.current_stored_energy_wh)
+        target_energy_wh = min(
+            requirement.required_energy_wh,
+            storage_limit.max_energy_wh,
+        )
+        extra_required_wh = max(
+            0.0,
+            target_energy_wh - storage_state.current_stored_energy_wh,
+        )
+        acquisition_required = extra_required_wh > 0.0
         headroom_wh = max(
             0.0,
             storage_limit.max_energy_wh - storage_state.current_stored_energy_wh,
         )
-        available_hours = (requirement.required_by - evaluated_at).total_seconds() / 3600.0
-        power_limited_energy_wh = maximum_power_w * available_hours
-        maximum_charge_energy_wh = min(headroom_wh, power_limited_energy_wh)
-        required_charge_hours = extra_required_wh / maximum_power_w
-        latest_full_power_charge_start = requirement.required_by - timedelta(
-            hours=required_charge_hours
+        available_seconds = max(
+            0.0,
+            (requirement.protection_starts_at - evaluated_at).total_seconds(),
         )
+        power_limited_energy_wh = maximum_power_w * available_seconds / 3600.0
+        maximum_charge_energy_wh = min(headroom_wh, power_limited_energy_wh)
+        latest_full_power_charge_start = None
+        if acquisition_required:
+            required_charge_hours = extra_required_wh / maximum_power_w
+            latest_full_power_charge_start = (
+                requirement.protection_starts_at
+                - timedelta(hours=required_charge_hours)
+            )
 
         evidence_ids = tuple(
             dict.fromkeys(
@@ -119,11 +162,17 @@ class StorageTechnicalRecoverabilityEvaluator:
             evaluated_at=evaluated_at,
             requirement_id=requirement.requirement_id,
             capability_id=capability.capability_id,
-            required_by=requirement.required_by,
+            protection_starts_at=requirement.protection_starts_at,
+            protected_through=requirement.protected_through,
             extra_energy_required_wh=extra_required_wh,
-            maximum_charge_energy_before_deadline_wh=maximum_charge_energy_wh,
+            additional_acquisition_required=acquisition_required,
+            maximum_charge_energy_before_protection_wh=maximum_charge_energy_wh,
             latest_full_power_charge_start=latest_full_power_charge_start,
-            technically_recoverable=maximum_charge_energy_wh >= extra_required_wh,
+            technically_recoverable=(
+                True
+                if not acquisition_required
+                else maximum_charge_energy_wh >= extra_required_wh
+            ),
             confidence=min(
                 requirement.confidence,
                 storage_state.confidence,
@@ -140,11 +189,17 @@ class StorageTechnicalRecoverabilityEvaluator:
         capability: LogicalCapabilitySnapshot,
     ) -> None:
         if capability.execution_scope_id != storage_state.execution_scope_id:
-            raise ValueError("Storage capability and current state must share a scope.")
+            raise ValueError(
+                "Storage capability and current state must share a scope."
+            )
         if capability.capability_id != storage_state.capability_id:
-            raise ValueError("Storage capability must match the canonical storage capability ID.")
+            raise ValueError(
+                "Storage capability must match the canonical storage capability ID."
+            )
         if capability.role is not CapabilityRole.ENERGY_STORAGE:
-            raise ValueError("Technical recoverability requires an energy-storage capability.")
+            raise ValueError(
+                "Technical recoverability requires an energy-storage capability."
+            )
         if EnergyFlowDirection.CHARGE not in capability.flow_directions and (
             EnergyFlowDirection.BIDIRECTIONAL not in capability.flow_directions
         ):

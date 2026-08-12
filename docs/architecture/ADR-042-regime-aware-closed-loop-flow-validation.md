@@ -1,6 +1,6 @@
 # ADR-042 — Regime-aware closed-loop flow validation
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-12
 - Decision scope: Planner feedback, runtime flow validation and replan evidence
 - Related: ADR-015, ADR-016, ADR-017, ADR-037, ADR-038, ADR-039, ADR-041

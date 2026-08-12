@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from picot.addon.history_store import HistoryStore
-from picot.domain.pv_energy_timeline import PVEnergyEvidenceType, PVEnergyTimelineInterval
+from picot.domain.pv_energy_timeline import (
+    PVEnergyEvidenceType,
+    PVEnergyTimeline,
+    PVEnergyTimelineInterval,
+)
 
 ACTUAL_PV_METHOD_VERSION = "goodwe-sample-hold-quarter-energy-v1"
 
@@ -68,7 +72,9 @@ def actual_pv_interval_from_history(
     raw_interval = event.get("telemetry_interval_seconds", 5)
     cadence_s = (
         int(raw_interval)
-        if isinstance(raw_interval, int) and not isinstance(raw_interval, bool) and raw_interval > 0
+        if isinstance(raw_interval, int)
+        and not isinstance(raw_interval, bool)
+        and raw_interval > 0
         else 5
     )
     max_gap_s = max(30, cadence_s * 3)
@@ -138,4 +144,33 @@ def actual_pv_interval_from_history(
         confidence=1.0,
         evidence_ids=tuple(evidence_ids or (f"goodwe-pv:{sequence}",)),
         method_version=ACTUAL_PV_METHOD_VERSION,
+    )
+
+
+def prepend_actual_pv_evidence(
+    *,
+    timeline: PVEnergyTimeline,
+    history: HistoryStore,
+    event: dict[str, object],
+    captured_at: datetime,
+    sequence: int,
+) -> PVEnergyTimeline:
+    """Extend one future PV timeline backwards with validated realised PV energy."""
+
+    if timeline.horizon_start != captured_at:
+        raise ValueError("Future PV timeline must start at snapshot capture time.")
+    actual = actual_pv_interval_from_history(
+        history=history,
+        event=event,
+        captured_at=captured_at,
+        sequence=sequence,
+    )
+    if actual is None:
+        return timeline
+    return PVEnergyTimeline(
+        timeline_id=timeline.timeline_id,
+        created_at=timeline.created_at,
+        horizon_start=actual.starts_at,
+        horizon_end=timeline.horizon_end,
+        intervals=(actual, *timeline.intervals),
     )

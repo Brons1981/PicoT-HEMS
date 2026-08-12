@@ -1,13 +1,9 @@
-"""Observer-only ADR-037 runtime readiness bridge.
-
-This module deliberately stops before Candidate Generation until a real live
-storage capability snapshot and canonical OpportunitySet are available. It may
-assemble the canonical projected household balance because all required energy
-inputs are already present in the atomic PlanningInputSnapshot.
-"""
+"""Observer-only ADR-037 runtime readiness bridge."""
 
 from __future__ import annotations
 
+from picot.domain.capability_snapshot import CapabilitySnapshotSet
+from picot.domain.effective_storage_limit import EffectiveStorageLimit
 from picot.domain.planning_input_snapshot import PlanningInputSnapshot
 from picot.domain.projected_household_energy_balance import (
     ProjectedHouseholdEnergyBalance,
@@ -38,6 +34,9 @@ def assemble_live_projected_balance(
 
 def adr037_readiness_log_event(
     snapshot: PlanningInputSnapshot,
+    *,
+    capabilities: CapabilitySnapshotSet | None = None,
+    effective_limit: EffectiveStorageLimit | None = None,
 ) -> dict[str, object]:
     """Expose exactly how far the real ADR-037 live path can safely proceed."""
 
@@ -45,11 +44,25 @@ def adr037_readiness_log_event(
     blockers: list[str] = []
     if balance is None:
         blockers.append("incomplete_energy_input_set")
-    # These objects are intentionally not synthesized from observed runtime power.
+
+    storage_capability = None
+    if capabilities is not None:
+        storage_capability = next(
+            (
+                item
+                for item in capabilities.capabilities
+                if item.execution_scope_id == "storage-primary"
+            ),
+            None,
+        )
+    if storage_capability is None:
+        blockers.append("live_storage_capability_snapshot_unavailable")
+
+    if effective_limit is None:
+        blockers.append("live_effective_storage_limit_unwired")
+
     blockers.extend(
         (
-            "live_storage_capability_snapshot_unavailable",
-            "live_effective_storage_limit_unwired",
             "live_evidence_confidence_assessment_unwired",
             "canonical_price_opportunity_set_unwired_to_live_snapshot",
         )
@@ -70,6 +83,15 @@ def adr037_readiness_log_event(
         ),
         "projected_balance_cumulative_household_load_wh": (
             balance.points[-1].cumulative_household_load_wh if balance is not None else None
+        ),
+        "storage_capability_available": storage_capability is not None,
+        "storage_max_charge_power_w": (
+            storage_capability.maximum_power_w if storage_capability is not None else None
+        ),
+        "effective_storage_limit_available": effective_limit is not None,
+        "effective_storage_max_soc": effective_limit.max_soc if effective_limit else None,
+        "effective_storage_max_energy_wh": (
+            effective_limit.max_energy_wh if effective_limit else None
         ),
         "adr037_pipeline_stage_reached": (
             "projected_household_energy_balance" if balance is not None else "planning_input"

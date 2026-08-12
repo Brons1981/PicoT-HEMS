@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from picot.domain.candidate import CandidateFamily
+from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.household_state import Phase
 
@@ -41,6 +42,7 @@ class PathSegment:
     requested_power_w: float | None = None
     soc_constraint: SocConstraint | None = None
     energy_profile_id: str | None = None
+    charge_source_policy: ChargeSourcePolicy | None = None
 
     def __post_init__(self) -> None:
         for text_value, label in (
@@ -71,6 +73,11 @@ class PathSegment:
             raise ValueError("Power-based execution primitives require requested power.")
         if not requires_power and self.requested_power_w is not None:
             raise ValueError("Requested power is only valid for power-based primitives.")
+        is_charge = self.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+        if is_charge and self.charge_source_policy is None:
+            raise ValueError("Charging Path Segments require an explicit charge source policy.")
+        if not is_charge and self.charge_source_policy is not None:
+            raise ValueError("Charge source policy is only valid for charging Path Segments.")
         if self.energy_profile_id is not None and not self.energy_profile_id.strip():
             raise ValueError("Energy profile ID must not be empty when provided.")
         if any(not evidence_id.strip() for evidence_id in self.evidence_ids):

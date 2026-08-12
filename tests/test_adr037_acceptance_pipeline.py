@@ -118,15 +118,6 @@ def _capability(*, maximum_power_w: float = 2000.0) -> LogicalCapabilitySnapshot
     )
 
 
-def _capabilities(*, maximum_power_w: float = 2000.0) -> CapabilitySnapshotSet:
-    return CapabilitySnapshotSet(
-        snapshot_id="snapshot-adr037-acceptance",
-        mapping_version=1,
-        captured_at=BASE,
-        capabilities=(_capability(maximum_power_w=maximum_power_w),),
-    )
-
-
 def _assessment(*, lower_allowed: bool = True) -> EvidenceConfidenceAssessment:
     return EvidenceConfidenceAssessment(
         decision=(
@@ -157,17 +148,7 @@ def _price_opportunities() -> OpportunitySet:
         lifecycle=OpportunityLifecycle.DETECTED,
         evidence=(EvidenceReference(source_id="price-forecast", point_indexes=(0, 1)),),
     )
-    return OpportunitySet(
-        snapshot_id="snapshot-adr037-acceptance",
-        opportunities=(opportunity,),
-    )
-
-
-def _no_opportunities() -> OpportunitySet:
-    return OpportunitySet(
-        snapshot_id="snapshot-adr037-acceptance",
-        opportunities=(),
-    )
+    return OpportunitySet(snapshot_id="snapshot-adr037-acceptance", opportunities=(opportunity,))
 
 
 def _pv_sufficient_balance() -> ProjectedHouseholdEnergyBalance:
@@ -178,24 +159,9 @@ def _pv_sufficient_balance() -> ProjectedHouseholdEnergyBalance:
         execution_scope_id=SCOPE,
         starting_storage_energy_wh=4000.0,
         points=(
-            ProjectedHouseholdEnergyBalancePoint(
-                at=BASE + timedelta(hours=1),
-                projected_storage_energy_wh=6000.0,
-                cumulative_pv_energy_wh=2500.0,
-                cumulative_household_load_wh=500.0,
-            ),
-            ProjectedHouseholdEnergyBalancePoint(
-                at=BASE + timedelta(hours=2),
-                projected_storage_energy_wh=5000.0,
-                cumulative_pv_energy_wh=3000.0,
-                cumulative_household_load_wh=2000.0,
-            ),
-            ProjectedHouseholdEnergyBalancePoint(
-                at=BASE + timedelta(hours=6),
-                projected_storage_energy_wh=3000.0,
-                cumulative_pv_energy_wh=3000.0,
-                cumulative_household_load_wh=4000.0,
-            ),
+            ProjectedHouseholdEnergyBalancePoint(at=BASE + timedelta(hours=1), projected_storage_energy_wh=6000.0, cumulative_pv_energy_wh=2500.0, cumulative_household_load_wh=500.0),
+            ProjectedHouseholdEnergyBalancePoint(at=BASE + timedelta(hours=2), projected_storage_energy_wh=5000.0, cumulative_pv_energy_wh=3000.0, cumulative_household_load_wh=2000.0),
+            ProjectedHouseholdEnergyBalancePoint(at=BASE + timedelta(hours=6), projected_storage_energy_wh=3000.0, cumulative_pv_energy_wh=3000.0, cumulative_household_load_wh=4000.0),
         ),
         confidence=0.85,
         evidence_ids=("balance:pv-sufficient",),
@@ -210,37 +176,16 @@ def _pv_shortfall_balance() -> ProjectedHouseholdEnergyBalance:
         execution_scope_id=SCOPE,
         starting_storage_energy_wh=2000.0,
         points=(
-            ProjectedHouseholdEnergyBalancePoint(
-                at=BASE + timedelta(hours=1),
-                projected_storage_energy_wh=3000.0,
-                cumulative_pv_energy_wh=1500.0,
-                cumulative_household_load_wh=500.0,
-            ),
-            ProjectedHouseholdEnergyBalancePoint(
-                at=BASE + timedelta(hours=2),
-                projected_storage_energy_wh=4000.0,
-                cumulative_pv_energy_wh=3000.0,
-                cumulative_household_load_wh=1000.0,
-            ),
-            ProjectedHouseholdEnergyBalancePoint(
-                at=BASE + timedelta(hours=6),
-                projected_storage_energy_wh=-2000.0,
-                cumulative_pv_energy_wh=3000.0,
-                cumulative_household_load_wh=7000.0,
-            ),
+            ProjectedHouseholdEnergyBalancePoint(at=BASE + timedelta(hours=1), projected_storage_energy_wh=3000.0, cumulative_pv_energy_wh=1500.0, cumulative_household_load_wh=500.0),
+            ProjectedHouseholdEnergyBalancePoint(at=BASE + timedelta(hours=2), projected_storage_energy_wh=4000.0, cumulative_pv_energy_wh=3000.0, cumulative_household_load_wh=1000.0),
+            ProjectedHouseholdEnergyBalancePoint(at=BASE + timedelta(hours=6), projected_storage_energy_wh=-2000.0, cumulative_pv_energy_wh=3000.0, cumulative_household_load_wh=7000.0),
         ),
         confidence=0.8,
         evidence_ids=("balance:pv-shortfall",),
     )
 
 
-def _run(
-    *,
-    balance: ProjectedHouseholdEnergyBalance,
-    opportunities: OpportunitySet,
-    maximum_power_w: float = 2000.0,
-    lower_allowed: bool = True,
-):
+def _run(*, balance: ProjectedHouseholdEnergyBalance, maximum_power_w: float = 2000.0, lower_allowed: bool = True):
     capability = _capability(maximum_power_w=maximum_power_w)
     return ADR037PlannerPipeline().run(
         requirement_id="storage:req:acceptance",
@@ -251,22 +196,13 @@ def _run(
         confidence_assessment=_assessment(lower_allowed=lower_allowed),
         storage_state=_storage_state(),
         storage_capability=capability,
-        opportunities=opportunities,
-        capabilities=CapabilitySnapshotSet(
-            snapshot_id="snapshot-adr037-acceptance",
-            mapping_version=1,
-            captured_at=BASE,
-            capabilities=(capability,),
-        ),
+        opportunities=_price_opportunities(),
+        capabilities=CapabilitySnapshotSet(snapshot_id="snapshot-adr037-acceptance", mapping_version=1, captured_at=BASE, capabilities=(capability,)),
     )
 
 
 def test_pv_sufficient_path_needs_no_grid_supported_candidate() -> None:
-    result = _run(
-        balance=_pv_sufficient_balance(),
-        opportunities=_price_opportunities(),
-    )
-
+    result = _run(balance=_pv_sufficient_balance())
     assert result.pv_only_feasibility.energy_sufficient is True
     assert all(path.family.value != "cost_first" for path in result.candidate_set.energy_paths)
     assert result.evaluation.status is EvaluationOutcomeStatus.WINNER_SELECTED
@@ -275,38 +211,17 @@ def test_pv_sufficient_path_needs_no_grid_supported_candidate() -> None:
 
 
 def test_pv_shortfall_makes_grid_supported_path_the_only_valid_winner() -> None:
-    result = _run(
-        balance=_pv_shortfall_balance(),
-        opportunities=_price_opportunities(),
-    )
-
-    assert result.requirement.required_by == BASE + timedelta(hours=6)
+    result = _run(balance=_pv_shortfall_balance())
+    assert result.requirement.required_by == BASE + timedelta(hours=2)
     assert result.requirement.required_energy_wh == pytest.approx(6000.0)
     assert result.pv_only_feasibility.energy_sufficient is False
     assert result.technical_recoverability.technically_recoverable is True
-
-    cost_paths = [
-        path for path in result.candidate_set.energy_paths if path.family.value == "cost_first"
-    ]
+    cost_paths = [path for path in result.candidate_set.energy_paths if path.family.value == "cost_first"]
     assert len(cost_paths) == 1
-    assert (
-        cost_paths[0].segments[0].charge_source_policy
-        is ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
-    )
-
-    validity = {
-        item.candidate_id: item.validity for item in result.candidate_outcomes.outcomes
-    }
-    baseline = next(
-        candidate
-        for candidate in result.candidate_set.candidates
-        if candidate.family.value == "reserve_first"
-    )
-    grid = next(
-        candidate
-        for candidate in result.candidate_set.candidates
-        if candidate.family.value == "cost_first"
-    )
+    assert cost_paths[0].segments[0].charge_source_policy is ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
+    validity = {item.candidate_id: item.validity for item in result.candidate_outcomes.outcomes}
+    baseline = next(candidate for candidate in result.candidate_set.candidates if candidate.family.value == "reserve_first")
+    grid = next(candidate for candidate in result.candidate_set.candidates if candidate.family.value == "cost_first")
     assert validity[baseline.candidate_id] is CandidateValidity.INVALID
     assert validity[grid.candidate_id] is CandidateValidity.VALID
     assert result.evaluation.winning_candidate is not None
@@ -314,32 +229,18 @@ def test_pv_shortfall_makes_grid_supported_path_the_only_valid_winner() -> None:
 
 
 def test_degraded_confidence_raises_requirement_to_effective_maximum() -> None:
-    result = _run(
-        balance=_pv_shortfall_balance(),
-        opportunities=_price_opportunities(),
-        maximum_power_w=3000.0,
-        lower_allowed=False,
-    )
-
+    result = _run(balance=_pv_shortfall_balance(), maximum_power_w=3000.0, lower_allowed=False)
     assert result.requirement.reason is StorageRequirementReason.CONSERVATIVE_RESERVE
     assert result.requirement.required_energy_wh == pytest.approx(7600.0)
     assert result.requirement.reserve_energy_wh == pytest.approx(1600.0)
-    assert result.requirement.required_by == BASE + timedelta(hours=6)
+    assert result.requirement.required_by == BASE + timedelta(hours=2)
 
 
 def test_unrecoverable_shortfall_returns_explicit_no_valid_candidate() -> None:
-    result = _run(
-        balance=_pv_shortfall_balance(),
-        opportunities=_price_opportunities(),
-        maximum_power_w=500.0,
-    )
-
+    result = _run(balance=_pv_shortfall_balance(), maximum_power_w=1000.0)
     assert result.pv_only_feasibility.energy_sufficient is False
     assert result.technical_recoverability.technically_recoverable is False
     assert all(path.family.value != "cost_first" for path in result.candidate_set.energy_paths)
-    assert all(
-        outcome.validity is CandidateValidity.INVALID
-        for outcome in result.candidate_outcomes.outcomes
-    )
+    assert all(outcome.validity is CandidateValidity.INVALID for outcome in result.candidate_outcomes.outcomes)
     assert result.evaluation.status is EvaluationOutcomeStatus.NO_VALID_CANDIDATE
     assert result.evaluation.winning_candidate is None

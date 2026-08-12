@@ -153,7 +153,9 @@ def _price_entry_observation(
             "price_entry_observation_only": True,
             "price_entry_replan_input": False,
             "price_entry_opportunity_context": opportunity_context,
-            "price_entry_limitation": "No low-price opportunity is available for the legacy entry comparison.",
+            "price_entry_limitation": (
+                "No low-price opportunity is available for the legacy entry comparison."
+            ),
         }
     points = tuple(
         point
@@ -197,7 +199,9 @@ def _price_entry_observation(
             }
         )
     result: dict[str, object] = {
-        "price_entry_observation_status": "lower_later_price_exists" if cheaper_later else "entry_is_lowest_so_far",
+        "price_entry_observation_status": (
+            "lower_later_price_exists" if cheaper_later else "entry_is_lowest_so_far"
+        ),
         "price_entry_observation_only": True,
         "price_entry_replan_input": False,
         "price_entry_opportunity_context": opportunity_context,
@@ -208,7 +212,10 @@ def _price_entry_observation(
         "price_entry_reference_price_eur_per_kwh": entry.value,
         "price_entry_better_later_price_exists": cheaper_later,
         "price_entry_alternatives": alternatives,
-        "price_entry_limitation": "Legacy observation only. The lowest later quarter-hour is not a best start and is not used by the canonical planner.",
+        "price_entry_limitation": (
+            "Legacy observation only. The lowest later quarter-hour is not a best start "
+            "and is not used by the canonical planner."
+        ),
     }
     if lowest_later is not None:
         result.update(
@@ -250,7 +257,9 @@ def run_planner_once(
         item for item in price_opportunities if item.kind is OpportunityKind.LOWEST_PRICE_WINDOW
     )
     high_opportunities = tuple(
-        item for item in price_opportunities if item.kind is OpportunityKind.HIGH_EXPORT_VALUE_WINDOW
+        item
+        for item in price_opportunities
+        if item.kind is OpportunityKind.HIGH_EXPORT_VALUE_WINDOW
     )
     event: dict[str, object] = {
         "event": "picot_price_decision",
@@ -276,7 +285,10 @@ def run_planner_once(
         "dispatch_status": "blocked_by_candidate_contract",
         "control_change_allowed": False,
         "pipeline_stage_reached": "candidate_generation",
-        "reason": "Canonical price opportunities reached Candidate Generation. Cost-first control remains excluded until the required ADR contract exists.",
+        "reason": (
+            "Canonical price opportunities reached Candidate Generation. Cost-first control "
+            "remains excluded until the required ADR contract exists."
+        ),
         "planner_interval_seconds": int(options["planner_interval_seconds"]),
     }
     event.update(

@@ -141,6 +141,7 @@ def _recoverability(*, extra_energy_wh: float = 1000.0, recoverable: bool = True
         required_by=BASE + timedelta(hours=6),
         extra_energy_required_wh=extra_energy_wh,
         maximum_charge_energy_before_deadline_wh=6000.0,
+        latest_full_power_charge_start=BASE + timedelta(hours=5),
         technically_recoverable=recoverable,
         confidence=0.82,
         evidence_ids=("storage:req:evening", "battery-charge", "recoverability-v1"),

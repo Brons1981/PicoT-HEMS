@@ -33,6 +33,12 @@ def _states() -> dict[str, dict[str, Any]]:
         "input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage": {
             "state": "10"
         },
+        "sensor.zendure_2400_ac_indicatie_beschikbare_energie": {"state": "5.61"},
+        "sensor.zendure_2400_ac_indicatie_benodigde_energie": {"state": "0.80"},
+        "sensor.zendure_2400_ac_resterende_ontlaad_tijd": {"state": "2u 10m"},
+        "sensor.zendure_2400_ac_resterende_oplaad_tijd": {"state": "0u 20m"},
+        "sensor.zendure_2400_ac_ingesteld_ontlaadvermogen": {"state": "1800"},
+        "sensor.zendure_2400_ac_ingesteld_oplaadvermogen": {"state": "2400"},
     }
 
 
@@ -69,6 +75,12 @@ def test_read_zendure_observation_normalizes_all_selected_entities() -> None:
     assert event["zendure_allowed_max_soc_percent"] == 100.0
     assert event["zendure_reported_min_soc_percent"] == 10.0
     assert event["zendure_reported_max_soc_percent"] == 100.0
+    assert event["zendure_available_energy"] == 5.61
+    assert event["zendure_required_energy"] == 0.8
+    assert event["zendure_remaining_discharge_time"] == "2u 10m"
+    assert event["zendure_remaining_charge_time"] == "0u 20m"
+    assert event["zendure_configured_discharge_power_w"] == 1800.0
+    assert event["zendure_configured_charge_power_w"] == 2400.0
     assert event["zendure_observed_at"] == OBSERVED_AT.isoformat()
 
 
@@ -83,4 +95,6 @@ def test_unavailable_zendure_observation_is_explicit() -> None:
     assert event["zendure_soc_percent"] is None
     assert event["zendure_allowed_min_soc_percent"] is None
     assert event["zendure_allowed_max_soc_percent"] is None
+    assert event["zendure_available_energy"] is None
+    assert event["zendure_required_energy"] is None
     assert event["zendure_power_consistent"] is None

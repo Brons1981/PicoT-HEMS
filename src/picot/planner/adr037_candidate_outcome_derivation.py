@@ -8,6 +8,7 @@ from picot.domain.candidate import Candidate, CandidateFamily, CandidateSet
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import EnergyPath
 from picot.domain.evaluation import CandidateOutcome, CandidateOutcomeSet, CandidateValidity
+from picot.domain.pv_only_storage_feasibility import PVOnlyStorageEnergyFeasibility
 from picot.domain.storage_technical_recoverability import StorageTechnicalRecoverability
 from picot.planner.evaluation_engine import EvaluationEngine
 
@@ -29,6 +30,7 @@ class ADR037CandidateOutcomeDeriver:
         self,
         *,
         candidate_set: CandidateSet,
+        pv_only_feasibility: PVOnlyStorageEnergyFeasibility | None = None,
         storage_recoverability: StorageTechnicalRecoverability | None = None,
     ) -> CandidateOutcomeSet:
         paths_by_id = {path.path_id: path for path in candidate_set.energy_paths}
@@ -36,6 +38,7 @@ class ADR037CandidateOutcomeDeriver:
             self._outcome_for(
                 candidate=candidate,
                 path=paths_by_id[candidate.energy_path_id],
+                pv_only_feasibility=pv_only_feasibility,
                 storage_recoverability=storage_recoverability,
             )
             for candidate in candidate_set.candidates
@@ -52,13 +55,27 @@ class ADR037CandidateOutcomeDeriver:
         *,
         candidate: Candidate,
         path: EnergyPath,
+        pv_only_feasibility: PVOnlyStorageEnergyFeasibility | None,
         storage_recoverability: StorageTechnicalRecoverability | None,
     ) -> CandidateOutcome:
+        grid_supported = self._is_grid_supported(path)
         recoverability = self._recoverability_for(
             candidate=candidate,
             path=path,
             storage_recoverability=storage_recoverability,
         )
+        validity = CandidateValidity.VALID
+        invalidity_reasons: tuple[str, ...] = ()
+        if (
+            pv_only_feasibility is not None
+            and not pv_only_feasibility.energy_sufficient
+            and not grid_supported
+        ):
+            validity = CandidateValidity.INVALID
+            invalidity_reasons = (
+                "PV-only path cannot meet the StorageEnergyRequirement before its deadline.",
+            )
+
         recoverability_evidence_ids: tuple[str, ...] = ()
         if recoverability is not None:
             if storage_recoverability is None:
@@ -66,11 +83,15 @@ class ADR037CandidateOutcomeDeriver:
                     "Recoverability outcome requires technical recoverability evidence."
                 )
             recoverability_evidence_ids = storage_recoverability.evidence_ids
+        feasibility_evidence_ids = (
+            pv_only_feasibility.evidence_ids if pv_only_feasibility is not None else ()
+        )
         evidence_ids = tuple(
             dict.fromkeys(
                 (
                     candidate.candidate_id,
                     path.path_id,
+                    *feasibility_evidence_ids,
                     *recoverability_evidence_ids,
                 )
             )
@@ -83,24 +104,28 @@ class ADR037CandidateOutcomeDeriver:
             execution_complexity=self._execution_complexity(path),
             expected_switching_count=None,
             complexity_version=self.complexity_version,
-            validity=CandidateValidity.VALID,
-            invalidity_reasons=(),
+            validity=validity,
+            invalidity_reasons=invalidity_reasons,
             evidence_ids=evidence_ids,
         )
 
     @staticmethod
+    def _is_grid_supported(path: EnergyPath) -> bool:
+        return any(
+            segment.charge_source_policy
+            is ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
+            for segment in path.segments
+        )
+
+    @classmethod
     def _recoverability_for(
+        cls,
         *,
         candidate: Candidate,
         path: EnergyPath,
         storage_recoverability: StorageTechnicalRecoverability | None,
     ) -> float | None:
-        grid_supported = any(
-            segment.charge_source_policy
-            is ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
-            for segment in path.segments
-        )
-        if not grid_supported:
+        if not cls._is_grid_supported(path):
             return None
         if candidate.family is not CandidateFamily.COST_FIRST:
             raise ValueError("Grid-supported ADR-037 paths must use COST_FIRST family.")

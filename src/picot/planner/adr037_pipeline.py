@@ -105,6 +105,7 @@ class ADR037PlannerPipeline:
         )
         candidate_outcomes = self.outcome_deriver.derive(
             candidate_set=candidate_set,
+            pv_only_feasibility=pv_only_feasibility,
             storage_recoverability=technical_recoverability,
         )
         evaluation = self.evaluation_engine.evaluate(

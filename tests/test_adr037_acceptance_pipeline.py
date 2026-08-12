@@ -21,7 +21,7 @@ from picot.domain.evidence_confidence_policy import (
     EvidenceConfidenceDecision,
 )
 from picot.domain.execution_primitive import ExecutionPrimitive
-from picot.domain.forecast import ForecastSet
+from picot.domain.forecast import ForecastKind, ForecastPoint, ForecastSeries, ForecastSet
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import OptimisationProfile, PlannerStrategy
 from picot.domain.opportunity import (
@@ -48,6 +48,31 @@ SCOPE = "battery-main"
 CAPABILITY_ID = "battery-charge"
 
 
+def _price_forecast() -> ForecastSeries:
+    return ForecastSeries(
+        forecast_id="price-forecast",
+        kind=ForecastKind.ENERGY_PRICE,
+        source="test-price",
+        created_at=BASE,
+        expires_at=BASE + timedelta(hours=6),
+        unit="EUR/kWh",
+        points=(
+            ForecastPoint(
+                starts_at=BASE,
+                ends_at=BASE + timedelta(hours=1),
+                value=0.20,
+                confidence=1.0,
+            ),
+            ForecastPoint(
+                starts_at=BASE + timedelta(hours=1),
+                ends_at=BASE + timedelta(hours=2),
+                value=0.10,
+                confidence=1.0,
+            ),
+        ),
+    )
+
+
 def _snapshot() -> PlanningInputSnapshot:
     return PlanningInputSnapshot(
         snapshot_id="snapshot-adr037-acceptance",
@@ -61,7 +86,7 @@ def _snapshot() -> PlanningInputSnapshot:
             objectives=(),
         ),
         household_state=HouseholdState(measured_at=BASE, phases=()),
-        forecasts=ForecastSet(series=()),
+        forecasts=ForecastSet(series=(_price_forecast(),)),
         runtime_state=RuntimePressureState.NORMAL,
         versions=PlanningInputVersions(
             capability_mapping=1,
@@ -269,6 +294,8 @@ def test_pv_shortfall_makes_grid_supported_path_the_only_valid_winner() -> None:
         if path.family.value == "cost_first"
     ]
     assert len(cost_paths) == 1
+    assert cost_paths[0].segments[0].starts_at == BASE + timedelta(hours=1)
+    assert cost_paths[0].segments[0].ends_at == BASE + timedelta(hours=2)
     assert (
         cost_paths[0].segments[0].charge_source_policy
         is ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
@@ -304,6 +331,13 @@ def test_degraded_confidence_raises_requirement_to_effective_maximum() -> None:
     assert result.requirement.reserve_energy_wh == pytest.approx(1600.0)
     assert result.requirement.protection_starts_at == BASE + timedelta(hours=2)
     assert result.requirement.protected_through == BASE + timedelta(hours=6)
+    cost_paths = [
+        path
+        for path in result.candidate_set.energy_paths
+        if path.family.value == "cost_first"
+    ]
+    assert len(cost_paths) == 1
+    assert len(cost_paths[0].segments) == 2
 
 
 def test_unrecoverable_shortfall_returns_explicit_no_valid_candidate() -> None:

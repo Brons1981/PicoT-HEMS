@@ -28,7 +28,9 @@ ZENDURE_AVAILABLE_ENERGY_ENTITY = "sensor.zendure_2400_ac_indicatie_beschikbare_
 ZENDURE_REQUIRED_ENERGY_ENTITY = "sensor.zendure_2400_ac_indicatie_benodigde_energie"
 ZENDURE_REMAINING_DISCHARGE_TIME_ENTITY = "sensor.zendure_2400_ac_resterende_ontlaad_tijd"
 ZENDURE_REMAINING_CHARGE_TIME_ENTITY = "sensor.zendure_2400_ac_resterende_oplaad_tijd"
-ZENDURE_CONFIGURED_DISCHARGE_POWER_ENTITY = "sensor.zendure_2400_ac_ingesteld_ontlaadvermogen"
+ZENDURE_CONFIGURED_DISCHARGE_POWER_ENTITY = (
+    "sensor.zendure_2400_ac_ingesteld_ontlaadvermogen"
+)
 ZENDURE_CONFIGURED_CHARGE_POWER_ENTITY = "sensor.zendure_2400_ac_ingesteld_oplaadvermogen"
 
 RequestJson = Callable[[str, str], dict[str, Any]]
@@ -118,16 +120,36 @@ def read_zendure_observation(
         "zendure_soc_limit_status": snapshot.soc_limit_status,
         "zendure_error_status": snapshot.error_status,
         "zendure_power_consistent": snapshot.power_consistent,
-        "zendure_allowed_min_soc_percent": _percentage_state(states, ZENDURE_ALLOWED_MIN_SOC_ENTITY),
-        "zendure_allowed_max_soc_percent": _percentage_state(states, ZENDURE_ALLOWED_MAX_SOC_ENTITY),
-        "zendure_reported_min_soc_percent": _percentage_state(states, ZENDURE_REPORTED_MIN_SOC_ENTITY),
-        "zendure_reported_max_soc_percent": _percentage_state(states, ZENDURE_REPORTED_MAX_SOC_ENTITY),
-        "zendure_available_energy": _numeric_state(states, ZENDURE_AVAILABLE_ENERGY_ENTITY),
-        "zendure_required_energy": _numeric_state(states, ZENDURE_REQUIRED_ENERGY_ENTITY),
-        "zendure_remaining_discharge_time": _raw_state(states, ZENDURE_REMAINING_DISCHARGE_TIME_ENTITY),
-        "zendure_remaining_charge_time": _raw_state(states, ZENDURE_REMAINING_CHARGE_TIME_ENTITY),
-        "zendure_configured_discharge_power_w": _numeric_state(states, ZENDURE_CONFIGURED_DISCHARGE_POWER_ENTITY),
-        "zendure_configured_charge_power_w": _numeric_state(states, ZENDURE_CONFIGURED_CHARGE_POWER_ENTITY),
+        "zendure_allowed_min_soc_percent": _percentage_state(
+            states, ZENDURE_ALLOWED_MIN_SOC_ENTITY
+        ),
+        "zendure_allowed_max_soc_percent": _percentage_state(
+            states, ZENDURE_ALLOWED_MAX_SOC_ENTITY
+        ),
+        "zendure_reported_min_soc_percent": _percentage_state(
+            states, ZENDURE_REPORTED_MIN_SOC_ENTITY
+        ),
+        "zendure_reported_max_soc_percent": _percentage_state(
+            states, ZENDURE_REPORTED_MAX_SOC_ENTITY
+        ),
+        "zendure_available_energy": _numeric_state(
+            states, ZENDURE_AVAILABLE_ENERGY_ENTITY
+        ),
+        "zendure_required_energy": _numeric_state(
+            states, ZENDURE_REQUIRED_ENERGY_ENTITY
+        ),
+        "zendure_remaining_discharge_time": _raw_state(
+            states, ZENDURE_REMAINING_DISCHARGE_TIME_ENTITY
+        ),
+        "zendure_remaining_charge_time": _raw_state(
+            states, ZENDURE_REMAINING_CHARGE_TIME_ENTITY
+        ),
+        "zendure_configured_discharge_power_w": _numeric_state(
+            states, ZENDURE_CONFIGURED_DISCHARGE_POWER_ENTITY
+        ),
+        "zendure_configured_charge_power_w": _numeric_state(
+            states, ZENDURE_CONFIGURED_CHARGE_POWER_ENTITY
+        ),
         "zendure_allowed_min_soc_entity": ZENDURE_ALLOWED_MIN_SOC_ENTITY,
         "zendure_allowed_max_soc_entity": ZENDURE_ALLOWED_MAX_SOC_ENTITY,
         "zendure_reported_min_soc_entity": ZENDURE_REPORTED_MIN_SOC_ENTITY,

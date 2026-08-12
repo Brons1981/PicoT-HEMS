@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from picot.addon import runtime, runtime_observation
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
+from picot.addon.live_adr037_readiness import adr037_readiness_log_event
 from picot.addon.live_snapshot_runtime import (
     build_live_planning_snapshot,
     snapshot_log_event,
@@ -35,6 +36,7 @@ def telemetry_evidence_events_with_snapshot(
         load_forecaster=_load_forecaster,
     )
     events.append(snapshot_log_event(snapshot))
+    events.append(adr037_readiness_log_event(snapshot))
     return events
 
 

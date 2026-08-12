@@ -78,7 +78,13 @@ def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
             "price_window_best_later_price_eur_per_kwh"
         ),
         "requirement_energy_wh": event.get("adr037_requirement_energy_wh"),
+        "requirement_required_by": event.get("adr037_requirement_required_by"),
         "remaining_charge_energy_wh": event.get("adr037_remaining_charge_energy_wh"),
+        "latest_full_power_charge_start": event.get(
+            "adr037_latest_full_power_charge_start"
+        ),
+        "recovery_start_due": event.get("adr037_recovery_start_due"),
+        "technically_recoverable": event.get("adr037_technically_recoverable"),
         "charge_needed_now": event.get("adr037_charge_needed_now"),
         "pv_only_sufficient": event.get("adr037_pv_only_sufficient"),
         "candidate_count": event.get("adr037_candidate_count"),

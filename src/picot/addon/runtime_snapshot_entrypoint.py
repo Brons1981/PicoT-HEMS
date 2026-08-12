@@ -8,6 +8,7 @@ from dataclasses import replace
 from typing import Any, cast
 
 from picot.addon import price_runtime_v2, runtime, runtime_observation
+from picot.addon.actual_pv_energy import prepend_actual_pv_evidence
 from picot.addon.adr037_dashboard import publish_adr037_dashboard_states
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
 from picot.addon.live_adr037_readiness import adr037_readiness_log_event
@@ -156,6 +157,15 @@ def telemetry_evidence_events_with_snapshot(
         sequence=_snapshot_sequence,
         load_forecaster=_load_forecaster,
     )
+    if snapshot.pv_energy_timeline is not None:
+        canonical_pv = prepend_actual_pv_evidence(
+            timeline=snapshot.pv_energy_timeline,
+            history=_load_forecaster.history,
+            event=snapshot_input,
+            captured_at=snapshot.captured_at,
+            sequence=_snapshot_sequence,
+        )
+        snapshot = replace(snapshot, pv_energy_timeline=canonical_pv)
     price_forecast = _live_price_forecast(captured_at=snapshot.captured_at)
     if price_forecast is not None:
         snapshot = replace(snapshot, forecasts=ForecastSet(series=(price_forecast,)))

@@ -1,6 +1,6 @@
 # ADR-040 — Authoritative Observation Source Ingestion Contract
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-12
 
 ## Context
@@ -11,7 +11,7 @@ Live validation during the 2026-08-10 test phase showed that realtime planning a
 
 Intermediate mirror entities can introduce unnecessary update latency, timestamp skew, temporary availability differences and duplicated calculations. They also blur ownership: a copied value may look PicoT-owned even though the authoritative observation belongs to an external source.
 
-The development log already records the operational invariant that PicoT planner/runtime uses real selected Home Assistant source entities as source data and that PicoT diagnostic/mirror entities are for display, Recorder history, migration and diagnosis only. This rule is not yet captured in an Accepted ADR.
+The development log already records the operational invariant that PicoT planner/runtime uses real selected Home Assistant source entities as source data and that PicoT diagnostic/mirror entities are for display, Recorder history, migration and diagnosis only. This rule is now captured in this Accepted ADR.
 
 ## Responsibility
 
@@ -23,7 +23,7 @@ It does not select the source. Discovery, semantic validation, capability-role s
 
 It does not define Candidate Generation, Evaluation, execution commands, dashboard entities or vendor-specific control logic.
 
-## Proposed decision
+## Decision
 
 PicoT reads the already selected and validated authoritative source directly at the Home Assistant adapter/input boundary and normalizes that value immediately into an immutable, vendor-independent planning-domain record.
 
@@ -107,6 +107,6 @@ This does not prohibit domain-owned derivations that create a genuinely differen
 - Source ownership remains explicit.
 - Duplicate normalization or calculation of the same logical physical quantity is prevented.
 
-## Proposed core principle
+## Core principle
 
 > PicoT ingests the already selected authoritative source once at the adapter boundary, normalizes it directly into immutable vendor-independent domain data, and never routes Core planning back through a `sensor.picot_*` mirror of that same source.

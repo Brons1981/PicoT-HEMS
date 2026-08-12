@@ -20,6 +20,7 @@ from picot.domain.capability_snapshot import (
     LogicalCapabilitySnapshot,
 )
 from picot.domain.charge_source_policy import ChargeSourcePolicy
+from picot.domain.effective_storage_limit import EffectiveStorageLimit
 from picot.domain.energy_path import EnergyPath, PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.opportunity import (
@@ -29,6 +30,7 @@ from picot.domain.opportunity import (
     OpportunitySet,
 )
 from picot.domain.planning_input_snapshot import PlanningInputSnapshot
+from picot.domain.projected_household_energy_balance import ProjectedHouseholdEnergyBalance
 from picot.domain.pv_only_storage_feasibility import PVOnlyStorageEnergyFeasibility
 from picot.domain.storage_energy_requirement import StorageEnergyRequirement
 from picot.domain.storage_technical_recoverability import StorageTechnicalRecoverability
@@ -46,12 +48,16 @@ class CandidateEngine:
         storage_requirement: StorageEnergyRequirement | None = None,
         pv_only_feasibility: PVOnlyStorageEnergyFeasibility | None = None,
         storage_recoverability: StorageTechnicalRecoverability | None = None,
+        projected_balance: ProjectedHouseholdEnergyBalance | None = None,
+        effective_storage_limit: EffectiveStorageLimit | None = None,
     ) -> CandidateSet:
         self._validate_inputs(snapshot, opportunities, capabilities)
         self._validate_storage_evidence(
             storage_requirement,
             pv_only_feasibility,
             storage_recoverability,
+            projected_balance,
+            effective_storage_limit,
         )
 
         paths: list[EnergyPath] = [self._baseline_path(snapshot, capabilities)]
@@ -87,14 +93,17 @@ class CandidateEngine:
                     storage_requirement is None
                     or pv_only_feasibility is None
                     or storage_recoverability is None
+                    or projected_balance is None
+                    or effective_storage_limit is None
                 ):
                     exclusions.append(
                         CandidateExclusion(
                             family=CandidateFamily.COST_FIRST,
                             kind=CandidateExclusionKind.OBJECTIVELY_IMPOSSIBLE,
                             reason=(
-                                "Cost-first charging requires a storage requirement, "
-                                "PV-only feasibility and technical recoverability evidence."
+                                "Timed cost-first charging requires storage requirement, "
+                                "PV-only feasibility, technical recoverability, projected "
+                                "household balance and effective storage limit evidence."
                             ),
                             source_ids=(opportunity.opportunity_id,),
                         )
@@ -108,6 +117,8 @@ class CandidateEngine:
                     requirement=storage_requirement,
                     pv_only_feasibility=pv_only_feasibility,
                     recoverability=storage_recoverability,
+                    projected_balance=projected_balance,
+                    effective_storage_limit=effective_storage_limit,
                 )
             elif opportunity.kind is OpportunityKind.HIGH_EXPORT_VALUE_WINDOW:
                 generated = []
@@ -160,19 +171,30 @@ class CandidateEngine:
         requirement: StorageEnergyRequirement | None,
         pv_only_feasibility: PVOnlyStorageEnergyFeasibility | None,
         recoverability: StorageTechnicalRecoverability | None,
+        projected_balance: ProjectedHouseholdEnergyBalance | None,
+        effective_storage_limit: EffectiveStorageLimit | None,
     ) -> None:
-        supplied = (
+        core_supplied = (
             requirement is not None,
             pv_only_feasibility is not None,
             recoverability is not None,
         )
-        if any(supplied) and not all(supplied):
+        if any(core_supplied) and not all(core_supplied):
             raise ValueError(
                 "Storage Candidate generation requires requirement, PV-only feasibility "
                 "and technical recoverability together."
             )
         if requirement is None or pv_only_feasibility is None or recoverability is None:
+            if projected_balance is not None or effective_storage_limit is not None:
+                raise ValueError(
+                    "Projected balance and effective storage limit require the complete "
+                    "storage evidence set."
+                )
             return
+        if (projected_balance is None) != (effective_storage_limit is None):
+            raise ValueError(
+                "Projected balance and effective storage limit must be supplied together."
+            )
         if pv_only_feasibility.requirement_id != requirement.requirement_id:
             raise ValueError("PV-only feasibility must match the storage requirement.")
         if recoverability.requirement_id != requirement.requirement_id:
@@ -187,6 +209,22 @@ class CandidateEngine:
             raise ValueError(
                 "Technical recoverability protected interval must match the requirement."
             )
+        if projected_balance is not None and effective_storage_limit is not None:
+            if (
+                projected_balance.execution_scope_id
+                != effective_storage_limit.execution_scope_id
+            ):
+                raise ValueError(
+                    "Projected balance and effective storage limit must share a scope."
+                )
+            if projected_balance.balance_id not in requirement.evidence_ids:
+                raise ValueError(
+                    "Storage requirement must reference the supplied projected balance."
+                )
+            if effective_storage_limit.limit_id not in requirement.evidence_ids:
+                raise ValueError(
+                    "Storage requirement must reference the supplied effective storage limit."
+                )
 
     @staticmethod
     def _baseline_path(
@@ -315,6 +353,8 @@ class CandidateEngine:
         requirement: StorageEnergyRequirement,
         pv_only_feasibility: PVOnlyStorageEnergyFeasibility,
         recoverability: StorageTechnicalRecoverability,
+        projected_balance: ProjectedHouseholdEnergyBalance,
+        effective_storage_limit: EffectiveStorageLimit,
     ) -> tuple[list[EnergyPath], list[CandidateExclusion]]:
         if pv_only_feasibility.energy_sufficient:
             return [], [
@@ -432,9 +472,13 @@ class CandidateEngine:
                 (
                     opportunity.opportunity_id,
                     requirement.requirement_id,
+                    projected_balance.balance_id,
+                    effective_storage_limit.limit_id,
                     *requirement.evidence_ids,
                     *pv_only_feasibility.evidence_ids,
                     *recoverability.evidence_ids,
+                    *projected_balance.evidence_ids,
+                    *effective_storage_limit.evidence_ids,
                 )
             )
         )
@@ -460,6 +504,7 @@ class CandidateEngine:
             requirement.confidence,
             pv_only_feasibility.confidence,
             recoverability.confidence,
+            projected_balance.confidence,
         )
         path = EnergyPath(
             path_id=path_id,
@@ -478,6 +523,8 @@ class CandidateEngine:
                 "PV remains the preferred charging source.",
                 "Grid supplementation is permitted only by this Energy Path.",
                 "The storage-energy target must be available when protection starts.",
+                f"Canonical projected balance: {projected_balance.balance_id}.",
+                f"Effective storage ceiling: {effective_storage_limit.limit_id}.",
             ),
             confidence=confidence,
         )

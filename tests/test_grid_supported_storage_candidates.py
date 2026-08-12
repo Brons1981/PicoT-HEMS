@@ -13,6 +13,7 @@ from picot.domain.capability_snapshot import (
     LogicalCapabilitySnapshot,
 )
 from picot.domain.charge_source_policy import ChargeSourcePolicy
+from picot.domain.effective_storage_limit import EffectiveStorageLimit
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.forecast import ForecastSet
 from picot.domain.household_state import HouseholdState
@@ -28,6 +29,10 @@ from picot.domain.planning_input_snapshot import (
     PlanningInputSnapshot,
     PlanningInputVersions,
     RuntimePressureState,
+)
+from picot.domain.projected_household_energy_balance import (
+    ProjectedHouseholdEnergyBalance,
+    ProjectedHouseholdEnergyBalancePoint,
 )
 from picot.domain.pv_only_storage_feasibility import (
     PVOnlyEnergyFeasibilityOutcome,
@@ -107,6 +112,38 @@ def _capabilities(*, maximum_power_w: float = 1500.0) -> CapabilitySnapshotSet:
     )
 
 
+def _balance() -> ProjectedHouseholdEnergyBalance:
+    return ProjectedHouseholdEnergyBalance(
+        balance_id="balance-1",
+        created_at=BASE,
+        horizon_end=BASE + timedelta(hours=24),
+        execution_scope_id="battery-main",
+        starting_storage_energy_wh=6000.0,
+        points=(
+            ProjectedHouseholdEnergyBalancePoint(
+                at=BASE + timedelta(hours=24),
+                projected_storage_energy_wh=5000.0,
+                cumulative_pv_energy_wh=1000.0,
+                cumulative_household_load_wh=2000.0,
+            ),
+        ),
+        confidence=0.8,
+        evidence_ids=("balance-source",),
+    )
+
+
+def _limit() -> EffectiveStorageLimit:
+    return EffectiveStorageLimit(
+        limit_id="limit-1",
+        execution_scope_id="battery-main",
+        max_soc=0.95,
+        usable_capacity_wh=8000.0,
+        confidence=1.0,
+        evidence_ids=("config:max-soc",),
+        method_version="effective-storage-limit-v1",
+    )
+
+
 def _requirement() -> StorageEnergyRequirement:
     return StorageEnergyRequirement(
         requirement_id="storage:req:evening",
@@ -116,7 +153,7 @@ def _requirement() -> StorageEnergyRequirement:
         required_soc_percent=None,
         reason=StorageRequirementReason.HOUSEHOLD_DEMAND,
         confidence=0.85,
-        evidence_ids=("balance-1",),
+        evidence_ids=("balance-1", "limit-1"),
     )
 
 
@@ -155,15 +192,26 @@ def _recoverability(*, extra_energy_wh: float = 1000.0, recoverable: bool = True
     )
 
 
-def test_grid_supported_candidate_uses_explicit_source_policy() -> None:
-    result = CandidateEngine().generate(
+def _generate(
+    *,
+    sufficient: bool = False,
+    extra_energy_wh: float = 1000.0,
+    maximum_power_w: float = 1500.0,
+) -> object:
+    return CandidateEngine().generate(
         _snapshot(),
         _opportunities(),
-        _capabilities(),
+        _capabilities(maximum_power_w=maximum_power_w),
         storage_requirement=_requirement(),
-        pv_only_feasibility=_feasibility(),
-        storage_recoverability=_recoverability(),
+        pv_only_feasibility=_feasibility(sufficient=sufficient),
+        storage_recoverability=_recoverability(extra_energy_wh=extra_energy_wh),
+        projected_balance=_balance(),
+        effective_storage_limit=_limit(),
     )
+
+
+def test_grid_supported_candidate_uses_explicit_source_policy() -> None:
+    result = _generate()
 
     cost_paths = [path for path in result.energy_paths if path.family.value == "cost_first"]
     assert len(cost_paths) == 1
@@ -171,31 +219,19 @@ def test_grid_supported_candidate_uses_explicit_source_policy() -> None:
     assert segment.requested_power_w == pytest.approx(1000.0)
     assert segment.charge_source_policy is ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
     assert "storage:req:evening" in segment.evidence_ids
+    assert "balance-1" in segment.evidence_ids
+    assert "limit-1" in segment.evidence_ids
 
 
 def test_grid_candidate_is_not_generated_when_pv_only_is_sufficient() -> None:
-    result = CandidateEngine().generate(
-        _snapshot(),
-        _opportunities(),
-        _capabilities(),
-        storage_requirement=_requirement(),
-        pv_only_feasibility=_feasibility(sufficient=True),
-        storage_recoverability=_recoverability(),
-    )
+    result = _generate(sufficient=True)
 
     assert all(path.family.value != "cost_first" for path in result.energy_paths)
     assert any("grid supplementation is unnecessary" in item.reason for item in result.exclusions)
 
 
 def test_grid_candidate_is_rejected_when_price_window_cannot_deliver_target() -> None:
-    result = CandidateEngine().generate(
-        _snapshot(),
-        _opportunities(),
-        _capabilities(maximum_power_w=1500.0),
-        storage_requirement=_requirement(),
-        pv_only_feasibility=_feasibility(),
-        storage_recoverability=_recoverability(extra_energy_wh=2000.0),
-    )
+    result = _generate(extra_energy_wh=2000.0, maximum_power_w=1500.0)
 
     assert all(path.family.value != "cost_first" for path in result.energy_paths)
     assert any("cannot deliver" in item.reason for item in result.exclusions)
@@ -209,3 +245,17 @@ def test_storage_candidate_evidence_must_be_supplied_atomically() -> None:
             _capabilities(),
             storage_requirement=_requirement(),
         )
+
+
+def test_price_candidate_fails_closed_without_balance_and_limit() -> None:
+    result = CandidateEngine().generate(
+        _snapshot(),
+        _opportunities(),
+        _capabilities(),
+        storage_requirement=_requirement(),
+        pv_only_feasibility=_feasibility(),
+        storage_recoverability=_recoverability(),
+    )
+
+    assert all(path.family.value != "cost_first" for path in result.energy_paths)
+    assert any("projected household balance" in item.reason for item in result.exclusions)

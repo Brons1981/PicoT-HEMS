@@ -163,6 +163,7 @@ class LiveFlowObserver:
             ) if regime else "unknown",
             "flow_observer_validation_band": band,
             "flow_observer_tracking_deviation_w": deviation_w,
+            "flow_observer_discharge_while_exporting": contradiction,
             "flow_observer_raw_mismatch": contradiction or band in {"grey", "red"},
             "flow_observer_persistent_mismatch": actionable,
             "flow_observer_grey_elapsed_s": grey_elapsed,

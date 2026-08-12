@@ -1,6 +1,6 @@
 # ADR-037 — Household Energy Requirement, Storage Reserve and Grid Use Contract
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-12
 
 ## Context
@@ -9,7 +9,7 @@ PicoT is a household energy management system. Battery charging is an instrument
 
 The Price Driven path can identify economically relevant price opportunities, but a cheap price window alone is not sufficient evidence that the battery should charge. Before cost-first storage Candidates can be constructed, PicoT needs an explicit and deterministic contract for expected household demand, projected household energy balance, required storage energy and reserve, historical-load confidence, grid-supported charging permission, and battery target SoC.
 
-ADR-031 deliberately prevents cost-first charging Candidates while these contracts are absent. This ADR proposes those missing contracts without changing ADR-031 itself.
+ADR-031 deliberately prevents cost-first charging Candidates while these contracts are absent. This ADR provides those missing contracts without changing ADR-031 itself.
 
 ## Responsibility
 
@@ -234,7 +234,7 @@ This ADR does not define:
 - ADR-026 / ADR-032 remain authoritative for winner selection and evaluation.
 - ADR-031 remains unchanged and authoritative for the existing cost-first Candidate exclusion until implementation satisfies the required contracts.
 - ADR-034 remains authoritative for material-change replanning.
-- ADR-036 remains authoritative for the canonical Price Driven Opportunity path while it is developed toward acceptance.
+- ADR-036 remains authoritative for the canonical Price Driven Opportunity path.
 
 ## Consequences
 

@@ -150,3 +150,13 @@ Detailed record: [`ADR-034-runtime-monitor-material-change-replanning-contract.m
 One validated Execution Primitive Request is translated through one explicit, versioned Home Assistant mapping. Dry-run and live use the same immutable service call.
 
 Detailed record: [`ADR-035-home-assistant-adapter-contract.md`](ADR-035-home-assistant-adapter-contract.md)
+
+### ADR-036 — Price Opportunity Detection Contract
+Price Opportunity Detection describes all meaningful low-price and high-price windows inside the rolling planning horizon with explicit evidence and no hidden ranking. It never selects devices, power, primitives or winners.
+
+Detailed record: [`ADR-036-price-opportunity-detection-contract.md`](ADR-036-price-opportunity-detection-contract.md)
+
+### ADR-037 — Household Energy Requirement, Storage Reserve and Grid Use Contract
+PicoT determines future household/storage energy requirements, reserve needs and explicit grid-source permission while preserving Planner Strategy ownership of the final trade-off.
+
+Detailed record: [`ADR-037-household-energy-requirement-storage-reserve-grid-use.md`](ADR-037-household-energy-requirement-storage-reserve-grid-use.md)

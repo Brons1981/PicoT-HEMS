@@ -41,6 +41,7 @@ def _anchor(
     history.append(
         {
             "event": "picot_pv_forecast_quarter_anchor",
+            "observed_at": anchored_at.isoformat(),
             "anchored_at": anchored_at.isoformat(),
             "interval_start": starts_at.isoformat(),
             "interval_end": (starts_at + timedelta(minutes=15)).isoformat(),
@@ -87,9 +88,12 @@ def test_anchor_freezes_next_full_forecast_quarter() -> None:
     assert event is not None
     assert event["interval_start"] == start.isoformat()
     assert event["expected_energy_wh"] == 250.0
+    assert event["observed_at"] == captured.isoformat()
 
 
-def test_material_completed_quarter_routes_through_runtime_monitor(tmp_path: Path) -> None:
+def test_material_completed_quarter_routes_through_runtime_monitor(
+    tmp_path: Path,
+) -> None:
     history = HistoryStore(tmp_path / "history.jsonl")
     start = datetime(2026, 8, 13, 10, 0, tzinfo=UTC)
     end = start + timedelta(minutes=15)

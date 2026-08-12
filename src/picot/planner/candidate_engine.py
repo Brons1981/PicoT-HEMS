@@ -34,6 +34,11 @@ from picot.domain.projected_household_energy_balance import ProjectedHouseholdEn
 from picot.domain.pv_only_storage_feasibility import PVOnlyStorageEnergyFeasibility
 from picot.domain.storage_energy_requirement import StorageEnergyRequirement
 from picot.domain.storage_technical_recoverability import StorageTechnicalRecoverability
+from picot.planner.timed_storage_acquisition import (
+    SelectedAcquisitionInterval,
+    TimedStorageAcquisitionAllocation,
+    TimedStorageAcquisitionAllocator,
+)
 
 
 class CandidateEngine:
@@ -421,39 +426,32 @@ class CandidateEngine:
                 )
             ]
 
-        starts_at = max(snapshot.captured_at, opportunity.starts_at)
-        ends_at = min(
-            snapshot.horizon_end,
-            opportunity.ends_at,
-            requirement.protection_starts_at,
-        )
-        if ends_at <= starts_at:
+        try:
+            allocation = TimedStorageAcquisitionAllocator().allocate(
+                snapshot=snapshot,
+                opportunity=opportunity,
+                balance=projected_balance,
+                requirement=requirement,
+                storage_limit=effective_storage_limit,
+                capability=capability,
+            )
+        except ValueError as exc:
             return [], [
                 CandidateExclusion(
                     family=CandidateFamily.COST_FIRST,
-                    kind=CandidateExclusionKind.HARD_BOUNDARY,
-                    reason=(
-                        "Price Opportunity does not provide charge time before "
-                        "the protected interval starts."
-                    ),
+                    kind=CandidateExclusionKind.OBJECTIVELY_IMPOSSIBLE,
+                    reason=f"Timed acquisition unavailable: {exc}",
                     source_ids=(opportunity.opportunity_id, requirement.requirement_id),
                 )
             ]
-
-        requested_power = self._grid_requested_power(
-            required_energy_wh=recoverability.extra_energy_required_wh,
-            starts_at=starts_at,
-            ends_at=ends_at,
-            capability=capability,
-        )
-        if requested_power is None:
+        if allocation is None:
             return [], [
                 CandidateExclusion(
                     family=CandidateFamily.COST_FIRST,
                     kind=CandidateExclusionKind.HARD_BOUNDARY,
                     reason=(
-                        "Price Opportunity cannot deliver the required storage energy "
-                        "within capability power limits before protection starts."
+                        "Price Opportunity cannot provide a feasible exact-interval "
+                        "acquisition before protection starts."
                     ),
                     source_ids=(
                         opportunity.opportunity_id,
@@ -467,13 +465,15 @@ class CandidateEngine:
             f"{snapshot.snapshot_id}:cost-first:{opportunity.opportunity_id}:"
             f"{capability.capability_id}:{requirement.requirement_id}"
         )
-        evidence_ids = tuple(
+        common_evidence = tuple(
             dict.fromkeys(
                 (
                     opportunity.opportunity_id,
                     requirement.requirement_id,
                     projected_balance.balance_id,
                     effective_storage_limit.limit_id,
+                    allocation.forecast_id,
+                    allocation.method_version,
                     *requirement.evidence_ids,
                     *pv_only_feasibility.evidence_ids,
                     *recoverability.evidence_ids,
@@ -482,21 +482,11 @@ class CandidateEngine:
                 )
             )
         )
-        segment = PathSegment(
-            segment_id=f"{path_id}:segment:1",
-            order=1,
-            execution_scope_id=capability.execution_scope_id,
-            starts_at=starts_at,
-            ends_at=ends_at,
-            primitive=ExecutionPrimitive.CHARGE_AT_POWER,
-            capability_id=capability.capability_id,
-            purpose=(
-                "Reach future storage requirement with PV preferred and grid support "
-                "allowed."
-            ),
-            evidence_ids=evidence_ids,
-            requested_power_w=requested_power,
-            charge_source_policy=ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED,
+        segments = self._segments_from_allocation(
+            path_id=path_id,
+            capability=capability,
+            allocation=allocation,
+            common_evidence=common_evidence,
         )
         confidence = min(
             opportunity.confidence,
@@ -512,7 +502,7 @@ class CandidateEngine:
             family=CandidateFamily.COST_FIRST,
             horizon_start=snapshot.captured_at,
             horizon_end=snapshot.horizon_end,
-            segments=(segment,),
+            segments=segments,
             projected_states=(),
             opportunity_ids=(opportunity.opportunity_id,),
             constraint_ids=(),
@@ -520,15 +510,61 @@ class CandidateEngine:
             strategy_version=snapshot.strategy.strategy_version,
             mapping_version=mapping_version,
             assumptions=(
-                "PV remains the preferred charging source.",
+                "PV remains part of the canonical no-grid projected balance.",
                 "Grid supplementation is permitted only by this Energy Path.",
-                "The storage-energy target must be available when protection starts.",
+                "Selected intervals resolve to exact price ForecastPoint evidence.",
                 f"Canonical projected balance: {projected_balance.balance_id}.",
                 f"Effective storage ceiling: {effective_storage_limit.limit_id}.",
+                f"Scheduled grid energy: {allocation.scheduled_grid_energy_wh:.3f} Wh.",
+                f"Projected acquisition cost: {allocation.projected_cost_eur:.6f} EUR.",
             ),
             confidence=confidence,
         )
         return [path], []
+
+    @staticmethod
+    def _segments_from_allocation(
+        *,
+        path_id: str,
+        capability: LogicalCapabilitySnapshot,
+        allocation: TimedStorageAcquisitionAllocation,
+        common_evidence: tuple[str, ...],
+    ) -> tuple[PathSegment, ...]:
+        groups: list[list[SelectedAcquisitionInterval]] = []
+        for interval in allocation.intervals:
+            if (
+                groups
+                and groups[-1][-1].ends_at == interval.starts_at
+                and abs(groups[-1][-1].requested_power_w - interval.requested_power_w)
+                < 1e-9
+            ):
+                groups[-1].append(interval)
+            else:
+                groups.append([interval])
+
+        segments: list[PathSegment] = []
+        for order, group in enumerate(groups, start=1):
+            interval_evidence = tuple(item.evidence_id for item in group)
+            evidence_ids = tuple(dict.fromkeys((*common_evidence, *interval_evidence)))
+            segments.append(
+                PathSegment(
+                    segment_id=f"{path_id}:segment:{order}",
+                    order=order,
+                    execution_scope_id=capability.execution_scope_id,
+                    starts_at=group[0].starts_at,
+                    ends_at=group[-1].ends_at,
+                    primitive=ExecutionPrimitive.CHARGE_AT_POWER,
+                    capability_id=capability.capability_id,
+                    purpose=(
+                        "Acquire only the economically selected storage energy before "
+                        "the protected interval."
+                    ),
+                    evidence_ids=evidence_ids,
+                    requested_power_w=group[0].requested_power_w,
+                    charge_source_policy=ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED,
+                )
+            )
+        return tuple(segments)
 
     @staticmethod
     def _unsupported_pv_reason(

@@ -1,8 +1,8 @@
-"""Deterministic Candidate Engine implementing ADR-024, ADR-030 and ADR-031."""
+"""Deterministic Candidate Engine implementing ADR-024, ADR-030, ADR-031 and ADR-037."""
 
 from __future__ import annotations
 
-from math import floor
+from math import ceil, floor
 
 from picot.domain.candidate import (
     Candidate,
@@ -29,6 +29,9 @@ from picot.domain.opportunity import (
     OpportunitySet,
 )
 from picot.domain.planning_input_snapshot import PlanningInputSnapshot
+from picot.domain.pv_only_storage_feasibility import PVOnlyStorageEnergyFeasibility
+from picot.domain.storage_energy_requirement import StorageEnergyRequirement
+from picot.domain.storage_technical_recoverability import StorageTechnicalRecoverability
 
 
 class CandidateEngine:
@@ -39,8 +42,17 @@ class CandidateEngine:
         snapshot: PlanningInputSnapshot,
         opportunities: OpportunitySet,
         capabilities: CapabilitySnapshotSet,
+        *,
+        storage_requirement: StorageEnergyRequirement | None = None,
+        pv_only_feasibility: PVOnlyStorageEnergyFeasibility | None = None,
+        storage_recoverability: StorageTechnicalRecoverability | None = None,
     ) -> CandidateSet:
         self._validate_inputs(snapshot, opportunities, capabilities)
+        self._validate_storage_evidence(
+            storage_requirement,
+            pv_only_feasibility,
+            storage_recoverability,
+        )
 
         paths: list[EnergyPath] = [self._baseline_path(snapshot, capabilities)]
         candidates: list[Candidate] = [self._candidate_for(paths[0])]
@@ -75,17 +87,36 @@ class CandidateEngine:
                 OpportunityKind.NEGATIVE_PRICE_WINDOW,
                 OpportunityKind.LOWEST_PRICE_WINDOW,
             }:
-                exclusions.append(
-                    CandidateExclusion(
-                        family=CandidateFamily.COST_FIRST,
-                        kind=CandidateExclusionKind.OBJECTIVELY_IMPOSSIBLE,
-                        reason=(
-                            "Cost-first charging requires an accepted energy-target "
-                            "or power-allocation contract."
-                        ),
-                        source_ids=(opportunity.opportunity_id,),
+                if (
+                    storage_requirement is None
+                    or pv_only_feasibility is None
+                    or storage_recoverability is None
+                ):
+                    exclusions.append(
+                        CandidateExclusion(
+                            family=CandidateFamily.COST_FIRST,
+                            kind=CandidateExclusionKind.OBJECTIVELY_IMPOSSIBLE,
+                            reason=(
+                                "Cost-first charging requires a storage requirement, "
+                                "PV-only feasibility and technical recoverability evidence."
+                            ),
+                            source_ids=(opportunity.opportunity_id,),
+                        )
                     )
+                    continue
+
+                generated, rejected = self._build_grid_supported_storage_path(
+                    snapshot=snapshot,
+                    opportunity=opportunity,
+                    capabilities=storage_capabilities,
+                    mapping_version=capabilities.mapping_version,
+                    requirement=storage_requirement,
+                    pv_only_feasibility=pv_only_feasibility,
+                    recoverability=storage_recoverability,
                 )
+                paths.extend(generated)
+                candidates.extend(self._candidate_for(path) for path in generated)
+                exclusions.extend(rejected)
             elif opportunity.kind is OpportunityKind.HIGH_EXPORT_VALUE_WINDOW:
                 exclusions.append(
                     CandidateExclusion(
@@ -121,6 +152,31 @@ class CandidateEngine:
             raise ValueError("Capability mapping versions must match.")
         if capabilities.captured_at > snapshot.captured_at:
             raise ValueError("Capability Snapshot Set cannot be captured after planning input.")
+
+    @staticmethod
+    def _validate_storage_evidence(
+        requirement: StorageEnergyRequirement | None,
+        pv_only_feasibility: PVOnlyStorageEnergyFeasibility | None,
+        recoverability: StorageTechnicalRecoverability | None,
+    ) -> None:
+        supplied = (
+            requirement is not None,
+            pv_only_feasibility is not None,
+            recoverability is not None,
+        )
+        if any(supplied) and not all(supplied):
+            raise ValueError(
+                "Storage Candidate generation requires requirement, PV-only feasibility "
+                "and technical recoverability together."
+            )
+        if requirement is None or pv_only_feasibility is None or recoverability is None:
+            return
+        if pv_only_feasibility.requirement_id != requirement.requirement_id:
+            raise ValueError("PV-only feasibility must match the storage requirement.")
+        if recoverability.requirement_id != requirement.requirement_id:
+            raise ValueError("Technical recoverability must match the storage requirement.")
+        if recoverability.required_by != requirement.required_by:
+            raise ValueError("Technical recoverability deadline must match the requirement.")
 
     @staticmethod
     def _baseline_path(
@@ -246,6 +302,171 @@ class CandidateEngine:
 
         return paths, exclusions
 
+    def _build_grid_supported_storage_path(
+        self,
+        *,
+        snapshot: PlanningInputSnapshot,
+        opportunity: Opportunity,
+        capabilities: tuple[LogicalCapabilitySnapshot, ...],
+        mapping_version: int,
+        requirement: StorageEnergyRequirement,
+        pv_only_feasibility: PVOnlyStorageEnergyFeasibility,
+        recoverability: StorageTechnicalRecoverability,
+    ) -> tuple[list[EnergyPath], list[CandidateExclusion]]:
+        if pv_only_feasibility.energy_sufficient:
+            return [], [
+                CandidateExclusion(
+                    family=CandidateFamily.COST_FIRST,
+                    kind=CandidateExclusionKind.DOMINATED,
+                    reason=(
+                        "PV-only energy is sufficient for the storage requirement; "
+                        "grid supplementation is unnecessary."
+                    ),
+                    source_ids=(opportunity.opportunity_id, requirement.requirement_id),
+                )
+            ]
+        if not recoverability.technically_recoverable:
+            return [], [
+                CandidateExclusion(
+                    family=CandidateFamily.COST_FIRST,
+                    kind=CandidateExclusionKind.HARD_BOUNDARY,
+                    reason=(
+                        "Storage requirement is not technically recoverable before its deadline."
+                    ),
+                    source_ids=(opportunity.opportunity_id, requirement.requirement_id),
+                )
+            ]
+        if recoverability.extra_energy_required_wh <= 0.0:
+            return [], [
+                CandidateExclusion(
+                    family=CandidateFamily.COST_FIRST,
+                    kind=CandidateExclusionKind.DOMINATED,
+                    reason="No additional stored energy is required.",
+                    source_ids=(opportunity.opportunity_id, requirement.requirement_id),
+                )
+            ]
+
+        capability = next(
+            (
+                item
+                for item in capabilities
+                if item.capability_id == recoverability.capability_id
+            ),
+            None,
+        )
+        if capability is None:
+            return [], [
+                CandidateExclusion(
+                    family=CandidateFamily.COST_FIRST,
+                    kind=CandidateExclusionKind.UNSUPPORTED_CAPABILITY,
+                    reason="Technical recoverability references no current storage capability.",
+                    source_ids=(opportunity.opportunity_id, recoverability.capability_id),
+                )
+            ]
+
+        reason = self._unsupported_pv_reason(capability)
+        if reason is not None:
+            return [], [
+                CandidateExclusion(
+                    family=CandidateFamily.COST_FIRST,
+                    kind=CandidateExclusionKind.UNSUPPORTED_CAPABILITY,
+                    reason=reason,
+                    source_ids=(opportunity.opportunity_id, capability.capability_id),
+                )
+            ]
+
+        starts_at = max(snapshot.captured_at, opportunity.starts_at)
+        ends_at = min(snapshot.horizon_end, opportunity.ends_at, requirement.required_by)
+        if ends_at <= starts_at:
+            return [], [
+                CandidateExclusion(
+                    family=CandidateFamily.COST_FIRST,
+                    kind=CandidateExclusionKind.HARD_BOUNDARY,
+                    reason="Price Opportunity does not provide charge time before the deadline.",
+                    source_ids=(opportunity.opportunity_id, requirement.requirement_id),
+                )
+            ]
+
+        requested_power = self._grid_requested_power(
+            required_energy_wh=recoverability.extra_energy_required_wh,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            capability=capability,
+        )
+        if requested_power is None:
+            return [], [
+                CandidateExclusion(
+                    family=CandidateFamily.COST_FIRST,
+                    kind=CandidateExclusionKind.HARD_BOUNDARY,
+                    reason=(
+                        "Price Opportunity cannot deliver the required storage energy "
+                        "within capability power limits before the deadline."
+                    ),
+                    source_ids=(
+                        opportunity.opportunity_id,
+                        requirement.requirement_id,
+                        capability.capability_id,
+                    ),
+                )
+            ]
+
+        path_id = (
+            f"{snapshot.snapshot_id}:cost-first:{opportunity.opportunity_id}:"
+            f"{capability.capability_id}:{requirement.requirement_id}"
+        )
+        evidence_ids = tuple(
+            dict.fromkeys(
+                (
+                    opportunity.opportunity_id,
+                    requirement.requirement_id,
+                    *requirement.evidence_ids,
+                    *pv_only_feasibility.evidence_ids,
+                    *recoverability.evidence_ids,
+                )
+            )
+        )
+        segment = PathSegment(
+            segment_id=f"{path_id}:segment:1",
+            order=1,
+            execution_scope_id=capability.execution_scope_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            primitive=ExecutionPrimitive.CHARGE_AT_POWER,
+            capability_id=capability.capability_id,
+            purpose="Reach future storage requirement with PV preferred and grid support allowed.",
+            evidence_ids=evidence_ids,
+            requested_power_w=requested_power,
+            charge_source_policy=ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED,
+        )
+        confidence = min(
+            opportunity.confidence,
+            capability.confidence,
+            requirement.confidence,
+            pv_only_feasibility.confidence,
+            recoverability.confidence,
+        )
+        path = EnergyPath(
+            path_id=path_id,
+            snapshot_id=snapshot.snapshot_id,
+            family=CandidateFamily.COST_FIRST,
+            horizon_start=snapshot.captured_at,
+            horizon_end=snapshot.horizon_end,
+            segments=(segment,),
+            projected_states=(),
+            opportunity_ids=(opportunity.opportunity_id,),
+            constraint_ids=(),
+            capability_ids=(capability.capability_id,),
+            strategy_version=snapshot.strategy.strategy_version,
+            mapping_version=mapping_version,
+            assumptions=(
+                "PV remains the preferred charging source.",
+                "Grid supplementation is permitted only by this Energy Path.",
+                "The storage-energy target is required by the recorded deadline.",
+            ),
+            confidence=confidence,
+        )
+        return [path], []
+
     @staticmethod
     def _unsupported_pv_reason(
         capability: LogicalCapabilitySnapshot,
@@ -276,6 +497,31 @@ class CandidateEngine:
         if requested <= 0:
             return None
         if capability.minimum_power_w is not None and requested < capability.minimum_power_w:
+            return None
+        return requested
+
+    @staticmethod
+    def _grid_requested_power(
+        *,
+        required_energy_wh: float,
+        starts_at: object,
+        ends_at: object,
+        capability: LogicalCapabilitySnapshot,
+    ) -> float | None:
+        duration_seconds = (ends_at - starts_at).total_seconds()  # type: ignore[operator]
+        duration_hours = duration_seconds / 3600.0
+        if duration_hours <= 0.0:
+            return None
+        maximum = capability.maximum_power_w
+        if maximum is None:
+            return None
+
+        requested = required_energy_wh / duration_hours
+        if capability.power_step_w is not None:
+            requested = ceil(requested / capability.power_step_w) * capability.power_step_w
+        if capability.minimum_power_w is not None:
+            requested = max(requested, capability.minimum_power_w)
+        if requested <= 0.0 or requested > maximum:
             return None
         return requested
 

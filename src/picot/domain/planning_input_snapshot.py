@@ -120,4 +120,6 @@ class PlanningInputSnapshot:
             if not pv_timeline.horizon_start <= self.captured_at < pv_timeline.horizon_end:
                 raise ValueError("PV energy timeline must contain snapshot capture time.")
             if pv_timeline.horizon_end != self.horizon_end:
-                raise ValueError("PV energy timeline must cover the planning horizon end.")
+                raise ValueError(
+                    "PV energy timeline must cover the complete planning horizon end."
+                )

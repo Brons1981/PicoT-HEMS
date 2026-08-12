@@ -1,6 +1,6 @@
 # ADR-041 — Storage Energy Temporal Value and Replacement Cost Contract
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-12
 
 ## Context

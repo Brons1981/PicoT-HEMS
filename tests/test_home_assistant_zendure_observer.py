@@ -25,6 +25,14 @@ def _states() -> dict[str, dict[str, Any]]:
         "sensor.zendure_2400_ac_vermogen_van_huis": {"state": "0"},
         "sensor.zendure_2400_ac_soc_limiet_status": {"state": "Binnen limiet"},
         "sensor.zendure_2400_ac_error": {"state": "Geen fout"},
+        "sensor.zendure_2400_ac_minimale_laadpercentage": {"state": "10"},
+        "sensor.zendure_2400_ac_maximale_laadpercentage": {"state": "100"},
+        "input_number.zendure_2400_ac_maximaal_toegestaan_laadpercentage": {
+            "state": "100"
+        },
+        "input_number.zendure_2400_ac_minimaal_toegestaan_laadpercentage": {
+            "state": "10"
+        },
     }
 
 
@@ -57,6 +65,10 @@ def test_read_zendure_observation_normalizes_all_selected_entities() -> None:
     assert event["zendure_charge_power_w"] == 0.0
     assert event["zendure_discharge_power_w"] == 86.0
     assert event["zendure_power_consistent"] is True
+    assert event["zendure_allowed_min_soc_percent"] == 10.0
+    assert event["zendure_allowed_max_soc_percent"] == 100.0
+    assert event["zendure_reported_min_soc_percent"] == 10.0
+    assert event["zendure_reported_max_soc_percent"] == 100.0
     assert event["zendure_observed_at"] == OBSERVED_AT.isoformat()
 
 
@@ -69,4 +81,6 @@ def test_unavailable_zendure_observation_is_explicit() -> None:
     assert event["zendure_status"] == "unavailable"
     assert event["zendure_error"] == "Zendure unavailable"
     assert event["zendure_soc_percent"] is None
+    assert event["zendure_allowed_min_soc_percent"] is None
+    assert event["zendure_allowed_max_soc_percent"] is None
     assert event["zendure_power_consistent"] is None

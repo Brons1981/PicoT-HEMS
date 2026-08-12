@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from statistics import fmean
 
 from picot.addon.history_store import HistoryStore
@@ -38,7 +38,7 @@ class LiveEvidenceConfidenceTracker:
     _samples: list[float] = field(default_factory=list)
     _loaded: bool = False
 
-    def _load(self, captured_at) -> None:
+    def _load(self, captured_at: datetime) -> None:
         if self._loaded:
             return
         start = captured_at - timedelta(days=BASELINE_HISTORY_DAYS)
@@ -150,7 +150,5 @@ def opportunity_set_from_planner_context(
     return OpportunitySet(snapshot_id=snapshot_id, opportunities=tuple(opportunities))
 
 
-def _parse_datetime(value: str):
-    from datetime import datetime
-
+def _parse_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))

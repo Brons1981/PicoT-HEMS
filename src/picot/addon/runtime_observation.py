@@ -100,14 +100,24 @@ def _run_price_planner_once(options: dict[str, Any], token: str) -> dict[str, ob
 
 
 def _publish_telemetry_states(event: dict[str, object], token: str) -> None:
-    """Publish presentation states after evidence has already been persisted."""
+    """Publish every presentation stream even when one publisher fails."""
 
-    publish_dashboard_states(event, token)
-    publish_goodwe_dashboard_states(event, token)
-    publish_zendure_dashboard_states(event, token)
-    publish_power_comparison_states(event, token)
-    publish_diagnostics_dashboard_states(event, token)
-    publish_diagnostics_timeline_state(event, token)
+    failures: list[str] = []
+    publishers = (
+        ("dashboard", publish_dashboard_states),
+        ("goodwe", publish_goodwe_dashboard_states),
+        ("zendure", publish_zendure_dashboard_states),
+        ("power_comparison", publish_power_comparison_states),
+        ("diagnostics", publish_diagnostics_dashboard_states),
+        ("diagnostics_timeline", publish_diagnostics_timeline_state),
+    )
+    for name, publisher in publishers:
+        try:
+            publisher(event, token)
+        except Exception as exc:
+            failures.append(f"{name}: {str(exc) or exc.__class__.__name__}")
+    if failures:
+        raise RuntimeError("Presentation publisher failure(s): " + " | ".join(failures))
 
 
 def run_telemetry_once(

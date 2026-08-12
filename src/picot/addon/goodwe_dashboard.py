@@ -13,6 +13,13 @@ DashboardPayload = dict[str, object]
 DashboardStates = dict[str, DashboardPayload]
 
 
+def _measurement_state(event: dict[str, object], key: str) -> object:
+    """Return a Home Assistant-safe state for an optional measurement."""
+
+    value = event.get(key)
+    return "unavailable" if value is None else value
+
+
 def _measurement_attributes(
     friendly_name: str,
     icon: str,
@@ -52,7 +59,7 @@ def goodwe_dashboard_states(event: dict[str, object]) -> DashboardStates:
             "attributes": common_status_attributes,
         },
         "sensor.picot_goodwe_power": {
-            "state": event.get("goodwe_solar_power_w", "unknown"),
+            "state": _measurement_state(event, "goodwe_solar_power_w"),
             "attributes": _measurement_attributes(
                 "PicoT GoodWe PV-vermogen",
                 "mdi:solar-power",
@@ -62,7 +69,7 @@ def goodwe_dashboard_states(event: dict[str, object]) -> DashboardStates:
             ),
         },
         "sensor.picot_goodwe_generation_today": {
-            "state": event.get("goodwe_generation_today_kwh", "unknown"),
+            "state": _measurement_state(event, "goodwe_generation_today_kwh"),
             "attributes": _measurement_attributes(
                 "PicoT GoodWe opbrengst vandaag",
                 "mdi:solar-panel-large",
@@ -72,7 +79,7 @@ def goodwe_dashboard_states(event: dict[str, object]) -> DashboardStates:
             ),
         },
         "sensor.picot_goodwe_generation_total": {
-            "state": event.get("goodwe_generation_total_kwh", "unknown"),
+            "state": _measurement_state(event, "goodwe_generation_total_kwh"),
             "attributes": _measurement_attributes(
                 "PicoT GoodWe totale opbrengst",
                 "mdi:counter",
@@ -82,7 +89,7 @@ def goodwe_dashboard_states(event: dict[str, object]) -> DashboardStates:
             ),
         },
         "sensor.picot_goodwe_temperature": {
-            "state": event.get("goodwe_temperature_c", "unknown"),
+            "state": _measurement_state(event, "goodwe_temperature_c"),
             "attributes": _measurement_attributes(
                 "PicoT GoodWe temperatuur",
                 "mdi:thermometer",

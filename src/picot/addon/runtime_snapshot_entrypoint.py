@@ -197,10 +197,19 @@ def telemetry_evidence_events_with_snapshot(
 def publish_telemetry_states_with_adr037(
     event: dict[str, object], token: str
 ) -> None:
-    """Publish existing telemetry states plus the ADR-037 observer sensor."""
+    """Publish base presentation and ADR-037 independently."""
 
-    _base_publish_telemetry_states(event, token)
-    publish_adr037_dashboard_states(event, token)
+    failures: list[str] = []
+    try:
+        _base_publish_telemetry_states(event, token)
+    except Exception as exc:
+        failures.append(str(exc) or exc.__class__.__name__)
+    try:
+        publish_adr037_dashboard_states(event, token)
+    except Exception as exc:
+        failures.append(f"adr037: {str(exc) or exc.__class__.__name__}")
+    if failures:
+        raise RuntimeError("Presentation publisher failure(s): " + " | ".join(failures))
 
 
 def main() -> int:

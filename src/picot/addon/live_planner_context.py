@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
 from statistics import fmean
-from typing import Mapping
 
 from picot.addon.history_store import HistoryStore
 from picot.domain.evidence_confidence_policy import (
@@ -64,7 +64,7 @@ class LiveEvidenceConfidenceTracker:
             baseline = EvidenceConfidenceBaseline(
                 baseline_id=f"live-confidence-baseline:{snapshot.captured_at.date().isoformat()}",
                 source_method_id=SOURCE_METHOD_ID,
-                mean_confidence=fmean(self._samples),
+                mean_confidence=round(fmean(self._samples), 12),
                 sample_count=len(self._samples),
                 reliable=len(self._samples) >= MIN_RELIABLE_SAMPLES,
                 evidence_ids=("history:picot_live_adr037_readiness",),

@@ -102,6 +102,8 @@ class ADR037PlannerPipeline:
             storage_requirement=requirement,
             pv_only_feasibility=pv_only_feasibility,
             storage_recoverability=technical_recoverability,
+            projected_balance=balance,
+            effective_storage_limit=effective_limit,
         )
         candidate_outcomes = self.outcome_deriver.derive(
             candidate_set=candidate_set,

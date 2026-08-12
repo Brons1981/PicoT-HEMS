@@ -85,6 +85,7 @@ def _recoverability(*, technically_recoverable: bool = True) -> StorageTechnical
         required_by=BASE + timedelta(hours=4),
         extra_energy_required_wh=3000.0,
         maximum_charge_energy_before_deadline_wh=4000.0,
+        latest_full_power_charge_start=BASE + timedelta(hours=2),
         technically_recoverable=technically_recoverable,
         confidence=0.84,
         evidence_ids=("requirement-1", "battery-charge"),

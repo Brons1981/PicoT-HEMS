@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from picot.domain.candidate import Candidate, CandidateFamily
+from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import EnergyPath, PathSegment
 from picot.domain.evaluation import (
     EvaluationOutcomeStatus,
@@ -53,6 +54,7 @@ def _winner(*, with_segments: bool = True) -> EvaluationResult:
                 purpose="Use PV surplus",
                 evidence_ids=("opportunity-pv-1",),
                 requested_power_w=1200.0,
+                charge_source_policy=ChargeSourcePolicy.PV_ONLY,
             ),
             PathSegment(
                 segment_id="path-segment-ev",
@@ -65,6 +67,7 @@ def _winner(*, with_segments: bool = True) -> EvaluationResult:
                 purpose="Charge flexible load",
                 evidence_ids=("opportunity-flex-1",),
                 requested_power_w=1800.0,
+                charge_source_policy=ChargeSourcePolicy.PV_ONLY,
             ),
         )
         capability_ids = ("battery-charge", "ev-charge")

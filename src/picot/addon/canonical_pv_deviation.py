@@ -39,7 +39,9 @@ class CanonicalPVDeviationResult:
 
     def as_fields(self) -> dict[str, object]:
         return {
-            "canonical_pv_deviation_status": "material" if self.threshold_crossed else "within_tolerance",
+            "canonical_pv_deviation_status": (
+                "material" if self.threshold_crossed else "within_tolerance"
+            ),
             "canonical_pv_deviation_observer_only": False,
             "canonical_pv_deviation_authoritative": True,
             "canonical_pv_interval_start": self.interval_start.isoformat(),
@@ -59,7 +61,11 @@ class CanonicalPVDeviationResult:
 
 
 def quarter_floor(moment: datetime) -> datetime:
-    return moment.replace(minute=(moment.minute // 15) * 15, second=0, microsecond=0)
+    return moment.replace(
+        minute=(moment.minute // 15) * 15,
+        second=0,
+        microsecond=0,
+    )
 
 
 def quarter_anchor_event(
@@ -86,6 +92,7 @@ def quarter_anchor_event(
     return {
         "event": "picot_pv_forecast_quarter_anchor",
         "layer": "pv_forecast_validation",
+        "observed_at": captured_at.isoformat(),
         "anchored_at": captured_at.isoformat(),
         "interval_start": start.isoformat(),
         "interval_end": end.isoformat(),
@@ -119,8 +126,6 @@ class CanonicalPVDeviationEvaluator:
     ) -> CanonicalPVDeviationResult | None:
         interval_end = quarter_floor(captured_at)
         interval_start = interval_end - timedelta(minutes=15)
-        if interval_end == captured_at and captured_at.second == 0 and captured_at.microsecond == 0:
-            pass
         if self._last_interval_end == interval_end:
             return None
         self._last_interval_end = interval_end
@@ -166,13 +171,17 @@ class CanonicalPVDeviationEvaluator:
             forecast_evidence_ids=forecast_ids,
             actual_evidence_ids=actual.evidence_ids,
             forecast_method_version=(
-                str(forecast_method) if isinstance(forecast_method, str) else "unknown"
+                str(forecast_method)
+                if isinstance(forecast_method, str)
+                else "unknown"
             ),
             actual_method_version=actual.method_version,
         )
 
     def _forecast_anchor(
-        self, interval_start: datetime, interval_end: datetime
+        self,
+        interval_start: datetime,
+        interval_end: datetime,
     ) -> dict[str, object] | None:
         selected: dict[str, object] | None = None
         selected_at: datetime | None = None
@@ -187,7 +196,9 @@ class CanonicalPVDeviationEvaluator:
             raw_anchored = record.get("anchored_at")
             if not isinstance(raw_anchored, str):
                 continue
-            anchored_at = datetime.fromisoformat(raw_anchored.replace("Z", "+00:00"))
+            anchored_at = datetime.fromisoformat(
+                raw_anchored.replace("Z", "+00:00")
+            )
             if anchored_at > interval_start:
                 continue
             if selected_at is None or anchored_at > selected_at:
@@ -204,7 +215,9 @@ def runtime_monitor_fields(
 
     observation = RuntimeObservation(
         observation_id=(
-            f"canonical-pv-deviation:{result.interval_start.isoformat()}:{result.interval_end.isoformat()}"
+            "canonical-pv-deviation:"
+            f"{result.interval_start.isoformat()}:"
+            f"{result.interval_end.isoformat()}"
         ),
         kind=RuntimeObservationKind.FORECAST_CHANGED,
         observed_at=observed_at,
@@ -213,7 +226,11 @@ def runtime_monitor_fields(
         new_value=f"actual:{result.actual_energy_wh:.6f}Wh",
         unit="Wh",
         source_version=1,
-        evidence_ids=tuple(dict.fromkeys((*result.forecast_evidence_ids, *result.actual_evidence_ids))),
+        evidence_ids=tuple(
+            dict.fromkeys(
+                (*result.forecast_evidence_ids, *result.actual_evidence_ids)
+            )
+        ),
         material_transition=result.threshold_crossed,
     )
     state = RuntimeCoordinationState(
@@ -229,7 +246,11 @@ def runtime_monitor_fields(
         runtime_pressure_state=RuntimePressureState.NORMAL,
         state_version=1,
     )
-    monitor_result = RuntimeMonitor().evaluate((observation,), state, now=observed_at)
+    monitor_result = RuntimeMonitor().evaluate(
+        (observation,),
+        state,
+        now=observed_at,
+    )
     record = monitor_result.material_changes[0]
     signal = monitor_result.replanning_signal
     return {
@@ -238,5 +259,7 @@ def runtime_monitor_fields(
         "canonical_pv_replan_signal": signal.status.value,
         "canonical_pv_fresh_snapshot_required": signal.fresh_snapshot_required,
         "canonical_pv_replan_reasons": list(signal.reasons),
-        "canonical_pv_replan_source_observation_ids": list(signal.source_observation_ids),
+        "canonical_pv_replan_source_observation_ids": list(
+            signal.source_observation_ids
+        ),
     }

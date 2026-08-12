@@ -47,27 +47,46 @@ class StorageTechnicalRecoverability:
             ("protected-through time", self.protected_through),
         ):
             if value.tzinfo is None or value.utcoffset() is None:
-                raise ValueError(f"Technical recoverability {name} must be timezone-aware.")
+                raise ValueError(
+                    f"Technical recoverability {name} must be timezone-aware."
+                )
         if self.protected_through < self.protection_starts_at:
-            raise ValueError("Protected-through time must not precede protection start.")
+            raise ValueError(
+                "Protected-through time must not precede protection start."
+            )
         if self.latest_full_power_charge_start is not None:
             if (
                 self.latest_full_power_charge_start.tzinfo is None
                 or self.latest_full_power_charge_start.utcoffset() is None
             ):
-                raise ValueError("Latest full-power charge start must be timezone-aware.")
+                raise ValueError(
+                    "Latest full-power charge start must be timezone-aware."
+                )
             if self.latest_full_power_charge_start > self.protection_starts_at:
-                raise ValueError("Latest full-power charge start must not be after protection starts.")
+                raise ValueError(
+                    "Latest full-power charge start must not be after protection starts."
+                )
         if self.extra_energy_required_wh < 0:
             raise ValueError("Extra required storage energy must not be negative.")
         if self.maximum_charge_energy_before_protection_wh < 0:
             raise ValueError("Maximum charge energy must not be negative.")
-        if self.additional_acquisition_required != (self.extra_energy_required_wh > 0.0):
-            raise ValueError("Additional-acquisition flag must match extra required energy.")
-        if not self.additional_acquisition_required and self.latest_full_power_charge_start is not None:
-            raise ValueError("No latest charge start exists when no additional energy is required.")
+        if self.additional_acquisition_required != (
+            self.extra_energy_required_wh > 0.0
+        ):
+            raise ValueError(
+                "Additional-acquisition flag must match extra required energy."
+            )
+        if (
+            not self.additional_acquisition_required
+            and self.latest_full_power_charge_start is not None
+        ):
+            raise ValueError(
+                "No latest charge start exists when no additional energy is required."
+            )
         if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError("Technical recoverability confidence must be between 0.0 and 1.0.")
+            raise ValueError(
+                "Technical recoverability confidence must be between 0.0 and 1.0."
+            )
         if not self.evidence_ids:
             raise ValueError("Technical recoverability requires evidence IDs.")
 
@@ -91,15 +110,27 @@ class StorageTechnicalRecoverabilityEvaluator:
             raise ValueError("Evaluation time must be timezone-aware.")
 
         storage_limit.validate_against(storage_state)
-        self._validate_capability(storage_state=storage_state, capability=capability)
+        self._validate_capability(
+            storage_state=storage_state,
+            capability=capability,
+        )
         maximum_power_w = capability.maximum_power_w
         if maximum_power_w is None:
             raise ValueError("Storage capability requires a maximum charge power.")
 
-        target_energy_wh = min(requirement.required_energy_wh, storage_limit.max_energy_wh)
-        extra_required_wh = max(0.0, target_energy_wh - storage_state.current_stored_energy_wh)
+        target_energy_wh = min(
+            requirement.required_energy_wh,
+            storage_limit.max_energy_wh,
+        )
+        extra_required_wh = max(
+            0.0,
+            target_energy_wh - storage_state.current_stored_energy_wh,
+        )
         acquisition_required = extra_required_wh > 0.0
-        headroom_wh = max(0.0, storage_limit.max_energy_wh - storage_state.current_stored_energy_wh)
+        headroom_wh = max(
+            0.0,
+            storage_limit.max_energy_wh - storage_state.current_stored_energy_wh,
+        )
         available_seconds = max(
             0.0,
             (requirement.protection_starts_at - evaluated_at).total_seconds(),
@@ -109,8 +140,9 @@ class StorageTechnicalRecoverabilityEvaluator:
         latest_full_power_charge_start = None
         if acquisition_required:
             required_charge_hours = extra_required_wh / maximum_power_w
-            latest_full_power_charge_start = requirement.protection_starts_at - timedelta(
-                hours=required_charge_hours
+            latest_full_power_charge_start = (
+                requirement.protection_starts_at
+                - timedelta(hours=required_charge_hours)
             )
 
         evidence_ids = tuple(
@@ -137,7 +169,9 @@ class StorageTechnicalRecoverabilityEvaluator:
             maximum_charge_energy_before_protection_wh=maximum_charge_energy_wh,
             latest_full_power_charge_start=latest_full_power_charge_start,
             technically_recoverable=(
-                True if not acquisition_required else maximum_charge_energy_wh >= extra_required_wh
+                True
+                if not acquisition_required
+                else maximum_charge_energy_wh >= extra_required_wh
             ),
             confidence=min(
                 requirement.confidence,
@@ -155,11 +189,17 @@ class StorageTechnicalRecoverabilityEvaluator:
         capability: LogicalCapabilitySnapshot,
     ) -> None:
         if capability.execution_scope_id != storage_state.execution_scope_id:
-            raise ValueError("Storage capability and current state must share a scope.")
+            raise ValueError(
+                "Storage capability and current state must share a scope."
+            )
         if capability.capability_id != storage_state.capability_id:
-            raise ValueError("Storage capability must match the canonical storage capability ID.")
+            raise ValueError(
+                "Storage capability must match the canonical storage capability ID."
+            )
         if capability.role is not CapabilityRole.ENERGY_STORAGE:
-            raise ValueError("Technical recoverability requires an energy-storage capability.")
+            raise ValueError(
+                "Technical recoverability requires an energy-storage capability."
+            )
         if EnergyFlowDirection.CHARGE not in capability.flow_directions and (
             EnergyFlowDirection.BIDIRECTIONAL not in capability.flow_directions
         ):

@@ -280,7 +280,7 @@ def test_pv_shortfall_makes_grid_supported_path_the_only_valid_winner() -> None:
         opportunities=_price_opportunities(),
     )
 
-    assert result.requirement.required_by == BASE + timedelta(hours=2)
+    assert result.requirement.required_by == BASE + timedelta(hours=6)
     assert result.requirement.required_energy_wh == pytest.approx(6000.0)
     assert result.pv_only_feasibility.energy_sufficient is False
     assert result.technical_recoverability.technically_recoverable is True
@@ -324,14 +324,14 @@ def test_degraded_confidence_raises_requirement_to_effective_maximum() -> None:
     assert result.requirement.reason is StorageRequirementReason.CONSERVATIVE_RESERVE
     assert result.requirement.required_energy_wh == pytest.approx(7600.0)
     assert result.requirement.reserve_energy_wh == pytest.approx(1600.0)
-    assert result.requirement.required_by == BASE + timedelta(hours=2)
+    assert result.requirement.required_by == BASE + timedelta(hours=6)
 
 
 def test_unrecoverable_shortfall_returns_explicit_no_valid_candidate() -> None:
     result = _run(
         balance=_pv_shortfall_balance(),
         opportunities=_price_opportunities(),
-        maximum_power_w=1000.0,
+        maximum_power_w=500.0,
     )
 
     assert result.pv_only_feasibility.energy_sufficient is False

@@ -22,7 +22,7 @@ from picot.domain.storage_reserve_decision import (
 
 @dataclass(frozen=True, slots=True)
 class BalanceStorageTargetProposal:
-    """Balance-derived lower storage target and the time it must be available."""
+    """Balance-derived lower storage target and the time it must remain available through."""
 
     required_by: datetime
     target_energy_wh: float
@@ -34,7 +34,7 @@ class BalanceStorageTargetProposal:
 class StorageRequirementDeriver:
     """Map canonical balance and reserve evidence to one storage requirement."""
 
-    method_version: str = "storage-requirement-derivation-v1"
+    method_version: str = "storage-requirement-derivation-v2"
 
     def propose_lower_target(
         self,
@@ -50,14 +50,18 @@ class StorageRequirementDeriver:
             *((point.at, point.projected_storage_energy_wh) for point in balance.points),
         )
 
-        best_required_by = balance.created_at
+        best_required_by = balance.horizon_end
         best_drawdown = 0.0
-        for index, (at, energy_wh) in enumerate(positions[:-1]):
-            minimum_after = min(value for _, value in positions[index + 1 :])
+        for index, (_, energy_wh) in enumerate(positions[:-1]):
+            future_positions = positions[index + 1 :]
+            minimum_at, minimum_after = min(future_positions, key=lambda item: item[1])
             drawdown = max(0.0, energy_wh - minimum_after)
             if drawdown > best_drawdown:
                 best_drawdown = drawdown
-                best_required_by = at
+                # The target energy protects the household through the drawdown.  The
+                # deadline is therefore the point where that drawdown bottoms out,
+                # not the point where it starts.
+                best_required_by = minimum_at
 
         target_energy_wh = min(best_drawdown, effective_limit.max_energy_wh)
         evidence_ids = tuple(

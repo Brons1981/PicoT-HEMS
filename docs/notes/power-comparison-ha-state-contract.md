@@ -1,0 +1,1 @@
+Derived power values may be absent inside PicoT evidence. The Home Assistant presentation contract maps absent numeric values to the HA state `unavailable`; it never serializes JSON `null` as an entity state. Calculation status and source diagnostics remain available in attributes.

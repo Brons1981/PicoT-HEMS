@@ -165,3 +165,8 @@ Detailed record: [`ADR-037-household-energy-requirement-storage-reserve-grid-use
 PicoT captures one immutable, vendor-independent current storage state per logical storage scope in the atomic Planning Input Snapshot and reuses that same state throughout the Planner Run.
 
 Detailed record: [`ADR-038-current-storage-state-contract.md`](ADR-038-current-storage-state-contract.md)
+
+### ADR-039 — PV Energy Timeline Contract
+PicoT assembles one immutable canonical PV energy timeline per Planner Run: measured production replaces forecast for known elapsed time, while forecast remains only for still-unknown future production.
+
+Detailed record: [`ADR-039-pv-energy-timeline-contract.md`](ADR-039-pv-energy-timeline-contract.md)

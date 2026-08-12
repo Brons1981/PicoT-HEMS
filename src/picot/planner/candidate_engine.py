@@ -209,19 +209,21 @@ class CandidateEngine:
             raise ValueError(
                 "Technical recoverability protected interval must match the requirement."
             )
-        if projected_balance is not None:
-            if projected_balance.execution_scope_id != requirement.execution_scope_id:
+        if projected_balance is not None and effective_storage_limit is not None:
+            if (
+                projected_balance.execution_scope_id
+                != effective_storage_limit.execution_scope_id
+            ):
                 raise ValueError(
-                    "Projected balance execution scope must match the storage requirement."
+                    "Projected balance and effective storage limit must share a scope."
                 )
-            if projected_balance.created_at != requirement.derived_at:
+            if projected_balance.balance_id not in requirement.evidence_ids:
                 raise ValueError(
-                    "Projected balance and storage requirement must belong to the same run."
+                    "Storage requirement must reference the supplied projected balance."
                 )
-        if effective_storage_limit is not None:
-            if effective_storage_limit.execution_scope_id != requirement.execution_scope_id:
+            if effective_storage_limit.limit_id not in requirement.evidence_ids:
                 raise ValueError(
-                    "Effective storage limit execution scope must match the requirement."
+                    "Storage requirement must reference the supplied effective storage limit."
                 )
 
     @staticmethod

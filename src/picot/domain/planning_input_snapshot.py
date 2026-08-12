@@ -84,8 +84,12 @@ class PlanningInputSnapshot:
         load_forecast = self.household_load_forecast
         if load_forecast is not None:
             if load_forecast.created_at > self.captured_at:
-                raise ValueError("Household load forecast cannot be created after snapshot capture time.")
+                raise ValueError(
+                    "Household load forecast cannot be created after snapshot capture time."
+                )
             if load_forecast.horizon_start != self.captured_at:
                 raise ValueError("Household load forecast must start at snapshot capture time.")
             if load_forecast.horizon_end != self.horizon_end:
-                raise ValueError("Household load forecast must cover the complete planning horizon.")
+                raise ValueError(
+                    "Household load forecast must cover the complete planning horizon."
+                )

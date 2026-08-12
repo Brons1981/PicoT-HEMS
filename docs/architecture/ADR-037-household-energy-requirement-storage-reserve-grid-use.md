@@ -11,13 +11,21 @@ The Price Driven path can identify economically relevant price opportunities, bu
 
 ADR-031 deliberately prevents cost-first charging Candidates while these contracts are absent. This ADR proposes those missing contracts without changing ADR-031 itself.
 
+## Responsibility
+
+This ADR has one architectural responsibility:
+
+> Determine how much future household/storage energy is required, by when it is required, and under which conditions grid energy may be used as a source to satisfy that requirement.
+
+Candidate Generation remains responsible for constructing complete Energy Paths. Evaluation remains responsible for selecting a winner according to the active Planner Strategy. Execution remains responsible for executing the selected path.
+
 ## Decision
 
 PicoT plans the complete household energy path.
 
-> PicoT minimises household dependency on grid energy over the complete planning horizon. When grid energy is necessary or economically justified, PicoT plans that energy at the most favourable feasible time without unnecessarily blocking future PV utilisation.
+Unnecessary household dependency on grid energy is an outcome PicoT seeks to reduce within the active Planner Strategy. Grid use does not override the User Objectives or their priority defined by ADR-025. When grid energy remains necessary or is economically justified within that strategy, PicoT plans that energy at the most favourable feasible time without unnecessarily blocking future PV utilisation.
 
-Price Driven remains the strategy basis. PV is preferred over grid energy where it can reliably satisfy the projected household requirement. Grid-supported battery charging is a last-option energy source, but it is a normal and required planning capability when PV alone cannot reliably provide the desired future energy state or when shifting unavoidable grid use prevents materially less favourable later import.
+Price Driven remains the strategy basis where applicable. PV is preferred over grid energy where it can reliably satisfy the projected household requirement. Grid-supported battery charging is a last-option energy source, but it is a normal and required planning capability when PV alone cannot reliably provide the desired future energy state or when shifting otherwise unavoidable grid use prevents materially less favourable later import.
 
 ## HouseholdLoadForecast
 
@@ -117,7 +125,7 @@ Grid charging is an energy-source option inside a complete Candidate, not an ind
 
 The Candidate Engine considers meaningful complete alternatives using canonical price Opportunities. It does not select the winning price window. Candidate Evaluation compares valid complete paths according to the active Planner Strategy.
 
-Evaluation concerns the complete household outcome, including where available total grid import, grid import cost, PV utilisation/self-consumption, export consequences, storage losses, recoverability, confidence, switching/wear implications and technical feasibility.
+Evaluation concerns the complete household outcome, including where available total grid import, grid import cost, PV utilisation/self-consumption, export consequences, storage losses, recoverability, confidence, switching/wear implications and technical feasibility. The active Planner Strategy remains authoritative for how these outcomes are compared.
 
 PicoT avoids unnecessary fragmented charging throughout the day. Candidate Generation constructs a limited set of meaningful charging paths around materially relevant opportunities rather than continuously chasing marginal price differences.
 
@@ -132,38 +140,15 @@ A separate generic `ChargeSourcePolicy` expresses the permitted energy sources f
 
 Exact enum names and schema representation remain implementation details until implementation review, but the semantic distinction is mandatory.
 
-> Grid import must never be inferred solely from `CHARGE_AT_POWER`. Grid use is allowed only when the winning Energy Path explicitly permits it.
+> Grid import must never be inferred solely from `CHARGE_AT_POWER`. Grid use is allowed only when the Winning Energy Path explicitly permits it.
 
-Device Adapters translate the generic charging intent and source permission into supported vendor behaviour.
+Device Adapters translate the generic charging intent and source permission into supported vendor behaviour. This ADR does not define runtime completion semantics or vendor-specific execution behaviour.
 
-## Active charging behaviour
+## Target SoC planning boundary
 
-A valid grid-supported charging path may request active charging where available PV contributes first and grid energy supplements the requested charging path within the explicit source policy, technical limits and household constraints.
+The effective target/max SoC is part of the planned energy requirement and selected Energy Path. The target is the effective configured/planned maximum, not a hard-coded literal 100% value.
 
-Example:
-
-```text
-requested battery charge power: 2400 W
-available usable PV contribution: 800 W
-ChargeSourcePolicy: PV preferred, grid allowed
-
-→ PV contributes 800 W
-→ grid may provide the remaining required contribution
-```
-
-The exact real-time split may vary with PV and household load. Execution does not independently change the Planner's energy strategy.
-
-## Target completion
-
-Execution Plans may contain generic SoC constraints under ADR-016.
-
-When an active charging segment reaches its effective target/max SoC before the nominal segment end, reaching that target is successful completion of the charging objective, not a fault.
-
-The charging commitment must not remain logically active merely because the device itself entered standby at full charge. The runtime/execution contract must end the completed charging objective and continue or replan into the appropriate next planned behaviour, such as balancing/NOM where applicable.
-
-The target is the effective configured/planned maximum, not a hard-coded literal 100% value.
-
-Detailed runtime completion implementation is outside this ADR and must be verified against the existing Execution and Runtime Monitor contracts before code changes.
+How runtime execution detects that a target has been reached, terminates an active charging commitment, handles device standby, or returns to balancing/NOM is owned by the existing Execution/Runtime architecture and must be verified or extended separately before implementation. This ADR does not define that runtime behaviour.
 
 ## Battery health over time
 
@@ -173,13 +158,13 @@ Where a future battery-health policy requires the battery not to remain below a 
 
 The exact battery-health duration and policy are outside this ADR unless already provided by an accepted user/system contract.
 
-## Control ownership assumption
+## Integration ownership boundary
 
-This ADR defines PicoT Core behaviour independent of the current Zendure integration.
+This ADR defines PicoT Core planning independent of the current Zendure integration.
 
-For this design, PicoT is assumed to be the owner of battery strategy and the Device Adapter/integration is assumed to execute requested generic behaviour. Current NOM support may provide balancing behaviour, but external integration behaviour must not redefine PicoT planning architecture.
+The planning contract assumes only that a Device Adapter exposes capabilities that PicoT may rely on after normal capability validation. Whether the current Zendure/@gielz integration provides exclusive and deterministic control ownership is an integration/runtime verification concern and is outside this ADR.
 
-Actual Zendure/@gielz control ownership must be verified separately before relying on overlapping control functions in production. If the current integration cannot provide deterministic execution ownership, PicoT may require a dedicated Zendure execution engine/adapter. PicoT Core must not be weakened to accommodate conflicting third-party strategy logic.
+No third-party integration may redefine PicoT Core planning architecture. If an integration cannot execute a required generic capability deterministically, that is a capability/integration limitation to resolve separately rather than a reason to weaken this planning contract.
 
 ## Candidate-generation boundary
 
@@ -187,15 +172,15 @@ This ADR provides planning concepts required to later enable the cost-first stor
 
 ```text
 Planning Input Set
-→ confidence assessment
+  └─ includes HouseholdLoadForecast and its confidence
+→ Opportunity Engine
 → canonical Opportunities
-→ HouseholdLoadForecast
 → projected household energy balance
 → StorageEnergyRequirement
 → PV-only feasibility / recoverability
 → meaningful complete Candidate Energy Paths
 → simulation/outcomes
-→ Candidate Evaluation
+→ Candidate Evaluation under active Planner Strategy
 → selected Planner Decision
 → Execution Plan
 ```
@@ -216,7 +201,7 @@ A decision involving storage reserve or grid-supported charging exposes at least
 - StorageEnergyRequirement and deadline;
 - whether grid supplementation was permitted;
 - why waiting for PV or another charging window was or was not recoverable;
-- why the winning complete path was preferred over the closest alternatives.
+- why the winning complete path was preferred over the closest alternatives under the active Planner Strategy.
 
 If history is missing, corrupt or unavailable, diagnostics state this explicitly together with the conservative fallback used.
 
@@ -228,6 +213,8 @@ This ADR does not define:
 - appliance recognition;
 - a complete self-learning Energy Profile engine;
 - Zendure-specific mode names or commands;
+- runtime target-completion behaviour;
+- Zendure/@gielz control ownership or a replacement execution engine;
 - a new PV deviation monitor;
 - Candidate ranking inside Price Driven;
 - direct execution from Opportunities;
@@ -241,9 +228,12 @@ This ADR does not define:
 - ADR-016 remains authoritative for Execution Plan structure and runtime validation.
 - ADR-017 remains authoritative for the rolling planning horizon, confidence, projected energy state and recoverability.
 - ADR-019 remains authoritative for explicit Energy Profiles and Planning Hints; these remain separate from baseline household load.
+- ADR-023 remains authoritative for Opportunity Engine input/output boundaries; `HouseholdLoadForecast` is a Planning Input available before Opportunity Detection.
 - ADR-024 remains authoritative for complete Candidate generation.
+- ADR-025 remains authoritative for Planner Strategy and User Objective priority; grid dependency is not a hidden overriding objective.
+- ADR-026 / ADR-032 remain authoritative for winner selection and evaluation.
 - ADR-031 remains unchanged and authoritative for the existing cost-first Candidate exclusion until implementation satisfies the required contracts.
-- ADR-032 remains authoritative for Candidate outcomes/evaluation separation.
+- ADR-034 remains authoritative for material-change replanning.
 - ADR-036 remains authoritative for the canonical Price Driven Opportunity path while it is developed toward acceptance.
 
 ## Consequences
@@ -257,7 +247,8 @@ Positive consequences:
 - The battery is not optimised independently from the household.
 - Grid charging cannot be accidentally implied by a generic charge-power command.
 - Price Opportunities remain evidence rather than commands.
-- The design remains vendor-independent and compatible with a future dedicated Zendure adapter.
+- Planner Strategy remains authoritative for the final trade-off between financial result, self-consumption, reserve, net balance and other User Objectives.
+- The design remains vendor-independent.
 
 Costs and risks:
 
@@ -265,13 +256,15 @@ Costs and risks:
 - Conservative operation with little history may intentionally buy more energy than later refined planning would have bought.
 - Projected household balance and reserve calculation add Planner complexity.
 - Source-policy capability and adapter support must be verified before execution.
-- Control ownership with the current Zendure integration requires separate verification.
+- Runtime target completion and integration control ownership require separate verification before relying on active grid-supported charging in production.
 
 ## Core principles
 
 > PicoT optimises the complete household energy path, not the battery in isolation.
 
-> Grid energy should be avoided where reliable PV and stored energy can satisfy household demand; unavoidable grid energy should be shifted to the most favourable feasible time.
+> Unnecessary grid dependency is reduced within the active Planner Strategy; grid use does not silently override User Objective priorities.
+
+> Grid energy should be avoided where reliable PV and stored energy can satisfy household demand; when grid energy remains necessary, its timing and cost are optimised across the complete household path.
 
 > PicoT plans toward the effective maximum battery SoC by default. It deliberately plans less only when sufficiently reliable evidence shows that less is enough.
 
@@ -279,4 +272,4 @@ Costs and risks:
 
 > Uncertainty increases reserve; it does not disable Price Driven planning.
 
-> Grid import is an explicit property of the winning Energy Path and is never implied solely by `CHARGE_AT_POWER`.
+> Grid import is an explicit property of the Winning Energy Path and is never implied solely by `CHARGE_AT_POWER`.

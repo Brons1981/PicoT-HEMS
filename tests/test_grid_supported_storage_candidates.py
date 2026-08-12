@@ -38,6 +38,8 @@ from picot.domain.storage_technical_recoverability import StorageTechnicalRecove
 from picot.planner.candidate_engine import CandidateEngine
 
 BASE = datetime(2026, 8, 12, 8, 0, tzinfo=UTC)
+PROTECTION_START = BASE + timedelta(hours=6)
+PROTECTED_THROUGH = BASE + timedelta(hours=10)
 
 
 def _snapshot() -> PlanningInputSnapshot:
@@ -108,7 +110,8 @@ def _capabilities(*, maximum_power_w: float = 1500.0) -> CapabilitySnapshotSet:
 def _requirement() -> StorageEnergyRequirement:
     return StorageEnergyRequirement(
         requirement_id="storage:req:evening",
-        required_by=BASE + timedelta(hours=6),
+        protection_starts_at=PROTECTION_START,
+        protected_through=PROTECTED_THROUGH,
         required_energy_wh=7000.0,
         required_soc_percent=None,
         reason=StorageRequirementReason.HOUSEHOLD_DEMAND,
@@ -125,11 +128,11 @@ def _feasibility(*, sufficient: bool = False) -> PVOnlyStorageEnergyFeasibility:
             if sufficient
             else PVOnlyEnergyFeasibilityOutcome.ENERGY_SHORTFALL
         ),
-        projected_energy_at_deadline_wh=6000.0,
-        deadline_shortfall_wh=0.0 if sufficient else 1000.0,
+        projected_energy_at_protection_start_wh=6000.0,
+        protection_start_shortfall_wh=0.0 if sufficient else 1000.0,
         household_path_shortfall_wh=0.0,
         confidence=0.8,
-        evidence_ids=("storage:req:evening", "balance-1", "pv-feasibility-v1"),
+        evidence_ids=("storage:req:evening", "balance-1", "pv-feasibility-v2"),
     )
 
 
@@ -138,13 +141,17 @@ def _recoverability(*, extra_energy_wh: float = 1000.0, recoverable: bool = True
         evaluated_at=BASE,
         requirement_id="storage:req:evening",
         capability_id="battery-charge",
-        required_by=BASE + timedelta(hours=6),
+        protection_starts_at=PROTECTION_START,
+        protected_through=PROTECTED_THROUGH,
         extra_energy_required_wh=extra_energy_wh,
-        maximum_charge_energy_before_deadline_wh=6000.0,
-        latest_full_power_charge_start=BASE + timedelta(hours=5),
+        additional_acquisition_required=extra_energy_wh > 0.0,
+        maximum_charge_energy_before_protection_wh=6000.0,
+        latest_full_power_charge_start=(
+            BASE + timedelta(hours=5) if extra_energy_wh > 0.0 else None
+        ),
         technically_recoverable=recoverable,
         confidence=0.82,
-        evidence_ids=("storage:req:evening", "battery-charge", "recoverability-v1"),
+        evidence_ids=("storage:req:evening", "battery-charge", "recoverability-v3"),
     )
 
 

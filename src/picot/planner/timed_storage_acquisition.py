@@ -72,18 +72,21 @@ class TimedStorageAcquisitionAllocator:
             snapshot=snapshot,
             balance=balance,
             requirement=requirement,
-            series=series,
             referenced=referenced,
         )
         if not eligible:
             return None
 
-        baseline_at_protection = self._energy_at(balance, requirement.protection_starts_at)
+        baseline_at_protection = self._energy_at(
+            balance, requirement.protection_starts_at
+        )
         if baseline_at_protection is None:
             raise ValueError(
                 "Canonical projected balance has no boundary at protection_starts_at."
             )
-        deficit_wh = max(0.0, requirement.required_energy_wh - baseline_at_protection)
+        deficit_wh = max(
+            0.0, requirement.required_energy_wh - baseline_at_protection
+        )
         if deficit_wh <= _EPSILON_WH:
             return None
 
@@ -95,11 +98,17 @@ class TimedStorageAcquisitionAllocator:
         # Cost first. Equal-price intervals prefer the latest feasible start.
         ranked = sorted(
             eligible,
-            key=lambda item: (item[1].value, -item[1].starts_at.timestamp(), item[0]),
+            key=lambda item: (
+                item[1].value,
+                -item[1].starts_at.timestamp(),
+                item[0],
+            ),
         )
 
         for point_index, point in ranked:
-            duration_hours = (point.ends_at - point.starts_at).total_seconds() / 3600.0
+            duration_hours = (
+                point.ends_at - point.starts_at
+            ).total_seconds() / 3600.0
             maximum_energy_wh = maximum_power_w * duration_hours
             if maximum_energy_wh <= _EPSILON_WH:
                 continue
@@ -124,12 +133,18 @@ class TimedStorageAcquisitionAllocator:
             if marginal_effect_wh <= _EPSILON_WH:
                 continue
 
-            remaining_deficit_wh = max(0.0, requirement.required_energy_wh - before)
+            remaining_deficit_wh = max(
+                0.0, requirement.required_energy_wh - before
+            )
             if marginal_effect_wh + _EPSILON_WH < remaining_deficit_wh:
                 scheduled = trial
                 continue
 
-            required_input_wh = maximum_energy_wh * remaining_deficit_wh / marginal_effect_wh
+            # With the canonical v1 energy accounting there are no private
+            # conversion losses: useful scheduled Wh are one-for-one until the
+            # effective storage ceiling is reached. Do not scale the final input
+            # by a clipped full-power marginal effect; that would over-schedule.
+            required_input_wh = remaining_deficit_wh
             requested_power_w = self._valid_power_for_energy(
                 required_energy_wh=required_input_wh,
                 duration_hours=duration_hours,
@@ -138,7 +153,9 @@ class TimedStorageAcquisitionAllocator:
             if requested_power_w is None:
                 scheduled = trial
             else:
-                scheduled[(series.forecast_id, point_index)] = requested_power_w * duration_hours
+                scheduled[(series.forecast_id, point_index)] = (
+                    requested_power_w * duration_hours
+                )
             break
 
         projected_at_protection = self._simulate_energy_at_protection(
@@ -152,11 +169,15 @@ class TimedStorageAcquisitionAllocator:
             return None
 
         selected: list[SelectedAcquisitionInterval] = []
-        for point_index, point in sorted(eligible, key=lambda item: item[1].starts_at):
+        for point_index, point in sorted(
+            eligible, key=lambda item: item[1].starts_at
+        ):
             energy_wh = scheduled.get((series.forecast_id, point_index), 0.0)
             if energy_wh <= _EPSILON_WH:
                 continue
-            duration_hours = (point.ends_at - point.starts_at).total_seconds() / 3600.0
+            duration_hours = (
+                point.ends_at - point.starts_at
+            ).total_seconds() / 3600.0
             power_w = energy_wh / duration_hours
             selected.append(
                 SelectedAcquisitionInterval(
@@ -195,7 +216,9 @@ class TimedStorageAcquisitionAllocator:
             for series in snapshot.forecasts.by_kind(ForecastKind.ENERGY_PRICE)
         }
         references = [
-            reference for reference in opportunity.evidence if reference.source_id in price_by_id
+            reference
+            for reference in opportunity.evidence
+            if reference.source_id in price_by_id
         ]
         if len(references) != 1:
             raise ValueError(
@@ -206,7 +229,9 @@ class TimedStorageAcquisitionAllocator:
         resolved: list[tuple[int, ForecastPoint]] = []
         for index in reference.point_indexes:
             if index >= len(series.points):
-                raise ValueError("Price Opportunity references a missing ForecastPoint index.")
+                raise ValueError(
+                    "Price Opportunity references a missing ForecastPoint index."
+                )
             resolved.append((index, series.points[index]))
         return series, tuple(resolved)
 
@@ -216,10 +241,8 @@ class TimedStorageAcquisitionAllocator:
         snapshot: PlanningInputSnapshot,
         balance: ProjectedHouseholdEnergyBalance,
         requirement: StorageEnergyRequirement,
-        series: ForecastSeries,
         referenced: tuple[tuple[int, ForecastPoint], ...],
     ) -> tuple[tuple[int, ForecastPoint], ...]:
-        del series
         boundaries = {balance.created_at, *(point.at for point in balance.points)}
         eligible: list[tuple[int, ForecastPoint]] = []
         for index, point in referenced:
@@ -264,7 +287,9 @@ class TimedStorageAcquisitionAllocator:
             return None
         requested = required_energy_wh / duration_hours
         if capability.power_step_w is not None:
-            requested = ceil(requested / capability.power_step_w) * capability.power_step_w
+            requested = (
+                ceil(requested / capability.power_step_w) * capability.power_step_w
+            )
         if capability.minimum_power_w is not None:
             requested = max(requested, capability.minimum_power_w)
         if requested <= 0.0 or requested > maximum:
@@ -280,7 +305,9 @@ class TimedStorageAcquisitionAllocator:
         series: ForecastSeries,
         scheduled_energy_wh: dict[tuple[str, int], float],
     ) -> float:
-        index_by_end = {point.ends_at: index for index, point in enumerate(series.points)}
+        index_by_end = {
+            point.ends_at: index for index, point in enumerate(series.points)
+        }
         current_energy = balance.starting_storage_energy_wh
         previous_baseline = balance.starting_storage_energy_wh
         for point in balance.points:

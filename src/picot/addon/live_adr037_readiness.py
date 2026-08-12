@@ -137,10 +137,20 @@ def adr037_readiness_log_event(
             / 100.0,
         )
 
+    recoverability = (
+        planning_result.technical_recoverability if planning_result is not None else None
+    )
     remaining_charge_wh = (
-        planning_result.technical_recoverability.extra_energy_required_wh
-        if planning_result is not None
-        else None
+        recoverability.extra_energy_required_wh if recoverability is not None else None
+    )
+    latest_charge_start = (
+        recoverability.latest_full_power_charge_start if recoverability is not None else None
+    )
+    recovery_start_due = (
+        remaining_charge_wh is not None
+        and remaining_charge_wh > 0.0
+        and latest_charge_start is not None
+        and snapshot.captured_at >= latest_charge_start
     )
     return {
         "event": "picot_live_adr037_readiness",
@@ -219,7 +229,17 @@ def adr037_readiness_log_event(
         "adr037_requirement_energy_wh": (
             planning_result.requirement.required_energy_wh if planning_result else None
         ),
+        "adr037_requirement_required_by": (
+            planning_result.requirement.required_by.isoformat() if planning_result else None
+        ),
         "adr037_remaining_charge_energy_wh": remaining_charge_wh,
+        "adr037_latest_full_power_charge_start": (
+            latest_charge_start.isoformat() if latest_charge_start is not None else None
+        ),
+        "adr037_recovery_start_due": recovery_start_due,
+        "adr037_technically_recoverable": (
+            recoverability.technically_recoverable if recoverability is not None else None
+        ),
         "adr037_charge_needed_now": (
             remaining_charge_wh > 0.0 if remaining_charge_wh is not None else None
         ),

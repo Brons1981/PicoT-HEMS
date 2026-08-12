@@ -1,0 +1,203 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from picot.domain.capability_snapshot import (
+    CapabilityAvailability,
+    CapabilityHealth,
+    CapabilityRole,
+    CapabilitySnapshotSet,
+    EnergyFlowDirection,
+    LogicalCapabilitySnapshot,
+)
+from picot.domain.charge_source_policy import ChargeSourcePolicy
+from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.forecast import ForecastSet
+from picot.domain.household_state import HouseholdState
+from picot.domain.objectives import OptimisationProfile, PlannerStrategy
+from picot.domain.opportunity import (
+    EvidenceReference,
+    Opportunity,
+    OpportunityKind,
+    OpportunityLifecycle,
+    OpportunitySet,
+)
+from picot.domain.planning_input_snapshot import (
+    PlanningInputSnapshot,
+    PlanningInputVersions,
+    RuntimePressureState,
+)
+from picot.domain.pv_only_storage_feasibility import (
+    PVOnlyEnergyFeasibilityOutcome,
+    PVOnlyStorageEnergyFeasibility,
+)
+from picot.domain.storage_energy_requirement import StorageEnergyRequirement, StorageRequirementReason
+from picot.domain.storage_technical_recoverability import StorageTechnicalRecoverability
+from picot.planner.candidate_engine import CandidateEngine
+
+BASE = datetime(2026, 8, 12, 8, 0, tzinfo=UTC)
+
+
+def _snapshot() -> PlanningInputSnapshot:
+    return PlanningInputSnapshot(
+        snapshot_id="snapshot-grid",
+        captured_at=BASE,
+        horizon_end=BASE + timedelta(hours=24),
+        strategy=PlannerStrategy(
+            strategy_version=2,
+            source_profile_version=1,
+            mapping_version="map-1",
+            optimisation_profile=OptimisationProfile.BALANCED,
+            objectives=(),
+        ),
+        household_state=HouseholdState(measured_at=BASE, phases=()),
+        forecasts=ForecastSet(series=()),
+        runtime_state=RuntimePressureState.NORMAL,
+        versions=PlanningInputVersions(
+            capability_mapping=3,
+            user_rules=1,
+            commitments=1,
+            household_state=1,
+            forecasts=1,
+        ),
+        replan_reasons=("test",),
+    )
+
+
+def _opportunities() -> OpportunitySet:
+    opportunity = Opportunity(
+        opportunity_id="lowest-price-1",
+        snapshot_id="snapshot-grid",
+        kind=OpportunityKind.LOWEST_PRICE_WINDOW,
+        starts_at=BASE + timedelta(hours=1),
+        ends_at=BASE + timedelta(hours=2),
+        confidence=0.9,
+        lifecycle=OpportunityLifecycle.DETECTED,
+        evidence=(EvidenceReference(source_id="price-forecast-1", point_indexes=(0,)),),
+    )
+    return OpportunitySet(snapshot_id="snapshot-grid", opportunities=(opportunity,))
+
+
+def _capabilities(*, maximum_power_w: float = 1500.0) -> CapabilitySnapshotSet:
+    capability = LogicalCapabilitySnapshot(
+        capability_id="battery-charge",
+        execution_scope_id="battery-main",
+        supported_primitives=(ExecutionPrimitive.CHARGE_AT_POWER,),
+        availability=CapabilityAvailability.AVAILABLE,
+        health=CapabilityHealth.HEALTHY,
+        fresh_at=BASE,
+        confidence=0.95,
+        source_mapping_id="mapping-1",
+        adapter_contract_version="1",
+        role=CapabilityRole.ENERGY_STORAGE,
+        flow_directions=(EnergyFlowDirection.CHARGE,),
+        minimum_power_w=100.0,
+        maximum_power_w=maximum_power_w,
+        power_step_w=100.0,
+    )
+    return CapabilitySnapshotSet(
+        snapshot_id="snapshot-grid",
+        mapping_version=3,
+        captured_at=BASE,
+        capabilities=(capability,),
+    )
+
+
+def _requirement() -> StorageEnergyRequirement:
+    return StorageEnergyRequirement(
+        requirement_id="storage:req:evening",
+        required_by=BASE + timedelta(hours=6),
+        required_energy_wh=7000.0,
+        required_soc_percent=None,
+        reason=StorageRequirementReason.HOUSEHOLD_DEMAND,
+        confidence=0.85,
+        evidence_ids=("balance-1",),
+    )
+
+
+def _feasibility(*, sufficient: bool = False) -> PVOnlyStorageEnergyFeasibility:
+    return PVOnlyStorageEnergyFeasibility(
+        requirement_id="storage:req:evening",
+        outcome=(
+            PVOnlyEnergyFeasibilityOutcome.ENERGY_SUFFICIENT
+            if sufficient
+            else PVOnlyEnergyFeasibilityOutcome.ENERGY_SHORTFALL
+        ),
+        projected_energy_at_deadline_wh=6000.0,
+        deadline_shortfall_wh=0.0 if sufficient else 1000.0,
+        household_path_shortfall_wh=0.0,
+        confidence=0.8,
+        evidence_ids=("storage:req:evening", "balance-1", "pv-feasibility-v1"),
+    )
+
+
+def _recoverability(*, extra_energy_wh: float = 1000.0, recoverable: bool = True) -> StorageTechnicalRecoverability:
+    return StorageTechnicalRecoverability(
+        evaluated_at=BASE,
+        requirement_id="storage:req:evening",
+        capability_id="battery-charge",
+        required_by=BASE + timedelta(hours=6),
+        extra_energy_required_wh=extra_energy_wh,
+        maximum_charge_energy_before_deadline_wh=6000.0,
+        technically_recoverable=recoverable,
+        confidence=0.82,
+        evidence_ids=("storage:req:evening", "battery-charge", "recoverability-v1"),
+    )
+
+
+def test_grid_supported_candidate_uses_explicit_source_policy() -> None:
+    result = CandidateEngine().generate(
+        _snapshot(),
+        _opportunities(),
+        _capabilities(),
+        storage_requirement=_requirement(),
+        pv_only_feasibility=_feasibility(),
+        storage_recoverability=_recoverability(),
+    )
+
+    cost_paths = [path for path in result.energy_paths if path.family.value == "cost_first"]
+    assert len(cost_paths) == 1
+    segment = cost_paths[0].segments[0]
+    assert segment.requested_power_w == pytest.approx(1000.0)
+    assert segment.charge_source_policy is ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
+    assert "storage:req:evening" in segment.evidence_ids
+
+
+def test_grid_candidate_is_not_generated_when_pv_only_is_sufficient() -> None:
+    result = CandidateEngine().generate(
+        _snapshot(),
+        _opportunities(),
+        _capabilities(),
+        storage_requirement=_requirement(),
+        pv_only_feasibility=_feasibility(sufficient=True),
+        storage_recoverability=_recoverability(),
+    )
+
+    assert all(path.family.value != "cost_first" for path in result.energy_paths)
+    assert any("grid supplementation is unnecessary" in item.reason for item in result.exclusions)
+
+
+def test_grid_candidate_is_rejected_when_price_window_cannot_deliver_target() -> None:
+    result = CandidateEngine().generate(
+        _snapshot(),
+        _opportunities(),
+        _capabilities(maximum_power_w=1500.0),
+        storage_requirement=_requirement(),
+        pv_only_feasibility=_feasibility(),
+        storage_recoverability=_recoverability(extra_energy_wh=2000.0),
+    )
+
+    assert all(path.family.value != "cost_first" for path in result.energy_paths)
+    assert any("cannot deliver" in item.reason for item in result.exclusions)
+
+
+def test_storage_candidate_evidence_must_be_supplied_atomically() -> None:
+    with pytest.raises(ValueError, match="requires requirement"):
+        CandidateEngine().generate(
+            _snapshot(),
+            _opportunities(),
+            _capabilities(),
+            storage_requirement=_requirement(),
+        )

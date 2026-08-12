@@ -1,6 +1,6 @@
 # ADR-045 — Canonical PV Deviation as Planner Evidence
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-13
 
 ## Context

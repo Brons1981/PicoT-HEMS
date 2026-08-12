@@ -1,6 +1,6 @@
 # ADR-044 — Timed Storage Acquisition Candidate Selection
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-12
 
 ## Context

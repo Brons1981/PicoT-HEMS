@@ -76,6 +76,9 @@ class StorageTechnicalRecoverabilityEvaluator:
 
         storage_limit.validate_against(storage_state)
         self._validate_capability(storage_state=storage_state, capability=capability)
+        maximum_power_w = capability.maximum_power_w
+        if maximum_power_w is None:
+            raise ValueError("Storage capability requires a maximum charge power.")
 
         target_energy_wh = min(requirement.required_energy_wh, storage_limit.max_energy_wh)
         extra_required_wh = max(0.0, target_energy_wh - storage_state.current_stored_energy_wh)
@@ -84,7 +87,7 @@ class StorageTechnicalRecoverabilityEvaluator:
             storage_limit.max_energy_wh - storage_state.current_stored_energy_wh,
         )
         available_hours = (requirement.required_by - evaluated_at).total_seconds() / 3600.0
-        power_limited_energy_wh = capability.maximum_power_w * available_hours
+        power_limited_energy_wh = maximum_power_w * available_hours
         maximum_charge_energy_wh = min(headroom_wh, power_limited_energy_wh)
 
         evidence_ids = tuple(

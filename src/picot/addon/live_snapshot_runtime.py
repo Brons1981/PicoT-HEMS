@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
@@ -9,6 +10,7 @@ from picot.addon.planning_snapshot_assembly import (
     NormalizedPlanningInputs,
     assemble_planning_input_snapshot,
 )
+from picot.domain.current_flow_observation import CurrentFlowObservation
 from picot.domain.current_storage_state import CurrentStorageState
 from picot.domain.forecast import ForecastSet
 from picot.domain.household_state import HouseholdState
@@ -77,6 +79,43 @@ def current_storage_state_from_telemetry(
         measured_at=measured_at,
         confidence=1.0,
         evidence_ids=(f"zendure-observation-{sequence}",),
+    )
+
+
+def current_flow_observation_from_telemetry(
+    event: dict[str, object], *, sequence: int, captured_at: datetime
+) -> CurrentFlowObservation | None:
+    grid_export_w = _number(event, "flow_observer_grid_export_w")
+    discharge_w = _number(event, "flow_observer_battery_discharge_w")
+    pv_power_w = _number(event, "flow_observer_pv_power_w")
+    raw_mismatch = event.get("flow_observer_raw_mismatch")
+    persistent = event.get("flow_observer_persistent_mismatch")
+    consecutive = event.get("flow_observer_consecutive_samples")
+    required = event.get("flow_observer_required_samples")
+    if (
+        grid_export_w is None
+        or discharge_w is None
+        or pv_power_w is None
+        or not isinstance(raw_mismatch, bool)
+        or not isinstance(persistent, bool)
+        or isinstance(consecutive, bool)
+        or not isinstance(consecutive, int)
+        or isinstance(required, bool)
+        or not isinstance(required, int)
+    ):
+        return None
+    observation_id = f"live-flow-{sequence}"
+    return CurrentFlowObservation(
+        observation_id=observation_id,
+        observed_at=captured_at,
+        grid_export_w=grid_export_w,
+        battery_discharge_w=discharge_w,
+        pv_power_w=pv_power_w,
+        discharge_while_exporting=raw_mismatch,
+        persistent_mismatch=persistent,
+        consecutive_samples=consecutive,
+        required_samples=required,
+        evidence_ids=(f"flow-observer-sample-{sequence}",),
     )
 
 
@@ -181,6 +220,11 @@ def build_live_planning_snapshot(
         raise ValueError("Telemetry event requires telemetry_updated_at.")
     household_state = household_state_from_telemetry(event)
     storage_state = current_storage_state_from_telemetry(event, sequence=sequence)
+    flow_observation = current_flow_observation_from_telemetry(
+        event,
+        sequence=sequence,
+        captured_at=captured_at,
+    )
     pv_timeline = pv_energy_timeline_from_telemetry(
         event,
         sequence=sequence,
@@ -203,7 +247,7 @@ def build_live_planning_snapshot(
         if pv_timeline is not None
         else captured_at + timedelta(hours=horizon_hours)
     )
-    return assemble_planning_input_snapshot(
+    snapshot = assemble_planning_input_snapshot(
         snapshot_id=f"live-observation-{captured_at.isoformat()}-{sequence}",
         captured_at=captured_at,
         horizon_end=horizon_end,
@@ -224,6 +268,7 @@ def build_live_planning_snapshot(
         ),
         replan_reasons=("live_observation",),
     )
+    return replace(snapshot, current_flow_observation=flow_observation)
 
 
 def snapshot_log_event(snapshot: PlanningInputSnapshot) -> dict[str, object]:
@@ -231,6 +276,7 @@ def snapshot_log_event(snapshot: PlanningInputSnapshot) -> dict[str, object]:
     storage = snapshot.current_storage_states[0] if snapshot.current_storage_states else None
     pv_timeline = snapshot.pv_energy_timeline
     load_forecast = snapshot.household_load_forecast
+    flow = snapshot.current_flow_observation
     status = (
         "observation_plus_storage_pv_load"
         if load_forecast is not None
@@ -263,6 +309,8 @@ def snapshot_log_event(snapshot: PlanningInputSnapshot) -> dict[str, object]:
         "household_load_history_source": (
             load_forecast.historical_source_reference if load_forecast is not None else None
         ),
+        "flow_observation_id": flow.observation_id if flow is not None else None,
+        "flow_persistent_mismatch": flow.persistent_mismatch if flow is not None else None,
         "household_state_version": snapshot.versions.household_state,
         "status": status,
     }

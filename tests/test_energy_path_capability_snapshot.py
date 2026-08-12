@@ -12,6 +12,7 @@ from picot.domain.capability_snapshot import (
     EnergyFlowDirection,
     LogicalCapabilitySnapshot,
 )
+from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import (
     EnergyPath,
     PathSegment,
@@ -89,6 +90,7 @@ def test_power_primitive_requires_requested_power() -> None:
             capability_id="battery-control",
             purpose="Use forecast PV surplus",
             evidence_ids=("opportunity-pv-1",),
+            charge_source_policy=ChargeSourcePolicy.PV_ONLY,
         )
 
 
@@ -104,6 +106,7 @@ def test_energy_path_is_complete_traceable_and_immutable() -> None:
         purpose="Use forecast PV surplus",
         evidence_ids=("opportunity-pv-1",),
         requested_power_w=1200.0,
+        charge_source_policy=ChargeSourcePolicy.PV_ONLY,
     )
     state = ProjectedEnergyState(
         at=BASE + timedelta(hours=1),
@@ -133,6 +136,7 @@ def test_energy_path_is_complete_traceable_and_immutable() -> None:
     )
 
     assert path.segments[0].primitive is ExecutionPrimitive.CHARGE_AT_POWER
+    assert path.segments[0].charge_source_policy is ChargeSourcePolicy.PV_ONLY
     assert path.mapping_version == 3
     with pytest.raises(AttributeError):
         path.confidence = 0.5  # type: ignore[misc]

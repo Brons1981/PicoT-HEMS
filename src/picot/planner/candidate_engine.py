@@ -19,6 +19,7 @@ from picot.domain.capability_snapshot import (
     EnergyFlowDirection,
     LogicalCapabilitySnapshot,
 )
+from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import EnergyPath, PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.opportunity import (
@@ -219,6 +220,7 @@ class CandidateEngine:
                 purpose="Store expected PV surplus.",
                 evidence_ids=(opportunity.opportunity_id,),
                 requested_power_w=requested_power,
+                charge_source_policy=ChargeSourcePolicy.PV_ONLY,
             )
             confidence = min(opportunity.confidence, capability.confidence)
             paths.append(

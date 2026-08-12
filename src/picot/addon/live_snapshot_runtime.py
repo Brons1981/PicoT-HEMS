@@ -22,6 +22,8 @@ from picot.domain.pv_energy_timeline import (
     PVEnergyTimelineInterval,
 )
 
+PV_TIMELINE_METHOD_VERSION = "solcast-power-to-quarter-hour-energy-v2"
+
 
 def _number(event: dict[str, object], key: str) -> float | None:
     value = event.get(key)
@@ -151,6 +153,71 @@ def _forecast_points(
     return parsed
 
 
+def _next_quarter_boundary(moment: datetime) -> datetime:
+    """Return the first wall-clock quarter boundary strictly after ``moment``."""
+
+    base = moment.replace(second=0, microsecond=0)
+    minutes = 15 - (base.minute % 15)
+    return base + timedelta(minutes=minutes)
+
+
+def _canonical_pv_intervals(
+    *,
+    parsed: list[tuple[datetime, float, float]],
+    captured_at: datetime,
+    sequence: int,
+) -> list[PVEnergyTimelineInterval]:
+    """Integrate source PV power onto one canonical quarter-hour planning grid."""
+
+    source_intervals: list[tuple[datetime, datetime, float, float]] = []
+    for (start, estimate_kw, confidence), (next_start, _, _) in zip(
+        parsed, parsed[1:], strict=False
+    ):
+        if next_start <= captured_at:
+            continue
+        effective_start = max(start, captured_at)
+        if effective_start >= next_start:
+            continue
+        source_intervals.append((effective_start, next_start, estimate_kw, confidence))
+    if not source_intervals or source_intervals[0][0] != captured_at:
+        return []
+
+    horizon_end = source_intervals[-1][1]
+    canonical: list[PVEnergyTimelineInterval] = []
+    cursor = captured_at
+    while cursor < horizon_end:
+        interval_end = min(horizon_end, _next_quarter_boundary(cursor))
+        energy_wh = 0.0
+        covered_seconds = 0.0
+        confidences: list[float] = []
+        for source_start, source_end, estimate_kw, confidence in source_intervals:
+            overlap_start = max(cursor, source_start)
+            overlap_end = min(interval_end, source_end)
+            if overlap_end <= overlap_start:
+                continue
+            seconds = (overlap_end - overlap_start).total_seconds()
+            covered_seconds += seconds
+            energy_wh += estimate_kw * 1000.0 * seconds / 3600.0
+            confidences.append(confidence)
+
+        expected_seconds = (interval_end - cursor).total_seconds()
+        if abs(covered_seconds - expected_seconds) > 1e-6 or not confidences:
+            return []
+        canonical.append(
+            PVEnergyTimelineInterval(
+                starts_at=cursor,
+                ends_at=interval_end,
+                energy_wh=energy_wh,
+                evidence_type=PVEnergyEvidenceType.FORECAST,
+                confidence=min(confidences),
+                evidence_ids=(f"solcast-forecast-{sequence}",),
+                method_version=PV_TIMELINE_METHOD_VERSION,
+            )
+        )
+        cursor = interval_end
+    return canonical
+
+
 def pv_energy_timeline_from_telemetry(
     event: dict[str, object], *, sequence: int, captured_at: datetime
 ) -> PVEnergyTimeline | None:
@@ -170,28 +237,12 @@ def pv_energy_timeline_from_telemetry(
     if len(parsed) < 2:
         return None
 
-    intervals: list[PVEnergyTimelineInterval] = []
-    for (start, estimate_kw, confidence), (next_start, _, _) in zip(
-        parsed, parsed[1:], strict=False
-    ):
-        if next_start <= captured_at:
-            continue
-        effective_start = max(start, captured_at)
-        if effective_start >= next_start:
-            continue
-        hours = (next_start - effective_start).total_seconds() / 3600.0
-        intervals.append(
-            PVEnergyTimelineInterval(
-                starts_at=effective_start,
-                ends_at=next_start,
-                energy_wh=estimate_kw * 1000.0 * hours,
-                evidence_type=PVEnergyEvidenceType.FORECAST,
-                confidence=confidence,
-                evidence_ids=(f"solcast-forecast-{sequence}",),
-                method_version="solcast-power-to-energy-v1",
-            )
-        )
-    if not intervals or intervals[0].starts_at != captured_at:
+    intervals = _canonical_pv_intervals(
+        parsed=parsed,
+        captured_at=captured_at,
+        sequence=sequence,
+    )
+    if not intervals:
         return None
     return PVEnergyTimeline(
         timeline_id=f"live-pv-{sequence}",

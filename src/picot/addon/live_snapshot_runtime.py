@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from picot.addon.household_load_forecaster import HouseholdLoadForecaster
 from picot.addon.planning_snapshot_assembly import (
     NormalizedPlanningInputs,
     assemble_planning_input_snapshot,
@@ -167,19 +168,36 @@ def _runtime_strategy() -> PlannerStrategy:
 
 
 def build_live_planning_snapshot(
-    event: dict[str, object], *, sequence: int, horizon_hours: int = 24
+    event: dict[str, object],
+    *,
+    sequence: int,
+    horizon_hours: int = 24,
+    load_forecaster: HouseholdLoadForecaster | None = None,
 ) -> PlanningInputSnapshot:
     if sequence < 1:
         raise ValueError("Snapshot sequence must be at least 1.")
     captured_at = _timestamp(event, "telemetry_updated_at")
     if captured_at is None:
         raise ValueError("Telemetry event requires telemetry_updated_at.")
+    household_state = household_state_from_telemetry(event)
     storage_state = current_storage_state_from_telemetry(event, sequence=sequence)
     pv_timeline = pv_energy_timeline_from_telemetry(
         event,
         sequence=sequence,
         captured_at=captured_at,
     )
+    household_load_forecast = None
+    if load_forecaster is not None and pv_timeline is not None:
+        load_forecaster.observe(
+            measured_at=household_state.measured_at,
+            household_load_w=household_state.household_load_w,
+        )
+        household_load_forecast = load_forecaster.forecast(
+            captured_at=captured_at,
+            pv_timeline=pv_timeline,
+            current_household_load_w=household_state.household_load_w,
+            sequence=sequence,
+        )
     horizon_end = (
         pv_timeline.horizon_end
         if pv_timeline is not None
@@ -191,9 +209,10 @@ def build_live_planning_snapshot(
         horizon_end=horizon_end,
         strategy=_runtime_strategy(),
         inputs=NormalizedPlanningInputs(
-            household_state=household_state_from_telemetry(event),
+            household_state=household_state,
             forecasts=ForecastSet(series=()),
             current_storage_states=((storage_state,) if storage_state is not None else ()),
+            household_load_forecast=household_load_forecast,
             pv_energy_timeline=pv_timeline,
         ),
         versions=PlanningInputVersions(
@@ -211,6 +230,12 @@ def snapshot_log_event(snapshot: PlanningInputSnapshot) -> dict[str, object]:
     state = snapshot.household_state
     storage = snapshot.current_storage_states[0] if snapshot.current_storage_states else None
     pv_timeline = snapshot.pv_energy_timeline
+    load_forecast = snapshot.household_load_forecast
+    status = (
+        "observation_plus_storage_pv_load"
+        if load_forecast is not None
+        else "observation_plus_storage_pv"
+    )
     return {
         "event": "picot_live_planning_snapshot",
         "layer": "planning_input",
@@ -226,6 +251,18 @@ def snapshot_log_event(snapshot: PlanningInputSnapshot) -> dict[str, object]:
         "pv_timeline_energy_wh": (
             pv_timeline.total_energy_wh if pv_timeline is not None else None
         ),
+        "household_load_forecast_wh": (
+            load_forecast.expected_energy_wh if load_forecast is not None else None
+        ),
+        "household_load_forecast_confidence": (
+            load_forecast.confidence if load_forecast is not None else None
+        ),
+        "household_load_forecast_method": (
+            load_forecast.method_version if load_forecast is not None else None
+        ),
+        "household_load_history_source": (
+            load_forecast.historical_source_reference if load_forecast is not None else None
+        ),
         "household_state_version": snapshot.versions.household_state,
-        "status": "observation_plus_storage_pv",
+        "status": status,
     }

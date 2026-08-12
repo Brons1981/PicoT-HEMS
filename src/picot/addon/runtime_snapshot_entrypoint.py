@@ -6,6 +6,7 @@ import json
 from typing import Any, cast
 
 from picot.addon import runtime, runtime_observation
+from picot.addon.household_load_forecaster import HouseholdLoadForecaster
 from picot.addon.live_snapshot_runtime import (
     build_live_planning_snapshot,
     snapshot_log_event,
@@ -14,6 +15,7 @@ from picot.addon.live_snapshot_runtime import (
 _base_evidence_events = runtime_observation._telemetry_evidence_events
 _snapshot_sequence = 0
 _storage_usable_capacity_wh: float | None = None
+_load_forecaster = HouseholdLoadForecaster()
 
 
 def telemetry_evidence_events_with_snapshot(
@@ -30,6 +32,7 @@ def telemetry_evidence_events_with_snapshot(
     snapshot = build_live_planning_snapshot(
         snapshot_input,
         sequence=_snapshot_sequence,
+        load_forecaster=_load_forecaster,
     )
     events.append(snapshot_log_event(snapshot))
     return events

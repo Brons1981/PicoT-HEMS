@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from picot.domain.effective_storage_limit import EffectiveStorageLimit
+from picot.domain.evidence_confidence_policy import EvidenceConfidenceAssessment
 from picot.domain.projected_household_energy_balance import (
     ProjectedHouseholdEnergyBalance,
 )
@@ -17,7 +18,6 @@ from picot.domain.storage_reserve_decision import (
     StorageReserveDecision,
     StorageReserveDecisionPolicy,
 )
-from picot.domain.evidence_confidence_policy import EvidenceConfidenceAssessment
 
 
 @dataclass(frozen=True, slots=True)

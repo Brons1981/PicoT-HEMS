@@ -11,6 +11,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from picot.domain.forecast import ForecastSet
+from picot.domain.household_load_forecast import HouseholdLoadForecast
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import PlannerStrategy
 
@@ -58,6 +59,7 @@ class PlanningInputSnapshot:
     runtime_state: RuntimePressureState
     versions: PlanningInputVersions
     replan_reasons: tuple[str, ...]
+    household_load_forecast: HouseholdLoadForecast | None = None
 
     def __post_init__(self) -> None:
         if not self.snapshot_id.strip():
@@ -78,3 +80,16 @@ class PlanningInputSnapshot:
             raise ValueError("A Planning Input Snapshot requires a replan reason.")
         if any(not reason.strip() for reason in self.replan_reasons):
             raise ValueError("Replan reasons must not be empty.")
+
+        load_forecast = self.household_load_forecast
+        if load_forecast is not None:
+            if load_forecast.created_at > self.captured_at:
+                raise ValueError(
+                    "Household load forecast cannot be created after snapshot capture time."
+                )
+            if load_forecast.horizon_start != self.captured_at:
+                raise ValueError("Household load forecast must start at snapshot capture time.")
+            if load_forecast.horizon_end != self.horizon_end:
+                raise ValueError(
+                    "Household load forecast must cover the complete planning horizon."
+                )

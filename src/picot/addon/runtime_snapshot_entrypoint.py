@@ -9,6 +9,7 @@ from picot.addon import runtime, runtime_observation
 from picot.addon.adr037_dashboard import publish_adr037_dashboard_states
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
 from picot.addon.live_adr037_readiness import adr037_readiness_log_event
+from picot.addon.live_flow_observer import LiveFlowObserver
 from picot.addon.live_planner_context import LiveEvidenceConfidenceTracker
 from picot.addon.live_snapshot_runtime import (
     build_live_planning_snapshot,
@@ -28,6 +29,7 @@ _storage_max_charge_power_w: float | None = None
 _storage_power_step_w: float | None = None
 _load_forecaster = HouseholdLoadForecaster()
 _confidence_tracker = LiveEvidenceConfidenceTracker()
+_flow_observer = LiveFlowObserver()
 
 
 def _soc_fraction(event: dict[str, object], key: str) -> float | None:
@@ -47,6 +49,31 @@ def telemetry_evidence_events_with_snapshot(
 
     global _snapshot_sequence
     events = _base_evidence_events(telemetry_event)
+    flow_fields = _flow_observer.evaluate(telemetry_event)
+    telemetry_event.update(flow_fields)
+    events.append(
+        {
+            "event": "picot_live_flow_observation",
+            "layer": "closed_loop_observer",
+            "observed_at": telemetry_event.get("telemetry_updated_at"),
+            **flow_fields,
+            "zendure_available_energy": telemetry_event.get("zendure_available_energy"),
+            "zendure_required_energy": telemetry_event.get("zendure_required_energy"),
+            "zendure_remaining_discharge_time": telemetry_event.get(
+                "zendure_remaining_discharge_time"
+            ),
+            "zendure_remaining_charge_time": telemetry_event.get(
+                "zendure_remaining_charge_time"
+            ),
+            "zendure_configured_discharge_power_w": telemetry_event.get(
+                "zendure_configured_discharge_power_w"
+            ),
+            "zendure_configured_charge_power_w": telemetry_event.get(
+                "zendure_configured_charge_power_w"
+            ),
+        }
+    )
+
     _snapshot_sequence += 1
     snapshot_input = dict(telemetry_event)
     if _storage_usable_capacity_wh is not None:

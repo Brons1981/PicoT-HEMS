@@ -1,4 +1,13 @@
-"""Projected household energy balance from ADR-037."""
+"""Projected household energy balance from ADR-037.
+
+Implementation boundary:
+- This module is the canonical projected-household-balance engine.
+- Future known-demand/commitment inputs and conversion-loss inputs MUST be
+  integrated into this same balance calculation when their Core contracts exist.
+- They MUST NOT be implemented as a second or parallel household-balance engine.
+- Planned grid energy remains outside the no-grid baseline used to determine
+  whether grid-supported charging is required.
+"""
 
 from __future__ import annotations
 
@@ -22,7 +31,13 @@ class ProjectedHouseholdEnergyBalancePoint:
 
 @dataclass(frozen=True, slots=True)
 class ProjectedHouseholdEnergyBalance:
-    """Immutable baseline projection without planned grid charging."""
+    """Immutable baseline projection without planned grid charging.
+
+    `known_future_demand_applied` and `conversion_losses_applied` deliberately
+    remain explicit until those accepted inputs are integrated here. They are
+    extension markers for this canonical engine, not permission to create
+    parallel calculations elsewhere.
+    """
 
     balance_id: str
     created_at: datetime
@@ -63,7 +78,11 @@ class ProjectedHouseholdEnergyBalance:
 
 @dataclass(frozen=True, slots=True)
 class ProjectedHouseholdEnergyBalanceAssembler:
-    """Build the v1 no-grid baseline from canonical Planner inputs."""
+    """Build the v1 no-grid baseline from canonical Planner inputs.
+
+    Future known-demand/commitment and conversion-loss inputs extend this
+    assembler. They do not get a separate projected-balance implementation.
+    """
 
     method_version: str = "projected-household-balance-v1"
 

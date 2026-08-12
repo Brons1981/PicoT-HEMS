@@ -128,4 +128,6 @@ class PlanningInputSnapshot:
 
         flow_observation = self.current_flow_observation
         if flow_observation is not None and flow_observation.observed_at > self.captured_at:
-            raise ValueError("Current flow observation cannot be measured after snapshot capture time.")
+            raise ValueError(
+                "Current flow observation cannot be measured after snapshot capture time."
+            )

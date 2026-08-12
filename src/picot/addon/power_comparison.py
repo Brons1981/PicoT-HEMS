@@ -17,6 +17,10 @@ def _number(event: dict[str, object], key: str) -> float | None:
     return float(value)
 
 
+def _ha_state(value: object) -> object:
+    return "unavailable" if value is None else value
+
+
 def add_power_comparison_fields(event: dict[str, object]) -> None:
     """Add derived house demand and self-supply without changing planner decisions."""
 
@@ -31,10 +35,6 @@ def add_power_comparison_fields(event: dict[str, object]) -> None:
         event["self_supply_power_status"] = "unavailable"
         return
 
-    # Sign contract:
-    # grid: positive import, negative export
-    # battery: positive charging, negative discharging
-    # balance: PV + grid = house + battery
     house_power_w = pv_power_w + grid_power_w - battery_power_w
     grid_import_w = max(grid_power_w, 0.0)
 
@@ -73,7 +73,7 @@ def power_comparison_dashboard_states(
 
     return {
         "sensor.picot_house_power": {
-            "state": event.get("house_power_w", "unknown"),
+            "state": _ha_state(event.get("house_power_w", "unknown")),
             "attributes": _power_attributes(
                 friendly_name="PicoT afgeleid huisverbruik",
                 icon="mdi:home-lightning-bolt-outline",
@@ -83,7 +83,7 @@ def power_comparison_dashboard_states(
             ),
         },
         "sensor.picot_self_supply_power": {
-            "state": event.get("self_supply_power_w", "unknown"),
+            "state": _ha_state(event.get("self_supply_power_w", "unknown")),
             "attributes": _power_attributes(
                 friendly_name="PicoT zelfvoorzienend vermogen",
                 icon="mdi:home-battery-outline",

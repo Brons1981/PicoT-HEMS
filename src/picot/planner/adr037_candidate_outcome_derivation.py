@@ -59,12 +59,19 @@ class ADR037CandidateOutcomeDeriver:
             path=path,
             storage_recoverability=storage_recoverability,
         )
+        recoverability_evidence_ids: tuple[str, ...] = ()
+        if recoverability is not None:
+            if storage_recoverability is None:
+                raise ValueError(
+                    "Recoverability outcome requires technical recoverability evidence."
+                )
+            recoverability_evidence_ids = storage_recoverability.evidence_ids
         evidence_ids = tuple(
             dict.fromkeys(
                 (
                     candidate.candidate_id,
                     path.path_id,
-                    *(storage_recoverability.evidence_ids if recoverability is not None else ()),
+                    *recoverability_evidence_ids,
                 )
             )
         )

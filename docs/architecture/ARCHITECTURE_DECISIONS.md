@@ -160,3 +160,8 @@ Detailed record: [`ADR-036-price-opportunity-detection-contract.md`](ADR-036-pri
 PicoT determines future household/storage energy requirements, reserve needs and explicit grid-source permission while preserving Planner Strategy ownership of the final trade-off.
 
 Detailed record: [`ADR-037-household-energy-requirement-storage-reserve-grid-use.md`](ADR-037-household-energy-requirement-storage-reserve-grid-use.md)
+
+### ADR-038 — Current Storage State Contract
+PicoT captures one immutable, vendor-independent current storage state per logical storage scope in the atomic Planning Input Snapshot and reuses that same state throughout the Planner Run.
+
+Detailed record: [`ADR-038-current-storage-state-contract.md`](ADR-038-current-storage-state-contract.md)

@@ -108,7 +108,10 @@ class FlowAwareCandidateEngine(CandidateEngine):
         if grid_power_w <= -self.grid_deadband_w:
             return (
                 ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
-                "Grid export is present; allow bidirectional balancing so live surplus can charge storage.",
+                (
+                    "Grid export is present; allow bidirectional balancing so live "
+                    "surplus can charge storage."
+                ),
             )
 
         active_low_price = any(
@@ -128,13 +131,19 @@ class FlowAwareCandidateEngine(CandidateEngine):
         ):
             return (
                 ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
-                "Storage still has a future energy shortfall; keep delegated charging permission available.",
+                (
+                    "Storage still has a future energy shortfall; keep delegated "
+                    "charging permission available."
+                ),
             )
 
         if grid_power_w >= self.grid_deadband_w:
             return (
                 ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
-                "The household is importing and no current charge permission is required; use delegated discharge-only balancing.",
+                (
+                    "The household is importing and no current charge permission is "
+                    "required; use delegated discharge-only balancing."
+                ),
             )
 
         return None, "Grid flow is inside the deadband; keep the current delegated mode."

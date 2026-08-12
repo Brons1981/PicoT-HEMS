@@ -9,7 +9,7 @@ from picot.domain.candidate import (
     CandidateFamily,
     CandidateSet,
 )
-from picot.domain.capability_snapshot import CapabilitySnapshotSet, CapabilityRole
+from picot.domain.capability_snapshot import CapabilityRole, CapabilitySnapshotSet
 from picot.domain.energy_path import EnergyPath, PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.opportunity import OpportunitySet

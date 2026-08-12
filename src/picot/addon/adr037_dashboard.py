@@ -32,12 +32,31 @@ def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
         "projected_balance_confidence": event.get("projected_balance_confidence"),
         "storage_capability_available": event.get("storage_capability_available"),
         "storage_max_charge_power_w": event.get("storage_max_charge_power_w"),
+        "current_storage_soc": event.get("current_storage_soc"),
+        "current_storage_energy_wh": event.get("current_storage_energy_wh"),
+        "live_storage_min_soc_percent": event.get("live_storage_min_soc_percent"),
+        "live_storage_max_soc_percent": event.get("live_storage_max_soc_percent"),
+        "live_storage_operating_window_wh": event.get(
+            "live_storage_operating_window_wh"
+        ),
         "effective_storage_max_soc": event.get("effective_storage_max_soc"),
+        "effective_storage_max_energy_wh": event.get("effective_storage_max_energy_wh"),
         "evidence_confidence_decision": event.get("evidence_confidence_decision"),
         "canonical_price_opportunity_count": event.get(
             "canonical_price_opportunity_count"
         ),
+        "price_window_context": event.get("price_window_context"),
+        "price_window_starts_at": event.get("price_window_starts_at"),
+        "price_window_ends_at": event.get("price_window_ends_at"),
+        "price_window_best_later_starts_at": event.get(
+            "price_window_best_later_starts_at"
+        ),
+        "price_window_best_later_price_eur_per_kwh": event.get(
+            "price_window_best_later_price_eur_per_kwh"
+        ),
         "requirement_energy_wh": event.get("adr037_requirement_energy_wh"),
+        "remaining_charge_energy_wh": event.get("adr037_remaining_charge_energy_wh"),
+        "charge_needed_now": event.get("adr037_charge_needed_now"),
         "pv_only_sufficient": event.get("adr037_pv_only_sufficient"),
         "candidate_count": event.get("adr037_candidate_count"),
         "evaluation_status": event.get("adr037_evaluation_status"),

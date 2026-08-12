@@ -37,10 +37,13 @@ def _limit(max_soc: float = 1.0) -> EffectiveStorageLimit:
     )
 
 
-def _requirement(*, required_by: datetime = T2, energy_wh: float = 5000.0) -> StorageEnergyRequirement:
+def _requirement(
+    *, protection_starts_at: datetime = T2, energy_wh: float = 5000.0
+) -> StorageEnergyRequirement:
     return StorageEnergyRequirement(
         requirement_id="requirement-1",
-        required_by=required_by,
+        protection_starts_at=protection_starts_at,
+        protected_through=T3,
         required_energy_wh=energy_wh,
         required_soc_percent=energy_wh / 80.0,
         reason=StorageRequirementReason.HOUSEHOLD_DEMAND,
@@ -71,7 +74,7 @@ def _balance(*, starting: float, positions: tuple[float, ...]) -> ProjectedHouse
     )
 
 
-def test_pv_only_energy_is_sufficient_when_complete_path_and_deadline_are_covered() -> None:
+def test_pv_only_energy_is_sufficient_when_complete_path_and_protection_start_are_covered() -> None:
     result = PVOnlyStorageEnergyFeasibilityEvaluator().evaluate(
         requirement=_requirement(),
         balance=_balance(starting=4000.0, positions=(5200.0, 6000.0, 3000.0)),
@@ -79,13 +82,13 @@ def test_pv_only_energy_is_sufficient_when_complete_path_and_deadline_are_covere
     )
 
     assert result.outcome is PVOnlyEnergyFeasibilityOutcome.ENERGY_SUFFICIENT
-    assert result.projected_energy_at_deadline_wh == pytest.approx(6000.0)
-    assert result.deadline_shortfall_wh == 0.0
+    assert result.projected_energy_at_protection_start_wh == pytest.approx(6000.0)
+    assert result.protection_start_shortfall_wh == 0.0
     assert result.household_path_shortfall_wh == 0.0
     assert result.technical_recoverability_evaluated is False
 
 
-def test_deadline_target_shortfall_is_explicit() -> None:
+def test_protection_start_target_shortfall_is_explicit() -> None:
     result = PVOnlyStorageEnergyFeasibilityEvaluator().evaluate(
         requirement=_requirement(energy_wh=6000.0),
         balance=_balance(starting=4000.0, positions=(4500.0, 5000.0, 3000.0)),
@@ -93,7 +96,7 @@ def test_deadline_target_shortfall_is_explicit() -> None:
     )
 
     assert result.outcome is PVOnlyEnergyFeasibilityOutcome.ENERGY_SHORTFALL
-    assert result.deadline_shortfall_wh == pytest.approx(1000.0)
+    assert result.protection_start_shortfall_wh == pytest.approx(1000.0)
 
 
 def test_earlier_household_path_shortfall_is_not_hidden_by_later_pv_recovery() -> None:
@@ -104,8 +107,8 @@ def test_earlier_household_path_shortfall_is_not_hidden_by_later_pv_recovery() -
     )
 
     assert result.outcome is PVOnlyEnergyFeasibilityOutcome.ENERGY_SHORTFALL
-    assert result.projected_energy_at_deadline_wh == pytest.approx(4000.0)
-    assert result.deadline_shortfall_wh == 0.0
+    assert result.projected_energy_at_protection_start_wh == pytest.approx(4000.0)
+    assert result.protection_start_shortfall_wh == 0.0
     assert result.household_path_shortfall_wh == pytest.approx(500.0)
 
 
@@ -117,14 +120,16 @@ def test_storage_ceiling_prevents_spilled_pv_from_being_reused_later() -> None:
     )
 
     assert result.outcome is PVOnlyEnergyFeasibilityOutcome.ENERGY_SHORTFALL
-    assert result.projected_energy_at_deadline_wh == pytest.approx(3000.0)
-    assert result.deadline_shortfall_wh == pytest.approx(4000.0)
+    assert result.projected_energy_at_protection_start_wh == pytest.approx(3000.0)
+    assert result.protection_start_shortfall_wh == pytest.approx(4000.0)
 
 
-def test_requirement_deadline_must_match_balance_boundary() -> None:
+def test_requirement_protection_start_must_match_balance_boundary() -> None:
     with pytest.raises(ValueError, match="align with a balance boundary"):
         PVOnlyStorageEnergyFeasibilityEvaluator().evaluate(
-            requirement=_requirement(required_by=START + timedelta(minutes=30)),
+            requirement=_requirement(
+                protection_starts_at=START + timedelta(minutes=30)
+            ),
             balance=_balance(starting=4000.0, positions=(5000.0, 6000.0, 3000.0)),
             effective_limit=_limit(),
         )

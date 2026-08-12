@@ -148,16 +148,28 @@ def telemetry_evidence_events_with_snapshot(
             **flow_fields,
             "zendure_available_energy": telemetry_event.get("zendure_available_energy"),
             "zendure_required_energy": telemetry_event.get("zendure_required_energy"),
-            "zendure_remaining_discharge_time": telemetry_event.get("zendure_remaining_discharge_time"),
-            "zendure_remaining_charge_time": telemetry_event.get("zendure_remaining_charge_time"),
-            "zendure_configured_discharge_power_w": telemetry_event.get("zendure_configured_discharge_power_w"),
-            "zendure_configured_charge_power_w": telemetry_event.get("zendure_configured_charge_power_w"),
+            "zendure_remaining_discharge_time": telemetry_event.get(
+                "zendure_remaining_discharge_time"
+            ),
+            "zendure_remaining_charge_time": telemetry_event.get(
+                "zendure_remaining_charge_time"
+            ),
+            "zendure_configured_discharge_power_w": telemetry_event.get(
+                "zendure_configured_discharge_power_w"
+            ),
+            "zendure_configured_charge_power_w": telemetry_event.get(
+                "zendure_configured_charge_power_w"
+            ),
         }
     )
 
     captured_at = _captured_at(telemetry_event)
     cadence = telemetry_event.get("telemetry_interval_seconds", 5)
-    cadence_seconds = int(cadence) if isinstance(cadence, int) and not isinstance(cadence, bool) else 5
+    cadence_seconds = (
+        int(cadence)
+        if isinstance(cadence, int) and not isinstance(cadence, bool)
+        else 5
+    )
     deviation = _canonical_pv_deviation.evaluate(
         captured_at=captured_at,
         telemetry_interval_seconds=cadence_seconds,
@@ -193,7 +205,9 @@ def telemetry_evidence_events_with_snapshot(
     if canonical_replan_required:
         snapshot = replace(
             snapshot,
-            replan_reasons=tuple(dict.fromkeys((*snapshot.replan_reasons, "canonical_pv_deviation"))),
+            replan_reasons=tuple(
+                dict.fromkeys((*snapshot.replan_reasons, "canonical_pv_deviation"))
+            ),
         )
 
     if snapshot.pv_energy_timeline is not None:
@@ -291,7 +305,9 @@ def main() -> int:
     _storage_power_step_w = configured_step if configured_step > 0 else None
     _target_entity = str(options["target_entity"])
     _price_entity = str(options["price_entity"])
-    _price_opportunity_margin_eur_per_kwh = float(options["price_opportunity_margin_eur_per_kwh"])
+    _price_opportunity_margin_eur_per_kwh = float(
+        options["price_opportunity_margin_eur_per_kwh"]
+    )
     _dispatch_mode = HomeAssistantDispatchMode(str(options["mode"]))
     _supervisor_token = os.environ.get("SUPERVISOR_TOKEN", "")
 

@@ -39,7 +39,7 @@ def _metric_value(opportunity: Opportunity, kind: OpportunityMetricKind) -> floa
 
 
 def _serialize_opportunities(opportunity_set: OpportunitySet) -> list[dict[str, object]]:
-    """Serialize objective canonical price opportunities without inventing rank."""
+    """Serialize canonical price opportunities with their immutable evidence."""
 
     serialized: list[dict[str, object]] = []
     for opportunity in opportunity_set.opportunities:
@@ -52,6 +52,13 @@ def _serialize_opportunities(opportunity_set: OpportunitySet) -> list[dict[str, 
                 "starts_at": opportunity.starts_at.isoformat(),
                 "ends_at": opportunity.ends_at.isoformat(),
                 "confidence": opportunity.confidence,
+                "evidence": [
+                    {
+                        "source_id": item.source_id,
+                        "point_indexes": list(item.point_indexes),
+                    }
+                    for item in opportunity.evidence
+                ],
                 "average_price_eur_per_kwh": _metric_value(
                     opportunity,
                     OpportunityMetricKind.AVERAGE_ENERGY_PRICE_EUR_PER_KWH,
@@ -106,12 +113,6 @@ def _diagnostic_low_price_opportunity(
     *,
     evaluated_at: datetime,
 ) -> tuple[Opportunity | None, str]:
-    """Choose only a diagnostic current/next/completed low-price window.
-
-    This chronological diagnostic selection is not a planner rank and is never
-    passed back into Candidate Generation or execution.
-    """
-
     low_windows = tuple(
         sorted(
             (
@@ -123,20 +124,14 @@ def _diagnostic_low_price_opportunity(
         )
     )
     active = next(
-        (
-            item
-            for item in low_windows
-            if item.starts_at <= evaluated_at < item.ends_at
-        ),
+        (item for item in low_windows if item.starts_at <= evaluated_at < item.ends_at),
         None,
     )
     if active is not None:
         return active, "active"
-
     future = tuple(item for item in low_windows if item.starts_at > evaluated_at)
     if future:
         return future[0], "next"
-
     completed = tuple(item for item in low_windows if item.ends_at <= evaluated_at)
     if completed:
         return max(completed, key=lambda item: item.ends_at), "most_recent_completed"
@@ -149,16 +144,8 @@ def _price_entry_observation(
     *,
     evaluated_at: datetime,
 ) -> dict[str, object]:
-    """Keep the old entry-price forensic comparison observation-only.
-
-    The value is retained only for historical comparison while Price Driven is
-    migrated. It is explicitly not the selected/best start and never enters the
-    canonical planner as input.
-    """
-
     opportunity, opportunity_context = _diagnostic_low_price_opportunity(
-        opportunity_set,
-        evaluated_at=evaluated_at,
+        opportunity_set, evaluated_at=evaluated_at
     )
     if opportunity is None:
         return {
@@ -166,11 +153,8 @@ def _price_entry_observation(
             "price_entry_observation_only": True,
             "price_entry_replan_input": False,
             "price_entry_opportunity_context": opportunity_context,
-            "price_entry_limitation": (
-                "No low-price opportunity is available for the legacy entry comparison."
-            ),
+            "price_entry_limitation": "No low-price opportunity is available for the legacy entry comparison.",
         }
-
     points = tuple(
         point
         for point in forecast.points
@@ -183,13 +167,7 @@ def _price_entry_observation(
             "price_entry_replan_input": False,
             "price_entry_opportunity_context": opportunity_context,
             "price_entry_opportunity_id": opportunity.opportunity_id,
-            "price_entry_opportunity_starts_at": opportunity.starts_at.isoformat(),
-            "price_entry_opportunity_ends_at": opportunity.ends_at.isoformat(),
-            "price_entry_limitation": (
-                "The opportunity exists, but matching forecast points were unavailable."
-            ),
         }
-
     entry = points[0]
     later_points = points[1:]
     lowest_later = (
@@ -198,35 +176,28 @@ def _price_entry_observation(
         else None
     )
     cheaper_later = lowest_later is not None and lowest_later.value < entry.value
-
     alternatives: list[dict[str, object]] = []
     for delay_minutes in PRICE_ENTRY_DELAY_MINUTES:
         starts_at = opportunity.starts_at + timedelta(minutes=delay_minutes)
         candidate = next((point for point in points if point.starts_at == starts_at), None)
-        if candidate is None:
-            alternatives.append(
-                {
-                    "delay_minutes": delay_minutes,
-                    "status": "not_available",
-                    "starts_at": starts_at.isoformat(),
-                }
-            )
-            continue
         alternatives.append(
             {
                 "delay_minutes": delay_minutes,
-                "status": "available",
-                "starts_at": candidate.starts_at.isoformat(),
-                "price_eur_per_kwh": candidate.value,
-                "delta_vs_entry_eur_per_kwh": candidate.value - entry.value,
-                "cheaper_than_entry": candidate.value < entry.value,
+                "status": "available" if candidate is not None else "not_available",
+                "starts_at": starts_at.isoformat(),
+                **(
+                    {
+                        "price_eur_per_kwh": candidate.value,
+                        "delta_vs_entry_eur_per_kwh": candidate.value - entry.value,
+                        "cheaper_than_entry": candidate.value < entry.value,
+                    }
+                    if candidate is not None
+                    else {}
+                ),
             }
         )
-
     result: dict[str, object] = {
-        "price_entry_observation_status": (
-            "lower_later_price_exists" if cheaper_later else "entry_is_lowest_so_far"
-        ),
+        "price_entry_observation_status": "lower_later_price_exists" if cheaper_later else "entry_is_lowest_so_far",
         "price_entry_observation_only": True,
         "price_entry_replan_input": False,
         "price_entry_opportunity_context": opportunity_context,
@@ -237,10 +208,7 @@ def _price_entry_observation(
         "price_entry_reference_price_eur_per_kwh": entry.value,
         "price_entry_better_later_price_exists": cheaper_later,
         "price_entry_alternatives": alternatives,
-        "price_entry_limitation": (
-            "Legacy observation only. The lowest later quarter-hour is not a best start "
-            "and is not used by the canonical planner."
-        ),
+        "price_entry_limitation": "Legacy observation only. The lowest later quarter-hour is not a best start and is not used by the canonical planner.",
     }
     if lowest_later is not None:
         result.update(
@@ -255,29 +223,19 @@ def _price_entry_observation(
 
 def _current_price(forecast: ForecastSeries, *, evaluated_at: datetime) -> float | str:
     point = next(
-        (
-            item
-            for item in forecast.points
-            if item.starts_at <= evaluated_at < item.ends_at
-        ),
+        (item for item in forecast.points if item.starts_at <= evaluated_at < item.ends_at),
         None,
     )
     return point.value if point is not None else "unknown"
 
 
 def run_planner_once(
-    options: dict[str, Any],
-    token: str,
-    *,
-    now: datetime | None = None,
+    options: dict[str, Any], token: str, *, now: datetime | None = None
 ) -> dict[str, object]:
-    """Run Price Driven v2 through the canonical planner path up to Candidates."""
-
     evaluated_at = now or datetime.now(runtime.LOCAL_TIMEZONE)
     price_entity = str(options["price_entity"])
     margin = float(options["price_opportunity_margin_eur_per_kwh"])
     mode = HomeAssistantDispatchMode(str(options["mode"]))
-
     price_state = runtime._request_json(f"/api/states/{price_entity}", token)
     forecast = runtime._price_forecast(price_state, now=evaluated_at)
     pipeline = run_canonical_price_pipeline(
@@ -285,21 +243,15 @@ def run_planner_once(
         evaluated_at=evaluated_at,
         price_margin_eur_per_kwh=margin,
     )
-
     price_opportunities = tuple(
         item for item in pipeline.opportunities.opportunities if item.kind in PRICE_KINDS
     )
     low_opportunities = tuple(
-        item
-        for item in price_opportunities
-        if item.kind is OpportunityKind.LOWEST_PRICE_WINDOW
+        item for item in price_opportunities if item.kind is OpportunityKind.LOWEST_PRICE_WINDOW
     )
     high_opportunities = tuple(
-        item
-        for item in price_opportunities
-        if item.kind is OpportunityKind.HIGH_EXPORT_VALUE_WINDOW
+        item for item in price_opportunities if item.kind is OpportunityKind.HIGH_EXPORT_VALUE_WINDOW
     )
-
     event: dict[str, object] = {
         "event": "picot_price_decision",
         "evaluated_at": evaluated_at.isoformat(),
@@ -310,10 +262,7 @@ def run_planner_once(
         "snapshot_id": pipeline.snapshot.snapshot_id,
         "planning_horizon_starts_at": pipeline.snapshot.captured_at.isoformat(),
         "planning_horizon_ends_at": pipeline.snapshot.horizon_end.isoformat(),
-        "current_price_eur_per_kwh": _current_price(
-            forecast,
-            evaluated_at=evaluated_at,
-        ),
+        "current_price_eur_per_kwh": _current_price(forecast, evaluated_at=evaluated_at),
         "price_opportunity_margin_eur_per_kwh": margin,
         "low_price_margin_eur_per_kwh": margin,
         "high_price_margin_eur_per_kwh": margin,
@@ -327,17 +276,12 @@ def run_planner_once(
         "dispatch_status": "blocked_by_candidate_contract",
         "control_change_allowed": False,
         "pipeline_stage_reached": "candidate_generation",
-        "reason": (
-            "Canonical price opportunities reached Candidate Generation. Cost-first "
-            "control remains excluded until the required ADR contract exists."
-        ),
+        "reason": "Canonical price opportunities reached Candidate Generation. Cost-first control remains excluded until the required ADR contract exists.",
         "planner_interval_seconds": int(options["planner_interval_seconds"]),
     }
     event.update(
         _price_entry_observation(
-            pipeline.opportunities,
-            forecast,
-            evaluated_at=evaluated_at,
+            pipeline.opportunities, forecast, evaluated_at=evaluated_at
         )
     )
     return event

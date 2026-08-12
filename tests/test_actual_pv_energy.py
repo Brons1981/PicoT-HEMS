@@ -46,7 +46,9 @@ def test_actual_current_quarter_integrates_sample_hold_energy(tmp_path: Path) ->
     quarter = datetime(2026, 8, 13, 10, 0, tzinfo=UTC)
     captured = quarter + timedelta(minutes=10)
     _append_goodwe(history, quarter - timedelta(seconds=5), 1000.0)
-    _append_goodwe(history, quarter + timedelta(minutes=5), 2000.0)
+    for seconds in range(5, 600, 5):
+        power_w = 1000.0 if seconds < 300 else 2000.0
+        _append_goodwe(history, quarter + timedelta(seconds=seconds), power_w)
 
     interval = actual_pv_interval_from_history(
         history=history,
@@ -88,6 +90,8 @@ def test_actual_elapsed_energy_prepends_without_replacing_future_forecast(
     captured = quarter + timedelta(minutes=5)
     future_end = quarter + timedelta(minutes=15)
     _append_goodwe(history, quarter - timedelta(seconds=5), 900.0)
+    for seconds in range(5, 300, 5):
+        _append_goodwe(history, quarter + timedelta(seconds=seconds), 900.0)
 
     future = PVEnergyTimeline(
         timeline_id="pv-live",

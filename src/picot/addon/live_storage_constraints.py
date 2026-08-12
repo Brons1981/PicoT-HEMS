@@ -40,13 +40,14 @@ def build_live_storage_capabilities(
                 supported_primitives=(
                     ExecutionPrimitive.CHARGE_AT_POWER,
                     ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                    ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
                 ),
                 availability=CapabilityAvailability.AVAILABLE,
                 health=CapabilityHealth.HEALTHY,
                 fresh_at=captured_at,
                 confidence=1.0,
                 source_mapping_id="configured-storage-primary",
-                adapter_contract_version="live-storage-config-v2",
+                adapter_contract_version="live-storage-config-v3",
                 role=CapabilityRole.ENERGY_STORAGE,
                 flow_directions=(
                     EnergyFlowDirection.CHARGE,

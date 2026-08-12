@@ -137,6 +137,11 @@ class ProjectedHouseholdEnergyBalanceAssembler:
             load_forecast.confidence,
             *(interval.confidence for interval in future_pv),
         )
+        pv_evidence_ids = tuple(
+            evidence_id
+            for interval in future_pv
+            for evidence_id in interval.evidence_ids
+        )
         evidence_ids = tuple(
             dict.fromkeys(
                 (
@@ -144,7 +149,7 @@ class ProjectedHouseholdEnergyBalanceAssembler:
                     load_forecast.forecast_id,
                     pv_timeline.timeline_id,
                     *storage_state.evidence_ids,
-                    *(evidence_id for interval in future_pv for evidence_id in interval.evidence_ids),
+                    *pv_evidence_ids,
                     self.method_version,
                 )
             )

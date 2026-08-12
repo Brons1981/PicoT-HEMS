@@ -133,10 +133,11 @@ def test_planning_snapshot_rejects_mismatched_load_horizon() -> None:
 
 
 def test_storage_requirement_is_evidence_not_implicit_grid_permission() -> None:
-    deadline = datetime(2026, 8, 12, 18, 0, tzinfo=UTC)
+    protection_starts_at = datetime(2026, 8, 12, 18, 0, tzinfo=UTC)
     requirement = StorageEnergyRequirement(
         requirement_id="storage:req:evening",
-        required_by=deadline,
+        protection_starts_at=protection_starts_at,
+        protected_through=protection_starts_at + timedelta(hours=4),
         required_energy_wh=6400.0,
         required_soc_percent=80.0,
         reason=StorageRequirementReason.HOUSEHOLD_DEMAND,
@@ -146,14 +147,17 @@ def test_storage_requirement_is_evidence_not_implicit_grid_permission() -> None:
     )
 
     assert requirement.required_energy_wh == 6400.0
+    assert requirement.protection_starts_at == protection_starts_at
     assert ChargeSourcePolicy.PV_ONLY != ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
 
 
 def test_storage_requirement_rejects_invalid_soc() -> None:
+    protection_starts_at = datetime(2026, 8, 12, 18, 0, tzinfo=UTC)
     with pytest.raises(ValueError, match="between 0 and 100"):
         StorageEnergyRequirement(
             requirement_id="storage:req:bad",
-            required_by=datetime(2026, 8, 12, 18, 0, tzinfo=UTC),
+            protection_starts_at=protection_starts_at,
+            protected_through=protection_starts_at + timedelta(hours=1),
             required_energy_wh=1000.0,
             required_soc_percent=101.0,
             reason=StorageRequirementReason.CONSERVATIVE_RESERVE,

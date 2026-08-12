@@ -145,11 +145,15 @@ class CandidateEngine:
         if opportunities.snapshot_id != snapshot.snapshot_id:
             raise ValueError("Opportunity Set must match the Planning Input Snapshot.")
         if capabilities.snapshot_id != snapshot.snapshot_id:
-            raise ValueError("Capability Snapshot Set must match the Planning Input Snapshot.")
+            raise ValueError(
+                "Capability Snapshot Set must match the Planning Input Snapshot."
+            )
         if capabilities.mapping_version != snapshot.versions.capability_mapping:
             raise ValueError("Capability mapping versions must match.")
         if capabilities.captured_at > snapshot.captured_at:
-            raise ValueError("Capability Snapshot Set cannot be captured after planning input.")
+            raise ValueError(
+                "Capability Snapshot Set cannot be captured after planning input."
+            )
 
     @staticmethod
     def _validate_storage_evidence(
@@ -172,11 +176,17 @@ class CandidateEngine:
         if pv_only_feasibility.requirement_id != requirement.requirement_id:
             raise ValueError("PV-only feasibility must match the storage requirement.")
         if recoverability.requirement_id != requirement.requirement_id:
-            raise ValueError("Technical recoverability must match the storage requirement.")
+            raise ValueError(
+                "Technical recoverability must match the storage requirement."
+            )
         if recoverability.protection_starts_at != requirement.protection_starts_at:
-            raise ValueError("Technical recoverability protection start must match the requirement.")
+            raise ValueError(
+                "Technical recoverability protection start must match the requirement."
+            )
         if recoverability.protected_through != requirement.protected_through:
-            raise ValueError("Technical recoverability protected interval must match the requirement.")
+            raise ValueError(
+                "Technical recoverability protected interval must match the requirement."
+            )
 
     @staticmethod
     def _baseline_path(
@@ -287,7 +297,9 @@ class CandidateEngine:
                     capability_ids=(capability.capability_id,),
                     strategy_version=snapshot.strategy.strategy_version,
                     mapping_version=mapping_version,
-                    assumptions=("PV surplus remains available within recorded confidence.",),
+                    assumptions=(
+                        "PV surplus remains available within recorded confidence.",
+                    ),
                     confidence=confidence,
                 )
             )
@@ -339,7 +351,11 @@ class CandidateEngine:
             ]
 
         capability = next(
-            (item for item in capabilities if item.capability_id == recoverability.capability_id),
+            (
+                item
+                for item in capabilities
+                if item.capability_id == recoverability.capability_id
+            ),
             None,
         )
         if capability is None:
@@ -347,7 +363,10 @@ class CandidateEngine:
                 CandidateExclusion(
                     family=CandidateFamily.COST_FIRST,
                     kind=CandidateExclusionKind.UNSUPPORTED_CAPABILITY,
-                    reason="Technical recoverability references no current storage capability.",
+                    reason=(
+                        "Technical recoverability references no current storage "
+                        "capability."
+                    ),
                     source_ids=(opportunity.opportunity_id, recoverability.capability_id),
                 )
             ]
@@ -427,7 +446,10 @@ class CandidateEngine:
             ends_at=ends_at,
             primitive=ExecutionPrimitive.CHARGE_AT_POWER,
             capability_id=capability.capability_id,
-            purpose="Reach future storage requirement with PV preferred and grid support allowed.",
+            purpose=(
+                "Reach future storage requirement with PV preferred and grid support "
+                "allowed."
+            ),
             evidence_ids=evidence_ids,
             requested_power_w=requested_power,
             charge_source_policy=ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED,
@@ -490,7 +512,10 @@ class CandidateEngine:
             requested = floor(requested / capability.power_step_w) * capability.power_step_w
         if requested <= 0:
             return None
-        if capability.minimum_power_w is not None and requested < capability.minimum_power_w:
+        if (
+            capability.minimum_power_w is not None
+            and requested < capability.minimum_power_w
+        ):
             return None
         return requested
 

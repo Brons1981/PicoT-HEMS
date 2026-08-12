@@ -1,0 +1,1 @@
+When a derived PicoT power measurement cannot be calculated because one or more source values are unavailable, the internal evidence value may remain absent, but the Home Assistant presentation state must be the scalar string `unavailable` rather than JSON `null`.

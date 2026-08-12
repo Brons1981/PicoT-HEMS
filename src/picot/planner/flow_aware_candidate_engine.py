@@ -10,10 +10,12 @@ from picot.domain.candidate import (
     CandidateSet,
 )
 from picot.domain.capability_snapshot import CapabilityRole, CapabilitySnapshotSet
+from picot.domain.effective_storage_limit import EffectiveStorageLimit
 from picot.domain.energy_path import EnergyPath, PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.opportunity import OpportunitySet
 from picot.domain.planning_input_snapshot import PlanningInputSnapshot
+from picot.domain.projected_household_energy_balance import ProjectedHouseholdEnergyBalance
 from picot.domain.pv_only_storage_feasibility import PVOnlyStorageEnergyFeasibility
 from picot.domain.storage_energy_requirement import StorageEnergyRequirement
 from picot.domain.storage_technical_recoverability import StorageTechnicalRecoverability
@@ -32,6 +34,8 @@ class FlowAwareCandidateEngine(CandidateEngine):
         storage_requirement: StorageEnergyRequirement | None = None,
         pv_only_feasibility: PVOnlyStorageEnergyFeasibility | None = None,
         storage_recoverability: StorageTechnicalRecoverability | None = None,
+        projected_balance: ProjectedHouseholdEnergyBalance | None = None,
+        effective_storage_limit: EffectiveStorageLimit | None = None,
     ) -> CandidateSet:
         base = super().generate(
             snapshot,
@@ -40,6 +44,8 @@ class FlowAwareCandidateEngine(CandidateEngine):
             storage_requirement=storage_requirement,
             pv_only_feasibility=pv_only_feasibility,
             storage_recoverability=storage_recoverability,
+            projected_balance=projected_balance,
+            effective_storage_limit=effective_storage_limit,
         )
         observation = snapshot.current_flow_observation
         if observation is None or not observation.persistent_mismatch:
@@ -130,7 +136,7 @@ class FlowAwareCandidateEngine(CandidateEngine):
         )
         candidate = Candidate(
             candidate_id=f"candidate:{path_id}",
-            snapshot_id=snapshot.snapshot_id,
+            snapshot_id=path.snapshot_id,
             family=path.family,
             energy_path_id=path.path_id,
             opportunity_ids=path.opportunity_ids,

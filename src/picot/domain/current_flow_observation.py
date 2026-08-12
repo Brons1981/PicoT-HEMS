@@ -8,7 +8,7 @@ from datetime import datetime
 
 @dataclass(frozen=True, slots=True)
 class CurrentFlowObservation:
-    """Debounced current-flow evidence captured atomically with planning inputs."""
+    """Time-based current-flow evidence captured atomically with planning inputs."""
 
     observation_id: str
     observed_at: datetime
@@ -20,6 +20,11 @@ class CurrentFlowObservation:
     consecutive_samples: int
     required_samples: int
     evidence_ids: tuple[str, ...]
+    control_regime: str | None = None
+    validation_band: str | None = None
+    tracking_deviation_w: float | None = None
+    grey_elapsed_s: float = 0.0
+    red_elapsed_s: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.observation_id.strip():
@@ -35,11 +40,11 @@ class CurrentFlowObservation:
                 raise ValueError(f"{label} must not be negative.")
         if self.consecutive_samples < 0:
             raise ValueError("Flow observation sample count must not be negative.")
-        if self.required_samples < 1:
-            raise ValueError("Flow observation required sample count must be at least 1.")
-        if self.persistent_mismatch and not self.discharge_while_exporting:
-            raise ValueError("Persistent flow mismatch requires a current contradiction.")
-        if self.persistent_mismatch and self.consecutive_samples < self.required_samples:
-            raise ValueError("Persistent flow mismatch requires enough consecutive samples.")
+        if self.required_samples < 0:
+            raise ValueError("Flow observation required sample count must not be negative.")
+        if self.tracking_deviation_w is not None and self.tracking_deviation_w < 0:
+            raise ValueError("Tracking deviation must not be negative.")
+        if self.grey_elapsed_s < 0 or self.red_elapsed_s < 0:
+            raise ValueError("Flow observation elapsed times must not be negative.")
         if any(not evidence_id.strip() for evidence_id in self.evidence_ids):
             raise ValueError("Flow observation evidence IDs must not be empty.")

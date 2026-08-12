@@ -80,15 +80,18 @@ class HouseholdLoadForecaster:
 
     @staticmethod
     def _slot(moment: datetime) -> tuple[int, int]:
-        local = moment.astimezone()
-        return local.hour, local.minute // 15
+        # Preserve the wall-clock offset carried by the authoritative PicoT timestamp.
+        # Using astimezone() here would make the result depend on the host/CI timezone.
+        return moment.hour, moment.minute // 15
 
     @staticmethod
     def _weight(sample: LoadSample, now: datetime) -> float:
         age_days = max(0.0, (now - sample.measured_at).total_seconds() / 86400.0)
         return 1.0 / (1.0 + age_days)
 
-    def _profile(self, now: datetime) -> tuple[dict[tuple[int, int], tuple[float, float]], float | None]:
+    def _profile(
+        self, now: datetime
+    ) -> tuple[dict[tuple[int, int], tuple[float, float]], float | None]:
         self._load_history_once(now)
         grouped: dict[tuple[int, int], list[LoadSample]] = defaultdict(list)
         for sample in self._samples:
@@ -103,7 +106,7 @@ class HouseholdLoadForecaster:
                 weight = self._weight(sample, now)
                 weighted_sum += sample.power_w * weight
                 total_weight += weight
-                distinct_days.add(sample.measured_at.astimezone().date())
+                distinct_days.add(sample.measured_at.date())
             if total_weight <= 0:
                 continue
             confidence = min(MAX_PROFILE_CONFIDENCE, 0.30 + 0.10 * len(distinct_days))

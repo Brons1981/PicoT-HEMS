@@ -1,7 +1,13 @@
-"""Observer-only ADR-037 runtime readiness bridge."""
+"""Observer-only ADR-037 runtime readiness and live planning bridge."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from picot.addon.live_planner_context import (
+    LiveEvidenceConfidenceTracker,
+    opportunity_set_from_planner_context,
+)
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
 from picot.domain.effective_storage_limit import EffectiveStorageLimit
 from picot.domain.planning_input_snapshot import PlanningInputSnapshot
@@ -9,6 +15,7 @@ from picot.domain.projected_household_energy_balance import (
     ProjectedHouseholdEnergyBalance,
     ProjectedHouseholdEnergyBalanceAssembler,
 )
+from picot.planner.adr037_pipeline import ADR037PlannerPipeline
 
 
 def assemble_live_projected_balance(
@@ -37,8 +44,10 @@ def adr037_readiness_log_event(
     *,
     capabilities: CapabilitySnapshotSet | None = None,
     effective_limit: EffectiveStorageLimit | None = None,
+    confidence_tracker: LiveEvidenceConfidenceTracker | None = None,
+    planner_context: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    """Expose exactly how far the real ADR-037 live path can safely proceed."""
+    """Run as far as real live ADR-037 inputs allow, without execution authority."""
 
     balance = assemble_live_projected_balance(snapshot)
     blockers: list[str] = []
@@ -57,15 +66,52 @@ def adr037_readiness_log_event(
         )
     if storage_capability is None:
         blockers.append("live_storage_capability_snapshot_unavailable")
-
     if effective_limit is None:
         blockers.append("live_effective_storage_limit_unwired")
 
-    blockers.extend(
-        (
-            "live_evidence_confidence_assessment_unwired",
-            "canonical_price_opportunity_set_unwired_to_live_snapshot",
+    confidence_assessment = None
+    if balance is not None and confidence_tracker is not None:
+        confidence_assessment = confidence_tracker.assess(balance=balance, snapshot=snapshot)
+    if confidence_assessment is None:
+        blockers.append("live_evidence_confidence_assessment_unwired")
+
+    opportunities = None
+    if planner_context is not None:
+        opportunities = opportunity_set_from_planner_context(
+            planner_context,
+            snapshot_id=snapshot.snapshot_id,
         )
+    if opportunities is None:
+        blockers.append("canonical_price_opportunity_set_unwired_to_live_snapshot")
+
+    planning_result = None
+    if (
+        not blockers
+        and balance is not None
+        and effective_limit is not None
+        and confidence_assessment is not None
+        and storage_capability is not None
+        and opportunities is not None
+        and capabilities is not None
+        and snapshot.current_storage_states
+    ):
+        planning_result = ADR037PlannerPipeline().run(
+            requirement_id=f"live-storage-requirement:{snapshot.snapshot_id}",
+            evaluated_at=snapshot.captured_at,
+            snapshot=snapshot,
+            balance=balance,
+            effective_limit=effective_limit,
+            confidence_assessment=confidence_assessment,
+            storage_state=snapshot.current_storage_states[0],
+            storage_capability=storage_capability,
+            opportunities=opportunities,
+            capabilities=capabilities,
+        )
+
+    winner = (
+        planning_result.evaluation.winning_candidate
+        if planning_result is not None
+        else None
     )
     return {
         "event": "picot_live_adr037_readiness",
@@ -93,11 +139,48 @@ def adr037_readiness_log_event(
         "effective_storage_max_energy_wh": (
             effective_limit.max_energy_wh if effective_limit else None
         ),
+        "evidence_confidence_available": confidence_assessment is not None,
+        "evidence_confidence_current": (
+            confidence_assessment.current_confidence if confidence_assessment else None
+        ),
+        "evidence_confidence_own_mean": (
+            confidence_assessment.baseline_mean_confidence if confidence_assessment else None
+        ),
+        "evidence_confidence_decision": (
+            confidence_assessment.decision.value if confidence_assessment else None
+        ),
+        "evidence_confidence_reason": (
+            confidence_assessment.reason if confidence_assessment else None
+        ),
+        "canonical_price_opportunities_available": opportunities is not None,
+        "canonical_price_opportunity_count": (
+            len(opportunities.opportunities) if opportunities is not None else 0
+        ),
         "adr037_pipeline_stage_reached": (
-            "projected_household_energy_balance" if balance is not None else "planning_input"
+            "evaluation"
+            if planning_result is not None
+            else "projected_household_energy_balance"
+            if balance is not None
+            else "planning_input"
         ),
         "adr037_live_ready": not blockers,
         "adr037_live_blockers": blockers,
+        "adr037_requirement_energy_wh": (
+            planning_result.requirement.required_energy_wh if planning_result else None
+        ),
+        "adr037_pv_only_sufficient": (
+            planning_result.pv_only_feasibility.energy_sufficient if planning_result else None
+        ),
+        "adr037_candidate_count": (
+            len(planning_result.candidate_set.candidates) if planning_result else 0
+        ),
+        "adr037_evaluation_status": (
+            planning_result.evaluation.status.value if planning_result else None
+        ),
+        "adr037_winning_candidate_id": winner.candidate_id if winner is not None else None,
+        "adr037_winning_candidate_family": (
+            winner.family.value if winner is not None else None
+        ),
         "control_change_allowed": False,
         "observer_only": True,
     }

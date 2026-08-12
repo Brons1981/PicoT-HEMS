@@ -8,6 +8,7 @@ from typing import Any, cast
 from picot.addon import runtime, runtime_observation
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
 from picot.addon.live_adr037_readiness import adr037_readiness_log_event
+from picot.addon.live_planner_context import LiveEvidenceConfidenceTracker
 from picot.addon.live_snapshot_runtime import (
     build_live_planning_snapshot,
     snapshot_log_event,
@@ -24,12 +25,13 @@ _storage_max_soc = 0.95
 _storage_max_charge_power_w: float | None = None
 _storage_power_step_w: float | None = None
 _load_forecaster = HouseholdLoadForecaster()
+_confidence_tracker = LiveEvidenceConfidenceTracker()
 
 
 def telemetry_evidence_events_with_snapshot(
     telemetry_event: dict[str, object],
 ) -> list[dict[str, object]]:
-    """Append one enriched PlanningInputSnapshot record to one telemetry poll."""
+    """Append one enriched PlanningInputSnapshot and live planner evidence per poll."""
 
     global _snapshot_sequence
     events = _base_evidence_events(telemetry_event)
@@ -63,6 +65,8 @@ def telemetry_evidence_events_with_snapshot(
             snapshot,
             capabilities=capabilities,
             effective_limit=effective_limit,
+            confidence_tracker=_confidence_tracker,
+            planner_context=telemetry_event,
         )
     )
     return events

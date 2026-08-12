@@ -264,34 +264,63 @@ def build_live_planning_snapshot(
             current_storage_states=((storage_state,) if storage_state is not None else ()),
             household_load_forecast=household_load_forecast,
             pv_energy_timeline=pv_timeline,
-            current_flow_observation=flow_observation,
         ),
         versions=PlanningInputVersions(
             capability_mapping=1,
             user_rules=1,
             commitments=1,
-            household_state=1,
+            household_state=sequence,
             forecasts=1,
         ),
         replan_reasons=("live_observation",),
     )
-    if pv_timeline is not None and pv_timeline.horizon_end != horizon_end:
-        snapshot = replace(snapshot, horizon_end=pv_timeline.horizon_end)
-    return snapshot
+    return replace(snapshot, current_flow_observation=flow_observation)
 
 
 def snapshot_log_event(snapshot: PlanningInputSnapshot) -> dict[str, object]:
-    """Return an explainable persisted event for the atomic planning snapshot."""
-
+    state = snapshot.household_state
+    storage = snapshot.current_storage_states[0] if snapshot.current_storage_states else None
+    pv_timeline = snapshot.pv_energy_timeline
+    load_forecast = snapshot.household_load_forecast
+    flow = snapshot.current_flow_observation
+    status = (
+        "observation_plus_storage_pv_load"
+        if load_forecast is not None
+        else "observation_plus_storage_pv"
+    )
     return {
-        "event": "planning_input_snapshot",
+        "event": "picot_live_planning_snapshot",
         "layer": "planning_input",
         "snapshot_id": snapshot.snapshot_id,
         "captured_at": snapshot.captured_at.isoformat(),
         "horizon_end": snapshot.horizon_end.isoformat(),
-        "storage_state_count": len(snapshot.current_storage_states),
-        "has_pv_energy_timeline": snapshot.pv_energy_timeline is not None,
-        "has_household_load_forecast": snapshot.household_load_forecast is not None,
-        "has_current_flow_observation": snapshot.current_flow_observation is not None,
-        "replan_reasons": list(snapshot.replan_reasons),
+        "grid_power_w": state.grid_power_w,
+        "pv_power_w": state.pv_power_w,
+        "battery_power_w": state.battery_power_w,
+        "household_load_w": state.household_load_w,
+        "current_soc": storage.current_soc if storage is not None else None,
+        "usable_capacity_wh": storage.usable_capacity_wh if storage is not None else None,
+        "pv_timeline_energy_wh": (
+            pv_timeline.total_energy_wh if pv_timeline is not None else None
+        ),
+        "household_load_forecast_wh": (
+            load_forecast.expected_energy_wh if load_forecast is not None else None
+        ),
+        "household_load_forecast_confidence": (
+            load_forecast.confidence if load_forecast is not None else None
+        ),
+        "household_load_forecast_method": (
+            load_forecast.method_version if load_forecast is not None else None
+        ),
+        "household_load_history_source": (
+            load_forecast.historical_source_reference if load_forecast is not None else None
+        ),
+        "flow_observation_id": flow.observation_id if flow is not None else None,
+        "flow_persistent_mismatch": flow.persistent_mismatch if flow is not None else None,
+        "flow_control_regime": flow.control_regime if flow is not None else None,
+        "flow_validation_band": flow.validation_band if flow is not None else None,
+        "flow_red_elapsed_s": flow.red_elapsed_s if flow is not None else None,
+        "flow_grey_elapsed_s": flow.grey_elapsed_s if flow is not None else None,
+        "household_state_version": snapshot.versions.household_state,
+        "status": status,
     }

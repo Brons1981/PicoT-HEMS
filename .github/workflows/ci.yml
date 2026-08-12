@@ -68,6 +68,7 @@ jobs:
           tests/test_home_assistant_zendure.py
           tests/test_home_assistant_zendure_observer.py
           tests/test_home_assistant_zendure_dashboard.py
+          tests/test_live_storage_pv_inputs.py
 
       - name: Run Mypy on PicoT Core slice
         run: >-
@@ -105,6 +106,7 @@ jobs:
           tests/test_home_assistant_zendure.py
           tests/test_home_assistant_zendure_observer.py
           tests/test_home_assistant_zendure_dashboard.py
+          tests/test_live_storage_pv_inputs.py
 
       - name: Run Pytest on PicoT Core slice
         run: >-
@@ -142,3 +144,4 @@ jobs:
           tests/test_home_assistant_zendure.py
           tests/test_home_assistant_zendure_observer.py
           tests/test_home_assistant_zendure_dashboard.py
+          tests/test_live_storage_pv_inputs.py

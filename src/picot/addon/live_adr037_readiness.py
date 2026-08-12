@@ -4,18 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from picot.addon.live_planner_context import (
-    LiveEvidenceConfidenceTracker,
-    opportunity_set_from_planner_context,
-)
+from picot.addon.live_planner_context import LiveEvidenceConfidenceTracker
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
 from picot.domain.effective_storage_limit import EffectiveStorageLimit
+from picot.domain.forecast import ForecastKind
+from picot.domain.opportunity import OpportunitySet
 from picot.domain.planning_input_snapshot import PlanningInputSnapshot
 from picot.domain.projected_household_energy_balance import (
     ProjectedHouseholdEnergyBalance,
     ProjectedHouseholdEnergyBalanceAssembler,
 )
 from picot.planner.adr037_pipeline import ADR037PlannerPipeline
+from picot.planner.opportunity_engine import OpportunityEngine
+from picot.planner.price_opportunity_detection import PriceOpportunityDetectionConfig
+
+PRICE_DETECTION_CONFIG_VERSION = 1
 
 
 def assemble_live_projected_balance(
@@ -39,6 +42,23 @@ def assemble_live_projected_balance(
     )
 
 
+def detect_live_price_opportunities(
+    snapshot: PlanningInputSnapshot,
+    *,
+    price_margin_eur_per_kwh: float,
+) -> OpportunitySet | None:
+    """Detect canonical price Opportunities from this exact live snapshot only."""
+
+    if not snapshot.forecasts.by_kind(ForecastKind.ENERGY_PRICE):
+        return None
+    config = PriceOpportunityDetectionConfig(
+        config_version=PRICE_DETECTION_CONFIG_VERSION,
+        low_price_margin_eur_per_kwh=price_margin_eur_per_kwh,
+        high_price_margin_eur_per_kwh=price_margin_eur_per_kwh,
+    )
+    return OpportunityEngine().detect(snapshot, price_config=config)
+
+
 def _context_value(
     planner_context: Mapping[str, object] | None,
     key: str,
@@ -53,6 +73,7 @@ def adr037_readiness_log_event(
     effective_limit: EffectiveStorageLimit | None = None,
     confidence_tracker: LiveEvidenceConfidenceTracker | None = None,
     planner_context: Mapping[str, object] | None = None,
+    price_margin_eur_per_kwh: float = 0.04,
 ) -> dict[str, object]:
     """Run as far as real live ADR-037 inputs allow, without execution authority."""
 
@@ -85,14 +106,12 @@ def adr037_readiness_log_event(
     if confidence_assessment is None:
         blockers.append("live_evidence_confidence_assessment_unwired")
 
-    opportunities = None
-    if planner_context is not None:
-        opportunities = opportunity_set_from_planner_context(
-            planner_context,
-            snapshot_id=snapshot.snapshot_id,
-        )
+    opportunities = detect_live_price_opportunities(
+        snapshot,
+        price_margin_eur_per_kwh=price_margin_eur_per_kwh,
+    )
     if opportunities is None:
-        blockers.append("canonical_price_opportunity_set_unwired_to_live_snapshot")
+        blockers.append("authoritative_live_price_forecast_unavailable")
 
     planning_result = None
     if (
@@ -256,6 +275,7 @@ def adr037_readiness_log_event(
             if opportunities is not None
             else 0
         ),
+        "price_opportunity_source": "live_planning_snapshot",
         "price_window_context": _context_value(
             planner_context,
             "price_entry_opportunity_context",

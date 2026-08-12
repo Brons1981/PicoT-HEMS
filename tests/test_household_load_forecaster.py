@@ -46,14 +46,15 @@ def test_weighted_profile_uses_recent_matching_quarter_hours(tmp_path: Path) -> 
     history = HistoryStore(path)
     now = datetime(2026, 8, 12, 10, 0, tzinfo=UTC)
     for days_ago, power in ((1, 1000.0), (2, 800.0), (3, 600.0)):
-        measured = now - timedelta(days=days_ago)
-        history.append(
-            {
-                "event": "picot_live_planning_snapshot",
-                "captured_at": measured.isoformat(),
-                "household_load_w": power,
-            }
-        )
+        for minute_offset in (0, 15):
+            measured = now - timedelta(days=days_ago) + timedelta(minutes=minute_offset)
+            history.append(
+                {
+                    "event": "picot_live_planning_snapshot",
+                    "captured_at": measured.isoformat(),
+                    "household_load_w": power,
+                }
+            )
 
     forecaster = HouseholdLoadForecaster(history=history)
     forecast = forecaster.forecast(
@@ -65,7 +66,7 @@ def test_weighted_profile_uses_recent_matching_quarter_hours(tmp_path: Path) -> 
 
     assert forecast.historical_source_reference == "picot_history:last_14_days"
     assert forecast.intervals[0].expected_energy_wh > 300.0
-    assert forecast.intervals[0].confidence >= 0.4
+    assert forecast.intervals[0].confidence >= 0.6
     assert forecast.method_version == "weighted-quarter-hour-profile-v1"
 
 
@@ -98,4 +99,4 @@ def test_runtime_observation_is_added_after_history_load(tmp_path: Path) -> None
     )
 
     assert forecast.intervals[0].expected_energy_wh == 600.0
-    assert forecast.intervals[0].confidence == 0.40
+    assert forecast.intervals[0].confidence == 0.20

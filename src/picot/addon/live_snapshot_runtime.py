@@ -88,34 +88,40 @@ def current_flow_observation_from_telemetry(
     grid_export_w = _number(event, "flow_observer_grid_export_w")
     discharge_w = _number(event, "flow_observer_battery_discharge_w")
     pv_power_w = _number(event, "flow_observer_pv_power_w")
-    raw_mismatch = event.get("flow_observer_raw_mismatch")
     persistent = event.get("flow_observer_persistent_mismatch")
-    consecutive = event.get("flow_observer_consecutive_samples")
-    required = event.get("flow_observer_required_samples")
+    discharge_while_exporting = event.get("flow_observer_discharge_while_exporting")
+    consecutive = event.get("flow_observer_consecutive_samples", 0)
+    required = event.get("flow_observer_required_samples", 0)
     if (
         grid_export_w is None
         or discharge_w is None
         or pv_power_w is None
-        or not isinstance(raw_mismatch, bool)
         or not isinstance(persistent, bool)
+        or not isinstance(discharge_while_exporting, bool)
         or isinstance(consecutive, bool)
         or not isinstance(consecutive, int)
         or isinstance(required, bool)
         or not isinstance(required, int)
     ):
         return None
-    observation_id = f"live-flow-{sequence}"
+    regime = event.get("flow_observer_control_regime")
+    band = event.get("flow_observer_validation_band")
     return CurrentFlowObservation(
-        observation_id=observation_id,
+        observation_id=f"live-flow-{sequence}",
         observed_at=captured_at,
         grid_export_w=grid_export_w,
         battery_discharge_w=discharge_w,
         pv_power_w=pv_power_w,
-        discharge_while_exporting=raw_mismatch,
+        discharge_while_exporting=discharge_while_exporting,
         persistent_mismatch=persistent,
         consecutive_samples=consecutive,
         required_samples=required,
         evidence_ids=(f"flow-observer-sample-{sequence}",),
+        control_regime=regime if isinstance(regime, str) else None,
+        validation_band=band if isinstance(band, str) else None,
+        tracking_deviation_w=_number(event, "flow_observer_tracking_deviation_w"),
+        grey_elapsed_s=_number(event, "flow_observer_grey_elapsed_s") or 0.0,
+        red_elapsed_s=_number(event, "flow_observer_red_elapsed_s") or 0.0,
     )
 
 
@@ -311,6 +317,10 @@ def snapshot_log_event(snapshot: PlanningInputSnapshot) -> dict[str, object]:
         ),
         "flow_observation_id": flow.observation_id if flow is not None else None,
         "flow_persistent_mismatch": flow.persistent_mismatch if flow is not None else None,
+        "flow_control_regime": flow.control_regime if flow is not None else None,
+        "flow_validation_band": flow.validation_band if flow is not None else None,
+        "flow_red_elapsed_s": flow.red_elapsed_s if flow is not None else None,
+        "flow_grey_elapsed_s": flow.grey_elapsed_s if flow is not None else None,
         "household_state_version": snapshot.versions.household_state,
         "status": status,
     }

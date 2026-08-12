@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+from picot.domain.current_storage_state import CurrentStorageState
 from picot.domain.forecast import ForecastSet
 from picot.domain.household_load_forecast import HouseholdLoadForecast
 from picot.domain.household_state import HouseholdState
@@ -60,6 +61,7 @@ class PlanningInputSnapshot:
     versions: PlanningInputVersions
     replan_reasons: tuple[str, ...]
     household_load_forecast: HouseholdLoadForecast | None = None
+    current_storage_states: tuple[CurrentStorageState, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.snapshot_id.strip():
@@ -93,3 +95,12 @@ class PlanningInputSnapshot:
                 raise ValueError(
                     "Household load forecast must cover the complete planning horizon."
                 )
+
+        state_ids = [state.storage_state_id for state in self.current_storage_states]
+        if len(state_ids) != len(set(state_ids)):
+            raise ValueError("Each current storage state ID may appear only once.")
+        scope_ids = [state.execution_scope_id for state in self.current_storage_states]
+        if len(scope_ids) != len(set(scope_ids)):
+            raise ValueError("Each storage execution scope may appear only once per snapshot.")
+        if any(state.measured_at > self.captured_at for state in self.current_storage_states):
+            raise ValueError("Storage state cannot be measured after snapshot capture time.")

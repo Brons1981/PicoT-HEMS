@@ -57,7 +57,6 @@ class CandidateEngine:
         paths: list[EnergyPath] = [self._baseline_path(snapshot, capabilities)]
         candidates: list[Candidate] = [self._candidate_for(paths[0])]
         exclusions: list[CandidateExclusion] = []
-
         storage_capabilities = tuple(
             sorted(
                 (
@@ -80,9 +79,6 @@ class CandidateEngine:
                     storage_capabilities,
                     capabilities.mapping_version,
                 )
-                paths.extend(generated)
-                candidates.extend(self._candidate_for(path) for path in generated)
-                exclusions.extend(rejected)
             elif opportunity.kind in {
                 OpportunityKind.NEGATIVE_PRICE_WINDOW,
                 OpportunityKind.LOWEST_PRICE_WINDOW,
@@ -104,7 +100,6 @@ class CandidateEngine:
                         )
                     )
                     continue
-
                 generated, rejected = self._build_grid_supported_storage_path(
                     snapshot=snapshot,
                     opportunity=opportunity,
@@ -114,11 +109,9 @@ class CandidateEngine:
                     pv_only_feasibility=pv_only_feasibility,
                     recoverability=storage_recoverability,
                 )
-                paths.extend(generated)
-                candidates.extend(self._candidate_for(path) for path in generated)
-                exclusions.extend(rejected)
             elif opportunity.kind is OpportunityKind.HIGH_EXPORT_VALUE_WINDOW:
-                exclusions.append(
+                generated = []
+                rejected = [
                     CandidateExclusion(
                         family=CandidateFamily.COST_FIRST,
                         kind=CandidateExclusionKind.OBJECTIVELY_IMPOSSIBLE,
@@ -128,7 +121,12 @@ class CandidateEngine:
                         ),
                         source_ids=(opportunity.opportunity_id,),
                     )
-                )
+                ]
+            else:
+                continue
+            paths.extend(generated)
+            candidates.extend(self._candidate_for(path) for path in generated)
+            exclusions.extend(rejected)
 
         return CandidateSet(
             snapshot_id=snapshot.snapshot_id,
@@ -175,8 +173,10 @@ class CandidateEngine:
             raise ValueError("PV-only feasibility must match the storage requirement.")
         if recoverability.requirement_id != requirement.requirement_id:
             raise ValueError("Technical recoverability must match the storage requirement.")
-        if recoverability.required_by != requirement.required_by:
-            raise ValueError("Technical recoverability deadline must match the requirement.")
+        if recoverability.protection_starts_at != requirement.protection_starts_at:
+            raise ValueError("Technical recoverability protection start must match the requirement.")
+        if recoverability.protected_through != requirement.protected_through:
+            raise ValueError("Technical recoverability protected interval must match the requirement.")
 
     @staticmethod
     def _baseline_path(
@@ -209,32 +209,28 @@ class CandidateEngine:
     ) -> tuple[list[EnergyPath], list[CandidateExclusion]]:
         paths: list[EnergyPath] = []
         exclusions: list[CandidateExclusion] = []
-
         if not capabilities:
-            exclusions.append(
+            return paths, [
                 CandidateExclusion(
                     family=CandidateFamily.PV_FIRST,
                     kind=CandidateExclusionKind.UNSUPPORTED_CAPABILITY,
                     reason="No ENERGY_STORAGE capability is available.",
                     source_ids=(opportunity.opportunity_id,),
                 )
-            )
-            return paths, exclusions
-
+            ]
         surplus_power = self._metric_value(
             opportunity,
             OpportunityMetricKind.MINIMUM_EXPECTED_POWER_W,
         )
         if surplus_power is None:
-            exclusions.append(
+            return paths, [
                 CandidateExclusion(
                     family=CandidateFamily.PV_FIRST,
                     kind=CandidateExclusionKind.OBJECTIVELY_IMPOSSIBLE,
                     reason="PV-first charging requires explicit expected surplus power.",
                     source_ids=(opportunity.opportunity_id,),
                 )
-            )
-            return paths, exclusions
+            ]
 
         for capability in capabilities:
             reason = self._unsupported_pv_reason(capability)
@@ -248,7 +244,6 @@ class CandidateEngine:
                     )
                 )
                 continue
-
             requested_power = self._requested_power(surplus_power, capability)
             if requested_power is None:
                 exclusions.append(
@@ -260,7 +255,6 @@ class CandidateEngine:
                     )
                 )
                 continue
-
             path_id = (
                 f"{snapshot.snapshot_id}:pv-first:{opportunity.opportunity_id}:"
                 f"{capability.capability_id}"
@@ -293,13 +287,10 @@ class CandidateEngine:
                     capability_ids=(capability.capability_id,),
                     strategy_version=snapshot.strategy.strategy_version,
                     mapping_version=mapping_version,
-                    assumptions=(
-                        "PV surplus remains available within recorded confidence.",
-                    ),
+                    assumptions=("PV surplus remains available within recorded confidence.",),
                     confidence=confidence,
                 )
             )
-
         return paths, exclusions
 
     def _build_grid_supported_storage_path(
@@ -325,18 +316,7 @@ class CandidateEngine:
                     source_ids=(opportunity.opportunity_id, requirement.requirement_id),
                 )
             ]
-        if not recoverability.technically_recoverable:
-            return [], [
-                CandidateExclusion(
-                    family=CandidateFamily.COST_FIRST,
-                    kind=CandidateExclusionKind.HARD_BOUNDARY,
-                    reason=(
-                        "Storage requirement is not technically recoverable before its deadline."
-                    ),
-                    source_ids=(opportunity.opportunity_id, requirement.requirement_id),
-                )
-            ]
-        if recoverability.extra_energy_required_wh <= 0.0:
+        if not recoverability.additional_acquisition_required:
             return [], [
                 CandidateExclusion(
                     family=CandidateFamily.COST_FIRST,
@@ -345,13 +325,21 @@ class CandidateEngine:
                     source_ids=(opportunity.opportunity_id, requirement.requirement_id),
                 )
             ]
+        if not recoverability.technically_recoverable:
+            return [], [
+                CandidateExclusion(
+                    family=CandidateFamily.COST_FIRST,
+                    kind=CandidateExclusionKind.HARD_BOUNDARY,
+                    reason=(
+                        "Storage requirement is not technically recoverable before "
+                        "the protected interval starts."
+                    ),
+                    source_ids=(opportunity.opportunity_id, requirement.requirement_id),
+                )
+            ]
 
         capability = next(
-            (
-                item
-                for item in capabilities
-                if item.capability_id == recoverability.capability_id
-            ),
+            (item for item in capabilities if item.capability_id == recoverability.capability_id),
             None,
         )
         if capability is None:
@@ -363,7 +351,6 @@ class CandidateEngine:
                     source_ids=(opportunity.opportunity_id, recoverability.capability_id),
                 )
             ]
-
         reason = self._unsupported_pv_reason(capability)
         if reason is not None:
             return [], [
@@ -376,13 +363,20 @@ class CandidateEngine:
             ]
 
         starts_at = max(snapshot.captured_at, opportunity.starts_at)
-        ends_at = min(snapshot.horizon_end, opportunity.ends_at, requirement.required_by)
+        ends_at = min(
+            snapshot.horizon_end,
+            opportunity.ends_at,
+            requirement.protection_starts_at,
+        )
         if ends_at <= starts_at:
             return [], [
                 CandidateExclusion(
                     family=CandidateFamily.COST_FIRST,
                     kind=CandidateExclusionKind.HARD_BOUNDARY,
-                    reason="Price Opportunity does not provide charge time before the deadline.",
+                    reason=(
+                        "Price Opportunity does not provide charge time before "
+                        "the protected interval starts."
+                    ),
                     source_ids=(opportunity.opportunity_id, requirement.requirement_id),
                 )
             ]
@@ -400,7 +394,7 @@ class CandidateEngine:
                     kind=CandidateExclusionKind.HARD_BOUNDARY,
                     reason=(
                         "Price Opportunity cannot deliver the required storage energy "
-                        "within capability power limits before the deadline."
+                        "within capability power limits before protection starts."
                     ),
                     source_ids=(
                         opportunity.opportunity_id,
@@ -461,7 +455,7 @@ class CandidateEngine:
             assumptions=(
                 "PV remains the preferred charging source.",
                 "Grid supplementation is permitted only by this Energy Path.",
-                "The storage-energy target is required by the recorded deadline.",
+                "The storage-energy target must be available when protection starts.",
             ),
             confidence=confidence,
         )
@@ -515,7 +509,6 @@ class CandidateEngine:
         maximum = capability.maximum_power_w
         if maximum is None:
             return None
-
         requested = required_energy_wh / duration_hours
         if capability.power_step_w is not None:
             requested = ceil(requested / capability.power_step_w) * capability.power_step_w

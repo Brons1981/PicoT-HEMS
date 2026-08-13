@@ -5,6 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+CANONICAL_CONTROL_REGIMES = {
+    "delegated_bidirectional",
+    "delegated_discharge_only",
+    "delegated_charge_only",
+    "forced_charge",
+    "forced_discharge",
+    "standby",
+}
+
 
 @dataclass(slots=True)
 class LiveFlowObserver:
@@ -38,8 +47,7 @@ class LiveFlowObserver:
         return parsed if parsed.tzinfo is not None else None
 
     @staticmethod
-    def _regime(event: dict[str, object]) -> str | None:
-        raw = event.get("zendure_requested_mode") or event.get("zendure_actual_mode")
+    def _vendor_mode_to_regime(raw: object) -> str | None:
         if not isinstance(raw, str):
             return None
         mode = raw.strip().casefold()
@@ -57,6 +65,22 @@ class LiveFlowObserver:
             return "forced_charge"
         return None
 
+    @classmethod
+    def _regime(cls, event: dict[str, object]) -> tuple[str | None, str]:
+        """Resolve ADR-042 intent without treating a HA selector as PicoT authority.
+
+        A canonical execution regime, once supplied by the accepted execution path,
+        is authoritative. Until then the observer validates the device's actually
+        reported mode. `zendure_requested_mode` is deliberately not used: it is a
+        device-facing selector state and can differ from reality when PicoT has no
+        active execution authority (for example after a manual Standby selection).
+        """
+
+        canonical = event.get("execution_control_regime")
+        if isinstance(canonical, str) and canonical in CANONICAL_CONTROL_REGIMES:
+            return canonical, "execution_intent"
+        return cls._vendor_mode_to_regime(event.get("zendure_actual_mode")), "actual_device_mode"
+
     @staticmethod
     def _elapsed(started_at: datetime | None, now: datetime | None) -> float:
         if started_at is None or now is None:
@@ -72,7 +96,7 @@ class LiveFlowObserver:
         """Return explainable ADR-042 flow validation for one poll."""
 
         now = self._timestamp(event)
-        regime = self._regime(event)
+        regime, regime_source = self._regime(event)
         if regime != self._active_regime:
             self._active_regime = regime
             self._reset_timers()
@@ -158,6 +182,7 @@ class LiveFlowObserver:
         return {
             "flow_observer_status": status,
             "flow_observer_control_regime": regime,
+            "flow_observer_regime_source": regime_source,
             "flow_observer_responsibility": (
                 "delegated" if regime and regime.startswith("delegated_") else "picot_setpoint"
             ) if regime else "unknown",

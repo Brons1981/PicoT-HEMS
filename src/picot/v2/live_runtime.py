@@ -1,4 +1,4 @@
-"""Minimal live runtime for PicoT v2.0.0-dev.1."""
+"""Minimal live runtime for PicoT v2.0.0-dev.2."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from time import perf_counter
 
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.pipeline import CanonicalPipeline
+from picot.v2.planning_input import assemble_planning_input
 from picot.v2.projection import Card, project
 
 
@@ -18,8 +19,12 @@ def main() -> None:
     if not token:
         raise RuntimeError("Supervisor token is required")
 
+    planning_input_started = perf_counter()
+    bundle = assemble_planning_input(token)
+    planning_input_ms = round((perf_counter() - planning_input_started) * 1000.0, 3)
+
     started = perf_counter()
-    run = CanonicalPipeline().run()
+    run = CanonicalPipeline().run(planning_input=bundle.snapshot)
     planner_cycle_ms = round((perf_counter() - started) * 1000.0, 3)
 
     projection = project(run)
@@ -40,6 +45,7 @@ def main() -> None:
             {
                 "picot_version": run.planning_input.picot_version,
                 "run_id": run.planning_input.run_id,
+                "planning_input_ms": planning_input_ms,
                 "planner_cycle_ms": planner_cycle_ms,
                 "diagnostic_projection_ms": projection.projection_ms,
                 "serialization_ms": serialization_ms,
@@ -47,6 +53,10 @@ def main() -> None:
                 "persistence_ms": 0.0,
                 "trace_events_per_run": len(projection.cards),
                 "buffer_depth": 0,
+                "source_fact_count": len(bundle.facts),
+                "source_available_count": sum(
+                    fact.availability == "available" for fact in bundle.facts
+                ),
                 "observer_only": True,
             },
         )
@@ -55,10 +65,14 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "event": "picot_v2_bootstrap_ready",
+                "event": "picot_v2_planning_input_ready",
                 "version": run.planning_input.picot_version,
                 "run_id": run.planning_input.run_id,
                 "snapshot_id": run.planning_input.snapshot_id,
+                "source_facts": len(bundle.facts),
+                "source_available": sum(
+                    fact.availability == "available" for fact in bundle.facts
+                ),
                 "cards": len(projection.cards),
             },
             separators=(",", ":"),

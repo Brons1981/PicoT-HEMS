@@ -1,4 +1,7 @@
-"""Minimal end-to-end PicoT v2 canonical pipeline."""
+"""Minimal end-to-end PicoT v2 canonical pipeline.
+
+Canonical v2 pipeline implementation; diagnostic timing is layered around this path.
+"""
 
 from __future__ import annotations
 

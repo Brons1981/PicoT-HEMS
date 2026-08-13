@@ -28,6 +28,15 @@ def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
         "typed_planning_result_available": event.get(
             "adr037_typed_planning_result_available", False
         ),
+        "execution_plan_set_available": event.get(
+            "execution_plan_set_available", False
+        ),
+        "execution_plan_set_id": event.get("execution_plan_set_id"),
+        "execution_plan_count": event.get("execution_plan_count", 0),
+        "execution_plan_construction_status": event.get(
+            "execution_plan_construction_status"
+        ),
+        "execution_fallback_policy_id": event.get("execution_fallback_policy_id"),
         "captured_at": event.get("captured_at"),
         "snapshot_id": event.get("snapshot_id"),
         "pipeline_stage": event.get("adr037_pipeline_stage_reached"),

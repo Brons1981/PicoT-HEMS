@@ -82,6 +82,21 @@ def _run_live_cycle(
     return _planning_input_signature(bundle)
 
 
+def _poll_live_cycle(
+    *,
+    previous_signature: str | None,
+    load_bundle: Any,
+    execute: Any,
+) -> str:
+    """Load fresh Planning Input and execute only when decision input changed."""
+    bundle = load_bundle()
+    return _run_live_cycle(
+        previous_signature=previous_signature,
+        bundle=bundle,
+        execute=execute,
+    )
+
+
 def _with_planning_input_diagnostics(
     projection: Projection,
     bundle: PlanningInputBundle,

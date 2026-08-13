@@ -70,6 +70,7 @@ def project(run: CanonicalPipelineRun) -> Projection:
                         "kind": item.kind,
                         "starts_at": item.starts_at.isoformat(),
                         "ends_at": item.ends_at.isoformat(),
+                        "duration_seconds": item.metrics.duration_seconds,
                         "confidence": item.confidence,
                         "lifecycle_status": item.lifecycle_status,
                         "average_price_eur_per_kwh": item.metrics.average_price_eur_per_kwh,
@@ -78,6 +79,13 @@ def project(run: CanonicalPipelineRun) -> Projection:
                         "boundary_eur_per_kwh": item.metrics.boundary_eur_per_kwh,
                         "source_interval_count": item.metrics.source_interval_count,
                         "bridged_interval_count": item.metrics.bridged_interval_count,
+                        "evidence": [
+                            {
+                                "evidence_id": evidence.evidence_id,
+                                "point_ids": list(evidence.point_ids),
+                            }
+                            for evidence in item.evidence
+                        ],
                     }
                     for item in o.opportunities
                 ],

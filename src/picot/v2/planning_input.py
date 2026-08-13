@@ -1,7 +1,7 @@
 """Authoritative Home Assistant ingestion for PicoT v2 Planning Input.
 
-HA entity ids exist only in source evidence. Canonical facts are vendor-independent
-and share the immutable run/snapshot identity used by the Planner pipeline.
+HA entity ids exist only in source evidence. Canonical facts and forecasts are
+created once at the ingestion boundary and then carried by one immutable snapshot.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
-from picot.v2.contracts import PlanningInputSnapshot
+from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +39,7 @@ class SourceEvidence:
     availability: str
     mapping_version: str
     error: str | None = None
+    price_points: tuple[PriceForecastPoint, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,14 +100,50 @@ def _canonical_value(raw_state: str | None) -> float | str | None:
         return raw_state
 
 
-def load_bindings(options_path: str = "/data/options.json") -> tuple[SourceBinding, ...]:
-    options: dict[str, Any] = {}
-    path = Path(options_path)
-    if path.exists():
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(parsed, dict):
-            options = parsed
+def _price_points_from_attributes(
+    attributes: dict[str, Any],
+    *,
+    evidence_id: str,
+) -> tuple[PriceForecastPoint, ...]:
+    raw_points: list[dict[str, Any]] = []
+    for key in ("raw_today", "raw_tomorrow"):
+        value = attributes.get(key, [])
+        if isinstance(value, list):
+            raw_points.extend(item for item in value if isinstance(item, dict))
 
+    result: list[PriceForecastPoint] = []
+    for item in raw_points:
+        starts_at = _parse_datetime(item.get("start"))
+        ends_at = _parse_datetime(item.get("end"))
+        raw_price = item.get("value", item.get("price"))
+        if starts_at is None or ends_at is None or ends_at <= starts_at:
+            continue
+        if isinstance(raw_price, bool) or not isinstance(raw_price, (int, float)):
+            continue
+        seed = f"{evidence_id}|{starts_at.isoformat()}|{ends_at.isoformat()}|{float(raw_price)}"
+        result.append(
+            PriceForecastPoint(
+                point_id=_stable_id("price-point", seed),
+                starts_at=starts_at,
+                ends_at=ends_at,
+                value_eur_per_kwh=float(raw_price),
+                confidence=1.0,
+                evidence_id=evidence_id,
+            )
+        )
+    return tuple(sorted(result, key=lambda point: (point.starts_at, point.ends_at)))
+
+
+def load_options(options_path: str = "/data/options.json") -> dict[str, Any]:
+    path = Path(options_path)
+    if not path.exists():
+        return {}
+    parsed = json.loads(path.read_text(encoding="utf-8"))
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def load_bindings(options_path: str = "/data/options.json") -> tuple[SourceBinding, ...]:
+    options = load_options(options_path)
     result: list[SourceBinding] = []
     for category, semantic_role, option_key in DEFAULT_BINDINGS:
         raw = options.get(option_key)
@@ -167,8 +204,15 @@ class HomeAssistantStateReader:
 
         raw_state = str(payload.get("state")) if payload.get("state") is not None else None
         attributes = payload.get("attributes")
-        unit = attributes.get("unit_of_measurement") if isinstance(attributes, dict) else None
+        typed_attributes = attributes if isinstance(attributes, dict) else {}
+        unit = typed_attributes.get("unit_of_measurement")
         unavailable = raw_state in {"unknown", "unavailable", None}
+        price_points = ()
+        if binding.category == "nordpool" and not unavailable:
+            price_points = _price_points_from_attributes(
+                typed_attributes,
+                evidence_id=evidence_id,
+            )
         return SourceEvidence(
             evidence_id=evidence_id,
             category=binding.category,
@@ -179,6 +223,12 @@ class HomeAssistantStateReader:
             observed_at=_parse_datetime(payload.get("last_updated")),
             availability="unavailable" if unavailable else "available",
             mapping_version=mapping_version,
+            error=(
+                "price_forecast_points_missing"
+                if binding.category == "nordpool" and not unavailable and not price_points
+                else None
+            ),
+            price_points=price_points,
         )
 
 
@@ -221,6 +271,13 @@ def assemble_planning_input(
         )
         for item in evidence
     )
+    price_points = tuple(
+        point
+        for item in evidence
+        for point in item.price_points
+        if point.ends_at > capture
+    )
+    horizon_end = max((point.ends_at for point in price_points), default=None)
 
     snapshot = PlanningInputSnapshot(
         run_id=run_id,
@@ -230,5 +287,7 @@ def assemble_planning_input(
         architecture_baseline_commit=ARCHITECTURE_BASELINE_COMMIT,
         pipeline_contract_version=PIPELINE_CONTRACT_VERSION,
         strategy_id="strategy:no-objectives:v1",
+        horizon_end=horizon_end,
+        price_points=price_points,
     )
     return PlanningInputBundle(snapshot, evidence, facts, started, finished)

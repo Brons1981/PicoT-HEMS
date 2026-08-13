@@ -1,0 +1,40 @@
+name: PicoT v2 Rebuild
+
+on:
+  push:
+    branches:
+      - "rebuild/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-v2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package and dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff v2
+        run: ruff check src/picot/v2 tests/test_v2_*.py
+
+      - name: Mypy v2
+        run: mypy src/picot/v2
+
+      - name: Pytest v2
+        run: pytest -q tests/test_v2_*.py

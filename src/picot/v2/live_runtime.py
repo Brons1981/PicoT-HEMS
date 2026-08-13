@@ -1,4 +1,4 @@
-"""Minimal live runtime for PicoT v2.0.0-dev.2."""
+"""Live runtime for the PicoT v2 canonical validation pipeline."""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ from dataclasses import asdict
 from time import perf_counter
 
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
+from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline
-from picot.v2.planning_input import PlanningInputBundle, assemble_planning_input
+from picot.v2.planning_input import PlanningInputBundle, assemble_planning_input, load_options
 from picot.v2.projection import Card, Projection, project
 
 
@@ -34,6 +35,8 @@ def _with_planning_input_diagnostics(
             "mapping_version": evidence.mapping_version,
             "observed_at": evidence.observed_at.isoformat() if evidence.observed_at else None,
             "confidence_status": fact.confidence_status,
+            "price_point_count": len(evidence.price_points),
+            "error": evidence.error,
         }
         for evidence, fact in zip(bundle.evidence, bundle.facts, strict=True)
     ]
@@ -47,6 +50,10 @@ def _with_planning_input_diagnostics(
             "source_available_count": sum(
                 source["availability"] == "available" for source in sources
             ),
+            "horizon_end": (
+                bundle.snapshot.horizon_end.isoformat() if bundle.snapshot.horizon_end else None
+            ),
+            "price_point_count": len(bundle.snapshot.price_points),
             "sources": sources,
         },
     )
@@ -56,17 +63,33 @@ def _with_planning_input_diagnostics(
     )
 
 
+def _price_opportunity_config(options: dict[str, object]) -> PriceOpportunityConfig:
+    low = float(options["price_low_margin_eur_per_kwh"])
+    high = float(options["price_high_margin_eur_per_kwh"])
+    return PriceOpportunityConfig(
+        low_price_margin_eur_per_kwh=low,
+        high_price_margin_eur_per_kwh=high,
+        config_version=f"price-opportunity-v1:low={low:.6f}:high={high:.6f}",
+    )
+
+
 def main() -> None:
     token = os.environ.get("SUPERVISOR_TOKEN", "")
     if not token:
         raise RuntimeError("Supervisor token is required")
+
+    options = load_options()
+    price_config = _price_opportunity_config(options)
 
     planning_input_started = perf_counter()
     bundle = assemble_planning_input(token)
     planning_input_ms = round((perf_counter() - planning_input_started) * 1000.0, 3)
 
     started = perf_counter()
-    run = CanonicalPipeline().run(planning_input=bundle.snapshot)
+    run = CanonicalPipeline().run(
+        planning_input=bundle.snapshot,
+        price_opportunity_config=price_config,
+    )
     planner_cycle_ms = round((perf_counter() - started) * 1000.0, 3)
 
     projection = _with_planning_input_diagnostics(project(run), bundle)
@@ -115,6 +138,9 @@ def main() -> None:
                 "source_available": sum(
                     fact.availability == "available" for fact in bundle.facts
                 ),
+                "price_points": len(bundle.snapshot.price_points),
+                "opportunities": len(run.opportunities.opportunities),
+                "opportunity_status": run.opportunities.detection_status,
                 "cards": len(projection.cards),
             },
             separators=(",", ":"),

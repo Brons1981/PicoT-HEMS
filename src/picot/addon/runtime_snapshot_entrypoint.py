@@ -24,6 +24,10 @@ from picot.addon.live_execution_engine_observer import observe_execution_engine
 from picot.addon.live_execution_plan_observer import observe_execution_plan_set
 from picot.addon.live_flow_observer import LiveFlowObserver
 from picot.addon.live_mode_control import LiveModeControl
+from picot.addon.live_objective_strategy import (
+    live_planner_strategy_from_options,
+    strategy_observer_fields,
+)
 from picot.addon.live_planner_context import LiveEvidenceConfidenceTracker
 from picot.addon.live_snapshot_runtime import (
     build_live_planning_snapshot,
@@ -49,6 +53,7 @@ _price_entity: str | None = None
 _price_opportunity_margin_eur_per_kwh = 0.04
 _dispatch_mode = HomeAssistantDispatchMode.DRY_RUN
 _supervisor_token = ""
+_planner_strategy = live_planner_strategy_from_options({})
 _load_forecaster = HouseholdLoadForecaster()
 _confidence_tracker = LiveEvidenceConfidenceTracker()
 _flow_observer = LiveFlowObserver()
@@ -222,7 +227,19 @@ def telemetry_evidence_events_with_snapshot(
         sequence=_snapshot_sequence,
         load_forecaster=_load_forecaster,
     )
+    snapshot = replace(snapshot, strategy=_planner_strategy)
     timings["snapshot_build_ms"] = _elapsed_ms(stage_started)
+    strategy_fields = strategy_observer_fields(snapshot.strategy)
+    telemetry_event.update(strategy_fields)
+    events.append(
+        {
+            "event": "picot_live_planner_strategy",
+            "layer": "planner_strategy",
+            "snapshot_id": snapshot.snapshot_id,
+            "captured_at": snapshot.captured_at.isoformat(),
+            **strategy_fields,
+        }
+    )
     if canonical_replan_required:
         snapshot = replace(
             snapshot,
@@ -287,6 +304,7 @@ def telemetry_evidence_events_with_snapshot(
     readiness["adr037_typed_planning_result_available"] = (
         readiness_run.planning_result is not None
     )
+    readiness.update(strategy_fields)
 
     stage_started = perf_counter()
     plan_set, plan_fields = observe_execution_plan_set(
@@ -390,6 +408,7 @@ def main() -> int:
     """Run the canonical live telemetry/planner loop with snapshot evidence composed in."""
 
     global _dispatch_mode
+    global _planner_strategy
     global _price_entity
     global _price_opportunity_margin_eur_per_kwh
     global _storage_max_charge_power_w
@@ -401,6 +420,7 @@ def main() -> int:
 
     with runtime.OPTIONS_PATH.open(encoding="utf-8") as handle:
         options = cast(dict[str, Any], json.load(handle))
+    _planner_strategy = live_planner_strategy_from_options(options)
     _storage_usable_capacity_wh = float(options["storage_usable_capacity_wh"])
     _storage_max_soc = float(options.get("storage_max_soc_percent", 100)) / 100.0
     configured_max_power = float(options.get("storage_max_charge_power_w", 0))

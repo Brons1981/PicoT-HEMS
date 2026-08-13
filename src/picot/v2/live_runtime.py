@@ -7,6 +7,7 @@ import os
 import time
 from dataclasses import asdict
 from time import perf_counter
+from typing import Any
 
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.opportunity_engine import PriceOpportunityConfig
@@ -63,7 +64,7 @@ def _with_planning_input_diagnostics(
     )
 
 
-def _price_opportunity_config(options: dict[str, object]) -> PriceOpportunityConfig:
+def _price_opportunity_config(options: dict[str, Any]) -> PriceOpportunityConfig:
     low = float(options["price_low_margin_eur_per_kwh"])
     high = float(options["price_high_margin_eur_per_kwh"])
     return PriceOpportunityConfig(

@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "0.1.61"
+version: "0.1.62"
 slug: picot_hems
 description: Deterministic PicoT HEMS live-validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -15,6 +15,7 @@ panel_icon: mdi:database-export-outline
 options:
   mode: dry_run
   price_entity: sensor.nordpool_kwh_nl_eur_3_095_0
+  export_price_entity: ""
   target_entity: input_select.zendure_2400_ac_modus_selecteren
   p1_power_entity: sensor.ct_shelly_pro_3em_api
   p1_import_is_positive: true
@@ -40,6 +41,7 @@ options:
 schema:
   mode: list(dry_run|live)
   price_entity: str
+  export_price_entity: str
   target_entity: str
   p1_power_entity: str
   p1_import_is_positive: bool

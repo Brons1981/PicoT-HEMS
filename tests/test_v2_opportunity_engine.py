@@ -4,7 +4,11 @@ import pytest
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
-from picot.v2.opportunity_engine import LOWEST_PRICE_WINDOW, OpportunityEngine, PriceOpportunityConfig
+from picot.v2.opportunity_engine import (
+    LOWEST_PRICE_WINDOW,
+    OpportunityEngine,
+    PriceOpportunityConfig,
+)
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.projection import project
 

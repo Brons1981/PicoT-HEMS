@@ -17,8 +17,10 @@ from picot.addon.canonical_pv_deviation import (
     quarter_anchor_event,
     runtime_monitor_fields,
 )
+from picot.addon.execution_engine_dashboard import publish_execution_engine_state
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
 from picot.addon.live_adr037_readiness import run_adr037_readiness
+from picot.addon.live_execution_engine_observer import observe_execution_engine
 from picot.addon.live_execution_plan_observer import observe_execution_plan_set
 from picot.addon.live_flow_observer import LiveFlowObserver
 from picot.addon.live_mode_control import LiveModeControl
@@ -287,7 +289,7 @@ def telemetry_evidence_events_with_snapshot(
     )
 
     stage_started = perf_counter()
-    _plan_set, plan_fields = observe_execution_plan_set(
+    plan_set, plan_fields = observe_execution_plan_set(
         readiness_run.planning_result,
         created_at=snapshot.captured_at,
     )
@@ -303,11 +305,33 @@ def telemetry_evidence_events_with_snapshot(
             **plan_fields,
         }
     )
+
+    stage_started = perf_counter()
+    execution_fields = observe_execution_engine(
+        plan_set,
+        capabilities,
+        now=snapshot.captured_at,
+    )
+    timings["execution_engine_ms"] = _elapsed_ms(stage_started)
+    readiness.update(execution_fields)
+    events.append(
+        {
+            "event": "picot_execution_engine_observation",
+            "layer": "execution",
+            "snapshot_id": snapshot.snapshot_id,
+            "captured_at": snapshot.captured_at.isoformat(),
+            "execution_plan_set_id": plan_fields.get("execution_plan_set_id"),
+            "observer_only": True,
+            **execution_fields,
+        }
+    )
+
     events.append(readiness)
     telemetry_event.update(readiness)
 
-    # TAB-001 remains the temporary execution bridge. Step 2 deliberately stops
-    # after ADR-033 plan construction and grants no ExecutionEngine authority.
+    # TAB-001 remains the temporary execution bridge. Step 3 observes the
+    # canonical ExecutionEngine output only; no Device Adapter or dispatch is
+    # connected to the emitted ExecutionPrimitiveRequest objects yet.
     stage_started = perf_counter()
     control_event = _apply_mode_control(telemetry_event, captured_at=snapshot.captured_at)
     timings["tab001_mode_control_ms"] = _elapsed_ms(stage_started)
@@ -334,7 +358,7 @@ def telemetry_evidence_events_with_snapshot(
 def publish_telemetry_states_with_adr037(
     event: dict[str, object], token: str
 ) -> None:
-    """Publish base presentation, ADR-037 and performance independently."""
+    """Publish base presentation, planning, execution and performance independently."""
 
     failures: list[str] = []
     try:
@@ -345,6 +369,10 @@ def publish_telemetry_states_with_adr037(
         publish_adr037_dashboard_states(event, token)
     except Exception as exc:
         failures.append(f"adr037: {str(exc) or exc.__class__.__name__}")
+    try:
+        publish_execution_engine_state(event, token)
+    except Exception as exc:
+        failures.append(f"execution: {str(exc) or exc.__class__.__name__}")
     try:
         publish_runtime_performance_state(event, token)
     except Exception as exc:

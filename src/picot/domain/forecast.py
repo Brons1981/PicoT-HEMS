@@ -15,6 +15,7 @@ class ForecastKind(StrEnum):
     """Forecast categories currently understood by the PicoT Core."""
 
     ENERGY_PRICE = "energy_price"
+    GRID_EXPORT_PRICE = "grid_export_price"
     PV_POWER = "pv_power"
     HOUSEHOLD_LOAD = "household_load"
 

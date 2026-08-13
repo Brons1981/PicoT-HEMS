@@ -220,7 +220,12 @@ class OpportunityEngine:
                 detection_reason="price_detector_config_missing",
             )
 
-        points = tuple(sorted(snapshot.price_points, key=lambda point: (point.starts_at, point.ends_at)))
+        points = tuple(
+            sorted(
+                snapshot.price_points,
+                key=lambda point: (point.starts_at, point.ends_at),
+            )
+        )
         for point in points:
             _validate_point(point)
         filtered = tuple(

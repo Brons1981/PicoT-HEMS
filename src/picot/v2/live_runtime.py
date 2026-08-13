@@ -1,4 +1,7 @@
-"""Live runtime for the PicoT v2 canonical validation pipeline."""
+"""Live runtime for the PicoT v2 canonical validation pipeline.
+
+Performance diagnostics remain observational and outside planner decision logic.
+"""
 
 from __future__ import annotations
 

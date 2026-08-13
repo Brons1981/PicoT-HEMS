@@ -1,4 +1,7 @@
-"""Minimal Home Assistant add-on runtime for the first live PicoT validation."""
+"""Minimal Home Assistant add-on runtime for the first live PicoT validation.
+
+Update-path probe.
+"""
 
 from __future__ import annotations
 

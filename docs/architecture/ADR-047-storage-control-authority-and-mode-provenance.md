@@ -1,6 +1,6 @@
 # ADR-047 — Storage Control Authority and Mode Provenance
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-08-13
 
 ## Context

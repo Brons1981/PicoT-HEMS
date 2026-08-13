@@ -9,6 +9,7 @@ import json
 import os
 import time
 from dataclasses import asdict
+from hashlib import sha256
 from time import perf_counter
 from typing import Any
 
@@ -17,6 +18,43 @@ from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.planning_input import PlanningInputBundle, assemble_planning_input, load_options
 from picot.v2.projection import Card, Projection, project
+
+
+def _planning_input_signature(bundle: PlanningInputBundle) -> str:
+    """Return a stable signature for decision-relevant Planning Input content."""
+    facts = [
+        {
+            "category": fact.category,
+            "semantic_role": fact.semantic_role,
+            "value": fact.value,
+            "unit": fact.unit,
+            "observed_at": fact.observed_at.isoformat() if fact.observed_at else None,
+            "availability": fact.availability,
+            "mapping_version": fact.mapping_version,
+            "confidence": fact.confidence,
+            "confidence_status": fact.confidence_status,
+        }
+        for fact in bundle.facts
+    ]
+    price_points = [
+        {
+            "starts_at": point.starts_at.isoformat(),
+            "ends_at": point.ends_at.isoformat(),
+            "value_eur_per_kwh": point.value_eur_per_kwh,
+            "confidence": point.confidence,
+        }
+        for point in bundle.snapshot.price_points
+    ]
+    payload = {
+        "strategy_id": bundle.snapshot.strategy_id,
+        "horizon_end": (
+            bundle.snapshot.horizon_end.isoformat() if bundle.snapshot.horizon_end else None
+        ),
+        "facts": facts,
+        "price_points": price_points,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _with_planning_input_diagnostics(

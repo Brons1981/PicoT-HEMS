@@ -283,15 +283,31 @@ def main() -> None:
 
     options = load_options()
     price_config = _price_opportunity_config(options)
-    bundle = assemble_planning_input(token)
-    _execute_planning_bundle(
-        token=token,
-        price_config=price_config,
-        bundle=bundle,
-    )
+    raw_poll_interval = options.get("live_poll_interval_seconds", 60.0)
+    try:
+        poll_interval_seconds = float(raw_poll_interval)
+    except (TypeError, ValueError):
+        poll_interval_seconds = 60.0
+    poll_interval_seconds = max(5.0, poll_interval_seconds)
 
+    def load_bundle() -> PlanningInputBundle:
+        return assemble_planning_input(token)
+
+    def execute(bundle: PlanningInputBundle) -> None:
+        _execute_planning_bundle(
+            token=token,
+            price_config=price_config,
+            bundle=bundle,
+        )
+
+    previous_signature: str | None = None
     while True:
-        time.sleep(3600)
+        previous_signature = _poll_live_cycle(
+            previous_signature=previous_signature,
+            load_bundle=load_bundle,
+            execute=execute,
+        )
+        time.sleep(poll_interval_seconds)
 
 
 if __name__ == "__main__":

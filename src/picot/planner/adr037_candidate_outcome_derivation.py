@@ -14,28 +14,26 @@ from picot.domain.evaluation import (
     ComparisonDirection,
     ObjectiveOutcome,
 )
+from picot.domain.forecast import ForecastSet
 from picot.domain.objectives import ObjectiveKind
 from picot.domain.pv_only_storage_feasibility import PVOnlyStorageEnergyFeasibility
 from picot.domain.storage_technical_recoverability import StorageTechnicalRecoverability
 from picot.planner.evaluation_engine import EvaluationEngine
+from picot.planner.financial_candidate_outcome import FinancialCandidateOutcomeDeriver
 
 
 @dataclass(frozen=True, slots=True)
 class ADR037CandidateOutcomeDeriver:
-    """Produce Evaluation inputs only from comparable simulated path facts.
-
-    Physical self-consumption and net-balance outcomes are derived when every
-    projected interval supplies the required dimensions. Financial result stays
-    unavailable until canonical import/export settlement evidence is present;
-    this producer never assumes that one price series applies symmetrically.
-    """
+    """Produce Evaluation inputs only from comparable simulated path facts."""
 
     complexity_version: str = "path-complexity-v1"
+    financial_deriver: FinancialCandidateOutcomeDeriver = FinancialCandidateOutcomeDeriver()
 
     def derive(
         self,
         *,
         candidate_set: CandidateSet,
+        forecasts: ForecastSet | None = None,
         pv_only_feasibility: PVOnlyStorageEnergyFeasibility | None = None,
         storage_recoverability: StorageTechnicalRecoverability | None = None,
     ) -> CandidateOutcomeSet:
@@ -44,6 +42,7 @@ class ADR037CandidateOutcomeDeriver:
             self._outcome_for(
                 candidate=candidate,
                 path=paths_by_id[candidate.energy_path_id],
+                forecasts=forecasts,
                 pv_only_feasibility=pv_only_feasibility,
                 storage_recoverability=storage_recoverability,
             )
@@ -61,6 +60,7 @@ class ADR037CandidateOutcomeDeriver:
         *,
         candidate: Candidate,
         path: EnergyPath,
+        forecasts: ForecastSet | None,
         pv_only_feasibility: PVOnlyStorageEnergyFeasibility | None,
         storage_recoverability: StorageTechnicalRecoverability | None,
     ) -> CandidateOutcome:
@@ -102,9 +102,14 @@ class ADR037CandidateOutcomeDeriver:
                 )
             )
         )
+        objective_outcomes = list(self._physical_objectives(path))
+        if forecasts is not None:
+            financial = self.financial_deriver.derive(path=path, forecasts=forecasts)
+            if financial is not None:
+                objective_outcomes.append(financial)
         return CandidateOutcome(
             candidate_id=candidate.candidate_id,
-            objective_outcomes=self._physical_objectives(path),
+            objective_outcomes=tuple(objective_outcomes),
             confidence=candidate.confidence,
             recoverability=recoverability,
             execution_complexity=self._execution_complexity(path),

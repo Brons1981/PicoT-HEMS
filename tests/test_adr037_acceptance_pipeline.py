@@ -22,6 +22,10 @@ from picot.domain.evidence_confidence_policy import (
 )
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.forecast import ForecastKind, ForecastPoint, ForecastSeries, ForecastSet
+from picot.domain.household_load_forecast import (
+    HouseholdLoadForecast,
+    HouseholdLoadForecastInterval,
+)
 from picot.domain.household_state import HouseholdState
 from picot.domain.objectives import OptimisationProfile, PlannerStrategy
 from picot.domain.opportunity import (
@@ -39,6 +43,11 @@ from picot.domain.planning_input_snapshot import (
 from picot.domain.projected_household_energy_balance import (
     ProjectedHouseholdEnergyBalance,
     ProjectedHouseholdEnergyBalancePoint,
+)
+from picot.domain.pv_energy_timeline import (
+    PVEnergyEvidenceType,
+    PVEnergyTimeline,
+    PVEnergyTimelineInterval,
 )
 from picot.domain.storage_energy_requirement import StorageRequirementReason
 from picot.planner.adr037_pipeline import ADR037PlannerPipeline
@@ -73,6 +82,47 @@ def _price_forecast() -> ForecastSeries:
     )
 
 
+def _pv_timeline() -> PVEnergyTimeline:
+    return PVEnergyTimeline(
+        timeline_id="pv-timeline-acceptance",
+        created_at=BASE,
+        horizon_start=BASE,
+        horizon_end=BASE + timedelta(hours=6),
+        intervals=tuple(
+            PVEnergyTimelineInterval(
+                starts_at=BASE + timedelta(hours=hour),
+                ends_at=BASE + timedelta(hours=hour + 1),
+                energy_wh=0.0,
+                evidence_type=PVEnergyEvidenceType.FORECAST,
+                confidence=1.0,
+                evidence_ids=(f"pv:{hour}",),
+                method_version="acceptance-v1",
+            )
+            for hour in range(6)
+        ),
+    )
+
+
+def _load_forecast() -> HouseholdLoadForecast:
+    return HouseholdLoadForecast(
+        forecast_id="load-forecast-acceptance",
+        created_at=BASE,
+        horizon_start=BASE,
+        horizon_end=BASE + timedelta(hours=6),
+        intervals=tuple(
+            HouseholdLoadForecastInterval(
+                starts_at=BASE + timedelta(hours=hour),
+                ends_at=BASE + timedelta(hours=hour + 1),
+                expected_energy_wh=0.0,
+                confidence=1.0,
+            )
+            for hour in range(6)
+        ),
+        historical_source_reference="acceptance-fixture",
+        method_version="acceptance-v1",
+    )
+
+
 def _snapshot() -> PlanningInputSnapshot:
     return PlanningInputSnapshot(
         snapshot_id="snapshot-adr037-acceptance",
@@ -96,6 +146,8 @@ def _snapshot() -> PlanningInputSnapshot:
             forecasts=1,
         ),
         replan_reasons=("adr037_acceptance",),
+        household_load_forecast=_load_forecast(),
+        pv_energy_timeline=_pv_timeline(),
     )
 
 

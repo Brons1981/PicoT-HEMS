@@ -32,7 +32,9 @@ class CandidateEnergyPathSimulator:
         pv_timeline = snapshot.pv_energy_timeline
         load_forecast = snapshot.household_load_forecast
         if pv_timeline is None or load_forecast is None:
-            raise ValueError("Candidate simulation requires canonical PV and household load inputs.")
+            raise ValueError(
+                "Candidate simulation requires canonical PV and household load inputs."
+            )
         if storage_state.execution_scope_id not in {
             segment.execution_scope_id for segment in path.segments
         } and path.segments:
@@ -52,7 +54,9 @@ class CandidateEnergyPathSimulator:
                 break
             load = load_by_interval.get((pv.starts_at, pv.ends_at))
             if load is None:
-                raise ValueError("Candidate simulation requires aligned canonical PV/load intervals.")
+                raise ValueError(
+                    "Candidate simulation requires aligned canonical PV/load intervals."
+                )
             duration_h = (pv.ends_at - pv.starts_at).total_seconds() / 3600.0
             if duration_h <= 0.0:
                 raise ValueError("Candidate simulation interval duration must be positive.")

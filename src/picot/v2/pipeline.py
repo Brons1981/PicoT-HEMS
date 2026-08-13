@@ -1,8 +1,4 @@
-"""Minimal end-to-end PicoT v2 canonical pipeline.
-
-No optimisation intelligence lives here yet. This module exists only to prove
-that the accepted stage boundaries can execute as one route without a side path.
-"""
+"""Minimal end-to-end PicoT v2 canonical pipeline."""
 
 from __future__ import annotations
 
@@ -21,10 +17,10 @@ from picot.v2.contracts import (
     ExecutionPlanSet,
     ExecutionPrimitiveBoundary,
     ExecutionRecord,
-    OpportunitySet,
     PlanningInputSnapshot,
     VendorBoundaryResult,
 )
+from picot.v2.opportunity_engine import OpportunityEngine, PriceOpportunityConfig
 
 
 def _id(prefix: str, seed: str) -> str:
@@ -32,32 +28,44 @@ def _id(prefix: str, seed: str) -> str:
     return f"{prefix}-{digest}"
 
 
+def _bootstrap_snapshot(captured_at: datetime | None = None) -> PlanningInputSnapshot:
+    now = captured_at or datetime.now(UTC)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("captured_at must be timezone-aware")
+    run_seed = f"{__version__}|{now.isoformat()}|{ARCHITECTURE_BASELINE_COMMIT}"
+    run_id = _id("run", run_seed)
+    snapshot_id = _id("snapshot", run_id)
+    return PlanningInputSnapshot(
+        run_id=run_id,
+        snapshot_id=snapshot_id,
+        captured_at=now,
+        picot_version=__version__,
+        architecture_baseline_commit=ARCHITECTURE_BASELINE_COMMIT,
+        pipeline_contract_version=PIPELINE_CONTRACT_VERSION,
+        strategy_id="strategy:no-objectives:v1",
+    )
+
+
 class CanonicalPipeline:
-    """Execute the minimal accepted route exactly once for one immutable run."""
+    """Execute the accepted route exactly once for one immutable run."""
 
-    def run(self, *, captured_at: datetime | None = None) -> CanonicalPipelineRun:
-        now = captured_at or datetime.now(UTC)
-        if now.tzinfo is None or now.utcoffset() is None:
-            raise ValueError("captured_at must be timezone-aware")
+    def __init__(self, *, opportunity_engine: OpportunityEngine | None = None) -> None:
+        self._opportunity_engine = opportunity_engine or OpportunityEngine()
 
-        run_seed = f"{__version__}|{now.isoformat()}|{ARCHITECTURE_BASELINE_COMMIT}"
-        run_id = _id("run", run_seed)
-        snapshot_id = _id("snapshot", run_id)
+    def run(
+        self,
+        *,
+        planning_input: PlanningInputSnapshot | None = None,
+        captured_at: datetime | None = None,
+        price_opportunity_config: PriceOpportunityConfig | None = None,
+    ) -> CanonicalPipelineRun:
+        snapshot = planning_input or _bootstrap_snapshot(captured_at)
+        run_id = snapshot.run_id
+        snapshot_id = snapshot.snapshot_id
 
-        planning_input = PlanningInputSnapshot(
-            run_id=run_id,
-            snapshot_id=snapshot_id,
-            captured_at=now,
-            picot_version=__version__,
-            architecture_baseline_commit=ARCHITECTURE_BASELINE_COMMIT,
-            pipeline_contract_version=PIPELINE_CONTRACT_VERSION,
-            strategy_id="strategy:no-objectives:v1",
-        )
-
-        opportunities = OpportunitySet(
-            run_id=run_id,
-            snapshot_id=snapshot_id,
-            opportunity_set_id=_id("opportunity-set", snapshot_id),
+        opportunities = self._opportunity_engine.detect(
+            snapshot,
+            price_config=price_opportunity_config,
         )
 
         path = EnergyPath(
@@ -123,7 +131,6 @@ class CanonicalPipeline:
             execution_record_id=execution_record.execution_record_id,
             status="not_emitted",
         )
-
         adapter_boundary = DeviceAdapterBoundary(
             run_id=run_id,
             snapshot_id=snapshot_id,
@@ -131,7 +138,6 @@ class CanonicalPipeline:
             primitive_request_id=None,
             status="not_invoked",
         )
-
         vendor_result = VendorBoundaryResult(
             run_id=run_id,
             snapshot_id=snapshot_id,
@@ -141,7 +147,7 @@ class CanonicalPipeline:
         )
 
         return CanonicalPipelineRun(
-            planning_input=planning_input,
+            planning_input=snapshot,
             opportunities=opportunities,
             candidate_set=candidate_set,
             outcomes=outcomes,

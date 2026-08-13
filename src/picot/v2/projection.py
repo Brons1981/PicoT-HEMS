@@ -58,9 +58,30 @@ def project(run: CanonicalPipelineRun) -> Projection:
         ),
         Card(
             "sensor.picot_v2_pipeline_02_opportunity_engine",
-            "ready",
+            o.detection_status,
             base(p.snapshot_id, o.opportunity_set_id, "derived")
-            | {"opportunity_count": len(o.opportunity_ids)},
+            | {
+                "opportunity_count": len(o.opportunities),
+                "detection_reason": o.detection_reason,
+                "detector_config_version": o.detector_config_version,
+                "opportunities": [
+                    {
+                        "opportunity_id": item.opportunity_id,
+                        "kind": item.kind,
+                        "starts_at": item.starts_at.isoformat(),
+                        "ends_at": item.ends_at.isoformat(),
+                        "confidence": item.confidence,
+                        "lifecycle_status": item.lifecycle_status,
+                        "average_price_eur_per_kwh": item.metrics.average_price_eur_per_kwh,
+                        "minimum_price_eur_per_kwh": item.metrics.minimum_price_eur_per_kwh,
+                        "maximum_price_eur_per_kwh": item.metrics.maximum_price_eur_per_kwh,
+                        "boundary_eur_per_kwh": item.metrics.boundary_eur_per_kwh,
+                        "source_interval_count": item.metrics.source_interval_count,
+                        "bridged_interval_count": item.metrics.bridged_interval_count,
+                    }
+                    for item in o.opportunities
+                ],
+            },
         ),
         Card(
             "sensor.picot_v2_pipeline_03_candidate_engine",

@@ -1,8 +1,9 @@
-"""Observer-only ADR-037 runtime readiness and live planning bridge."""
+"""ADR-037 live planning readiness and typed execution handoff boundary."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from picot.addon.live_planner_context import LiveEvidenceConfidenceTracker
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
@@ -14,11 +15,25 @@ from picot.domain.projected_household_energy_balance import (
     ProjectedHouseholdEnergyBalance,
     ProjectedHouseholdEnergyBalanceAssembler,
 )
-from picot.planner.adr037_pipeline import ADR037PlannerPipeline
+from picot.planner.adr037_pipeline import ADR037PlannerPipeline, ADR037PlanningResult
 from picot.planner.opportunity_engine import OpportunityEngine
 from picot.planner.price_opportunity_detection import PriceOpportunityDetectionConfig
 
 PRICE_DETECTION_CONFIG_VERSION = 1
+
+
+@dataclass(frozen=True, slots=True)
+class LiveADR037ReadinessRun:
+    """One live ADR-037 run with both presentation evidence and domain result.
+
+    The event is diagnostic/presentation evidence. ``planning_result`` is the
+    authoritative typed output of the same planner pass and is preserved for
+    the ADR-033 execution handoff. This boundary does not grant execution
+    authority and must not reinterpret the winner.
+    """
+
+    event: dict[str, object]
+    planning_result: ADR037PlanningResult | None
 
 
 def assemble_live_projected_balance(
@@ -66,7 +81,7 @@ def _context_value(
     return planner_context.get(key) if planner_context is not None else None
 
 
-def adr037_readiness_log_event(
+def run_adr037_readiness(
     snapshot: PlanningInputSnapshot,
     *,
     capabilities: CapabilitySnapshotSet | None = None,
@@ -74,8 +89,8 @@ def adr037_readiness_log_event(
     confidence_tracker: LiveEvidenceConfidenceTracker | None = None,
     planner_context: Mapping[str, object] | None = None,
     price_margin_eur_per_kwh: float = 0.04,
-) -> dict[str, object]:
-    """Run as far as real live ADR-037 inputs allow, without execution authority."""
+) -> LiveADR037ReadinessRun:
+    """Run live ADR-037 once and preserve its typed result without execution authority."""
 
     balance = assemble_live_projected_balance(snapshot)
     blockers: list[str] = []
@@ -199,7 +214,7 @@ def adr037_readiness_log_event(
         planning_result.requirement if planning_result is not None else None
     )
 
-    return {
+    event: dict[str, object] = {
         "event": "picot_live_adr037_readiness",
         "layer": "planner",
         "snapshot_id": snapshot.snapshot_id,
@@ -356,3 +371,25 @@ def adr037_readiness_log_event(
         "control_change_allowed": False,
         "observer_only": True,
     }
+    return LiveADR037ReadinessRun(event=event, planning_result=planning_result)
+
+
+def adr037_readiness_log_event(
+    snapshot: PlanningInputSnapshot,
+    *,
+    capabilities: CapabilitySnapshotSet | None = None,
+    effective_limit: EffectiveStorageLimit | None = None,
+    confidence_tracker: LiveEvidenceConfidenceTracker | None = None,
+    planner_context: Mapping[str, object] | None = None,
+    price_margin_eur_per_kwh: float = 0.04,
+) -> dict[str, object]:
+    """Return presentation evidence for callers that do not need the typed result."""
+
+    return run_adr037_readiness(
+        snapshot,
+        capabilities=capabilities,
+        effective_limit=effective_limit,
+        confidence_tracker=confidence_tracker,
+        planner_context=planner_context,
+        price_margin_eur_per_kwh=price_margin_eur_per_kwh,
+    ).event

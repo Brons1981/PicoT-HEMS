@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from picot.addon.live_adr037_readiness import adr037_readiness_log_event
+from picot.addon.live_adr037_readiness import (
+    adr037_readiness_log_event,
+    run_adr037_readiness,
+)
 from picot.domain.current_storage_state import CurrentStorageState
 from picot.domain.forecast import ForecastSet
 from picot.domain.household_load_forecast import (
@@ -108,3 +111,12 @@ def test_complete_energy_inputs_reach_projected_balance_but_not_fake_capability(
     assert "live_storage_capability_snapshot_unavailable" in event["adr037_live_blockers"]
     assert event["control_change_allowed"] is False
     assert event["observer_only"] is True
+
+
+def test_typed_run_preserves_none_when_planner_is_blocked() -> None:
+    run = run_adr037_readiness(_snapshot())
+
+    assert run.event["adr037_pipeline_stage_reached"] == "projected_household_energy_balance"
+    assert run.planning_result is None
+    assert run.event["control_change_allowed"] is False
+    assert run.event["observer_only"] is True

@@ -30,6 +30,7 @@ from picot.addon.live_storage_constraints import (
     build_effective_storage_limit,
     build_live_storage_capabilities,
 )
+from picot.addon.runtime_performance_dashboard import publish_runtime_performance_state
 from picot.domain.forecast import ForecastSeries, ForecastSet
 from picot.domain.home_assistant import HomeAssistantDispatchMode
 
@@ -314,7 +315,7 @@ def telemetry_evidence_events_with_snapshot(
 def publish_telemetry_states_with_adr037(
     event: dict[str, object], token: str
 ) -> None:
-    """Publish base presentation and ADR-037 independently."""
+    """Publish base presentation, ADR-037 and performance independently."""
 
     failures: list[str] = []
     try:
@@ -325,6 +326,10 @@ def publish_telemetry_states_with_adr037(
         publish_adr037_dashboard_states(event, token)
     except Exception as exc:
         failures.append(f"adr037: {str(exc) or exc.__class__.__name__}")
+    try:
+        publish_runtime_performance_state(event, token)
+    except Exception as exc:
+        failures.append(f"performance: {str(exc) or exc.__class__.__name__}")
     if failures:
         raise RuntimeError("Presentation publisher failure(s): " + " | ".join(failures))
 

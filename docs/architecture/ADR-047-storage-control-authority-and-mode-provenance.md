@@ -84,9 +84,38 @@ A later planner result does not silently reacquire authority merely because it p
 
 Automatic reacquisition after an external takeover is forbidden.
 
-The initial implementation must remain fail-closed until an explicit accepted mechanism restores PicoT control authority for that storage scope. That restoration mechanism may be a dedicated user action or another explicit contract, but it must not be inferred from time, price, a new planner winner, device activity or selector coincidence.
+The initial implementation must provide an explicit user-facing **Reset control authority / Give control back to PicoT** action per affected storage scope.
 
-A future user-facing authority control requires its own implementation decision if not already covered by an accepted contract.
+That reset is the normal recovery path after a deliberate or accidental user takeover. It must be an explicit user action and may not be triggered by elapsed time, price changes, a new planner winner, device activity or selector coincidence.
+
+When the user invokes the reset:
+
+1. PicoT records the reset request with timestamp and execution scope ID;
+2. the current selector and current device state are observed again before authority is restored;
+3. stale PicoT write provenance from before the takeover is not reused as if no takeover occurred;
+4. `control_authority` may transition from `external` to `picot` only through this explicit reset path or another higher-priority accepted contract;
+5. the reset itself does not immediately issue a battery mode or setpoint command;
+6. after authority is restored, the next normal valid Planner -> Evaluation -> Execution cycle may decide whether the selector should change;
+7. the authority restoration is logged and exposed in diagnostics.
+
+Therefore:
+
+```text
+PicoT last set: Alleen slim ontladen
+User changes selector to: Standby
+-> control_authority = external
+-> PicoT control suppressed
+
+User selects: Give control back to PicoT
+-> authority reset recorded
+-> control_authority = picot
+-> no immediate mode command is implied
+-> next valid planning/execution cycle may change the selector
+```
+
+The reset must be idempotent: invoking it while `control_authority = picot` must not create a synthetic device command or duplicate ownership transition.
+
+If PicoT cannot obtain sufficient current evidence when the reset is requested, authority restoration fails closed and remains `external` until a later explicit reset can be validated.
 
 ## Selected mode versus device activity
 
@@ -152,11 +181,21 @@ When external takeover is detected, PicoT records at least:
 - `control_authority = external`;
 - reason such as `selector_changed_outside_picot_dispatch`.
 
+When authority is reset by the user, PicoT records at least:
+
+- execution scope ID;
+- reset request timestamp;
+- authority before reset;
+- authority after reset;
+- current observed selector value;
+- current observed device activity state where available;
+- reset result (`restored` or fail-closed reason).
+
 ## Restart behavior
 
 Control authority must not be guessed after restart.
 
-If PicoT cannot prove from persisted provenance that the currently observed selector state is still the result of its own last valid write, the storage scope starts fail-closed with no normal PicoT control authority until the accepted authority-restoration path explicitly grants it.
+If PicoT cannot prove from persisted provenance that the currently observed selector state is still the result of its own last valid write, the storage scope starts fail-closed with no normal PicoT control authority until the explicit user authority-reset path or another accepted authority-restoration path grants it.
 
 Persisted provenance must therefore be sufficient to distinguish a PicoT-owned state from an unverified selector state after restart.
 
@@ -164,10 +203,10 @@ Persisted provenance must therefore be sufficient to distinguish a PicoT-owned s
 
 - **Planner / Evaluation:** may express the preferred Energy Path but does not own selector authority.
 - **Execution layer:** must validate that PicoT has authority before producing an executable scope action.
-- **Control Authority / Provenance component:** owns last-writer provenance and authority state per execution scope.
+- **Control Authority / Provenance component:** owns last-writer provenance, user takeover detection, reset validation and authority state per execution scope.
 - **Device Adapter:** translates validated requests only and does not infer authority from vendor state strings.
 - **Flow Observer:** observes selected mode, control regime and device activity separately; it never grants authority.
-- **Presentation/Diagnostics:** exposes provenance and authority without changing them.
+- **Presentation/Diagnostics:** exposes provenance and authority and provides the explicit user reset action, but does not bypass authority validation.
 
 ## Non-goals
 
@@ -178,7 +217,7 @@ This ADR does not:
 - define vendor-specific mode names as Core concepts;
 - declare every actual `Standby` report to be a user override;
 - allow planner output alone to reacquire control authority;
-- define the final user-interface mechanism for handing authority back to PicoT;
+- let the reset action itself choose or dispatch a new operating mode;
 - change Safety Layer priority.
 
 ## Consequences
@@ -186,6 +225,7 @@ This ADR does not:
 Positive:
 
 - a user/manual selector change cannot be silently overwritten by a later planner run;
+- a user can explicitly recover from a manual takeover without restarting or editing internal state;
 - PicoT can legitimately leave a battery in Standby and later change it again when PicoT itself owns that state;
 - transient device `Standby` activity no longer destroys the intended control regime;
 - authority becomes deterministic, persisted and explainable;
@@ -195,8 +235,9 @@ Costs:
 
 - execution needs a persisted per-scope authority/provenance record;
 - dispatch acknowledgement and selector observation must be correlated;
+- a user-facing authority reset action and diagnostics are required;
 - restart behavior becomes intentionally fail-closed when provenance cannot be proven.
 
 ## Core principle
 
-> PicoT may change a storage control state only when it can prove that it still owns control authority for that scope. The current selector value says what is selected; provenance says who is allowed to change it next.
+> PicoT may change a storage control state only when it can prove that it still owns control authority for that scope. The current selector value says what is selected; provenance says who is allowed to change it next. After user takeover, only an explicit authority-reset path may hand normal control back to PicoT.

@@ -1,14 +1,19 @@
-"""Minimal immutable contracts for the PicoT v2 canonical pipeline bootstrap.
-
-These records intentionally contain only the data required to prove the accepted
-1→9 route. Later functionality extends these contracts inside the existing stage
-ownership; it must not create parallel planner paths.
-"""
+"""Immutable contracts for the PicoT v2 canonical pipeline."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PriceForecastPoint:
+    point_id: str
+    starts_at: datetime
+    ends_at: datetime
+    value_eur_per_kwh: float
+    confidence: float
+    evidence_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +25,39 @@ class PlanningInputSnapshot:
     architecture_baseline_commit: str
     pipeline_contract_version: int
     strategy_id: str
+    horizon_end: datetime | None = None
+    price_points: tuple[PriceForecastPoint, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class OpportunityEvidenceRef:
+    evidence_id: str
+    point_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class OpportunityMetrics:
+    duration_seconds: float
+    average_price_eur_per_kwh: float
+    minimum_price_eur_per_kwh: float
+    maximum_price_eur_per_kwh: float
+    boundary_eur_per_kwh: float | None
+    source_interval_count: int
+    bridged_interval_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class Opportunity:
+    opportunity_id: str
+    run_id: str
+    snapshot_id: str
+    kind: str
+    starts_at: datetime
+    ends_at: datetime
+    confidence: float
+    lifecycle_status: str
+    evidence: tuple[OpportunityEvidenceRef, ...]
+    metrics: OpportunityMetrics
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +66,10 @@ class OpportunitySet:
     snapshot_id: str
     opportunity_set_id: str
     opportunity_ids: tuple[str, ...] = ()
+    opportunities: tuple[Opportunity, ...] = ()
+    detection_status: str = "ready"
+    detection_reason: str | None = None
+    detector_config_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

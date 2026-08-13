@@ -8,7 +8,12 @@ from picot.v2.planning_input import CanonicalInputFact, PlanningInputBundle
 BASE = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 
 
-def _bundle(*, captured_at: datetime, price: float = 0.20, grid_power: float = 500.0) -> PlanningInputBundle:
+def _bundle(
+    *,
+    captured_at: datetime,
+    price: float = 0.20,
+    grid_power: float = 500.0,
+) -> PlanningInputBundle:
     point = PriceForecastPoint(
         point_id="price-1",
         starts_at=BASE,

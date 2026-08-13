@@ -12,21 +12,27 @@ def _event(
     *,
     at: datetime,
     mode: str,
+    requested_mode: str | None = None,
+    execution_control_regime: str | None = None,
     grid_import: float = 0.0,
     grid_export: float = 0.0,
     discharge: float = 0.0,
     charge: float = 0.0,
     pv: float = 0.0,
 ) -> dict[str, object]:
-    return {
+    event: dict[str, object] = {
         "telemetry_updated_at": at.isoformat(),
-        "zendure_requested_mode": mode,
+        "zendure_actual_mode": mode,
+        "zendure_requested_mode": requested_mode if requested_mode is not None else mode,
         "grid_import_w": grid_import,
         "grid_export_w": grid_export,
         "zendure_discharge_power_w": discharge,
         "zendure_charge_power_w": charge,
         "goodwe_solar_power_w": pv,
     }
+    if execution_control_regime is not None:
+        event["execution_control_regime"] = execution_control_regime
+    return event
 
 
 def test_nom_transient_contradiction_does_not_trigger_before_120_seconds() -> None:
@@ -125,4 +131,41 @@ def test_standby_validates_battery_power_instead_of_grid_baseline() -> None:
     )
 
     assert result["flow_observer_control_regime"] == "standby"
+    assert result["flow_observer_validation_band"] == "green"
+
+
+def test_actual_standby_wins_over_stale_requested_smart_discharge() -> None:
+    observer = LiveFlowObserver()
+    result = observer.evaluate(
+        _event(
+            at=BASE,
+            mode="Standby",
+            requested_mode="Alleen slim ontladen",
+            grid_export=2050,
+            discharge=0,
+            charge=0,
+            pv=2270,
+        )
+    )
+
+    assert result["flow_observer_control_regime"] == "standby"
+    assert result["flow_observer_regime_source"] == "actual_device_mode"
+    assert result["flow_observer_validation_band"] == "green"
+    assert result["flow_observer_persistent_mismatch"] is False
+    assert result["flow_observer_recommendation"] == "observe"
+
+
+def test_canonical_execution_regime_overrides_actual_device_mode_when_present() -> None:
+    observer = LiveFlowObserver()
+    result = observer.evaluate(
+        _event(
+            at=BASE,
+            mode="Standby",
+            execution_control_regime="delegated_discharge_only",
+            grid_import=20,
+        )
+    )
+
+    assert result["flow_observer_control_regime"] == "delegated_discharge_only"
+    assert result["flow_observer_regime_source"] == "execution_intent"
     assert result["flow_observer_validation_band"] == "green"

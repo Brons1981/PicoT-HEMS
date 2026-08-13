@@ -5,8 +5,15 @@ ARG BUILD_VERSION
 
 RUN apk add --no-cache git \
     && echo "Building PicoT HEMS ${BUILD_VERSION}" \
-    && python -m pip install --no-cache-dir \
-      "git+https://github.com/Brons1981/PicoT-HEMS.git@rebuild/canonical-pipeline"
+    && git clone --depth 1 --branch rebuild/canonical-pipeline \
+      https://github.com/Brons1981/PicoT-HEMS.git /tmp/picot-src \
+    && mkdir -p /opt/picot/picot \
+    && cp -R /tmp/picot-src/src/picot/v2 /opt/picot/picot/v2 \
+    && touch /opt/picot/picot/__init__.py \
+    && rm -rf /tmp/picot-src \
+    && apk del git
+
+ENV PYTHONPATH=/opt/picot
 
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh

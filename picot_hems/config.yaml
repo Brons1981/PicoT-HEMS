@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.1"
+version: "2.0.0-dev.2"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -9,5 +9,15 @@ startup: application
 boot: auto
 init: false
 homeassistant_api: true
-options: {}
-schema: {}
+options:
+  p1_power_entity: "sensor.ct_shelly_pro_3em_api"
+  pv_power_entity: "sensor.inverter_54200dsn211r0265_vermogen"
+  zendure_soc_entity: ""
+  solcast_forecast_entity: "sensor.solcast_pv_forecast_voorspelling_volgende_x_uren"
+  nordpool_price_entity: ""
+schema:
+  p1_power_entity: str
+  pv_power_entity: str
+  zendure_soc_entity: str
+  solcast_forecast_entity: str
+  nordpool_price_entity: str

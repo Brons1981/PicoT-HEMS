@@ -11,7 +11,45 @@ from time import perf_counter
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.planning_input import assemble_planning_input
-from picot.v2.projection import Card, project
+from picot.v2.projection import Card, Projection, project
+
+
+def _with_planning_input_diagnostics(projection: Projection, bundle: object) -> Projection:
+    """Passively enrich card 1 from the already assembled Planning Input bundle."""
+    evidence = getattr(bundle, "evidence")
+    facts = getattr(bundle, "facts")
+    sources = [
+        {
+            "category": item.category,
+            "semantic_role": item.semantic_role,
+            "entity_id": item.entity_id,
+            "availability": item.availability,
+            "raw_state": item.raw_state,
+            "raw_unit": item.raw_unit,
+            "canonical_value": fact.value,
+            "canonical_unit": fact.unit,
+            "fact_id": fact.fact_id,
+            "evidence_id": item.evidence_id,
+            "mapping_version": item.mapping_version,
+            "observed_at": item.observed_at.isoformat() if item.observed_at else None,
+            "confidence_status": fact.confidence_status,
+        }
+        for item, fact in zip(evidence, facts, strict=True)
+    ]
+    first = projection.cards[0]
+    enriched = Card(
+        first.entity_id,
+        first.state,
+        first.attributes
+        | {
+            "source_count": len(sources),
+            "source_available_count": sum(
+                source["availability"] == "available" for source in sources
+            ),
+            "sources": sources,
+        },
+    )
+    return Projection(cards=(enriched, *projection.cards[1:]), projection_ms=projection.projection_ms)
 
 
 def main() -> None:
@@ -27,7 +65,7 @@ def main() -> None:
     run = CanonicalPipeline().run(planning_input=bundle.snapshot)
     planner_cycle_ms = round((perf_counter() - started) * 1000.0, 3)
 
-    projection = project(run)
+    projection = _with_planning_input_diagnostics(project(run), bundle)
     serialization_started = perf_counter()
     json.dumps([asdict(card) for card in projection.cards], separators=(",", ":"))
     serialization_ms = round((perf_counter() - serialization_started) * 1000.0, 3)

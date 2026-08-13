@@ -17,7 +17,7 @@ from picot.addon.canonical_pv_deviation import (
     runtime_monitor_fields,
 )
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
-from picot.addon.live_adr037_readiness import adr037_readiness_log_event
+from picot.addon.live_adr037_readiness import run_adr037_readiness
 from picot.addon.live_flow_observer import LiveFlowObserver
 from picot.addon.live_mode_control import LiveModeControl
 from picot.addon.live_planner_context import LiveEvidenceConfidenceTracker
@@ -247,7 +247,7 @@ def telemetry_evidence_events_with_snapshot(
             maximum_soc=effective_max_soc,
             sequence=_snapshot_sequence,
         )
-    readiness = adr037_readiness_log_event(
+    readiness_run = run_adr037_readiness(
         snapshot,
         capabilities=capabilities,
         effective_limit=effective_limit,
@@ -255,9 +255,15 @@ def telemetry_evidence_events_with_snapshot(
         planner_context=telemetry_event,
         price_margin_eur_per_kwh=_price_opportunity_margin_eur_per_kwh,
     )
+    readiness = readiness_run.event
+    readiness["adr037_typed_planning_result_available"] = (
+        readiness_run.planning_result is not None
+    )
     events.append(readiness)
     telemetry_event.update(readiness)
 
+    # TAB-001 remains the temporary execution bridge. Step 1 deliberately does
+    # not feed the preserved typed planner result into execution yet.
     control_event = _apply_mode_control(telemetry_event, captured_at=snapshot.captured_at)
     events.append(control_event)
     telemetry_event.update(control_event)

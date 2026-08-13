@@ -207,7 +207,7 @@ class HomeAssistantStateReader:
         typed_attributes = attributes if isinstance(attributes, dict) else {}
         unit = typed_attributes.get("unit_of_measurement")
         unavailable = raw_state in {"unknown", "unavailable", None}
-        price_points = ()
+        price_points: tuple[PriceForecastPoint, ...] = ()
         if binding.category == "nordpool" and not unavailable:
             price_points = _price_points_from_attributes(
                 typed_attributes,

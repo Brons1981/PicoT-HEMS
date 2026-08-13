@@ -33,3 +33,24 @@ def test_v2_bootstrap_pipeline_keeps_one_run_and_snapshot() -> None:
     assert run.primitive_boundary.request_id is None
     assert run.adapter_boundary.translation_id is None
     assert run.vendor_result.command_id is None
+
+
+def test_v2_timed_pipeline_reports_all_canonical_stage_timings() -> None:
+    run, timings = CanonicalPipeline().run_timed(
+        captured_at=datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    )
+
+    assert run.planning_input.picot_version == __version__
+    values = (
+        timings.opportunity_engine_ms,
+        timings.candidate_engine_ms,
+        timings.evaluation_engine_ms,
+        timings.execution_plan_builder_ms,
+        timings.execution_engine_ms,
+        timings.execution_primitive_ms,
+        timings.device_adapter_ms,
+        timings.vendor_result_ms,
+        timings.canonical_total_ms,
+    )
+    assert all(value >= 0.0 for value in values)
+    assert timings.canonical_total_ms >= timings.opportunity_engine_ms

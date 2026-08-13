@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.projection import project
@@ -6,7 +6,7 @@ from picot.v2.projection import project
 
 def test_v2_projection_exposes_nine_cards_without_new_decisions() -> None:
     run = CanonicalPipeline().run(
-        captured_at=datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
+        captured_at=datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
     )
     projection = project(run)
 

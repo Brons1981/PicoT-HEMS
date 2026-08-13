@@ -10,31 +10,32 @@ from time import perf_counter
 
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.pipeline import CanonicalPipeline
-from picot.v2.planning_input import assemble_planning_input
+from picot.v2.planning_input import PlanningInputBundle, assemble_planning_input
 from picot.v2.projection import Card, Projection, project
 
 
-def _with_planning_input_diagnostics(projection: Projection, bundle: object) -> Projection:
-    """Passively enrich card 1 from the already assembled Planning Input bundle."""
-    evidence = getattr(bundle, "evidence")
-    facts = getattr(bundle, "facts")
+def _with_planning_input_diagnostics(
+    projection: Projection,
+    bundle: PlanningInputBundle,
+) -> Projection:
+    """Passively enrich card 1 from already assembled Planning Input data."""
     sources = [
         {
-            "category": item.category,
-            "semantic_role": item.semantic_role,
-            "entity_id": item.entity_id,
-            "availability": item.availability,
-            "raw_state": item.raw_state,
-            "raw_unit": item.raw_unit,
+            "category": evidence.category,
+            "semantic_role": evidence.semantic_role,
+            "entity_id": evidence.entity_id,
+            "availability": evidence.availability,
+            "raw_state": evidence.raw_state,
+            "raw_unit": evidence.raw_unit,
             "canonical_value": fact.value,
             "canonical_unit": fact.unit,
             "fact_id": fact.fact_id,
-            "evidence_id": item.evidence_id,
-            "mapping_version": item.mapping_version,
-            "observed_at": item.observed_at.isoformat() if item.observed_at else None,
+            "evidence_id": evidence.evidence_id,
+            "mapping_version": evidence.mapping_version,
+            "observed_at": evidence.observed_at.isoformat() if evidence.observed_at else None,
             "confidence_status": fact.confidence_status,
         }
-        for item, fact in zip(evidence, facts, strict=True)
+        for evidence, fact in zip(bundle.evidence, bundle.facts, strict=True)
     ]
     first = projection.cards[0]
     enriched = Card(
@@ -49,7 +50,10 @@ def _with_planning_input_diagnostics(projection: Projection, bundle: object) -> 
             "sources": sources,
         },
     )
-    return Projection(cards=(enriched, *projection.cards[1:]), projection_ms=projection.projection_ms)
+    return Projection(
+        cards=(enriched, *projection.cards[1:]),
+        projection_ms=projection.projection_ms,
+    )
 
 
 def main() -> None:

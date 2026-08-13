@@ -6,7 +6,7 @@ that the accepted stage boundaries can execute as one route without a side path.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
@@ -36,7 +36,7 @@ class CanonicalPipeline:
     """Execute the minimal accepted route exactly once for one immutable run."""
 
     def run(self, *, captured_at: datetime | None = None) -> CanonicalPipelineRun:
-        now = captured_at or datetime.now(timezone.utc)
+        now = captured_at or datetime.now(UTC)
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("captured_at must be timezone-aware")
 

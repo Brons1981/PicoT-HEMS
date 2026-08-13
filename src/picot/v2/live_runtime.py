@@ -14,7 +14,7 @@ from typing import Any
 
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.opportunity_engine import PriceOpportunityConfig
-from picot.v2.pipeline import CanonicalPipeline
+from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.planning_input import PlanningInputBundle, assemble_planning_input, load_options
 from picot.v2.projection import Card, Projection, project
 
@@ -67,6 +67,35 @@ def _with_planning_input_diagnostics(
     )
 
 
+def _with_stage_timing_diagnostics(
+    projection: Projection,
+    *,
+    planning_input_ms: float,
+    timings: PipelineStageTimings,
+) -> Projection:
+    """Attach passive processing time to each canonical pipeline card."""
+    stage_ms = (
+        planning_input_ms,
+        timings.opportunity_engine_ms,
+        timings.candidate_engine_ms,
+        timings.evaluation_engine_ms,
+        timings.execution_plan_builder_ms,
+        timings.execution_engine_ms,
+        timings.execution_primitive_ms,
+        timings.device_adapter_ms,
+        timings.vendor_result_ms,
+    )
+    cards = tuple(
+        Card(
+            card.entity_id,
+            card.state,
+            card.attributes | {"processing_ms": processing_ms},
+        )
+        for card, processing_ms in zip(projection.cards, stage_ms, strict=True)
+    )
+    return Projection(cards=cards, projection_ms=projection.projection_ms)
+
+
 def _price_opportunity_config(options: dict[str, Any]) -> PriceOpportunityConfig:
     low = float(options["price_low_margin_eur_per_kwh"])
     high = float(options["price_high_margin_eur_per_kwh"])
@@ -89,14 +118,19 @@ def main() -> None:
     bundle = assemble_planning_input(token)
     planning_input_ms = round((perf_counter() - planning_input_started) * 1000.0, 3)
 
-    started = perf_counter()
-    run = CanonicalPipeline().run(
+    run, stage_timings = CanonicalPipeline().run_timed(
         planning_input=bundle.snapshot,
         price_opportunity_config=price_config,
     )
-    planner_cycle_ms = round((perf_counter() - started) * 1000.0, 3)
+    planner_cycle_ms = stage_timings.canonical_total_ms
+    pipeline_total_ms = round(planning_input_ms + stage_timings.canonical_total_ms, 3)
 
     projection = _with_planning_input_diagnostics(project(run), bundle)
+    projection = _with_stage_timing_diagnostics(
+        projection,
+        planning_input_ms=planning_input_ms,
+        timings=stage_timings,
+    )
     serialization_started = perf_counter()
     json.dumps([asdict(card) for card in projection.cards], separators=(",", ":"))
     serialization_ms = round((perf_counter() - serialization_started) * 1000.0, 3)
@@ -114,7 +148,17 @@ def main() -> None:
             {
                 "picot_version": run.planning_input.picot_version,
                 "run_id": run.planning_input.run_id,
+                "pipeline_total_ms": pipeline_total_ms,
                 "planning_input_ms": planning_input_ms,
+                "opportunity_engine_ms": stage_timings.opportunity_engine_ms,
+                "candidate_engine_ms": stage_timings.candidate_engine_ms,
+                "evaluation_engine_ms": stage_timings.evaluation_engine_ms,
+                "execution_plan_builder_ms": stage_timings.execution_plan_builder_ms,
+                "execution_engine_ms": stage_timings.execution_engine_ms,
+                "execution_primitive_ms": stage_timings.execution_primitive_ms,
+                "device_adapter_ms": stage_timings.device_adapter_ms,
+                "vendor_result_ms": stage_timings.vendor_result_ms,
+                "canonical_pipeline_02_09_ms": stage_timings.canonical_total_ms,
                 "planner_cycle_ms": planner_cycle_ms,
                 "diagnostic_projection_ms": projection.projection_ms,
                 "serialization_ms": serialization_ms,
@@ -145,6 +189,7 @@ def main() -> None:
                 "price_points": len(bundle.snapshot.price_points),
                 "opportunities": len(run.opportunities.opportunities),
                 "opportunity_status": run.opportunities.detection_status,
+                "pipeline_total_ms": pipeline_total_ms,
                 "cards": len(projection.cards),
             },
             separators=(",", ":"),

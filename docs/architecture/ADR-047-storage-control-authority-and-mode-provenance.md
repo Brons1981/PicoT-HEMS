@@ -13,10 +13,10 @@ Live flow validation exposed an ambiguity between three different concepts that 
 
 Zendure may report `Standby` as its actual activity while a delegated mode such as `Alleen slim ontladen` remains selected. In that situation the battery is simply idle because there is nothing to discharge; the selected control regime has not changed.
 
-A second and more important ambiguity concerns control authority. A selector value such as `Standby` can have two fundamentally different origins:
+A second and more important ambiguity concerns control authority. A selector value can have fundamentally different origins:
 
 - PicoT may have set it as the result of a valid Execution Plan;
-- a user or another external actor may have changed it after PicoT's last command.
+- a user or another external actor may have manually selected a mode after PicoT's last command.
 
 The selector value alone therefore cannot determine whether PicoT is still allowed to modify that storage scope.
 
@@ -42,17 +42,13 @@ These are separate facts and must not be inferred from one another by string equ
 
 PicoT retains control authority over a storage scope only while the currently observed selector state remains attributable to PicoT's own latest valid write, or while an explicit higher-priority accepted contract grants PicoT authority.
 
-For the initial implementation:
-
 ### PicoT-owned state
 
 When PicoT successfully writes a selector value through the normal Execution -> Adapter -> Dispatch path, it records that write as the authoritative `last_picot_selected_mode` for the scope.
 
-If the currently observed selector continues to equal that PicoT-owned state and no later external change is detected, `control_authority = picot`.
+If the currently observed selector continues to equal that PicoT-owned state and no later manual or external mode selection is detected, `control_authority = picot`.
 
-This remains true even when the selected value is `Standby`.
-
-Therefore:
+This remains true for every mode value, including `Standby`.
 
 ```text
 PicoT sets Standby
@@ -61,32 +57,60 @@ PicoT sets Standby
 -> later valid planning/execution may change the selector again
 ```
 
-`Standby` is not intrinsically a permanent lock-out state.
+`Standby` is therefore not intrinsically a permanent lock-out state.
 
-### External/user takeover
+## Manual mode takeover
 
-If the current selector changes after PicoT's last successful write and the change is not attributable to a current PicoT dispatch, PicoT must treat that as an external takeover.
+**Any manual mode selection by the user or another external actor transfers normal mode-control authority away from PicoT.**
 
-For example:
+This rule is independent of which mode is selected. It applies equally to `Standby`, `Alleen slim ontladen`, `Slim laden`, any future delegated mode, or any other mode exposed through the storage mode selector.
+
+Examples:
 
 ```text
 PicoT last set: Alleen slim ontladen
-User changes selector to: Standby
+User selects: Standby
 -> control_authority = external
--> PicoT may not alter the selector through normal planner/execution control
+-> PicoT may not alter mode select
 ```
 
-The same rule applies to any user/external change, not only Standby.
+```text
+PicoT last set: Standby
+User selects: Slim laden
+-> control_authority = external
+-> PicoT may not alter mode select
+```
 
-A later planner result does not silently reacquire authority merely because it prefers another mode.
+```text
+PicoT last set: Slim laden
+User selects: Alleen slim ontladen
+-> control_authority = external
+-> PicoT may not alter mode select
+```
+
+The semantic trigger is the manual/external selection event itself, not a particular target mode string.
+
+A later planner result does not silently reacquire authority merely because it prefers another mode. Time, prices, forecasts, flow mismatch, battery activity, restart, selector coincidence, or a new planning winner must not restore authority automatically.
+
+## Scope of suppression
+
+When `control_authority != picot` because of a manual mode takeover:
+
+- PicoT may still collect telemetry;
+- PicoT may still build snapshots, forecasts and plans;
+- PicoT may still evaluate candidates;
+- PicoT may still expose what it would have preferred;
+- PicoT may still produce diagnostics and replan evidence;
+- PicoT must not emit or dispatch any normal command that changes the storage mode selector for that scope;
+- no planner result, fallback policy, adapter behavior or flow-observer recommendation may silently restore mode-control authority.
+
+This suppression concerns **mode select authority** for the affected storage scope. Safety-layer semantics remain separate and retain their accepted priority and best-effort behavior.
 
 ## Reacquiring authority
 
-Automatic reacquisition after an external takeover is forbidden.
+Automatic reacquisition after manual takeover is forbidden.
 
-The initial implementation must provide an explicit user-facing **Reset control authority / Give control back to PicoT** action per affected storage scope.
-
-That reset is the normal recovery path after a deliberate or accidental user takeover. It must be an explicit user action and may not be triggered by elapsed time, price changes, a new planner winner, device activity or selector coincidence.
+The implementation must provide an explicit user-facing **Reset control authority / Give control back to PicoT** action per affected storage scope.
 
 When the user invokes the reset:
 
@@ -98,13 +122,11 @@ When the user invokes the reset:
 6. after authority is restored, the next normal valid Planner -> Evaluation -> Execution cycle may decide whether the selector should change;
 7. the authority restoration is logged and exposed in diagnostics.
 
-Therefore:
-
 ```text
 PicoT last set: Alleen slim ontladen
-User changes selector to: Standby
+User selects: Standby
 -> control_authority = external
--> PicoT control suppressed
+-> PicoT mode control suppressed
 
 User selects: Give control back to PicoT
 -> authority reset recorded
@@ -123,8 +145,6 @@ If PicoT cannot obtain sufficient current evidence when the reset is requested, 
 
 `device_activity_state` represents what the battery is physically doing now.
 
-Examples:
-
 ```text
 selected_mode = Alleen slim ontladen
 device_activity_state = standby
@@ -140,25 +160,11 @@ Likewise, an integration may report temporary standby activity while another del
 ADR-042 remains authoritative for regime-aware flow validation, but its runtime inputs must respect this ADR:
 
 - canonical `control_regime` comes from current PicoT-owned execution intent when PicoT has authority;
-- otherwise the observer may continue to observe device state and flow, but must not manufacture corrective PicoT control from stale intent;
+- otherwise the observer may continue to observe device state and flow, but must not manufacture corrective PicoT mode control from stale intent;
 - `device_activity_state = standby` is not itself a regime change;
-- an externally selected Standby state with `control_authority = external` must never trigger a planner-driven selector change.
+- any manually selected mode with `control_authority = external` must never trigger a planner-driven mode-selector change.
 
 A separate follow-up decision may refine delegated-discharge-only baseline semantics for PV-surplus export; this ADR does not redefine ADR-042's tracking equations.
-
-## Execution suppression boundary
-
-When `control_authority != picot` for a storage scope:
-
-- PicoT may still collect telemetry;
-- PicoT may still build snapshots, forecasts and plans;
-- PicoT may still expose what it would have preferred;
-- PicoT may still produce diagnostic/replan evidence;
-- PicoT must not emit a selector-changing or setpoint-changing Execution Primitive for that scope;
-- Device Adapters must not dispatch a normal PicoT control command for that scope;
-- no fallback policy may silently restore control authority.
-
-Safety-layer semantics remain separate and retain their accepted priority and best-effort behavior.
 
 ## Provenance requirements
 
@@ -173,13 +179,13 @@ Every PicoT-originated selector write that can establish or retain control autho
 - resulting observed selector value;
 - whether the write successfully established PicoT authority.
 
-When external takeover is detected, PicoT records at least:
+When manual/external takeover is detected, PicoT records at least:
 
 - previous PicoT-owned selector value;
 - newly observed selector value;
 - takeover detection timestamp;
 - `control_authority = external`;
-- reason such as `selector_changed_outside_picot_dispatch`.
+- reason such as `manual_mode_selection_detected` or `selector_changed_outside_picot_dispatch`.
 
 When authority is reset by the user, PicoT records at least:
 
@@ -195,15 +201,15 @@ When authority is reset by the user, PicoT records at least:
 
 Control authority must not be guessed after restart.
 
-If PicoT cannot prove from persisted provenance that the currently observed selector state is still the result of its own last valid write, the storage scope starts fail-closed with no normal PicoT control authority until the explicit user authority-reset path or another accepted authority-restoration path grants it.
+If PicoT cannot prove from persisted provenance that the currently observed selector state is still the result of its own last valid write and that no later manual/external selection occurred, the storage scope starts fail-closed with no normal PicoT mode-control authority until the explicit user authority-reset path or another accepted authority-restoration path grants it.
 
-Persisted provenance must therefore be sufficient to distinguish a PicoT-owned state from an unverified selector state after restart.
+Persisted provenance must therefore be sufficient to distinguish a PicoT-owned selector state from a manually selected or otherwise unverified selector state after restart.
 
 ## Layer responsibilities
 
 - **Planner / Evaluation:** may express the preferred Energy Path but does not own selector authority.
-- **Execution layer:** must validate that PicoT has authority before producing an executable scope action.
-- **Control Authority / Provenance component:** owns last-writer provenance, user takeover detection, reset validation and authority state per execution scope.
+- **Execution layer:** must validate that PicoT has authority before producing an executable mode change.
+- **Control Authority / Provenance component:** owns last-writer provenance, manual takeover detection, reset validation and authority state per execution scope.
 - **Device Adapter:** translates validated requests only and does not infer authority from vendor state strings.
 - **Flow Observer:** observes selected mode, control regime and device activity separately; it never grants authority.
 - **Presentation/Diagnostics:** exposes provenance and authority and provides the explicit user reset action, but does not bypass authority validation.
@@ -215,8 +221,8 @@ This ADR does not:
 - change accepted ADR-042;
 - define economic mode selection;
 - define vendor-specific mode names as Core concepts;
-- declare every actual `Standby` report to be a user override;
-- allow planner output alone to reacquire control authority;
+- declare every actual `Standby` activity report to be a user override;
+- permit planner output alone to reacquire control authority;
 - let the reset action itself choose or dispatch a new operating mode;
 - change Safety Layer priority.
 
@@ -224,20 +230,21 @@ This ADR does not:
 
 Positive:
 
-- a user/manual selector change cannot be silently overwritten by a later planner run;
-- a user can explicitly recover from a manual takeover without restarting or editing internal state;
-- PicoT can legitimately leave a battery in Standby and later change it again when PicoT itself owns that state;
+- any user-selected mode is respected until the user explicitly gives control back to PicoT;
+- no special-case behavior is tied only to `Standby`;
+- PicoT can legitimately set any mode itself and later change it while it still owns authority;
 - transient device `Standby` activity no longer destroys the intended control regime;
 - authority becomes deterministic, persisted and explainable;
-- selector value, regime and device activity no longer carry overloaded meanings.
+- selector value, selector origin, control regime and device activity no longer carry overloaded meanings.
 
 Costs:
 
 - execution needs a persisted per-scope authority/provenance record;
 - dispatch acknowledgement and selector observation must be correlated;
+- manual selector changes must be detected reliably;
 - a user-facing authority reset action and diagnostics are required;
 - restart behavior becomes intentionally fail-closed when provenance cannot be proven.
 
 ## Core principle
 
-> PicoT may change a storage control state only when it can prove that it still owns control authority for that scope. The current selector value says what is selected; provenance says who is allowed to change it next. After user takeover, only an explicit authority-reset path may hand normal control back to PicoT.
+> PicoT may change a storage mode only when it can prove that it still owns mode-control authority for that scope. Any manual mode selection transfers that authority away from PicoT, regardless of which mode was selected. Only an explicit reset may hand normal mode control back to PicoT.

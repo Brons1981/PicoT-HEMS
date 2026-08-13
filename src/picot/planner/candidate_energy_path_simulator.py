@@ -8,6 +8,7 @@ Candidates and does not invent vendor behaviour or economic values.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.current_storage_state import CurrentStorageState
@@ -35,8 +36,6 @@ class CandidateEnergyPathSimulator:
         if storage_state.execution_scope_id not in {
             segment.execution_scope_id for segment in path.segments
         } and path.segments:
-            # Other future device scopes may be simulated by their own profile/state inputs.
-            # This first storage slice must not reinterpret unrelated scopes.
             raise ValueError("Storage simulation cannot reinterpret another execution scope.")
 
         load_by_interval = {
@@ -94,11 +93,11 @@ class CandidateEnergyPathSimulator:
     @staticmethod
     def _active_storage_segment(
         path: EnergyPath,
-        starts_at: object,
-        ends_at: object,
+        starts_at: datetime,
+        ends_at: datetime,
     ) -> PathSegment | None:
         for segment in path.segments:
-            if segment.starts_at <= starts_at and segment.ends_at >= ends_at:  # type: ignore[operator]
+            if segment.starts_at <= starts_at and segment.ends_at >= ends_at:
                 return segment
         return None
 

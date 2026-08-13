@@ -57,6 +57,16 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _should_run_cycle(
+    previous_signature: str | None,
+    bundle: PlanningInputBundle,
+) -> bool:
+    """Return whether a fresh Planning Input bundle requires a canonical run."""
+    if previous_signature is None:
+        return True
+    return _planning_input_signature(bundle) != previous_signature
+
+
 def _with_planning_input_diagnostics(
     projection: Projection,
     bundle: PlanningInputBundle,

@@ -1,4 +1,4 @@
-"""Derive deterministic ADR-037 Candidate Outcomes without hidden objective scores."""
+"""Derive deterministic ADR-037 Candidate Outcomes without hidden scoring."""
 
 from __future__ import annotations
 
@@ -7,7 +7,14 @@ from dataclasses import dataclass
 from picot.domain.candidate import Candidate, CandidateFamily, CandidateSet
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import EnergyPath
-from picot.domain.evaluation import CandidateOutcome, CandidateOutcomeSet, CandidateValidity
+from picot.domain.evaluation import (
+    CandidateOutcome,
+    CandidateOutcomeSet,
+    CandidateValidity,
+    ComparisonDirection,
+    ObjectiveOutcome,
+)
+from picot.domain.objectives import ObjectiveKind
 from picot.domain.pv_only_storage_feasibility import PVOnlyStorageEnergyFeasibility
 from picot.domain.storage_technical_recoverability import StorageTechnicalRecoverability
 from picot.planner.evaluation_engine import EvaluationEngine
@@ -15,13 +22,12 @@ from picot.planner.evaluation_engine import EvaluationEngine
 
 @dataclass(frozen=True, slots=True)
 class ADR037CandidateOutcomeDeriver:
-    """Produce Evaluation inputs from facts already present in ADR-037 paths.
+    """Produce Evaluation inputs only from comparable simulated path facts.
 
-    This producer deliberately does not invent financial, self-consumption,
-    net-balance or grid-import values. Those objective outcomes require a
-    projected Energy Path with comparable physical quantities for every
-    Candidate. Until that projection exists, Evaluation records those objectives
-    as unavailable according to ADR-032.
+    Physical self-consumption and net-balance outcomes are derived when every
+    projected interval supplies the required dimensions. Financial result stays
+    unavailable until canonical import/export settlement evidence is present;
+    this producer never assumes that one price series applies symmetrically.
     """
 
     complexity_version: str = "path-complexity-v1"
@@ -98,7 +104,7 @@ class ADR037CandidateOutcomeDeriver:
         )
         return CandidateOutcome(
             candidate_id=candidate.candidate_id,
-            objective_outcomes=(),
+            objective_outcomes=self._physical_objectives(path),
             confidence=candidate.confidence,
             recoverability=recoverability,
             execution_complexity=self._execution_complexity(path),
@@ -107,6 +113,54 @@ class ADR037CandidateOutcomeDeriver:
             validity=validity,
             invalidity_reasons=invalidity_reasons,
             evidence_ids=evidence_ids,
+        )
+
+    @staticmethod
+    def _physical_objectives(path: EnergyPath) -> tuple[ObjectiveOutcome, ...]:
+        if not path.projected_states:
+            return ()
+        previous = path.horizon_start
+        self_consumed_wh = 0.0
+        net_exchange_wh = 0.0
+        confidences: list[float] = []
+        for state in path.projected_states:
+            if (
+                state.pv_production_w is None
+                or state.household_import_w is None
+                or state.household_export_w is None
+            ):
+                return ()
+            duration_h = (state.at - previous).total_seconds() / 3600.0
+            if duration_h <= 0.0:
+                return ()
+            self_consumed_wh += max(
+                0.0,
+                state.pv_production_w - state.household_export_w,
+            ) * duration_h
+            net_exchange_wh += (
+                state.household_import_w + state.household_export_w
+            ) * duration_h
+            confidences.append(state.confidence)
+            previous = state.at
+        confidence = min(confidences)
+        evidence_ids = (path.path_id,)
+        return (
+            ObjectiveOutcome(
+                objective=ObjectiveKind.SELF_CONSUMPTION,
+                value=self_consumed_wh,
+                direction=ComparisonDirection.HIGHER_IS_BETTER,
+                unit="Wh",
+                confidence=confidence,
+                evidence_ids=evidence_ids,
+            ),
+            ObjectiveOutcome(
+                objective=ObjectiveKind.NET_BALANCE,
+                value=net_exchange_wh,
+                direction=ComparisonDirection.LOWER_IS_BETTER,
+                unit="Wh",
+                confidence=confidence,
+                evidence_ids=evidence_ids,
+            ),
         )
 
     @staticmethod

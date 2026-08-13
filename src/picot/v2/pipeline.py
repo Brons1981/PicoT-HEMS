@@ -1,8 +1,4 @@
-"""Minimal end-to-end PicoT v2 canonical pipeline.
-
-No optimisation intelligence lives here yet. This module exists only to prove
-that the accepted stage boundaries can execute as one route without a side path.
-"""
+"""Minimal end-to-end PicoT v2 canonical pipeline."""
 
 from __future__ import annotations
 
@@ -21,10 +17,10 @@ from picot.v2.contracts import (
     ExecutionPlanSet,
     ExecutionPrimitiveBoundary,
     ExecutionRecord,
-    OpportunitySet,
     PlanningInputSnapshot,
     VendorBoundaryResult,
 )
+from picot.v2.opportunity_engine import OpportunityEngine, PriceOpportunityConfig
 
 
 def _id(prefix: str, seed: str) -> str:
@@ -51,22 +47,25 @@ def _bootstrap_snapshot(captured_at: datetime | None = None) -> PlanningInputSna
 
 
 class CanonicalPipeline:
-    """Execute the minimal accepted route exactly once for one immutable run."""
+    """Execute the accepted route exactly once for one immutable run."""
+
+    def __init__(self, *, opportunity_engine: OpportunityEngine | None = None) -> None:
+        self._opportunity_engine = opportunity_engine or OpportunityEngine()
 
     def run(
         self,
         *,
         planning_input: PlanningInputSnapshot | None = None,
         captured_at: datetime | None = None,
+        price_opportunity_config: PriceOpportunityConfig | None = None,
     ) -> CanonicalPipelineRun:
         snapshot = planning_input or _bootstrap_snapshot(captured_at)
         run_id = snapshot.run_id
         snapshot_id = snapshot.snapshot_id
 
-        opportunities = OpportunitySet(
-            run_id=run_id,
-            snapshot_id=snapshot_id,
-            opportunity_set_id=_id("opportunity-set", snapshot_id),
+        opportunities = self._opportunity_engine.detect(
+            snapshot,
+            price_config=price_opportunity_config,
         )
 
         path = EnergyPath(

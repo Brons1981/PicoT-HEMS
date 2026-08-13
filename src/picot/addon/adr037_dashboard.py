@@ -25,6 +25,9 @@ def adr037_dashboard_states(event: dict[str, object]) -> DashboardStates:
         "icon": "mdi:clipboard-text-search-outline",
         "observer_only": event.get("observer_only", True),
         "control_change_allowed": event.get("control_change_allowed", False),
+        "typed_planning_result_available": event.get(
+            "adr037_typed_planning_result_available", False
+        ),
         "captured_at": event.get("captured_at"),
         "snapshot_id": event.get("snapshot_id"),
         "pipeline_stage": event.get("adr037_pipeline_stage_reached"),

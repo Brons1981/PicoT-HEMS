@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
-from picot.v2.live_runtime import _planning_input_signature
+from picot.v2.live_runtime import _planning_input_signature, _should_run_cycle
 from picot.v2.planning_input import CanonicalInputFact, PlanningInputBundle
 
 BASE = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
@@ -75,3 +75,25 @@ def test_changed_canonical_fact_changes_signature() -> None:
     second = _bundle(captured_at=BASE + timedelta(minutes=1), grid_power=700.0)
 
     assert _planning_input_signature(first) != _planning_input_signature(second)
+
+
+def test_first_cycle_always_runs() -> None:
+    bundle = _bundle(captured_at=BASE)
+
+    assert _should_run_cycle(None, bundle)
+
+
+def test_identical_content_skips_new_pipeline_run() -> None:
+    first = _bundle(captured_at=BASE)
+    second = _bundle(captured_at=BASE + timedelta(minutes=1))
+    previous_signature = _planning_input_signature(first)
+
+    assert not _should_run_cycle(previous_signature, second)
+
+
+def test_changed_content_requests_new_pipeline_run() -> None:
+    first = _bundle(captured_at=BASE, price=0.20)
+    second = _bundle(captured_at=BASE + timedelta(minutes=1), price=0.10)
+    previous_signature = _planning_input_signature(first)
+
+    assert _should_run_cycle(previous_signature, second)

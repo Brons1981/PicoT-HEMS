@@ -1,4 +1,4 @@
-name: PicoT HEMS
+name: PicoT HEMStest
 version: "0.1.56"
 slug: picot_hems
 description: Deterministic PicoT HEMS live-validation runtime

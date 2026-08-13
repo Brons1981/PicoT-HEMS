@@ -5,7 +5,7 @@ ARG BUILD_VERSION
 
 RUN apk add --no-cache git \
     && echo "Building PicoT HEMS ${BUILD_VERSION}" \
-    && git clone --depth 1 --branch rebuild/canonical-pipeline \
+    && git clone --depth 1 --branch main \
       https://github.com/Brons1981/PicoT-HEMS.git /tmp/picot-src \
     && mkdir -p /opt/picot/picot \
     && cp -R /tmp/picot-src/src/picot/v2 /opt/picot/picot/v2 \

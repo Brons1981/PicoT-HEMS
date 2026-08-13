@@ -9,6 +9,7 @@ import json
 import os
 import time
 from dataclasses import asdict
+from hashlib import sha256
 from time import perf_counter
 from typing import Any
 
@@ -17,6 +18,83 @@ from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.planning_input import PlanningInputBundle, assemble_planning_input, load_options
 from picot.v2.projection import Card, Projection, project
+
+
+def _planning_input_signature(bundle: PlanningInputBundle) -> str:
+    """Return a stable signature for decision-relevant Planning Input content."""
+    facts = [
+        {
+            "category": fact.category,
+            "semantic_role": fact.semantic_role,
+            "value": fact.value,
+            "unit": fact.unit,
+            "observed_at": fact.observed_at.isoformat() if fact.observed_at else None,
+            "availability": fact.availability,
+            "mapping_version": fact.mapping_version,
+            "confidence": fact.confidence,
+            "confidence_status": fact.confidence_status,
+        }
+        for fact in bundle.facts
+    ]
+    price_points = [
+        {
+            "starts_at": point.starts_at.isoformat(),
+            "ends_at": point.ends_at.isoformat(),
+            "value_eur_per_kwh": point.value_eur_per_kwh,
+            "confidence": point.confidence,
+        }
+        for point in bundle.snapshot.price_points
+    ]
+    payload = {
+        "strategy_id": bundle.snapshot.strategy_id,
+        "horizon_end": (
+            bundle.snapshot.horizon_end.isoformat() if bundle.snapshot.horizon_end else None
+        ),
+        "facts": facts,
+        "price_points": price_points,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _should_run_cycle(
+    previous_signature: str | None,
+    bundle: PlanningInputBundle,
+) -> bool:
+    """Return whether a fresh Planning Input bundle requires a canonical run."""
+    if previous_signature is None:
+        return True
+    return _planning_input_signature(bundle) != previous_signature
+
+
+def _run_live_cycle(
+    *,
+    previous_signature: str | None,
+    bundle: PlanningInputBundle,
+    execute: Any,
+) -> str:
+    """Execute one changed-input cycle and return the committed input signature."""
+    if not _should_run_cycle(previous_signature, bundle):
+        assert previous_signature is not None
+        return previous_signature
+
+    execute(bundle)
+    return _planning_input_signature(bundle)
+
+
+def _poll_live_cycle(
+    *,
+    previous_signature: str | None,
+    load_bundle: Any,
+    execute: Any,
+) -> str:
+    """Load fresh Planning Input and execute only when decision input changed."""
+    bundle = load_bundle()
+    return _run_live_cycle(
+        previous_signature=previous_signature,
+        bundle=bundle,
+        execute=execute,
+    )
 
 
 def _with_planning_input_diagnostics(
@@ -106,17 +184,17 @@ def _price_opportunity_config(options: dict[str, Any]) -> PriceOpportunityConfig
     )
 
 
-def main() -> None:
-    token = os.environ.get("SUPERVISOR_TOKEN", "")
-    if not token:
-        raise RuntimeError("Supervisor token is required")
-
-    options = load_options()
-    price_config = _price_opportunity_config(options)
-
-    planning_input_started = perf_counter()
-    bundle = assemble_planning_input(token)
-    planning_input_ms = round((perf_counter() - planning_input_started) * 1000.0, 3)
+def _execute_planning_bundle(
+    *,
+    token: str,
+    price_config: PriceOpportunityConfig,
+    bundle: PlanningInputBundle,
+) -> None:
+    """Run, project, and publish one already assembled Planning Input bundle."""
+    planning_input_ms = round(
+        (bundle.assembly_finished_at - bundle.assembly_started_at).total_seconds() * 1000.0,
+        3,
+    )
 
     run, stage_timings = CanonicalPipeline().run_timed(
         planning_input=bundle.snapshot,
@@ -197,8 +275,39 @@ def main() -> None:
         flush=True,
     )
 
+
+def main() -> None:
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        raise RuntimeError("Supervisor token is required")
+
+    options = load_options()
+    price_config = _price_opportunity_config(options)
+    raw_poll_interval = options.get("live_poll_interval_seconds", 60.0)
+    try:
+        poll_interval_seconds = float(raw_poll_interval)
+    except (TypeError, ValueError):
+        poll_interval_seconds = 60.0
+    poll_interval_seconds = max(5.0, poll_interval_seconds)
+
+    def load_bundle() -> PlanningInputBundle:
+        return assemble_planning_input(token)
+
+    def execute(bundle: PlanningInputBundle) -> None:
+        _execute_planning_bundle(
+            token=token,
+            price_config=price_config,
+            bundle=bundle,
+        )
+
+    previous_signature: str | None = None
     while True:
-        time.sleep(3600)
+        previous_signature = _poll_live_cycle(
+            previous_signature=previous_signature,
+            load_bundle=load_bundle,
+            execute=execute,
+        )
+        time.sleep(poll_interval_seconds)
 
 
 if __name__ == "__main__":

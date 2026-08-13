@@ -2,298 +2,194 @@
 
 Status: **FROZEN REBUILD CONTRACT — Phase A**
 
-Basis: Accepted ADR-001 through ADR-039 and `ARCHITECTURE_MAP.md`.
+## Historical architecture baseline
 
-This document does not redesign PicoT. It converts the already accepted architecture into the implementation and live-validation contract for the clean rebuild.
+The architectural baseline for this rebuild is explicitly pinned to:
 
-## Non-negotiable rules
+- `docs/architecture/ARCHITECTURE_MAP.md`
+- commit `8197abbefd969f10da5a8f27244862be07998299`
+- created `2026-08-01T21:12:40Z`
+- commit message: `docs(architecture): add PicoT Core v0 architecture map`
+
+This is the original Architecture Map revision, before the 2026-08-12 closed-loop readiness update and ADR-040 work. Later implementation-status text, later integration conclusions and ADR-040+ are not architectural input to Phase A.
+
+Detailed rules remain authoritative in the Accepted ADRs represented by that architecture baseline. This document does not redesign PicoT; it turns that already accepted architecture into a strict rebuild and live-validation contract.
+
+## Verified original pipeline
+
+The 2026-08-01 Architecture Map defines this pipeline:
+
+```text
+PlanningInputSnapshot
+        │
+        ▼
+Opportunity Engine
+        │
+        ▼
+OpportunitySet
+        │
+        ▼
+Candidate Engine
+        │
+        ├── CapabilitySnapshotSet
+        ├── EnergyPath
+        └── CandidateSet
+        │
+        ▼
+Evaluation Engine
+        │
+        ├── CandidateOutcomeSet
+        ├── EvaluationRecord
+        └── Winning Candidate + Winning Energy Path
+        │
+        ▼
+Execution Plan Builder
+        │
+        ├── ExecutionPlanSet
+        ├── scope-specific ExecutionPlan
+        └── ExecutionPlanSegment
+        │
+        ▼
+Execution Engine
+        │
+        ├── due-segment selection
+        ├── current capability validation
+        ├── CommandValidationOutcome
+        ├── ExecutionPrimitiveRequest
+        └── ExecutionRecord / ExecutionResult
+        │
+        ▼
+Execution Primitive
+        │
+        ▼
+Device Adapter
+        │
+        ▼
+Vendor Command
+```
+
+The original map states that the pipeline is architecturally closed through `ExecutionPrimitiveRequest`; Device Adapters and vendor integrations remain separate from PicoT Core.
+
+## Original stage responsibilities — preserved
+
+### Planning Input
+Produces one immutable `PlanningInputSnapshot` with the active Planner Strategy, Household State, forecasts, runtime pressure and relevant version references.
+
+### Opportunity Engine
+Detects objective, evidence-backed Opportunities. It does not select devices, assign power or create plans.
+
+### Candidate Engine
+Constructs a small, diverse and meaningful `CandidateSet` from accepted scenario templates, Opportunities and logical capabilities. Each Candidate references exactly one immutable Energy Path.
+
+### Evaluation Engine
+Compares supplied Candidate outcomes in Planner Strategy order and applies deterministic tie-breaks. It selects one existing Candidate without hidden aggregate scoring.
+
+### Execution Plan Builder
+Converts the Winning Energy Path without reinterpretation into an atomic `ExecutionPlanSet`, with one immutable plan per execution scope.
+
+### Execution Engine
+Selects due plan segments, validates current logical capability conditions and emits vendor-independent `ExecutionPrimitiveRequest` records. It does not create vendor commands or make new energy decisions.
+
+### Device Adapter
+Translates validated Execution Primitives into vendor-specific commands and records acknowledgement and observed behaviour separately.
+
+## Original cross-cutting architecture — preserved
+
+- Planner Strategy guides the full Planner pipeline without becoming a separate layer.
+- Every request remains traceable through `ExecutionPrimitiveRequest → ExecutionRecord → ExecutionPlanSegment → ExecutionPlan → EvaluationRecord → Winning Candidate → EnergyPath → OpportunitySet → PlanningInputSnapshot → CapabilitySnapshotSet`.
+- Only one full Planner Run may be active.
+- A fixed five-second stabilisation interval applies between runs.
+- Material changes request replanning from a fresh atomic snapshot.
+- Safety, phase-current limits, voltage limits, fuse limits, capability health and hardware limits always override optimisation preferences.
+
+## Rebuild invariants
+
+These invariants are implementation guards for preserving the accepted architecture; they do not add planner stages or new optimisation behaviour.
 
 1. **One canonical fact → one owner.**
 2. **One canonical derivation → one owner.**
-3. Downstream stages may consume/reference canonical facts; they may not silently reinterpret, replace or mutate them.
-4. A derived value must remain traceable to its canonical source facts and the versioned derivation that created it.
-5. **No parallel path to the same result.** New functionality extends the canonical pipeline; it never creates a second planner, observer-planner, price planner, battery planner, ADR-specific runtime, or alternative execution path.
-6. The atomic `PlanningInputSnapshot` is immutable for the entire Planner Run. It is never progressively enriched or changed by downstream stages.
-7. Each stage may create only outputs owned by that stage.
-8. A downstream stage may not suppress data merely because it considers that data irrelevant to another stage.
-9. Every Planner Run has one stable `run_id`; all stage outputs and records reference that run.
-10. Every stage must be observable in the live dashboard before additional intelligence is added to the next stage.
-11. A stage is not complete because unit tests are green. It is complete only when its canonical output is produced through the single live pipeline and is end-to-end traceable.
-12. ADR-040 and later are outside the Phase A architectural basis. They may be reconsidered only after the ADR-001–039 pipeline is working and proven.
+3. Downstream components consume/reference canonical records; they do not silently reinterpret, replace or mutate them.
+4. A derived value remains traceable to its canonical source record(s) and designated derivation.
+5. **No parallel path to the same result.** The rebuild uses the accepted pipeline rather than an observer-planner, ADR-specific planner, battery planner, price planner or alternative orchestration route.
+6. `PlanningInputSnapshot` is immutable for the Planner Run.
+7. A component creates only records belonging to its accepted responsibility.
+8. No component may suppress another component's canonical input merely because it considers that information unnecessary downstream.
+9. Live validation must prove that the same immutable records/references survive the intended chain without hidden replacement.
+10. Green CI alone is not proof of architectural integration; the canonical live path must also be traceable.
 
-## Canonical nine-stage dashboard pipeline
+## Nine fixed live validation cards
 
-The Architecture Map remains authoritative for Core boundaries. For rebuild validation it is presented as nine fixed dashboard stages:
+The nine cards are a **dashboard projection of the original pipeline and its external command boundary**, not nine newly invented Core layers:
 
 ```text
 1  Planning Input
-        ↓
 2  Opportunity Engine
-        ↓
 3  Candidate Engine
-        ↓
 4  Evaluation Engine
-        ↓
 5  Execution Plan Builder
-        ↓
 6  Execution Engine
-        ↓
 7  Execution Primitive
-        ↓
 8  Device Adapter
-        ↓
 9  Vendor Command / Observed Result
 ```
 
-`Planner Strategy`, confidence, Runtime Governance, Safety/hard constraints, commitments, User Rules, diagnostics and traceability are cross-cutting contracts. They do not become alternative orchestration stages.
+Cards 1–7 expose the accepted planning/execution chain. Cards 8–9 expose the external adapter/vendor boundary needed to verify the physical closed loop. Their presence on the dashboard does not move Device Adapter or Vendor Command into PicoT Core.
 
-The PicoT Core pipeline is architecturally closed through `ExecutionPrimitiveRequest`; Device Adapter and vendor command/result are shown as stages 8–9 because the live rebuild dashboard must prove the complete physical closed loop.
+Each card must show, where applicable:
 
----
+- current run/snapshot reference;
+- canonical input reference(s);
+- canonical output reference(s);
+- creation/capture timestamp;
+- stage status;
+- explicit blocker/error;
+- provenance/lineage to the preceding accepted record;
+- stage-specific values already defined by the accepted architecture/ADR contracts.
 
-## 1 — Planning Input
+The card body may grow only with functionality that belongs to that accepted responsibility. Testing a new feature does not create an extra orchestration layer or parallel dashboard pipeline.
 
-**Owner:** Planning Input / snapshot assembly.
+## Lineage validation
 
-**Allowed input:** validated canonical observations, persistent logical capability mappings, forecasts, Household State, current storage state, active Planner Strategy, applicable User Rules/commitments, runtime pressure and required version references.
-
-**May do:** validate, normalise through the designated owner, assemble and freeze one atomic `PlanningInputSnapshot`; expose freshness/confidence/version metadata already owned by the relevant canonical contracts.
-
-**Owns/creates:** `PlanningInputSnapshot` and its snapshot identity/version references.
-
-**Must not:** plan; select an Opportunity, Candidate or device action; read vendor-specific entities inside Planner code; change the snapshot after the Planner Run starts; silently substitute unavailable sources; invent confidence.
-
-**Dashboard minimum:** `run_id`, `snapshot_id`, captured-at, source/mapping versions, strategy version, capability snapshot references, storage state, forecast references, runtime pressure, snapshot completeness, blockers.
-
-**Primary ADRs:** ADR-001–014, ADR-017, ADR-025, ADR-028, ADR-029, ADR-030, ADR-034, ADR-038, ADR-039.
-
-## 2 — Opportunity Engine
-
-**Owner:** Opportunity Engine.
-
-**Allowed input:** immutable `PlanningInputSnapshot` and canonical evidence available to this stage.
-
-**May do:** derive objective, evidence-backed Opportunities and constraints; describe price/PV/energy timing opportunities; attach evidence and confidence according to canonical contracts.
-
-**Owns/creates:** `OpportunitySet` and Opportunity records.
-
-**Must not:** select a device; assign execution power; create an Energy Path; select a winner; remove an alternative because another layer might prefer a different strategy.
-
-**Dashboard minimum:** opportunity-set id, count, each opportunity type/window/value, evidence references, confidence, constraints, exclusions with explicit contractual reason.
-
-**Primary ADRs:** ADR-017, ADR-023, ADR-025, ADR-036, ADR-037, ADR-039.
-
-## 3 — Candidate Engine
-
-**Owner:** Candidate Engine.
-
-**Allowed input:** immutable `PlanningInputSnapshot`, `OpportunitySet`, immutable logical `CapabilitySnapshotSet`, Planner Strategy guidance and accepted scenario templates.
-
-**May do:** hard technical reduction explicitly allowed by the ADRs; controlled branching; construct a small, diverse set of complete technically supported household Energy Paths; attach capability/evidence references.
-
-**Owns/creates:** `CandidateSet`, Candidate records and Candidate `EnergyPath` records.
-
-**Must not:** perform final economic/strategic winner selection; mutate canonical facts; create vendor commands; reinterpret capabilities; remove a Candidate on an evaluation criterion owned by Evaluation unless an accepted Candidate-reduction contract explicitly permits it.
-
-**Dashboard minimum:** candidate-set id/count, candidate ids/families, Energy Path ids, capability roles/versions, opportunity references, reduction reason, completeness/technical-validity status.
-
-**Primary ADRs:** ADR-017, ADR-024, ADR-025, ADR-029, ADR-030, ADR-031, ADR-037.
-
-## 4 — Evaluation Engine
-
-**Owner:** Evaluation Engine.
-
-**Allowed input:** immutable Candidates and their canonical simulated/derived outcomes plus immutable Planner Strategy.
-
-**May do:** compare supplied Candidate outcomes in strategy order; apply deterministic tie-breaks; record every comparison; select exactly one existing Candidate when selection is possible.
-
-**Owns/creates:** `CandidateOutcomeSet` where evaluation contract assigns outcome representation, `EvaluationRecord`, Winning Candidate reference and Winning Energy Path reference.
-
-**Must not:** create a new Candidate; change an Energy Path; alter canonical input facts; use hidden aggregate scoring; add a device action that was not in the winning path.
-
-**Dashboard minimum:** evaluated candidates, available/unavailable outcomes, objective order, comparison results, tie-breaks, winner id, winning Energy Path id, explicit no-winner/blocker reason.
-
-**Primary ADRs:** ADR-017, ADR-025, ADR-026, ADR-032, ADR-037.
-
-## 5 — Execution Plan Builder
-
-**Owner:** Execution Plan Builder.
-
-**Allowed input:** successful immutable `EvaluationRecord`, Winning Candidate and Winning Energy Path plus the references required by the accepted execution-plan contract.
-
-**May do:** deterministically convert the Winning Energy Path into an atomic `ExecutionPlanSet`; split it into scope-specific immutable plans and time-bound segments.
-
-**Owns/creates:** `ExecutionPlanSet`, `ExecutionPlan`, `ExecutionPlanSegment`.
-
-**Must not:** reinterpret optimisation; change timing/energy intent to improve the result; create a different energy decision; introduce vendor-specific commands.
-
-**Dashboard minimum:** plan-set id, plan count, scope, segment ids, start/end, intended primitive/behaviour, power/energy parameters, winning-path reference, commitment/flexibility metadata.
-
-**Primary ADRs:** ADR-016, ADR-027, ADR-033.
-
-## 6 — Execution Engine
-
-**Owner:** Execution Engine.
-
-**Allowed input:** immutable due Execution Plan segments, current logical capability conditions, commitments, hard constraints/Safety state and accepted execution fallback policy where applicable within ADR-001–039.
-
-**May do:** select due segments; validate current capability/constraint conditions; produce explicit validation outcomes; emit an approved vendor-independent `ExecutionPrimitiveRequest`; record execution lifecycle state.
-
-**Owns/creates:** `CommandValidationOutcome`, execution lifecycle/record data and approved `ExecutionPrimitiveRequest` handoff.
-
-**Must not:** re-optimise; choose a better price window; modify the Winning Energy Path; create a new energy decision; emit vendor commands directly.
-
-**Dashboard minimum:** due segment, validation inputs/references, authority/commitment state, validation result, primitive request id or explicit no-dispatch/replan reason.
-
-**Primary ADRs:** ADR-015, ADR-016, ADR-027, ADR-029, ADR-034.
-
-## 7 — Execution Primitive
-
-**Owner:** generic Execution Primitive contract / validated primitive request boundary.
-
-**Allowed input:** only an Execution Engine-approved primitive request.
-
-**May do:** represent desired generic energy behaviour with explicit scope, parameters, timing and provenance.
-
-**Owns/creates:** canonical `ExecutionPrimitiveRequest` representation handed to the adapter boundary.
-
-**Must not:** contain vendor entity ids, service names, Zendure/Home Assistant modes or other integration-specific semantics; make planning decisions.
-
-**Dashboard minimum:** primitive request id/type, logical scope, requested parameters, originating plan/segment/evaluation/run references, validation status.
-
-**Primary ADRs:** ADR-015, ADR-016, ADR-035.
-
-## 8 — Device Adapter
-
-**Owner:** selected Device Adapter / Home Assistant adapter mapping.
-
-**Allowed input:** one validated generic `ExecutionPrimitiveRequest` plus one explicit versioned adapter mapping.
-
-**May do:** deterministic translation to the vendor/integration-specific service call or command; use identical translation for dry-run and live operation.
-
-**Owns/creates:** adapter translation record / concrete service-call representation.
-
-**Must not:** change requested energy intent; optimise; choose another device because it appears preferable; silently remap capabilities; feed vendor semantics back into Core planning.
-
-**Dashboard minimum:** adapter id/version, mapping id/version, primitive request reference, translated target/action/parameters, dry-run/live gate, translation result.
-
-**Primary ADRs:** ADR-001, ADR-004, ADR-007, ADR-009, ADR-010, ADR-011, ADR-015, ADR-035.
-
-## 9 — Vendor Command / Observed Result
-
-**Owner:** vendor/integration boundary for command dispatch; canonical observation owner for subsequent observed facts.
-
-**Allowed input:** adapter-produced concrete command after live dispatch gating.
-
-**May do:** dispatch the exact translated command; record acknowledgement/failure separately; ingest resulting physical observations through the appropriate canonical observation path for a future fresh snapshot/replan.
-
-**Owns/creates:** vendor command/acknowledgement record and observed-result references. A physical observation does not mutate the active Planner Run; it may become evidence for a future snapshot.
-
-**Must not:** rewrite the active plan; alter previous canonical facts; bypass Runtime Monitor/replanning; treat acknowledgement as proof of physical behaviour without observation evidence.
-
-**Dashboard minimum:** command id, target/action/parameters, dispatch timestamp, acknowledgement/result, observed behaviour references, deviation/replan indication, next-snapshot reference when created.
-
-**Primary ADRs:** ADR-002–012, ADR-015, ADR-028, ADR-034, ADR-035.
-
----
-
-## Cross-cutting ownership rules
-
-### Planner Strategy
-
-Owned by the accepted Objective/Strategy contracts. It guides Opportunity, Candidate and Evaluation behaviour but is not a pipeline stage and may not be locally reinterpreted by a stage.
-
-### Confidence
-
-Confidence belongs to the canonical fact/evidence contract that derives it. A downstream layer consumes the confidence value; it may not replace it with an arbitrary value such as `1.0`. A downstream layer may create a new confidence only when an accepted contract explicitly defines that derived confidence and its evidence.
-
-### Safety and hard constraints
-
-Safety, phase-current limits, voltage/fuse limits, capability health and hardware limits override optimisation. Enforcement must occur at the contractually designated boundary; other stages may consume their state but may not redefine the limits.
-
-### Commitments
-
-Execution commitments are canonical execution state. Planner Runs optimise around them according to ADR-027. They are not reconstructed independently by Candidate or Evaluation logic.
-
-### Runtime governance
-
-One full Planner Run at a time. Material change produces a replan request; after the fixed five-second stabilisation interval a new atomic snapshot starts a new run. Existing snapshots are never patched with new live data.
-
-## End-to-end lineage contract
-
-Every live run must be traceable through stable immutable identifiers. At minimum:
+The live validation path must be able to prove the original traceability chain:
 
 ```text
-run_id
-  └─ PlanningInputSnapshot.snapshot_id
-      ├─ CapabilitySnapshotSet / mapping versions
-      └─ OpportunitySet.opportunity_set_id
-          └─ CandidateSet.candidate_set_id
-              └─ Candidate.candidate_id
-                  └─ EnergyPath.energy_path_id
-                      └─ EvaluationRecord.evaluation_id
-                          └─ Winning Candidate / EnergyPath refs
-                              └─ ExecutionPlanSet.plan_set_id
-                                  └─ ExecutionPlan.plan_id
-                                      └─ ExecutionPlanSegment.segment_id
-                                          └─ ExecutionPrimitiveRequest.request_id
-                                              └─ Adapter translation/command id
-                                                  └─ Execution/observed-result id
+PlanningInputSnapshot
+→ OpportunitySet
+→ Candidate / EnergyPath
+→ EvaluationRecord / Winning Candidate
+→ ExecutionPlan / ExecutionPlanSegment
+→ ExecutionRecord / ExecutionPrimitiveRequest
+→ Device Adapter translation
+→ Vendor Command / observed behaviour
 ```
 
-For each derived canonical record the trace must expose:
+For validation purposes, a record/reference can be classified as:
 
-- `created_by_stage`;
-- `derived_from` references;
-- `method/contract version` where derivation occurs;
-- source mapping/version references where relevant;
-- `run_id`;
-- creation timestamp;
-- immutable payload identity/hash where practical.
+- **UNCHANGED** — canonical record/reference consumed without reinterpretation;
+- **DERIVED** — a new record was created by the component contractually responsible for that derivation and retains provenance;
+- **NOT_CONSUMED** — the component did not require the fact; the source record itself remains unchanged;
+- **LINEAGE_BREAK** — a required reference/provenance link disappeared;
+- **ILLEGAL_MUTATION** — an immutable canonical record was changed/replaced outside its accepted ownership contract.
 
-### Lineage status
+`LINEAGE_BREAK` and `ILLEGAL_MUTATION` fail the rebuild validation gate.
 
-The dashboard/test harness must be able to classify relevant lineage as:
+## Phase A exclusion boundary
 
-- **UNCHANGED** — the canonical fact is referenced without reinterpretation;
-- **DERIVED** — a new canonical value was created by the designated owner with explicit `derived_from` provenance;
-- **NOT_CONSUMED** — a stage did not require the fact; this is informational and must not remove the fact from the immutable run context;
-- **LINEAGE_BREAK** — a required source/reference disappeared;
-- **ILLEGAL_MUTATION** — a canonical fact changed without a new authoritative observation or an explicitly owned derivation.
+Phase A deliberately does **not** use:
 
-`LINEAGE_BREAK` and `ILLEGAL_MUTATION` are rebuild-gate failures.
+- the 2026-08-12 `ARCHITECTURE_MAP.md` implementation-status update as architectural authority;
+- the 2026-08-12 closed-loop readiness conclusion as proof that the implementation is architecturally correct;
+- ADR-040 or later ADRs as justification for changing the 2026-08-01 pipeline;
+- current code structure as evidence that a component belongs in the architecture.
 
-## Dashboard contract
-
-The rebuild dashboard always contains the same nine stage cards. Cards are never added to test new planner functionality.
-
-Every card has a common header:
-
-```text
-stage_status
-run_id
-input_reference(s)
-output_reference(s)
-created_at
-confidence/evidence status where applicable
-blocker/error
-lineage_status
-```
-
-The body contains the stage-specific minimum fields listed above and grows only when intelligence/functionality belonging to that stage is implemented.
-
-A feature is not accepted until:
-
-1. its value appears in the owning stage card;
-2. required downstream references remain traceable;
-3. no unrelated stage mutated/reinterpreted the value;
-4. the same `run_id` can be followed through all applicable cards;
-5. the complete canonical pipeline remains operational without a parallel test path.
+Later ADRs and implementation work may be reviewed separately after the original accepted pipeline is reconstructed and proven. They are not allowed to retroactively redefine this Phase A baseline.
 
 ## Phase A completion gate
 
-Phase A is complete when this contract is frozen before rebuild implementation starts.
+Phase A is complete when:
 
-No production intelligence is implemented in Phase A.
-
-Phase B starts by constructing the minimal end-to-end canonical pipeline and nine-card dashboard against this contract. The first valid run may intentionally contain empty Opportunities, a baseline/no-action path and no physical dispatch; it must nevertheless prove the single canonical route and complete lineage.
+1. the historical baseline is pinned to commit `8197abbefd969f10da5a8f27244862be07998299`;
+2. the original pipeline and responsibilities above are treated as immutable rebuild boundaries;
+3. the rebuild invariants protect ownership, immutability and traceability without adding a new planner layer;
+4. the nine-card dashboard is understood only as a live validation projection of that architecture;
+5. Phase B starts with the smallest possible end-to-end path through these existing boundaries before planner intelligence is filled in stage by stage.

@@ -6,6 +6,7 @@ import json
 import os
 from dataclasses import replace
 from datetime import datetime
+from time import perf_counter
 from typing import Any, cast
 
 from picot.addon import price_runtime_v2, runtime, runtime_observation
@@ -29,6 +30,7 @@ from picot.addon.live_storage_constraints import (
     build_effective_storage_limit,
     build_live_storage_capabilities,
 )
+from picot.addon.runtime_performance_dashboard import publish_runtime_performance_state
 from picot.domain.forecast import ForecastSeries, ForecastSet
 from picot.domain.home_assistant import HomeAssistantDispatchMode
 
@@ -49,6 +51,10 @@ _confidence_tracker = LiveEvidenceConfidenceTracker()
 _flow_observer = LiveFlowObserver()
 _mode_control = LiveModeControl()
 _canonical_pv_deviation = CanonicalPVDeviationEvaluator(history=_load_forecaster.history)
+
+
+def _elapsed_ms(started_at: float) -> float:
+    return round((perf_counter() - started_at) * 1000.0, 3)
 
 
 def _soc_fraction(event: dict[str, object], key: str) -> float | None:
@@ -136,9 +142,17 @@ def telemetry_evidence_events_with_snapshot(
 ) -> list[dict[str, object]]:
     """Append canonical runtime evidence and one fresh PlanningInputSnapshot per poll."""
 
+    cycle_started = perf_counter()
+    timings: dict[str, float] = {}
     global _snapshot_sequence
+
+    stage_started = perf_counter()
     events = _base_evidence_events(telemetry_event)
+    timings["base_evidence_ms"] = _elapsed_ms(stage_started)
+
+    stage_started = perf_counter()
     flow_fields = _flow_observer.evaluate(telemetry_event)
+    timings["flow_observer_ms"] = _elapsed_ms(stage_started)
     telemetry_event.update(flow_fields)
     events.append(
         {
@@ -170,10 +184,12 @@ def telemetry_evidence_events_with_snapshot(
         if isinstance(cadence, int) and not isinstance(cadence, bool)
         else 5
     )
+    stage_started = perf_counter()
     deviation = _canonical_pv_deviation.evaluate(
         captured_at=captured_at,
         telemetry_interval_seconds=cadence_seconds,
     )
+    timings["canonical_pv_deviation_ms"] = _elapsed_ms(stage_started)
     canonical_replan_required = False
     if deviation is not None:
         deviation_fields = deviation.as_fields()
@@ -197,11 +213,13 @@ def telemetry_evidence_events_with_snapshot(
     snapshot_input = dict(telemetry_event)
     if _storage_usable_capacity_wh is not None:
         snapshot_input["storage_usable_capacity_wh"] = _storage_usable_capacity_wh
+    stage_started = perf_counter()
     snapshot = build_live_planning_snapshot(
         snapshot_input,
         sequence=_snapshot_sequence,
         load_forecaster=_load_forecaster,
     )
+    timings["snapshot_build_ms"] = _elapsed_ms(stage_started)
     if canonical_replan_required:
         snapshot = replace(
             snapshot,
@@ -210,6 +228,7 @@ def telemetry_evidence_events_with_snapshot(
             ),
         )
 
+    stage_started = perf_counter()
     if snapshot.pv_energy_timeline is not None:
         anchor = quarter_anchor_event(
             timeline=snapshot.pv_energy_timeline,
@@ -225,8 +244,11 @@ def telemetry_evidence_events_with_snapshot(
             sequence=_snapshot_sequence,
         )
         snapshot = replace(snapshot, pv_energy_timeline=canonical_pv)
+    timings["actual_pv_integration_ms"] = _elapsed_ms(stage_started)
 
+    stage_started = perf_counter()
     price_forecast = _live_price_forecast(captured_at=snapshot.captured_at)
+    timings["price_fetch_ms"] = _elapsed_ms(stage_started)
     if price_forecast is not None:
         snapshot = replace(snapshot, forecasts=ForecastSet(series=(price_forecast,)))
     events.append(snapshot_log_event(snapshot))
@@ -247,6 +269,8 @@ def telemetry_evidence_events_with_snapshot(
             maximum_soc=effective_max_soc,
             sequence=_snapshot_sequence,
         )
+
+    stage_started = perf_counter()
     readiness_run = run_adr037_readiness(
         snapshot,
         capabilities=capabilities,
@@ -255,6 +279,7 @@ def telemetry_evidence_events_with_snapshot(
         planner_context=telemetry_event,
         price_margin_eur_per_kwh=_price_opportunity_margin_eur_per_kwh,
     )
+    timings["adr037_planner_ms"] = _elapsed_ms(stage_started)
     readiness = readiness_run.event
     readiness["adr037_typed_planning_result_available"] = (
         readiness_run.planning_result is not None
@@ -262,18 +287,35 @@ def telemetry_evidence_events_with_snapshot(
     events.append(readiness)
     telemetry_event.update(readiness)
 
-    # TAB-001 remains the temporary execution bridge. Step 1 deliberately does
-    # not feed the preserved typed planner result into execution yet.
+    # TAB-001 remains the temporary execution bridge. Performance instrumentation
+    # observes its cost only and does not change bridge or execution behaviour.
+    stage_started = perf_counter()
     control_event = _apply_mode_control(telemetry_event, captured_at=snapshot.captured_at)
+    timings["tab001_mode_control_ms"] = _elapsed_ms(stage_started)
     events.append(control_event)
     telemetry_event.update(control_event)
+
+    timings["total_composed_cycle_ms"] = _elapsed_ms(cycle_started)
+    performance_fields = {
+        f"runtime_perf_{name}": value for name, value in timings.items()
+    }
+    telemetry_event.update(performance_fields)
+    events.append(
+        {
+            "event": "picot_runtime_performance",
+            "layer": "runtime_observation",
+            "observed_at": captured_at.isoformat(),
+            "observer_only": True,
+            **performance_fields,
+        }
+    )
     return events
 
 
 def publish_telemetry_states_with_adr037(
     event: dict[str, object], token: str
 ) -> None:
-    """Publish base presentation and ADR-037 independently."""
+    """Publish base presentation, ADR-037 and performance independently."""
 
     failures: list[str] = []
     try:
@@ -284,6 +326,10 @@ def publish_telemetry_states_with_adr037(
         publish_adr037_dashboard_states(event, token)
     except Exception as exc:
         failures.append(f"adr037: {str(exc) or exc.__class__.__name__}")
+    try:
+        publish_runtime_performance_state(event, token)
+    except Exception as exc:
+        failures.append(f"performance: {str(exc) or exc.__class__.__name__}")
     if failures:
         raise RuntimeError("Presentation publisher failure(s): " + " | ".join(failures))
 

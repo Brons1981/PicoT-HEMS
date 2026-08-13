@@ -19,6 +19,7 @@ from picot.addon.canonical_pv_deviation import (
 )
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
 from picot.addon.live_adr037_readiness import run_adr037_readiness
+from picot.addon.live_execution_plan_observer import observe_execution_plan_set
 from picot.addon.live_flow_observer import LiveFlowObserver
 from picot.addon.live_mode_control import LiveModeControl
 from picot.addon.live_planner_context import LiveEvidenceConfidenceTracker
@@ -284,11 +285,29 @@ def telemetry_evidence_events_with_snapshot(
     readiness["adr037_typed_planning_result_available"] = (
         readiness_run.planning_result is not None
     )
+
+    stage_started = perf_counter()
+    _plan_set, plan_fields = observe_execution_plan_set(
+        readiness_run.planning_result,
+        created_at=snapshot.captured_at,
+    )
+    timings["execution_plan_build_ms"] = _elapsed_ms(stage_started)
+    readiness.update(plan_fields)
+    events.append(
+        {
+            "event": "picot_execution_plan_set_observation",
+            "layer": "plan_construction",
+            "snapshot_id": snapshot.snapshot_id,
+            "captured_at": snapshot.captured_at.isoformat(),
+            "observer_only": True,
+            **plan_fields,
+        }
+    )
     events.append(readiness)
     telemetry_event.update(readiness)
 
-    # TAB-001 remains the temporary execution bridge. Performance instrumentation
-    # observes its cost only and does not change bridge or execution behaviour.
+    # TAB-001 remains the temporary execution bridge. Step 2 deliberately stops
+    # after ADR-033 plan construction and grants no ExecutionEngine authority.
     stage_started = perf_counter()
     control_event = _apply_mode_control(telemetry_event, captured_at=snapshot.captured_at)
     timings["tab001_mode_control_ms"] = _elapsed_ms(stage_started)

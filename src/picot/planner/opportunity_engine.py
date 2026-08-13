@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from picot.domain.forecast import ForecastKind, ForecastPoint, ForecastSeries
+from picot.domain.household_load_forecast import HouseholdLoadForecastInterval
 from picot.domain.opportunity import (
     EvidenceReference,
     Opportunity,
@@ -20,6 +21,7 @@ from picot.domain.opportunity import (
     OpportunitySet,
 )
 from picot.domain.planning_input_snapshot import PlanningInputSnapshot
+from picot.domain.pv_energy_timeline import PVEnergyTimelineInterval
 from picot.planner.price_opportunity_detection import (
     DetectedPriceWindow,
     PriceOpportunityDetectionConfig,
@@ -98,41 +100,74 @@ class OpportunityEngine:
 
         pv_series = snapshot.forecasts.by_kind(ForecastKind.PV_POWER)
         load_series = snapshot.forecasts.by_kind(ForecastKind.HOUSEHOLD_LOAD)
-        for pv in pv_series:
-            for load in load_series:
-                for surplus_window in self._pv_surplus_windows(pv, load, snapshot):
-                    opportunities.append(
-                        Opportunity(
-                            opportunity_id=f"{snapshot.snapshot_id}:pv-surplus:{sequence}",
-                            snapshot_id=snapshot.snapshot_id,
-                            kind=OpportunityKind.PV_SURPLUS_WINDOW,
-                            starts_at=surplus_window.starts_at,
-                            ends_at=surplus_window.ends_at,
-                            confidence=surplus_window.confidence,
-                            lifecycle=OpportunityLifecycle.DETECTED,
-                            evidence=(
-                                EvidenceReference(
-                                    source_id=pv.forecast_id,
-                                    point_indexes=surplus_window.pv_point_indexes,
-                                ),
-                                EvidenceReference(
-                                    source_id=load.forecast_id,
-                                    point_indexes=surplus_window.load_point_indexes,
-                                ),
-                            ),
-                            metrics=(
-                                OpportunityMetric(
-                                    kind=OpportunityMetricKind.MINIMUM_EXPECTED_POWER_W,
-                                    value=surplus_window.minimum_expected_power_w,
-                                ),
-                            ),
+        if pv_series and load_series:
+            for pv in pv_series:
+                for load in load_series:
+                    for surplus_window in self._pv_surplus_windows(pv, load, snapshot):
+                        opportunities.append(
+                            self._pv_surplus_opportunity(
+                                snapshot=snapshot,
+                                surplus_window=surplus_window,
+                                pv_source_id=pv.forecast_id,
+                                load_source_id=load.forecast_id,
+                                sequence=sequence,
+                            )
                         )
+                        sequence += 1
+        elif (
+            snapshot.pv_energy_timeline is not None
+            and snapshot.household_load_forecast is not None
+        ):
+            for surplus_window in self._pv_surplus_windows_from_energy_inputs(snapshot):
+                opportunities.append(
+                    self._pv_surplus_opportunity(
+                        snapshot=snapshot,
+                        surplus_window=surplus_window,
+                        pv_source_id=snapshot.pv_energy_timeline.timeline_id,
+                        load_source_id=snapshot.household_load_forecast.forecast_id,
+                        sequence=sequence,
                     )
-                    sequence += 1
+                )
+                sequence += 1
 
         return OpportunitySet(
             snapshot_id=snapshot.snapshot_id,
             opportunities=tuple(opportunities),
+        )
+
+    @staticmethod
+    def _pv_surplus_opportunity(
+        *,
+        snapshot: PlanningInputSnapshot,
+        surplus_window: _PvSurplusWindow,
+        pv_source_id: str,
+        load_source_id: str,
+        sequence: int,
+    ) -> Opportunity:
+        return Opportunity(
+            opportunity_id=f"{snapshot.snapshot_id}:pv-surplus:{sequence}",
+            snapshot_id=snapshot.snapshot_id,
+            kind=OpportunityKind.PV_SURPLUS_WINDOW,
+            starts_at=surplus_window.starts_at,
+            ends_at=surplus_window.ends_at,
+            confidence=surplus_window.confidence,
+            lifecycle=OpportunityLifecycle.DETECTED,
+            evidence=(
+                EvidenceReference(
+                    source_id=pv_source_id,
+                    point_indexes=surplus_window.pv_point_indexes,
+                ),
+                EvidenceReference(
+                    source_id=load_source_id,
+                    point_indexes=surplus_window.load_point_indexes,
+                ),
+            ),
+            metrics=(
+                OpportunityMetric(
+                    kind=OpportunityMetricKind.MINIMUM_EXPECTED_POWER_W,
+                    value=surplus_window.minimum_expected_power_w,
+                ),
+            ),
         )
 
     @staticmethod
@@ -302,6 +337,100 @@ class OpportunityEngine:
             flush()
             if overlaps_horizon and surplus_w > 0.0:
                 current.append((pv_index, pv_point, load_index, load_point, surplus_w))
+
+        flush()
+        return tuple(windows)
+
+    def _pv_surplus_windows_from_energy_inputs(
+        self,
+        snapshot: PlanningInputSnapshot,
+    ) -> tuple[_PvSurplusWindow, ...]:
+        """Derive PV surplus from the canonical ADR-039/037 energy inputs.
+
+        The live Planner already carries a canonical PVEnergyTimeline and
+        HouseholdLoadForecast in the same immutable PlanningInputSnapshot. This
+        path consumes those facts directly instead of requiring a duplicate
+        power-forecast representation solely for Opportunity Detection.
+        """
+
+        pv_timeline = snapshot.pv_energy_timeline
+        load_forecast = snapshot.household_load_forecast
+        if pv_timeline is None or load_forecast is None:
+            return ()
+
+        load_intervals = {
+            (item.starts_at, item.ends_at): (index, item)
+            for index, item in enumerate(load_forecast.intervals)
+        }
+        windows: list[_PvSurplusWindow] = []
+        current: list[
+            tuple[
+                int,
+                PVEnergyTimelineInterval,
+                int,
+                HouseholdLoadForecastInterval,
+                float,
+            ]
+        ] = []
+
+        def flush() -> None:
+            if not current:
+                return
+            first_pv = current[0][1]
+            last_pv = current[-1][1]
+            windows.append(
+                _PvSurplusWindow(
+                    starts_at=max(first_pv.starts_at, snapshot.captured_at),
+                    ends_at=min(last_pv.ends_at, snapshot.horizon_end),
+                    pv_point_indexes=tuple(item[0] for item in current),
+                    load_point_indexes=tuple(item[2] for item in current),
+                    confidence=min(
+                        min(item[1].confidence, item[3].confidence) for item in current
+                    ),
+                    minimum_expected_power_w=min(item[4] for item in current),
+                )
+            )
+            current.clear()
+
+        for pv_index, pv_interval in enumerate(pv_timeline.intervals):
+            if pv_interval.ends_at <= snapshot.captured_at:
+                continue
+            load_match = load_intervals.get(
+                (pv_interval.starts_at, pv_interval.ends_at)
+            )
+            if load_match is None:
+                flush()
+                continue
+
+            load_index, load_interval = load_match
+            duration_hours = (
+                pv_interval.ends_at - pv_interval.starts_at
+            ).total_seconds() / 3600.0
+            if duration_hours <= 0.0:
+                flush()
+                continue
+            pv_power_w = pv_interval.energy_wh / duration_hours
+            load_power_w = load_interval.expected_energy_wh / duration_hours
+            surplus_w = pv_power_w - load_power_w
+            overlaps_horizon = (
+                pv_interval.ends_at > snapshot.captured_at
+                and pv_interval.starts_at < snapshot.horizon_end
+            )
+            contiguous = (
+                not current or current[-1][1].ends_at == pv_interval.starts_at
+            )
+
+            if overlaps_horizon and surplus_w > 0.0 and contiguous:
+                current.append(
+                    (pv_index, pv_interval, load_index, load_interval, surplus_w)
+                )
+                continue
+
+            flush()
+            if overlaps_horizon and surplus_w > 0.0:
+                current.append(
+                    (pv_index, pv_interval, load_index, load_interval, surplus_w)
+                )
 
         flush()
         return tuple(windows)

@@ -30,6 +30,7 @@ from picot.domain.storage_technical_recoverability import (
     StorageTechnicalRecoverabilityEvaluator,
 )
 from picot.planner.adr037_candidate_outcome_derivation import ADR037CandidateOutcomeDeriver
+from picot.planner.candidate_energy_path_simulator import CandidateEnergyPathSimulator
 from picot.planner.evaluation_engine import EvaluationEngine
 from picot.planner.flow_aware_candidate_engine import FlowAwareCandidateEngine
 
@@ -58,6 +59,7 @@ class ADR037PlannerPipeline:
         StorageTechnicalRecoverabilityEvaluator()
     )
     candidate_engine: FlowAwareCandidateEngine = FlowAwareCandidateEngine()
+    simulator: CandidateEnergyPathSimulator = CandidateEnergyPathSimulator()
     outcome_deriver: ADR037CandidateOutcomeDeriver = ADR037CandidateOutcomeDeriver()
     evaluation_engine: EvaluationEngine = EvaluationEngine()
 
@@ -75,7 +77,7 @@ class ADR037PlannerPipeline:
         opportunities: OpportunitySet,
         capabilities: CapabilitySnapshotSet,
     ) -> ADR037PlanningResult:
-        """Run requirement -> feasibility -> recoverability -> evaluation."""
+        """Run requirement -> feasibility -> candidates -> simulation -> evaluation."""
 
         requirement = self.requirement_deriver.derive(
             requirement_id=requirement_id,
@@ -95,7 +97,7 @@ class ADR037PlannerPipeline:
             storage_limit=effective_limit,
             capability=storage_capability,
         )
-        candidate_set = self.candidate_engine.generate(
+        generated = self.candidate_engine.generate(
             snapshot,
             opportunities,
             capabilities,
@@ -104,6 +106,21 @@ class ADR037PlannerPipeline:
             storage_recoverability=technical_recoverability,
             projected_balance=balance,
             effective_storage_limit=effective_limit,
+        )
+        simulated_paths = tuple(
+            self.simulator.simulate(
+                path=path,
+                snapshot=snapshot,
+                storage_state=storage_state,
+            )
+            for path in generated.energy_paths
+        )
+        candidate_set = CandidateSet(
+            snapshot_id=generated.snapshot_id,
+            strategy_version=generated.strategy_version,
+            candidates=generated.candidates,
+            energy_paths=simulated_paths,
+            exclusions=generated.exclusions,
         )
         candidate_outcomes = self.outcome_deriver.derive(
             candidate_set=candidate_set,

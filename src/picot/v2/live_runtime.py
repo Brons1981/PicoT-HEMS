@@ -184,17 +184,17 @@ def _price_opportunity_config(options: dict[str, Any]) -> PriceOpportunityConfig
     )
 
 
-def main() -> None:
-    token = os.environ.get("SUPERVISOR_TOKEN", "")
-    if not token:
-        raise RuntimeError("Supervisor token is required")
-
-    options = load_options()
-    price_config = _price_opportunity_config(options)
-
-    planning_input_started = perf_counter()
-    bundle = assemble_planning_input(token)
-    planning_input_ms = round((perf_counter() - planning_input_started) * 1000.0, 3)
+def _execute_planning_bundle(
+    *,
+    token: str,
+    price_config: PriceOpportunityConfig,
+    bundle: PlanningInputBundle,
+) -> None:
+    """Run, project, and publish one already assembled Planning Input bundle."""
+    planning_input_ms = round(
+        (bundle.assembly_finished_at - bundle.assembly_started_at).total_seconds() * 1000.0,
+        3,
+    )
 
     run, stage_timings = CanonicalPipeline().run_timed(
         planning_input=bundle.snapshot,
@@ -273,6 +273,21 @@ def main() -> None:
             separators=(",", ":"),
         ),
         flush=True,
+    )
+
+
+def main() -> None:
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        raise RuntimeError("Supervisor token is required")
+
+    options = load_options()
+    price_config = _price_opportunity_config(options)
+    bundle = assemble_planning_input(token)
+    _execute_planning_bundle(
+        token=token,
+        price_config=price_config,
+        bundle=bundle,
     )
 
     while True:

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from picot.domain.forecast import ForecastKind, ForecastPoint, ForecastSeries
+from picot.domain.household_load_forecast import HouseholdLoadForecastInterval
 from picot.domain.opportunity import (
     EvidenceReference,
     Opportunity,
@@ -20,6 +21,7 @@ from picot.domain.opportunity import (
     OpportunitySet,
 )
 from picot.domain.planning_input_snapshot import PlanningInputSnapshot
+from picot.domain.pv_energy_timeline import PVEnergyTimelineInterval
 from picot.planner.price_opportunity_detection import (
     DetectedPriceWindow,
     PriceOpportunityDetectionConfig,
@@ -361,7 +363,15 @@ class OpportunityEngine:
             for index, item in enumerate(load_forecast.intervals)
         }
         windows: list[_PvSurplusWindow] = []
-        current: list[tuple[int, object, int, object, float]] = []
+        current: list[
+            tuple[
+                int,
+                PVEnergyTimelineInterval,
+                int,
+                HouseholdLoadForecastInterval,
+                float,
+            ]
+        ] = []
 
         def flush() -> None:
             if not current:

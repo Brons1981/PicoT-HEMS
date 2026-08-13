@@ -67,6 +67,21 @@ def _should_run_cycle(
     return _planning_input_signature(bundle) != previous_signature
 
 
+def _run_live_cycle(
+    *,
+    previous_signature: str | None,
+    bundle: PlanningInputBundle,
+    execute: Any,
+) -> str:
+    """Execute one changed-input cycle and return the committed input signature."""
+    if not _should_run_cycle(previous_signature, bundle):
+        assert previous_signature is not None
+        return previous_signature
+
+    execute(bundle)
+    return _planning_input_signature(bundle)
+
+
 def _with_planning_input_diagnostics(
     projection: Projection,
     bundle: PlanningInputBundle,

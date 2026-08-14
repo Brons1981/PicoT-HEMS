@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from hashlib import sha256
+from math import isfinite
 
 from picot.v2.contracts import (
     HouseholdLoadForecast,
@@ -20,6 +21,43 @@ FALLBACK_METHOD_VERSION = (
 def _stable_id(prefix: str, seed: str) -> str:
     digest = sha256(seed.encode("utf-8")).hexdigest()[:16]
     return f"{prefix}-{digest}"
+
+
+def derive_household_load_power_w(
+    *,
+    grid_power_w: float | None,
+    pv_power_w: float | None,
+    battery_power_w: float | None,
+) -> float | None:
+    """Derive valid household load from one complete power balance.
+
+    Grid import and battery charging are positive. Grid export and battery
+    discharging are negative.
+    """
+    if (
+        grid_power_w is None
+        or pv_power_w is None
+        or battery_power_w is None
+    ):
+        return None
+    values = (
+        grid_power_w,
+        pv_power_w,
+        battery_power_w,
+    )
+    if any(isinstance(value, bool) for value in values):
+        return None
+    if not all(isfinite(value) for value in values):
+        return None
+
+    household_load_w = (
+        pv_power_w
+        + grid_power_w
+        - battery_power_w
+    )
+    if not isfinite(household_load_w) or household_load_w < 0.0:
+        return None
+    return household_load_w
 
 
 def build_fallback_household_load_forecast(

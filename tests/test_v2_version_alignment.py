@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_open_quarter_details_release_uses_dev_17() -> None:
-    assert __version__ == "2.0.0-dev.17"
+def test_v2_historical_household_load_release_uses_dev_18() -> None:
+    assert __version__ == "2.0.0-dev.18"
 
 
 def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:

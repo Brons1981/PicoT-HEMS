@@ -11,7 +11,6 @@ from urllib.parse import urlsplit
 from picot.v2.contracts import CanonicalPipelineRun
 from picot.v2.projection import Projection
 
-
 DASHBOARD_HTML = """<!doctype html>
 <html lang="nl">
 <head>
@@ -131,9 +130,15 @@ DASHBOARD_HTML = """<!doctype html>
     </header>
 
     <section class="metadata" aria-label="Runinformatie">
-      <div class="metric"><span class="muted">Versie</span><span id="version" class="value">—</span></div>
-      <div class="metric"><span class="muted">Run</span><span id="run-id" class="value">—</span></div>
-      <div class="metric"><span class="muted">Vastgelegd</span><span id="captured-at" class="value">—</span></div>
+      <div class="metric">
+        <span class="muted">Versie</span><span id="version" class="value">—</span>
+      </div>
+      <div class="metric">
+        <span class="muted">Run</span><span id="run-id" class="value">—</span>
+      </div>
+      <div class="metric">
+        <span class="muted">Vastgelegd</span><span id="captured-at" class="value">—</span>
+      </div>
     </section>
 
     <p id="status" class="status">Wachten op de eerste pipeline-run…</p>

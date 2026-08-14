@@ -20,8 +20,8 @@ from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __
 from picot.v2.contracts import (
     CurrentStorageState,
     PlanningInputSnapshot,
-    PVEnergyTimelineInterval,
     PriceForecastPoint,
+    PVEnergyTimelineInterval,
 )
 
 

@@ -1,4 +1,6 @@
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +10,7 @@ from picot.v2.planning_input import (
     SourceEvidence,
     StorageStateConfig,
     assemble_planning_input,
+    load_storage_state_config,
 )
 
 BASE = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
@@ -62,3 +65,43 @@ def test_available_zendure_soc_becomes_current_storage_state(
     assert state.current_stored_energy_wh == pytest.approx(3264.0)
     assert state.measured_at == observed_at
     assert state.evidence_ids == ("evidence-zendure-soc",)
+
+
+def test_storage_state_config_is_loaded_from_explicit_options(
+    tmp_path: Path,
+) -> None:
+    options_path = tmp_path / "options.json"
+    options_path.write_text(
+        json.dumps(
+            {
+                "storage_execution_scope_id": "home-battery",
+                "storage_capability_id": "storage-capability-home-battery",
+                "storage_usable_capacity_wh": 8160.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_storage_state_config(str(options_path)) == StorageStateConfig(
+        execution_scope_id="home-battery",
+        capability_id="storage-capability-home-battery",
+        usable_capacity_wh=8160.0,
+    )
+
+
+def test_storage_state_config_is_absent_without_positive_capacity(
+    tmp_path: Path,
+) -> None:
+    options_path = tmp_path / "options.json"
+    options_path.write_text(
+        json.dumps(
+            {
+                "storage_execution_scope_id": "home-battery",
+                "storage_capability_id": "storage-capability-home-battery",
+                "storage_usable_capacity_wh": 0.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_storage_state_config(str(options_path)) is None

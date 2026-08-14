@@ -53,6 +53,31 @@ class PVEnergyTimelineInterval:
     def __post_init__(self) -> None:
         if self.starts_at >= self.ends_at:
             raise ValueError("starts_at must be before ends_at")
+        if self.evidence_type not in ("ACTUAL", "FORECAST", "MIXED"):
+            raise ValueError(
+                "evidence_type must be ACTUAL, FORECAST, or MIXED"
+            )
+        if (
+            self.evidence_type == "ACTUAL"
+            and not self.actual_evidence_ids
+        ):
+            raise ValueError(
+                "ACTUAL interval requires actual evidence"
+            )
+        if (
+            self.evidence_type == "FORECAST"
+            and not self.forecast_evidence_ids
+        ):
+            raise ValueError(
+                "FORECAST interval requires forecast evidence"
+            )
+        if self.evidence_type == "MIXED" and (
+            not self.actual_evidence_ids
+            or not self.forecast_evidence_ids
+        ):
+            raise ValueError(
+                "MIXED interval requires actual and forecast evidence"
+            )
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,8 +3,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from picot.v2.contracts import (
-    PVEnergyTimelineInterval,
     PriceForecastPoint,
+    PVEnergyTimelineInterval,
 )
 from picot.v2.household_load_forecast import (
     build_fallback_household_load_forecast,

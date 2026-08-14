@@ -323,11 +323,16 @@ def assemble_planning_input(
     *,
     bindings: tuple[SourceBinding, ...] | None = None,
     storage_state_config: StorageStateConfig | None = None,
+    options_path: str = "/data/options.json",
     captured_at: datetime | None = None,
 ) -> PlanningInputBundle:
     started = datetime.now(UTC)
     reader = HomeAssistantStateReader(token)
-    selected = bindings if bindings is not None else load_bindings()
+    selected = bindings if bindings is not None else load_bindings(options_path)
+    selected_storage_config = storage_state_config
+    if bindings is None and selected_storage_config is None:
+        selected_storage_config = load_storage_state_config(options_path)
+
     evidence = tuple(reader.read(binding) for binding in selected)
     finished = datetime.now(UTC)
     capture = captured_at or finished
@@ -367,7 +372,7 @@ def assemble_planning_input(
     horizon_end = max((point.ends_at for point in price_points), default=None)
     current_storage_states = _current_storage_states_from_evidence(
         evidence,
-        config=storage_state_config,
+        config=selected_storage_config,
     )
 
     snapshot = PlanningInputSnapshot(

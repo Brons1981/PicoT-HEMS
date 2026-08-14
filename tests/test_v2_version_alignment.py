@@ -51,3 +51,23 @@ def test_v2_addon_exposes_pipeline_dashboard_via_ingress() -> None:
     assert top_level.get("ingress_port") == "8099"
     assert top_level.get("panel_icon") == "mdi:chart-timeline-variant"
     assert top_level.get("panel_title") == "PicoT Pipeline"
+
+def test_v2_addon_exposes_household_load_fallback_power() -> None:
+    config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
+    lines = config_path.read_text(encoding="utf-8").splitlines()
+    option_lines = lines[
+        lines.index("options:") + 1 : lines.index("schema:")
+    ]
+    schema_lines = lines[lines.index("schema:") + 1 :]
+    options = {
+        key.strip(): value.strip().strip('"')
+        for line in option_lines
+        if line.startswith("  ") and ":" in line
+        for key, _, value in (line.partition(":"),)
+    }
+
+    assert options.get("household_load_fallback_power_w") == "500.0"
+    assert (
+        "  household_load_fallback_power_w: float(0,)"
+        in schema_lines
+    )

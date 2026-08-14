@@ -306,10 +306,63 @@ def test_web_view_exposes_prices_and_detected_windows_for_48_hour_chart() -> Non
     }
 
 
+def test_web_view_shows_elapsed_today_without_adding_it_to_canonical_input() -> None:
+    captured_at = datetime(2026, 8, 14, 20, 0, tzinfo=UTC)
+    bootstrap = CanonicalPipeline().run(
+        captured_at=captured_at
+    ).planning_input
+    elapsed = PriceForecastPoint(
+        point_id="price-elapsed-today",
+        starts_at=captured_at - timedelta(hours=18),
+        ends_at=captured_at - timedelta(hours=17),
+        value_eur_per_kwh=0.31,
+        confidence=1.0,
+        evidence_id="nordpool-today",
+    )
+    future = PriceForecastPoint(
+        point_id="price-future",
+        starts_at=captured_at + timedelta(hours=1),
+        ends_at=captured_at + timedelta(hours=2),
+        value_eur_per_kwh=0.18,
+        confidence=1.0,
+        evidence_id="nordpool-today",
+    )
+    run = CanonicalPipeline().run(
+        planning_input=replace(
+            bootstrap,
+            horizon_end=captured_at + timedelta(hours=36),
+            price_points=(future,),
+        )
+    )
+
+    view = build_web_view(
+        run,
+        project(run),
+        display_price_points=(elapsed, future),
+    )
+
+    assert run.planning_input.price_points == (future,)
+    price_timeline = view["price_timeline"]
+    assert price_timeline["display_starts_at"] == (
+        "2026-08-14T00:00:00+02:00"
+    )
+    assert price_timeline["display_ends_at"] == (
+        "2026-08-16T00:00:00+02:00"
+    )
+    assert [
+        point["point_id"]
+        for point in price_timeline["points"]
+    ] == ["price-elapsed-today", "price-future"]
+
+
 def test_dashboard_contains_48_hour_price_window_chart() -> None:
-    assert "Prijsverloop komende 48 uur" in DASHBOARD_HTML
+    assert "Prijsverloop vandaag en morgen" in DASHBOARD_HTML
     assert 'id="price-timeline"' in DASHBOARD_HTML
     assert "renderPriceTimeline" in DASHBOARD_HTML
+    assert "display_starts_at" in DASHBOARD_HTML
+    assert "display_ends_at" in DASHBOARD_HTML
+    assert ".price-bar.past" in DASHBOARD_HTML
+    assert "now-line" in DASHBOARD_HTML
     assert "Nog niet gepubliceerd" in DASHBOARD_HTML
     assert "LOWEST_PRICE_WINDOW" in DASHBOARD_HTML
     assert "HIGH_EXPORT_VALUE_WINDOW" in DASHBOARD_HTML

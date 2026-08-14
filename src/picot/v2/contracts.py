@@ -53,6 +53,8 @@ class PVEnergyTimelineInterval:
     def __post_init__(self) -> None:
         if self.starts_at >= self.ends_at:
             raise ValueError("starts_at must be before ends_at")
+        if self.pv_energy_wh < 0.0:
+            raise ValueError("pv_energy_wh must not be negative")
         if self.evidence_type not in ("ACTUAL", "FORECAST", "MIXED"):
             raise ValueError(
                 "evidence_type must be ACTUAL, FORECAST, or MIXED"

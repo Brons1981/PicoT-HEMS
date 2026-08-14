@@ -24,6 +24,12 @@ class Projection:
 def project(run: CanonicalPipelineRun) -> Projection:
     started = perf_counter()
     p = run.planning_input
+    pv_timeline = p.pv_energy_timeline
+    pv_intervals = (
+        pv_timeline.intervals
+        if pv_timeline is not None
+        else ()
+    )
 
     def base(
         input_ref: str,
@@ -75,6 +81,22 @@ def project(run: CanonicalPipelineRun) -> Projection:
                     }
                     for state in p.current_storage_states
                 ],
+                "pv_energy_timeline_available": pv_timeline is not None,
+                "pv_energy_interval_count": len(pv_intervals),
+                "pv_energy_total_wh": sum(
+                    interval.pv_energy_wh
+                    for interval in pv_intervals
+                ),
+                "pv_energy_starts_at": (
+                    pv_intervals[0].starts_at.isoformat()
+                    if pv_intervals
+                    else None
+                ),
+                "pv_energy_ends_at": (
+                    pv_intervals[-1].ends_at.isoformat()
+                    if pv_intervals
+                    else None
+                ),
             },
         ),
         Card(

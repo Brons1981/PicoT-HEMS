@@ -2,13 +2,13 @@ from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from picot.v2.energy_requirements import derive_projected_household_energy_balance_interval
 
 from picot.v2.contracts import (
     ProjectedHouseholdEnergyBalance,
     ProjectedHouseholdEnergyBalanceInterval,
     StorageEnergyRequirement,
 )
+from picot.v2.energy_requirements import derive_projected_household_energy_balance_interval
 
 BASE = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
 

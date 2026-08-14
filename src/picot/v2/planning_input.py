@@ -21,6 +21,7 @@ from picot.v2.contracts import (
     CurrentStorageState,
     PlanningInputSnapshot,
     PriceForecastPoint,
+    PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
 
@@ -470,6 +471,29 @@ def assemble_planning_input(
         evidence,
         config=selected_storage_config,
     )
+    pv_energy_intervals = tuple(
+        interval
+        for item in evidence
+        for interval in item.pv_energy_intervals
+    )
+    pv_energy_timeline = (
+        PVEnergyTimeline(
+            timeline_id=_stable_id(
+                "pv-energy-timeline",
+                snapshot_id,
+            ),
+            run_id=run_id,
+            snapshot_id=snapshot_id,
+            intervals=tuple(
+                sorted(
+                    pv_energy_intervals,
+                    key=lambda interval: interval.starts_at,
+                )
+            ),
+        )
+        if pv_energy_intervals
+        else None
+    )
 
     snapshot = PlanningInputSnapshot(
         run_id=run_id,
@@ -482,5 +506,6 @@ def assemble_planning_input(
         horizon_end=horizon_end,
         price_points=price_points,
         current_storage_states=current_storage_states,
+        pv_energy_timeline=pv_energy_timeline,
     )
     return PlanningInputBundle(snapshot, evidence, facts, started, finished)

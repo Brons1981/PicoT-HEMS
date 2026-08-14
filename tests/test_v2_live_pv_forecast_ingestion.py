@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from picot.v2 import planning_input
+from picot.v2.contracts import PVEnergyTimelineInterval
 
 
 def test_solcast_half_hour_power_forecast_becomes_pv_energy() -> None:
@@ -143,3 +144,68 @@ def test_solcast_reader_preserves_converted_intervals_in_source_evidence(
     assert interval.confidence == pytest.approx(0.8587)
     assert interval.evidence_type == "FORECAST"
     assert interval.forecast_evidence_ids == (evidence.evidence_id,)
+
+
+def test_planning_input_snapshot_reuses_solcast_evidence_as_one_timeline(
+    monkeypatch: object,
+) -> None:
+    captured_at = datetime.fromisoformat(
+        "2026-08-14T10:00:00+02:00"
+    )
+    starts_at = datetime.fromisoformat(
+        "2026-08-14T12:00:00+02:00"
+    )
+    interval = PVEnergyTimelineInterval(
+        interval_id="pv-energy-interval-solcast",
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(minutes=30),
+        pv_energy_wh=1382.3,
+        evidence_type="FORECAST",
+        confidence=0.8587,
+        actual_evidence_ids=(),
+        forecast_evidence_ids=("evidence-solcast-today",),
+        conversion_method_version=(
+            "solcast-detailed-forecast-average-kw-30m:v1"
+        ),
+    )
+
+    def fake_read(
+        self: planning_input.HomeAssistantStateReader,
+        binding: planning_input.SourceBinding,
+    ) -> planning_input.SourceEvidence:
+        del self
+        return planning_input.SourceEvidence(
+            evidence_id="evidence-solcast-today",
+            category=binding.category,
+            semantic_role=binding.semantic_role,
+            entity_id=binding.entity_id,
+            raw_state="23.9977",
+            raw_unit="kWh",
+            observed_at=captured_at,
+            availability="available",
+            mapping_version="mapping-solcast-today",
+            pv_energy_intervals=(interval,),
+        )
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        planning_input.HomeAssistantStateReader,
+        "read",
+        fake_read,
+    )
+    bundle = planning_input.assemble_planning_input(
+        "token",
+        bindings=(
+            planning_input.SourceBinding(
+                "solcast",
+                "pv_forecast",
+                "sensor.solcast_pv_forecast_voorspelling_vandaag",
+            ),
+        ),
+        captured_at=captured_at,
+    )
+
+    timeline = bundle.snapshot.pv_energy_timeline
+    assert timeline is not None
+    assert timeline.run_id == bundle.snapshot.run_id
+    assert timeline.snapshot_id == bundle.snapshot.snapshot_id
+    assert timeline.intervals == (interval,)

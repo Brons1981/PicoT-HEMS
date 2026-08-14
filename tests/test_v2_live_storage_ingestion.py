@@ -10,10 +10,48 @@ from picot.v2.planning_input import (
     SourceEvidence,
     StorageStateConfig,
     assemble_planning_input,
+    load_bindings,
     load_storage_state_config,
 )
 
 BASE = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
+
+
+def test_storage_power_bindings_are_loaded_from_explicit_options(
+    tmp_path: Path,
+) -> None:
+    options_path = tmp_path / "options.json"
+    options_path.write_text(
+        json.dumps(
+            {
+                "zendure_signed_power_entity": (
+                    "sensor.zendure_2400_ac_vermogen_aansturing"
+                ),
+                "zendure_power_to_house_entity": (
+                    "sensor.zendure_2400_ac_vermogen_naar_huis"
+                ),
+                "zendure_power_from_house_entity": (
+                    "sensor.zendure_2400_ac_vermogen_van_huis"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bindings = {
+        (binding.category, binding.semantic_role): binding.entity_id
+        for binding in load_bindings(str(options_path))
+    }
+
+    assert bindings[("zendure", "storage_power_signed")] == (
+        "sensor.zendure_2400_ac_vermogen_aansturing"
+    )
+    assert bindings[("zendure", "storage_power_to_house")] == (
+        "sensor.zendure_2400_ac_vermogen_naar_huis"
+    )
+    assert bindings[("zendure", "storage_power_from_house")] == (
+        "sensor.zendure_2400_ac_vermogen_van_huis"
+    )
 
 
 def test_available_zendure_soc_becomes_current_storage_state(

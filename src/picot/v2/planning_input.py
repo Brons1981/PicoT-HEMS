@@ -90,6 +90,21 @@ DEFAULT_BINDINGS = (
     ("p1", "grid_power", "p1_power_entity"),
     ("pv", "pv_power", "pv_power_entity"),
     ("zendure", "storage_soc", "zendure_soc_entity"),
+    (
+        "zendure",
+        "storage_power_signed",
+        "zendure_signed_power_entity",
+    ),
+    (
+        "zendure",
+        "storage_power_to_house",
+        "zendure_power_to_house_entity",
+    ),
+    (
+        "zendure",
+        "storage_power_from_house",
+        "zendure_power_from_house_entity",
+    ),
     ("solcast", "pv_forecast", "solcast_forecast_entity"),
     ("nordpool", "energy_price", "nordpool_price_entity"),
 )

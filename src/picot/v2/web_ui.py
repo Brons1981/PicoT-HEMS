@@ -52,7 +52,7 @@ DASHBOARD_HTML = """<!doctype html>
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
     }
-    .metric, .stage-card, .timeline-panel {
+    .metric, .source-card, .stage-card, .timeline-panel {
       border: 1px solid #27313d;
       border-radius: 12px;
       background: #151b23;
@@ -74,6 +74,28 @@ DASHBOARD_HTML = """<!doctype html>
     .status[data-state="error"] {
       background: #351b20;
       color: #ffadb8;
+    }
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .source-card { padding: 14px; min-width: 0; }
+    .source-status {
+      display: inline-block;
+      margin-bottom: 10px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: #193226;
+      color: #8de5ae;
+    }
+    .source-status[data-state="unavailable"] {
+      background: #351b20;
+      color: #ffadb8;
+    }
+    .source-status[data-state="unconfigured"] {
+      background: #3a3018;
+      color: #ffd77a;
     }
     .pipeline {
       display: grid;
@@ -99,6 +121,21 @@ DASHBOARD_HTML = """<!doctype html>
     }
     dt { color: #96a6b8; overflow-wrap: anywhere; }
     dd { margin: 0; overflow-wrap: anywhere; }
+    .technical-details {
+      margin-top: 12px;
+      border-top: 1px solid #27313d;
+      padding-top: 10px;
+      color: #96a6b8;
+    }
+    .technical-details summary { cursor: pointer; }
+    .technical-details pre {
+      max-height: 320px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: #d9e4ef;
+      font-size: 0.78rem;
+    }
     .timeline-panel { padding: 14px; overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; }
     th, td {
@@ -143,6 +180,16 @@ DASHBOARD_HTML = """<!doctype html>
 
     <p id="status" class="status">Wachten op de eerste pipeline-run…</p>
 
+    <h2>Brongegevens</h2>
+    <section
+      id="sources"
+      class="source-grid"
+      aria-label="Brongegevens"
+      aria-live="polite"
+    >
+      Nog geen brongegevens beschikbaar.
+    </section>
+
     <h2>Pipeline ①→⑨</h2>
     <section id="pipeline" class="pipeline" aria-live="polite"></section>
 
@@ -165,12 +212,129 @@ DASHBOARD_HTML = """<!doctype html>
       "Vendor / Result"
     ];
 
+    const sourceNames = {
+      "p1": "P1 netmeting",
+      "pv": "Zonnepanelen",
+      "zendure": "Zendure batterij",
+      "solcast": "Solcast voorspelling",
+      "nordpool": "Nord Pool prijzen"
+    };
+
+    const sourceStates = {
+      "available": "Beschikbaar",
+      "unavailable": "Niet beschikbaar",
+      "unconfigured": "Niet ingesteld"
+    };
+
     const element = (id) => document.getElementById(id);
 
     function displayValue(value) {
       if (value === null || value === undefined) return "—";
       if (typeof value === "object") return JSON.stringify(value);
       return String(value);
+    }
+
+    function compactReference(key, value) {
+      const displayed = displayValue(value);
+      if (
+        typeof value !== "string" ||
+        !/(?:_id|_reference)$/.test(key) ||
+        value.length <= 28
+      ) {
+        return displayed;
+      }
+      return value.slice(0, 14) + "…" + value.slice(-8);
+    }
+
+    function formatTimestamp(value) {
+      if (!value) return "—";
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime())
+        ? displayValue(value)
+        : parsed.toLocaleString("nl-NL");
+    }
+
+    function appendAttribute(list, label, value, fullValue = value) {
+      const row = document.createElement("div");
+      row.className = "attribute";
+      const term = document.createElement("dt");
+      const description = document.createElement("dd");
+      term.textContent = label;
+      description.textContent = displayValue(value);
+      if (displayValue(fullValue) !== displayValue(value)) {
+        description.title = displayValue(fullValue);
+      }
+      row.append(term, description);
+      list.appendChild(row);
+    }
+
+    function appendTechnicalDetails(container, value) {
+      const details = document.createElement("details");
+      details.className = "technical-details";
+      const summary = document.createElement("summary");
+      const raw = document.createElement("pre");
+      summary.textContent = "Technische details";
+      raw.textContent = JSON.stringify(value, null, 2);
+      details.append(summary, raw);
+      container.appendChild(details);
+    }
+
+    function renderSources(sources) {
+      const container = element("sources");
+      container.replaceChildren();
+
+      if (sources.length === 0) {
+        container.textContent = "Nog geen brongegevens beschikbaar.";
+        return;
+      }
+
+      const fragment = document.createDocumentFragment();
+      for (const source of sources) {
+        const card = document.createElement("article");
+        card.className = "source-card";
+
+        const heading = document.createElement("h3");
+        heading.textContent =
+          sourceNames[source.category] ?? displayValue(source.category);
+
+        const state = document.createElement("span");
+        state.className = "source-status";
+        state.dataset.state = displayValue(source.availability);
+        state.textContent =
+          sourceStates[source.availability] ??
+          displayValue(source.availability);
+
+        const attributes = document.createElement("dl");
+        appendAttribute(
+          attributes,
+          "Entiteit",
+          compactReference("entity_id", source.entity_id),
+          source.entity_id
+        );
+        appendAttribute(
+          attributes,
+          "Waarde",
+          source.raw_state === null || source.raw_state === undefined
+            ? "—"
+            : String(source.raw_state) +
+              (source.raw_unit ? " " + source.raw_unit : "")
+        );
+        appendAttribute(
+          attributes,
+          "Bijgewerkt",
+          formatTimestamp(source.observed_at)
+        );
+        appendAttribute(
+          attributes,
+          "Fout",
+          source.error
+        );
+
+        card.append(heading, state, attributes);
+        appendTechnicalDetails(card, source);
+        fragment.appendChild(card);
+      }
+      container.replaceChildren(fragment);
     }
 
     function renderPipeline(items) {
@@ -193,19 +357,29 @@ DASHBOARD_HTML = """<!doctype html>
         const attributes = document.createElement("dl");
         const entries = Object.entries(item.attributes ?? {})
           .sort(([left], [right]) => left.localeCompare(right));
+        const visibleEntries = entries.filter(
+          ([, value]) => value === null || typeof value !== "object"
+        );
+        const technicalEntries = entries.filter(
+          ([, value]) => value !== null && typeof value === "object"
+        );
 
-        for (const [key, value] of entries) {
-          const row = document.createElement("div");
-          row.className = "attribute";
-          const term = document.createElement("dt");
-          const description = document.createElement("dd");
-          term.textContent = key;
-          description.textContent = displayValue(value);
-          row.append(term, description);
-          attributes.appendChild(row);
+        for (const [key, value] of visibleEntries) {
+          appendAttribute(
+            attributes,
+            key,
+            compactReference(key, value),
+            value
+          );
         }
 
         card.appendChild(attributes);
+        if (technicalEntries.length > 0) {
+          appendTechnicalDetails(
+            card,
+            Object.fromEntries(technicalEntries)
+          );
+        }
         fragment.appendChild(card);
       }
 
@@ -270,7 +444,11 @@ DASHBOARD_HTML = """<!doctype html>
         element("version").textContent = displayValue(view.picot_version);
         element("run-id").textContent = displayValue(view.run_id);
         element("captured-at").textContent = displayValue(view.captured_at);
-        renderPipeline(Array.isArray(view.pipeline) ? view.pipeline : []);
+        const pipeline = Array.isArray(view.pipeline) ? view.pipeline : [];
+        const planningInput = pipeline.find((item) => item.stage === 1);
+        const sources = planningInput?.attributes?.sources;
+        renderSources(Array.isArray(sources) ? sources : []);
+        renderPipeline(pipeline);
         renderTimeline(view.pv_energy_timeline ?? {
           available: false,
           interval_count: 0,

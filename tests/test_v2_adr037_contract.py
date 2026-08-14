@@ -8,8 +8,44 @@ from picot.v2.contracts import (
     ProjectedHouseholdEnergyBalanceInterval,
     StorageEnergyRequirement,
 )
+from picot.v2.energy_requirements import derive_projected_household_energy_balance_interval
 
 BASE = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
+
+
+def test_projected_household_balance_interval_is_derived_deterministically() -> None:
+    def derive() -> ProjectedHouseholdEnergyBalanceInterval:
+        return derive_projected_household_energy_balance_interval(
+            starts_at=BASE,
+            ends_at=BASE + timedelta(hours=4),
+            current_usable_storage_energy_wh=3200.0,
+            expected_usable_pv_energy_wh=1500.0,
+            planned_grid_energy_wh=0.0,
+            household_load_forecast_energy_wh=2600.0,
+            known_future_demand_energy_wh=400.0,
+            conversion_losses_wh=100.0,
+            other_planned_household_energy_flows_wh=0.0,
+            confidence=0.80,
+            evidence_ids=(
+                "storage-state:home-battery",
+                "household-load:forecast-1",
+                "pv-energy:timeline-1",
+            ),
+        )
+
+    first = derive()
+    second = derive()
+
+    assert first == second
+    assert first.projected_storage_energy_wh == pytest.approx(
+        3200.0 + 1500.0 - 2600.0 - 400.0 - 100.0
+    )
+    assert first.confidence == pytest.approx(0.80)
+    assert first.evidence_ids == (
+        "storage-state:home-battery",
+        "household-load:forecast-1",
+        "pv-energy:timeline-1",
+    )
 
 
 def test_projected_balance_and_storage_requirement_are_immutable_and_traceable() -> None:

@@ -38,6 +38,34 @@ def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:
     )
 
 
+def test_v2_addon_exposes_validated_storage_power_sources() -> None:
+    config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
+    lines = config_path.read_text(encoding="utf-8").splitlines()
+    option_lines = lines[
+        lines.index("options:") + 1 : lines.index("schema:")
+    ]
+    schema_lines = lines[lines.index("schema:") + 1 :]
+    options = {
+        key.strip(): value.strip().strip('"')
+        for line in option_lines
+        if line.startswith("  ") and ":" in line
+        for key, _, value in (line.partition(":"),)
+    }
+
+    assert options.get("zendure_signed_power_entity") == (
+        "sensor.zendure_2400_ac_vermogen_aansturing"
+    )
+    assert options.get("zendure_power_to_house_entity") == (
+        "sensor.zendure_2400_ac_vermogen_naar_huis"
+    )
+    assert options.get("zendure_power_from_house_entity") == (
+        "sensor.zendure_2400_ac_vermogen_van_huis"
+    )
+    assert "  zendure_signed_power_entity: str" in schema_lines
+    assert "  zendure_power_to_house_entity: str" in schema_lines
+    assert "  zendure_power_from_house_entity: str" in schema_lines
+
+
 def test_v2_addon_exposes_pipeline_dashboard_via_ingress() -> None:
     config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
     top_level = {

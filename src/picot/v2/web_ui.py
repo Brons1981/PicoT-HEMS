@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
+from urllib.parse import urlsplit
 
 from picot.v2.contracts import CanonicalPipelineRun
 from picot.v2.projection import Projection
@@ -26,6 +29,84 @@ class WebViewStore:
         """Return the latest immutable JSON snapshot, when available."""
         with self._lock:
             return self._latest_json
+
+
+def create_web_server(
+    store: WebViewStore,
+    *,
+    host: str,
+    port: int,
+) -> ThreadingHTTPServer:
+    """Create, but do not start, the read-only observer HTTP server."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def _send_json(
+            self,
+            status: HTTPStatus,
+            body: str,
+            *,
+            allow_get: bool = False,
+        ) -> None:
+            encoded = body.encode("utf-8")
+            self.send_response(int(status))
+            self.send_header(
+                "Content-Type",
+                "application/json; charset=utf-8",
+            )
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(encoded)))
+            if allow_get:
+                self.send_header("Allow", "GET")
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def do_GET(self) -> None:
+            if urlsplit(self.path).path != "/api/view":
+                self._send_json(
+                    HTTPStatus.NOT_FOUND,
+                    '{"status":"not_found"}',
+                )
+                return
+
+            latest = store.latest_json()
+            if latest is None:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    '{"status":"waiting_for_first_run"}',
+                )
+                return
+
+            self._send_json(HTTPStatus.OK, latest)
+
+        def _reject_write(self) -> None:
+            self._send_json(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                '{"status":"method_not_allowed"}',
+                allow_get=True,
+            )
+
+        def do_POST(self) -> None:
+            self._reject_write()
+
+        def do_PUT(self) -> None:
+            self._reject_write()
+
+        def do_PATCH(self) -> None:
+            self._reject_write()
+
+        def do_DELETE(self) -> None:
+            self._reject_write()
+
+        def log_message(
+            self,
+            format: str,
+            *args: object,
+        ) -> None:
+            """Avoid access-log noise from frequent dashboard polling."""
+
+    server = ThreadingHTTPServer((host, port), Handler)
+    server.daemon_threads = True
+    return server
 
 
 def build_web_view(

@@ -5,6 +5,9 @@ import pytest
 from picot.v2.household_load_forecast import (
     derive_household_load_power_w,
 )
+from picot.v2.planning_input import (
+    derive_validated_storage_power_w,
+)
 
 
 @pytest.mark.parametrize(
@@ -53,4 +56,56 @@ def test_household_load_observation_rejects_incomplete_or_invalid_balance(
         grid_power_w=grid_power_w,
         pv_power_w=pv_power_w,
         battery_power_w=battery_power_w,
+    ) is None
+
+
+@pytest.mark.parametrize(
+    (
+        "signed_power_w",
+        "power_to_house_w",
+        "power_from_house_w",
+        "expected_power_w",
+    ),
+    (
+        (-86.0, 86.0, 0.0, -86.0),
+        (1200.0, 0.0, 1190.0, 1200.0),
+        (0.0, 0.0, 0.0, 0.0),
+    ),
+)
+def test_storage_power_requires_consistent_directional_evidence(
+    signed_power_w: float,
+    power_to_house_w: float,
+    power_from_house_w: float,
+    expected_power_w: float,
+) -> None:
+    assert derive_validated_storage_power_w(
+        signed_power_w=signed_power_w,
+        power_to_house_w=power_to_house_w,
+        power_from_house_w=power_from_house_w,
+    ) == pytest.approx(expected_power_w)
+
+
+@pytest.mark.parametrize(
+    (
+        "signed_power_w",
+        "power_to_house_w",
+        "power_from_house_w",
+    ),
+    (
+        (-86.0, 400.0, 0.0),
+        (1200.0, 0.0, 900.0),
+        (None, 0.0, 0.0),
+        (math.nan, 0.0, 0.0),
+        (0.0, math.inf, 0.0),
+    ),
+)
+def test_storage_power_rejects_missing_invalid_or_inconsistent_evidence(
+    signed_power_w: float | None,
+    power_to_house_w: float,
+    power_from_house_w: float,
+) -> None:
+    assert derive_validated_storage_power_w(
+        signed_power_w=signed_power_w,
+        power_to_house_w=power_to_house_w,
+        power_from_house_w=power_from_house_w,
     ) is None

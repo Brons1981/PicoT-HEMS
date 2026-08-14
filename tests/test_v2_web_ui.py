@@ -8,7 +8,7 @@ from picot.v2.contracts import (
 )
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.projection import project
-from picot.v2.web_ui import build_web_view
+from picot.v2.web_ui import WebViewStore, build_web_view
 
 
 def test_web_view_serializes_nine_stages_and_full_pv_timeline() -> None:
@@ -126,4 +126,37 @@ def test_web_view_represents_missing_pv_timeline_without_intervals() -> None:
         "starts_at": None,
         "ends_at": None,
         "intervals": [],
+    }
+
+
+def test_web_view_store_atomically_replaces_latest_serialized_view() -> None:
+    store = WebViewStore()
+    first: dict[str, object] = {
+        "run_id": "run-1",
+        "pipeline": [{"stage": 1, "state": "ready"}],
+    }
+    second: dict[str, object] = {
+        "run_id": "run-2",
+        "pipeline": [{"stage": 1, "state": "updated"}],
+    }
+
+    assert store.latest_json() is None
+
+    store.publish(first)
+    first["run_id"] = "mutated-after-publish"
+    first_json = store.latest_json()
+
+    assert first_json is not None
+    assert json.loads(first_json) == {
+        "run_id": "run-1",
+        "pipeline": [{"stage": 1, "state": "ready"}],
+    }
+
+    store.publish(second)
+    second_json = store.latest_json()
+
+    assert second_json is not None
+    assert json.loads(second_json) == {
+        "run_id": "run-2",
+        "pipeline": [{"stage": 1, "state": "updated"}],
     }

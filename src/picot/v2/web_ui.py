@@ -2,8 +2,30 @@
 
 from __future__ import annotations
 
+import json
+from threading import Lock
+
 from picot.v2.contracts import CanonicalPipelineRun
 from picot.v2.projection import Projection
+
+
+class WebViewStore:
+    """Thread-safe in-memory store for the latest serialized web view."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._latest_json: str | None = None
+
+    def publish(self, view: dict[str, object]) -> None:
+        """Serialize completely before atomically replacing the snapshot."""
+        serialized = json.dumps(view, separators=(",", ":"))
+        with self._lock:
+            self._latest_json = serialized
+
+    def latest_json(self) -> str | None:
+        """Return the latest immutable JSON snapshot, when available."""
+        with self._lock:
+            return self._latest_json
 
 
 def build_web_view(

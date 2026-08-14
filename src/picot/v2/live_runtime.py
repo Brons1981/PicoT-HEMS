@@ -11,6 +11,7 @@ import time
 from dataclasses import asdict
 from hashlib import sha256
 from http.server import ThreadingHTTPServer
+from math import isfinite
 from threading import Thread
 from time import perf_counter
 from typing import Any
@@ -210,6 +211,30 @@ def _price_opportunity_config(options: dict[str, Any]) -> PriceOpportunityConfig
     )
 
 
+def _load_live_planning_input(
+    token: str,
+    options: dict[str, Any],
+) -> PlanningInputBundle:
+    """Assemble live Planning Input with the configured load fallback."""
+    raw_power_w = options.get("household_load_fallback_power_w", 500.0)
+    try:
+        fallback_power_w = float(raw_power_w)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "household_load_fallback_power_w must be a finite positive number"
+        ) from None
+
+    if not isfinite(fallback_power_w) or fallback_power_w <= 0.0:
+        raise ValueError(
+            "household_load_fallback_power_w must be a finite positive number"
+        )
+
+    return assemble_planning_input(
+        token,
+        household_load_fallback_power_w=fallback_power_w,
+    )
+
+
 def _start_web_server(
     store: WebViewStore,
 ) -> tuple[ThreadingHTTPServer, Thread]:
@@ -340,7 +365,7 @@ def main() -> None:
     poll_interval_seconds = max(5.0, poll_interval_seconds)
 
     def load_bundle() -> PlanningInputBundle:
-        return assemble_planning_input(token)
+        return _load_live_planning_input(token, options)
 
     def execute(bundle: PlanningInputBundle) -> None:
         _execute_planning_bundle(

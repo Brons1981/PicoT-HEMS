@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -93,9 +94,57 @@ DEFAULT_BINDINGS = (
     ("nordpool", "energy_price", "nordpool_price_entity"),
 )
 
+DEFAULT_STORAGE_POWER_CONSISTENCY_TOLERANCE_W = 25.0
+
 
 def _stable_id(prefix: str, seed: str) -> str:
     return f"{prefix}-{sha256(seed.encode('utf-8')).hexdigest()[:16]}"
+
+
+def derive_validated_storage_power_w(
+    *,
+    signed_power_w: float | None,
+    power_to_house_w: float | None,
+    power_from_house_w: float | None,
+    consistency_tolerance_w: float = (
+        DEFAULT_STORAGE_POWER_CONSISTENCY_TOLERANCE_W
+    ),
+) -> float | None:
+    """Accept signed storage power only with consistent directional evidence."""
+    if (
+        signed_power_w is None
+        or power_to_house_w is None
+        or power_from_house_w is None
+    ):
+        return None
+    values = (
+        signed_power_w,
+        power_to_house_w,
+        power_from_house_w,
+    )
+    if any(isinstance(value, bool) for value in values):
+        return None
+    if not all(isfinite(value) for value in values):
+        return None
+    if power_to_house_w < 0.0 or power_from_house_w < 0.0:
+        return None
+    if (
+        isinstance(consistency_tolerance_w, bool)
+        or not isfinite(consistency_tolerance_w)
+        or consistency_tolerance_w < 0.0
+    ):
+        return None
+
+    charge_power_w = max(0.0, signed_power_w)
+    discharge_power_w = max(0.0, -signed_power_w)
+    if (
+        abs(discharge_power_w - power_to_house_w)
+        > consistency_tolerance_w
+        or abs(charge_power_w - power_from_house_w)
+        > consistency_tolerance_w
+    ):
+        return None
+    return signed_power_w
 
 
 def _parse_datetime(value: object) -> datetime | None:

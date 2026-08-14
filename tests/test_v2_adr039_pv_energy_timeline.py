@@ -3,9 +3,31 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from picot.v2.contracts import PVEnergyTimeline, PVEnergyTimelineInterval
+from picot.v2.contracts import (
+    PlanningInputSnapshot,
+    PVEnergyTimeline,
+    PVEnergyTimelineInterval,
+)
 
 BASE = datetime(2026, 8, 14, 10, 0, tzinfo=UTC)
+
+
+def _planning_input_snapshot(
+    *,
+    run_id: str = "run-adr039",
+    snapshot_id: str = "snapshot-adr039",
+    pv_energy_timeline: PVEnergyTimeline | None = None,
+) -> PlanningInputSnapshot:
+    return PlanningInputSnapshot(
+        run_id=run_id,
+        snapshot_id=snapshot_id,
+        captured_at=BASE,
+        picot_version="2.0.0-dev.12",
+        architecture_baseline_commit="baseline-adr039",
+        pipeline_contract_version=1,
+        strategy_id="strategy:no-objectives:v1",
+        pv_energy_timeline=pv_energy_timeline,
+    )
 
 
 def _pv_interval(
@@ -245,3 +267,64 @@ def test_actual_interval_may_retain_forecast_diagnostics() -> None:
     assert interval.forecast_evidence_ids == (
         "evidence-old-forecast",
     )
+
+def test_planning_input_snapshot_reuses_one_pv_energy_timeline() -> None:
+    timeline = PVEnergyTimeline(
+        timeline_id="pv-energy-timeline-planning-input",
+        run_id="run-adr039",
+        snapshot_id="snapshot-adr039",
+        intervals=(
+            _pv_interval(
+                "planning-input",
+                BASE,
+                BASE + timedelta(minutes=15),
+            ),
+        ),
+    )
+
+    snapshot = _planning_input_snapshot(
+        pv_energy_timeline=timeline,
+    )
+
+    assert snapshot.pv_energy_timeline is timeline
+
+
+@pytest.mark.parametrize(
+    ("run_id", "snapshot_id", "expected_message"),
+    (
+        (
+            "different-run",
+            "snapshot-adr039",
+            (
+                "PV energy timeline run_id must match "
+                "planning input snapshot run_id"
+            ),
+        ),
+        (
+            "run-adr039",
+            "different-snapshot",
+            (
+                "PV energy timeline snapshot_id must match "
+                "planning input snapshot snapshot_id"
+            ),
+        ),
+    ),
+)
+def test_planning_input_snapshot_rejects_pv_timeline_lineage_mismatch(
+    run_id: str,
+    snapshot_id: str,
+    expected_message: str,
+) -> None:
+    timeline = PVEnergyTimeline(
+        timeline_id="pv-energy-timeline-lineage",
+        run_id="run-adr039",
+        snapshot_id="snapshot-adr039",
+        intervals=(),
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        _planning_input_snapshot(
+            run_id=run_id,
+            snapshot_id=snapshot_id,
+            pv_energy_timeline=timeline,
+        )

@@ -3,12 +3,18 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from picot.v2.contracts import (
+    HouseholdLoadForecast,
+    HouseholdLoadForecastInterval,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.projection import project
-from picot.v2.web_ui import WebViewStore, build_web_view
+from picot.v2.web_ui import (
+    DASHBOARD_HTML,
+    WebViewStore,
+    build_web_view,
+)
 
 
 def test_web_view_serializes_nine_stages_and_full_pv_timeline() -> None:
@@ -107,6 +113,118 @@ def test_web_view_serializes_nine_stages_and_full_pv_timeline() -> None:
         ],
     }
     assert json.loads(json.dumps(view)) == view
+
+
+def test_web_view_serializes_readable_household_load_forecast() -> None:
+    captured_at = datetime(2026, 8, 14, 10, 0, tzinfo=UTC)
+    bootstrap = CanonicalPipeline().run(
+        captured_at=captured_at
+    ).planning_input
+    intervals = (
+        HouseholdLoadForecastInterval(
+            interval_id="household-load-interval-1",
+            starts_at=captured_at,
+            ends_at=captured_at + timedelta(minutes=15),
+            expected_energy_wh=125.0,
+            confidence=0.0,
+            source_reference="fallback:configured-power",
+            method_version="constant-power-conservative-fallback:v1",
+        ),
+        HouseholdLoadForecastInterval(
+            interval_id="household-load-interval-2",
+            starts_at=captured_at + timedelta(minutes=15),
+            ends_at=captured_at + timedelta(minutes=30),
+            expected_energy_wh=150.0,
+            confidence=0.0,
+            source_reference="fallback:configured-power",
+            method_version="constant-power-conservative-fallback:v1",
+        ),
+    )
+    forecast = HouseholdLoadForecast(
+        forecast_id="household-load-forecast-1",
+        run_id=bootstrap.run_id,
+        snapshot_id=bootstrap.snapshot_id,
+        intervals=intervals,
+        fallback_active=True,
+        fallback_reason="insufficient_history",
+    )
+    run = CanonicalPipeline().run(
+        planning_input=replace(
+            bootstrap,
+            horizon_end=captured_at + timedelta(hours=36),
+            household_load_forecast=forecast,
+        )
+    )
+
+    view = build_web_view(run, project(run))
+
+    assert view["household_load_forecast"] == {
+        "available": True,
+        "forecast_id": "household-load-forecast-1",
+        "run_id": run.planning_input.run_id,
+        "snapshot_id": run.planning_input.snapshot_id,
+        "interval_count": 2,
+        "total_wh": 275.0,
+        "average_confidence": 0.0,
+        "starts_at": "2026-08-14T10:00:00+00:00",
+        "ends_at": "2026-08-14T10:30:00+00:00",
+        "fallback_active": True,
+        "fallback_reason": "insufficient_history",
+        "intervals": [
+            {
+                "interval_id": "household-load-interval-1",
+                "starts_at": "2026-08-14T10:00:00+00:00",
+                "ends_at": "2026-08-14T10:15:00+00:00",
+                "expected_energy_wh": 125.0,
+                "confidence": 0.0,
+                "source_reference": "fallback:configured-power",
+                "method_version": (
+                    "constant-power-conservative-fallback:v1"
+                ),
+            },
+            {
+                "interval_id": "household-load-interval-2",
+                "starts_at": "2026-08-14T10:15:00+00:00",
+                "ends_at": "2026-08-14T10:30:00+00:00",
+                "expected_energy_wh": 150.0,
+                "confidence": 0.0,
+                "source_reference": "fallback:configured-power",
+                "method_version": (
+                    "constant-power-conservative-fallback:v1"
+                ),
+            },
+        ],
+    }
+
+
+def test_web_view_represents_missing_household_load_forecast() -> None:
+    run = CanonicalPipeline().run(
+        captured_at=datetime(2026, 8, 14, 10, 0, tzinfo=UTC)
+    )
+
+    view = build_web_view(run, project(run))
+
+    assert view["household_load_forecast"] == {
+        "available": False,
+        "forecast_id": None,
+        "run_id": run.planning_input.run_id,
+        "snapshot_id": run.planning_input.snapshot_id,
+        "interval_count": 0,
+        "total_wh": 0,
+        "average_confidence": 0.0,
+        "starts_at": None,
+        "ends_at": None,
+        "fallback_active": False,
+        "fallback_reason": None,
+        "intervals": [],
+    }
+
+
+def test_dashboard_contains_readable_household_load_forecast_panel() -> None:
+    assert "Verwacht huishoudverbruik" in DASHBOARD_HTML
+    assert 'id="household-load-forecast"' in DASHBOARD_HTML
+    assert "renderHouseholdLoadForecast" in DASHBOARD_HTML
+    assert "view.household_load_forecast" in DASHBOARD_HTML
 
 
 def test_web_view_represents_missing_pv_timeline_without_intervals() -> None:

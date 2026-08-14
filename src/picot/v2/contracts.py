@@ -104,6 +104,58 @@ class PVEnergyTimeline:
 
 
 @dataclass(frozen=True, slots=True)
+class HouseholdLoadForecastInterval:
+    interval_id: str
+    starts_at: datetime
+    ends_at: datetime
+    expected_energy_wh: float
+    confidence: float
+    source_reference: str
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if self.starts_at >= self.ends_at:
+            raise ValueError("starts_at must be before ends_at")
+        if self.expected_energy_wh < 0.0:
+            raise ValueError("expected_energy_wh must not be negative")
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("confidence must be between 0 and 1")
+        if not self.source_reference.strip():
+            raise ValueError("source_reference must be explicit")
+        if not self.method_version.strip():
+            raise ValueError("method_version must be explicit")
+
+
+@dataclass(frozen=True, slots=True)
+class HouseholdLoadForecast:
+    forecast_id: str
+    run_id: str
+    snapshot_id: str
+    intervals: tuple[HouseholdLoadForecastInterval, ...]
+    fallback_active: bool
+    fallback_reason: str | None
+
+    def __post_init__(self) -> None:
+        if self.fallback_active and not (
+            self.fallback_reason and self.fallback_reason.strip()
+        ):
+            raise ValueError(
+                "fallback_reason is required when fallback is active"
+            )
+        for previous, current in zip(
+            self.intervals,
+            self.intervals[1:],
+            strict=False,
+        ):
+            if current.starts_at < previous.starts_at:
+                raise ValueError(
+                    "intervals must be chronologically ordered"
+                )
+            if current.starts_at < previous.ends_at:
+                raise ValueError("intervals must not overlap")
+
+
+@dataclass(frozen=True, slots=True)
 class PlanningInputSnapshot:
     run_id: str
     snapshot_id: str
@@ -116,6 +168,7 @@ class PlanningInputSnapshot:
     price_points: tuple[PriceForecastPoint, ...] = ()
     current_storage_states: tuple[CurrentStorageState, ...] = ()
     pv_energy_timeline: PVEnergyTimeline | None = None
+    household_load_forecast: HouseholdLoadForecast | None = None
 
     def __post_init__(self) -> None:
         for state in self.current_storage_states:
@@ -135,6 +188,13 @@ class PlanningInputSnapshot:
                     "PV energy timeline snapshot_id must match "
                     "planning input snapshot snapshot_id"
                 )
+        if self.household_load_forecast is not None and (
+            self.household_load_forecast.run_id != self.run_id
+            or self.household_load_forecast.snapshot_id != self.snapshot_id
+        ):
+            raise ValueError(
+                "Household load forecast lineage must match planning input"
+            )
 
 
 @dataclass(frozen=True, slots=True)

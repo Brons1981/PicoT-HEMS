@@ -244,6 +244,8 @@ def _price_opportunity_config(options: dict[str, Any]) -> PriceOpportunityConfig
 def _load_live_planning_input(
     token: str,
     options: dict[str, Any],
+    *,
+    household_load_history: HouseholdLoadHistoryStore | None = None,
 ) -> PlanningInputBundle:
     """Assemble live Planning Input with the configured load fallback."""
     raw_power_w = options.get("household_load_fallback_power_w", 500.0)
@@ -259,9 +261,16 @@ def _load_live_planning_input(
             "household_load_fallback_power_w must be a finite positive number"
         )
 
+    if household_load_history is None:
+        return assemble_planning_input(
+            token,
+            household_load_fallback_power_w=fallback_power_w,
+        )
+
     return assemble_planning_input(
         token,
         household_load_fallback_power_w=fallback_power_w,
+        household_load_observations=household_load_history.load(),
     )
 
 
@@ -398,7 +407,11 @@ def main() -> None:
     poll_interval_seconds = max(5.0, poll_interval_seconds)
 
     def load_bundle() -> PlanningInputBundle:
-        return _load_live_planning_input(token, options)
+        return _load_live_planning_input(
+            token,
+            options,
+            household_load_history=household_load_history,
+        )
 
     def execute(bundle: PlanningInputBundle) -> None:
         _execute_planning_bundle(

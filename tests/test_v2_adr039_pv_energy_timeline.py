@@ -4,9 +4,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from picot.v2.contracts import (
+    PlanningInputSnapshot,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
-    PlanningInputSnapshot,
 )
 
 BASE = datetime(2026, 8, 14, 10, 0, tzinfo=UTC)

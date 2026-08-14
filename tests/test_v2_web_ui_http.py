@@ -68,3 +68,36 @@ def test_read_only_web_server_exposes_latest_view_and_rejects_writes() -> None:
         thread.join(timeout=2)
 
     assert not thread.is_alive()
+
+
+def test_web_server_exposes_auto_refreshing_read_only_dashboard() -> None:
+    store = WebViewStore()
+    server = create_web_server(
+        store,
+        host="127.0.0.1",
+        port=0,
+    )
+    thread = Thread(target=server.serve_forever)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_port}/"
+
+    try:
+        with urlopen(url, timeout=2) as response:
+            html = response.read().decode("utf-8")
+
+            assert response.status == 200
+            assert response.headers.get_content_type() == "text/html"
+            assert response.headers.get_content_charset() == "utf-8"
+            assert response.headers["Cache-Control"] == "no-store"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert "<title>PicoT v2 — Canonical Pipeline</title>" in html
+    assert 'data-observer-only="true"' in html
+    assert 'id="pipeline"' in html
+    assert 'id="pv-energy-timeline"' in html
+    assert 'fetch("api/view"' in html
+    assert "setInterval(loadView, 5000)" in html

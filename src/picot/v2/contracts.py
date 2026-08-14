@@ -27,6 +27,12 @@ class CurrentStorageState:
     confidence: float
     evidence_ids: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.current_soc <= 1.0:
+            raise ValueError("current_soc must be between 0.0 and 1.0")
+        if self.usable_capacity_wh <= 0.0:
+            raise ValueError("usable_capacity_wh must be positive")
+
     @property
     def current_stored_energy_wh(self) -> float:
         return self.current_soc * self.usable_capacity_wh

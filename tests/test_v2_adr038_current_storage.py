@@ -44,3 +44,30 @@ def test_current_stored_energy_uses_the_canonical_adr038_formula() -> None:
         confidence=1.0,
         evidence_ids=("measurement:1",),
     ).current_stored_energy_wh == pytest.approx(5000.0)
+
+
+@pytest.mark.parametrize(
+    ("current_soc", "usable_capacity_wh", "message"),
+    (
+        (-0.01, 8000.0, "current_soc must be between 0.0 and 1.0"),
+        (1.01, 8000.0, "current_soc must be between 0.0 and 1.0"),
+        (0.50, 0.0, "usable_capacity_wh must be positive"),
+        (0.50, -1.0, "usable_capacity_wh must be positive"),
+    ),
+)
+def test_current_storage_state_rejects_invalid_energy_boundaries(
+    current_soc: float,
+    usable_capacity_wh: float,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        CurrentStorageState(
+            storage_state_id="storage-state-invalid",
+            execution_scope_id="battery-invalid",
+            capability_id="capability-invalid",
+            current_soc=current_soc,
+            usable_capacity_wh=usable_capacity_wh,
+            measured_at=datetime(2026, 8, 14, 8, 0, tzinfo=UTC),
+            confidence=1.0,
+            evidence_ids=("measurement:invalid",),
+        )

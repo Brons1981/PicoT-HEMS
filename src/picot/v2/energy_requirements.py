@@ -58,6 +58,15 @@ def derive_storage_energy_requirement(
     reason: str,
     reserve_contribution_wh: float,
 ) -> StorageEnergyRequirement:
+    if not balance.intervals:
+        raise ValueError("balance must contain at least one interval")
+    if usable_capacity_wh <= 0.0:
+        raise ValueError("usable_capacity_wh must be positive")
+    if target_energy_wh < 0.0:
+        raise ValueError("target_energy_wh must be non-negative")
+    if target_energy_wh > usable_capacity_wh:
+        raise ValueError("target_energy_wh must not exceed usable_capacity_wh")
+
     confidence = min(interval.confidence for interval in balance.intervals)
     evidence_ids = tuple(
         dict.fromkeys(

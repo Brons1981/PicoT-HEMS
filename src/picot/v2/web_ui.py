@@ -52,7 +52,7 @@ DASHBOARD_HTML = """<!doctype html>
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
     }
-    .metric, .source-card, .stage-card, .timeline-panel {
+    .metric, .source-card, .stage-card, .timeline-panel, .price-panel {
       border: 1px solid #27313d;
       border-radius: 12px;
       background: #151b23;
@@ -137,6 +137,68 @@ DASHBOARD_HTML = """<!doctype html>
       font-size: 0.78rem;
     }
     .timeline-panel { padding: 14px; overflow-x: auto; }
+    .price-panel { padding: 14px; overflow: hidden; }
+    .price-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 10px;
+      color: #96a6b8;
+    }
+    .price-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .price-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      background: #477fa8;
+    }
+    .price-swatch.low { background: #35a862; }
+    .price-swatch.high { background: #df6b57; }
+    .price-swatch.missing { background: #2b3541; }
+    .price-chart-scroll { overflow-x: auto; }
+    .price-chart {
+      display: block;
+      width: 100%;
+      min-width: 760px;
+      height: auto;
+    }
+    .price-chart .grid-line {
+      stroke: #27313d;
+      stroke-width: 1;
+    }
+    .price-chart .zero-line {
+      stroke: #96a6b8;
+      stroke-width: 1.5;
+    }
+    .price-chart .axis-label {
+      fill: #96a6b8;
+      font-size: 12px;
+    }
+    .price-chart .missing-area { fill: #232c36; }
+    .price-chart .price-bar {
+      fill: #477fa8;
+      opacity: 0.85;
+    }
+    .price-chart .price-bar.low { fill: #35a862; }
+    .price-chart .price-bar.high { fill: #df6b57; }
+    .price-chart .horizon-line {
+      stroke: #ffd77a;
+      stroke-width: 2;
+      stroke-dasharray: 6 5;
+    }
+    .price-chart .horizon-label {
+      fill: #ffd77a;
+      font-size: 12px;
+    }
+    .price-detail {
+      min-height: 22px;
+      margin: 8px 0 0;
+      color: #96a6b8;
+    }
     table { width: 100%; border-collapse: collapse; }
     th, td {
       padding: 9px 10px;
@@ -190,6 +252,11 @@ DASHBOARD_HTML = """<!doctype html>
       Nog geen brongegevens beschikbaar.
     </section>
 
+    <h2>Prijsverloop komende 48 uur</h2>
+    <section id="price-timeline" class="price-panel" aria-live="polite">
+      Nog geen prijsgegevens beschikbaar.
+    </section>
+
     <h2>Pipeline ①→⑨</h2>
     <section id="pipeline" class="pipeline" aria-live="polite"></section>
 
@@ -232,6 +299,314 @@ DASHBOARD_HTML = """<!doctype html>
     };
 
     const element = (id) => document.getElementById(id);
+    const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+    const PRICE_DISPLAY_HOURS = 48;
+
+    function createSvgElement(name, attributes = {}) {
+      const node = document.createElementNS(SVG_NAMESPACE, name);
+      for (const [key, value] of Object.entries(attributes)) {
+        node.setAttribute(key, String(value));
+      }
+      return node;
+    }
+
+    function appendSvgText(parent, text, attributes, className) {
+      const node = createSvgElement("text", attributes);
+      node.classList.add(className);
+      node.textContent = text;
+      parent.appendChild(node);
+      return node;
+    }
+
+    function formatPrice(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric)
+        ? `${numeric.toFixed(3).replace(".", ",")} €/kWh`
+        : "—";
+    }
+
+    function formatChartTime(value, timezone) {
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return "—";
+      return parsed.toLocaleString("nl-NL", {
+        timeZone: timezone,
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    function priceWindowKind(point, opportunities) {
+      const startsAt = new Date(point.starts_at).getTime();
+      const endsAt = new Date(point.ends_at).getTime();
+      const matching = opportunities.filter((opportunity) => {
+        const windowStart = new Date(opportunity.starts_at).getTime();
+        const windowEnd = new Date(opportunity.ends_at).getTime();
+        return startsAt < windowEnd && endsAt > windowStart;
+      });
+
+      if (
+        matching.some(
+          (opportunity) =>
+            opportunity.kind === "NEGATIVE_PRICE_WINDOW" ||
+            opportunity.kind === "LOWEST_PRICE_WINDOW"
+        )
+      ) {
+        return "low";
+      }
+      if (
+        matching.some(
+          (opportunity) =>
+            opportunity.kind === "HIGH_EXPORT_VALUE_WINDOW"
+        )
+      ) {
+        return "high";
+      }
+      return "normal";
+    }
+
+    function priceWindowLabel(kind) {
+      if (kind === "low") return "Laagste-prijsvenster";
+      if (kind === "high") return "Hoogste-teruglevervenster";
+      return "Geen prijsvenster";
+    }
+
+    function renderPriceTimeline(timeline, capturedAt) {
+      const container = element("price-timeline");
+      container.replaceChildren();
+
+      const start = new Date(capturedAt);
+      if (Number.isNaN(start.getTime())) {
+        container.textContent = "Geen geldig begintijdstip beschikbaar.";
+        return;
+      }
+
+      const points = Array.isArray(timeline.points)
+        ? timeline.points
+        : [];
+      const opportunities = Array.isArray(timeline.opportunities)
+        ? timeline.opportunities
+        : [];
+      const timezone =
+        timeline.market_timezone ?? "Europe/Amsterdam";
+      const displayHours =
+        Number(timeline.display_hours) || PRICE_DISPLAY_HOURS;
+      const startsAtMs = start.getTime();
+      const endsAtMs =
+        startsAtMs + displayHours * 60 * 60 * 1000;
+      const visiblePoints = points.filter((point) => {
+        const pointStart = new Date(point.starts_at).getTime();
+        const pointEnd = new Date(point.ends_at).getTime();
+        return pointStart < endsAtMs && pointEnd > startsAtMs;
+      });
+
+      const legend = document.createElement("div");
+      legend.className = "price-legend";
+      for (const [kind, label] of [
+        ["normal", "Overige prijzen"],
+        ["low", "Laagste-prijsvenster"],
+        ["high", "Hoogste-teruglevervenster"],
+        ["missing", "Nog niet gepubliceerd"]
+      ]) {
+        const item = document.createElement("span");
+        item.className = "price-legend-item";
+        const swatch = document.createElement("span");
+        swatch.className = `price-swatch ${kind}`;
+        item.append(swatch, label);
+        legend.appendChild(item);
+      }
+      container.appendChild(legend);
+
+      const width = 1200;
+      const height = 350;
+      const margin = {
+        top: 24,
+        right: 20,
+        bottom: 52,
+        left: 76
+      };
+      const plotWidth = width - margin.left - margin.right;
+      const plotHeight = height - margin.top - margin.bottom;
+      const values = visiblePoints
+        .map((point) => Number(point.value_eur_per_kwh))
+        .filter((value) => Number.isFinite(value));
+      let minimum = Math.min(0, ...values);
+      let maximum = Math.max(0, ...values);
+      const initialRange = maximum - minimum || 0.1;
+      minimum -= initialRange * 0.1;
+      maximum += initialRange * 0.1;
+
+      const xPosition = (timestamp) =>
+        margin.left +
+        ((timestamp - startsAtMs) / (endsAtMs - startsAtMs)) *
+          plotWidth;
+      const yPosition = (value) =>
+        margin.top +
+        ((maximum - value) / (maximum - minimum)) *
+          plotHeight;
+
+      const scroll = document.createElement("div");
+      scroll.className = "price-chart-scroll";
+      const svg = createSvgElement("svg", {
+        class: "price-chart",
+        viewBox: `0 0 ${width} ${height}`,
+        role: "img",
+        "aria-label": (
+          "Prijsverloop voor 48 uur met gemarkeerde PicoT-prijsvensters"
+        )
+      });
+
+      svg.appendChild(
+        createSvgElement("rect", {
+          class: "missing-area",
+          x: margin.left,
+          y: margin.top,
+          width: plotWidth,
+          height: plotHeight
+        })
+      );
+
+      for (let index = 0; index <= 4; index += 1) {
+        const value =
+          maximum - ((maximum - minimum) * index) / 4;
+        const y = yPosition(value);
+        svg.appendChild(
+          createSvgElement("line", {
+            class: Math.abs(value) < 0.000001
+              ? "zero-line"
+              : "grid-line",
+            x1: margin.left,
+            x2: width - margin.right,
+            y1: y,
+            y2: y
+          })
+        );
+        appendSvgText(
+          svg,
+          formatPrice(value),
+          {
+            x: margin.left - 8,
+            y: y + 4,
+            "text-anchor": "end"
+          },
+          "axis-label"
+        );
+      }
+
+      for (let hour = 0; hour <= displayHours; hour += 6) {
+        const timestamp =
+          startsAtMs + hour * 60 * 60 * 1000;
+        const x = xPosition(timestamp);
+        svg.appendChild(
+          createSvgElement("line", {
+            class: "grid-line",
+            x1: x,
+            x2: x,
+            y1: margin.top,
+            y2: height - margin.bottom
+          })
+        );
+        appendSvgText(
+          svg,
+          hour === 0
+            ? "Nu"
+            : formatChartTime(timestamp, timezone),
+          {
+            x,
+            y: height - 20,
+            "text-anchor": hour === 0 ? "start" : "middle"
+          },
+          "axis-label"
+        );
+      }
+
+      const detail = document.createElement("p");
+      detail.className = "price-detail";
+      detail.textContent =
+        "Selecteer een staaf voor tijdstip, prijs en vensterstatus.";
+
+      const zeroY = yPosition(0);
+      for (const point of visiblePoints) {
+        const pointStart = Math.max(
+          startsAtMs,
+          new Date(point.starts_at).getTime()
+        );
+        const pointEnd = Math.min(
+          endsAtMs,
+          new Date(point.ends_at).getTime()
+        );
+        const value = Number(point.value_eur_per_kwh);
+        if (
+          !Number.isFinite(pointStart) ||
+          !Number.isFinite(pointEnd) ||
+          !Number.isFinite(value) ||
+          pointEnd <= pointStart
+        ) {
+          continue;
+        }
+
+        const kind = priceWindowKind(point, opportunities);
+        const valueY = yPosition(value);
+        const bar = createSvgElement("rect", {
+          class: `price-bar ${kind}`,
+          x: xPosition(pointStart) + 0.5,
+          y: Math.min(valueY, zeroY),
+          width: Math.max(
+            1,
+            xPosition(pointEnd) - xPosition(pointStart) - 1
+          ),
+          height: Math.max(1, Math.abs(zeroY - valueY)),
+          rx: 2,
+          tabindex: 0
+        });
+        const showDetail = () => {
+          detail.textContent = [
+            `${formatTimestamp(point.starts_at)} – ` +
+              formatTimestamp(point.ends_at),
+            formatPrice(value),
+            priceWindowLabel(kind),
+            `Confidence ${formatConfidence(point.confidence)}`
+          ].join(" · ");
+        };
+        bar.addEventListener("mouseenter", showDetail);
+        bar.addEventListener("focus", showDetail);
+        bar.addEventListener("click", showDetail);
+        svg.appendChild(bar);
+      }
+
+      const horizonEnd = new Date(
+        timeline.planning_horizon_ends_at
+      ).getTime();
+      if (
+        Number.isFinite(horizonEnd) &&
+        horizonEnd > startsAtMs &&
+        horizonEnd < endsAtMs
+      ) {
+        const x = xPosition(horizonEnd);
+        svg.appendChild(
+          createSvgElement("line", {
+            class: "horizon-line",
+            x1: x,
+            x2: x,
+            y1: margin.top,
+            y2: height - margin.bottom
+          })
+        );
+        appendSvgText(
+          svg,
+          "Einde planning 36 uur",
+          {
+            x: x - 6,
+            y: margin.top + 16,
+            "text-anchor": "end"
+          },
+          "horizon-label"
+        );
+      }
+
+      scroll.appendChild(svg);
+      container.append(scroll, detail);
+    }
 
     function displayValue(value) {
       if (value === null || value === undefined) return "—";
@@ -556,6 +931,17 @@ DASHBOARD_HTML = """<!doctype html>
         const planningInput = pipeline.find((item) => item.stage === 1);
         const sources = planningInput?.attributes?.sources;
         renderSources(Array.isArray(sources) ? sources : []);
+        renderPriceTimeline(
+          view.price_timeline ?? {
+            available: false,
+            display_hours: PRICE_DISPLAY_HOURS,
+            market_timezone: "Europe/Amsterdam",
+            planning_horizon_ends_at: null,
+            points: [],
+            opportunities: []
+          },
+          view.captured_at
+        );
         renderPipeline(pipeline);
         renderTimeline(view.pv_energy_timeline ?? {
           available: false,
@@ -723,6 +1109,17 @@ def build_web_view(
         if household_forecast is not None
         else ()
     )
+    price_points = tuple(
+        sorted(
+            planning_input.price_points,
+            key=lambda point: (
+                point.starts_at,
+                point.ends_at,
+                point.point_id,
+            ),
+        )
+    )
+    price_opportunities = run.opportunities.opportunities
     intervals = (
         timeline.intervals
         if timeline is not None
@@ -841,6 +1238,56 @@ def build_web_view(
         ],
     }
 
+    price_timeline: dict[str, object] = {
+        "available": bool(price_points),
+        "display_hours": 48,
+        "market_timezone": "Europe/Amsterdam",
+        "planning_horizon_ends_at": (
+            planning_input.horizon_end.isoformat()
+            if planning_input.horizon_end is not None
+            else None
+        ),
+        "points": [
+            {
+                "point_id": point.point_id,
+                "starts_at": point.starts_at.isoformat(),
+                "ends_at": point.ends_at.isoformat(),
+                "value_eur_per_kwh": point.value_eur_per_kwh,
+                "confidence": point.confidence,
+                "evidence_id": point.evidence_id,
+            }
+            for point in price_points
+        ],
+        "opportunities": [
+            {
+                "opportunity_id": opportunity.opportunity_id,
+                "kind": opportunity.kind,
+                "starts_at": opportunity.starts_at.isoformat(),
+                "ends_at": opportunity.ends_at.isoformat(),
+                "confidence": opportunity.confidence,
+                "lifecycle_status": opportunity.lifecycle_status,
+                "metrics": {
+                    "duration_seconds": (
+                        opportunity.metrics.duration_seconds
+                    ),
+                    "average_price_eur_per_kwh": (
+                        opportunity.metrics.average_price_eur_per_kwh
+                    ),
+                    "minimum_price_eur_per_kwh": (
+                        opportunity.metrics.minimum_price_eur_per_kwh
+                    ),
+                    "maximum_price_eur_per_kwh": (
+                        opportunity.metrics.maximum_price_eur_per_kwh
+                    ),
+                    "boundary_eur_per_kwh": (
+                        opportunity.metrics.boundary_eur_per_kwh
+                    ),
+                },
+            }
+            for opportunity in price_opportunities
+        ],
+    }
+
     return {
         "schema_version": 1,
         "observer_only": True,
@@ -849,6 +1296,7 @@ def build_web_view(
         "snapshot_id": planning_input.snapshot_id,
         "captured_at": planning_input.captured_at.isoformat(),
         "pipeline": pipeline,
+        "price_timeline": price_timeline,
         "pv_energy_timeline": pv_energy_timeline,
         "household_load_forecast": household_load_forecast,
     }

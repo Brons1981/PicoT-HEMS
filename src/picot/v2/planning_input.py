@@ -27,6 +27,7 @@ from picot.v2.contracts import (
 )
 from picot.v2.household_load_forecast import (
     build_fallback_household_load_forecast,
+    build_historical_household_load_forecast,
     derive_household_load_power_w,
 )
 
@@ -570,6 +571,10 @@ def assemble_planning_input(
     options_path: str = "/data/options.json",
     captured_at: datetime | None = None,
     household_load_fallback_power_w: float | None = None,
+    household_load_observations: tuple[
+        HouseholdLoadObservation,
+        ...,
+    ] = (),
 ) -> PlanningInputBundle:
     started = datetime.now(UTC)
     reader = HomeAssistantStateReader(token)
@@ -626,9 +631,13 @@ def assemble_planning_input(
         default=None,
     )
     household_load_horizon_end = capture + timedelta(hours=36)
+    household_load_forecast_requested = (
+        household_load_fallback_power_w is not None
+        or bool(household_load_observations)
+    )
     horizon_end = (
         household_load_horizon_end
-        if household_load_fallback_power_w is not None
+        if household_load_forecast_requested
         else price_horizon_end
     )
     current_storage_states = _current_storage_states_from_evidence(
@@ -658,17 +667,35 @@ def assemble_planning_input(
         if pv_energy_intervals
         else None
     )
+    eligible_household_load_observations = tuple(
+        observation
+        for observation in household_load_observations
+        if observation.sampled_at <= capture
+    )
     household_load_forecast = (
-        build_fallback_household_load_forecast(
+        build_historical_household_load_forecast(
             run_id=run_id,
             snapshot_id=snapshot_id,
             starts_at=capture,
             horizon_end=household_load_horizon_end,
-            fallback_power_w=household_load_fallback_power_w,
+            observations=eligible_household_load_observations,
         )
-        if household_load_fallback_power_w is not None
+        if eligible_household_load_observations
         else None
     )
+    if (
+        household_load_forecast is None
+        and household_load_fallback_power_w is not None
+    ):
+        household_load_forecast = (
+            build_fallback_household_load_forecast(
+                run_id=run_id,
+                snapshot_id=snapshot_id,
+                starts_at=capture,
+                horizon_end=household_load_horizon_end,
+                fallback_power_w=household_load_fallback_power_w,
+            )
+        )
 
     snapshot = PlanningInputSnapshot(
         run_id=run_id,

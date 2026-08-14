@@ -18,6 +18,7 @@ from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.planning_input import PlanningInputBundle, assemble_planning_input, load_options
 from picot.v2.projection import Card, Projection, project
+from picot.v2.web_ui import WebViewStore, build_web_view
 
 
 def _planning_input_signature(bundle: PlanningInputBundle) -> str:
@@ -208,6 +209,7 @@ def _execute_planning_bundle(
     token: str,
     price_config: PriceOpportunityConfig,
     bundle: PlanningInputBundle,
+    web_view_store: WebViewStore,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -272,6 +274,8 @@ def _execute_planning_bundle(
         )
     )
 
+    web_view_store.publish(build_web_view(run, projection))
+
     print(
         json.dumps(
             {
@@ -302,6 +306,7 @@ def main() -> None:
 
     options = load_options()
     price_config = _price_opportunity_config(options)
+    web_view_store = WebViewStore()
     raw_poll_interval = options.get("live_poll_interval_seconds", 60.0)
     try:
         poll_interval_seconds = float(raw_poll_interval)
@@ -317,6 +322,7 @@ def main() -> None:
             token=token,
             price_config=price_config,
             bundle=bundle,
+            web_view_store=web_view_store,
         )
 
     previous_signature: str | None = None

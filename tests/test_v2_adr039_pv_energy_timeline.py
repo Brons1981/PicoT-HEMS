@@ -8,6 +8,24 @@ from picot.v2.contracts import PVEnergyTimeline, PVEnergyTimelineInterval
 BASE = datetime(2026, 8, 14, 10, 0, tzinfo=UTC)
 
 
+def _pv_interval(
+    interval_id: str,
+    starts_at: datetime,
+    ends_at: datetime,
+) -> PVEnergyTimelineInterval:
+    return PVEnergyTimelineInterval(
+        interval_id=interval_id,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        pv_energy_wh=100.0,
+        evidence_type="FORECAST",
+        confidence=0.8,
+        actual_evidence_ids=(),
+        forecast_evidence_ids=(f"evidence-{interval_id}",),
+        conversion_method_version="forecast-energy-v1",
+    )
+
+
 def test_pv_energy_timeline_is_immutable_and_traceable() -> None:
     interval = PVEnergyTimelineInterval(
         interval_id="pv-energy-interval-mixed",
@@ -49,3 +67,84 @@ def test_pv_energy_timeline_is_immutable_and_traceable() -> None:
 
     with pytest.raises(FrozenInstanceError):
         timeline.intervals = ()  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "ends_at",
+    (BASE, BASE - timedelta(minutes=15)),
+)
+def test_pv_energy_interval_requires_positive_duration(
+    ends_at: datetime,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="starts_at must be before ends_at",
+    ):
+        _pv_interval("invalid-duration", BASE, ends_at)
+
+
+def test_pv_energy_timeline_rejects_out_of_order_intervals() -> None:
+    later = _pv_interval(
+        "later",
+        BASE + timedelta(minutes=30),
+        BASE + timedelta(minutes=45),
+    )
+    earlier = _pv_interval(
+        "earlier",
+        BASE,
+        BASE + timedelta(minutes=15),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="intervals must be chronologically ordered",
+    ):
+        PVEnergyTimeline(
+            timeline_id="out-of-order",
+            run_id="run-adr039",
+            snapshot_id="snapshot-adr039",
+            intervals=(later, earlier),
+        )
+
+
+def test_pv_energy_timeline_rejects_overlapping_intervals() -> None:
+    first = _pv_interval(
+        "first",
+        BASE,
+        BASE + timedelta(minutes=30),
+    )
+    overlapping = _pv_interval(
+        "overlapping",
+        BASE + timedelta(minutes=15),
+        BASE + timedelta(minutes=45),
+    )
+
+    with pytest.raises(ValueError, match="intervals must not overlap"):
+        PVEnergyTimeline(
+            timeline_id="overlapping",
+            run_id="run-adr039",
+            snapshot_id="snapshot-adr039",
+            intervals=(first, overlapping),
+        )
+
+
+def test_pv_energy_timeline_preserves_visible_gaps() -> None:
+    first = _pv_interval(
+        "first",
+        BASE,
+        BASE + timedelta(minutes=15),
+    )
+    after_gap = _pv_interval(
+        "after-gap",
+        BASE + timedelta(minutes=30),
+        BASE + timedelta(minutes=45),
+    )
+
+    timeline = PVEnergyTimeline(
+        timeline_id="with-gap",
+        run_id="run-adr039",
+        snapshot_id="snapshot-adr039",
+        intervals=(first, after_gap),
+    )
+
+    assert timeline.intervals == (first, after_gap)

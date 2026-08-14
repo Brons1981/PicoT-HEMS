@@ -1,9 +1,15 @@
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import picot.v2.live_runtime as live_runtime
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
 from picot.v2.live_runtime import _planning_input_signature, _poll_live_cycle
-from picot.v2.planning_input import CanonicalInputFact, PlanningInputBundle
+from picot.v2.planning_input import (
+    CanonicalInputFact,
+    HouseholdLoadObservation,
+    PlanningInputBundle,
+)
 
 BASE = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 
@@ -41,12 +47,23 @@ def _bundle(*, captured_at: datetime, price: float) -> PlanningInputBundle:
         evidence_id="evidence-grid",
         mapping_version="mapping-grid",
     )
+    observation = HouseholdLoadObservation(
+        power_w=500.0,
+        sampled_at=captured_at,
+        evidence_ids=(
+            "evidence-grid",
+            "evidence-pv",
+            "evidence-storage",
+        ),
+        method_version="complete-power-balance:v1",
+    )
     return PlanningInputBundle(
         snapshot=snapshot,
         evidence=(),
         facts=(fact,),
         assembly_started_at=captured_at,
         assembly_finished_at=captured_at,
+        household_load_observation=observation,
     )
 
 
@@ -80,3 +97,55 @@ def test_poll_cycle_executes_when_fresh_input_changed() -> None:
 
     assert calls == [changed.snapshot.run_id]
     assert result == _planning_input_signature(changed)
+
+
+def test_live_history_uses_persistent_addon_data_path() -> None:
+    assert live_runtime.HOUSEHOLD_LOAD_HISTORY_PATH == Path(
+        "/data/picot_v2_household_load_history.jsonl"
+    )
+
+
+def test_poll_cycle_persists_observation_when_execution_is_skipped() -> None:
+    first = _bundle(captured_at=BASE, price=0.20)
+    fresh = _bundle(
+        captured_at=BASE + timedelta(minutes=1),
+        price=0.20,
+    )
+    persisted: list[HouseholdLoadObservation] = []
+    executed: list[str] = []
+
+    result = _poll_live_cycle(
+        previous_signature=_planning_input_signature(first),
+        load_bundle=lambda: fresh,
+        execute=lambda bundle: executed.append(
+            bundle.snapshot.run_id
+        ),
+        persist_observation=persisted.append,
+    )
+
+    assert persisted == [fresh.household_load_observation]
+    assert executed == []
+    assert result == _planning_input_signature(first)
+
+
+def test_history_write_failure_does_not_stop_pipeline_cycle() -> None:
+    fresh = _bundle(captured_at=BASE, price=0.10)
+    executed: list[str] = []
+
+    def fail_persistence(
+        observation: HouseholdLoadObservation,
+    ) -> None:
+        del observation
+        raise OSError("history unavailable")
+
+    result = _poll_live_cycle(
+        previous_signature=None,
+        load_bundle=lambda: fresh,
+        execute=lambda bundle: executed.append(
+            bundle.snapshot.run_id
+        ),
+        persist_observation=fail_persistence,
+    )
+
+    assert executed == [fresh.snapshot.run_id]
+    assert result == _planning_input_signature(fresh)

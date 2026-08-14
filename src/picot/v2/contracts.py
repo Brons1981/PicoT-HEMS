@@ -17,6 +17,22 @@ class PriceForecastPoint:
 
 
 @dataclass(frozen=True, slots=True)
+class CurrentStorageState:
+    storage_state_id: str
+    execution_scope_id: str
+    capability_id: str
+    current_soc: float
+    usable_capacity_wh: float
+    measured_at: datetime
+    confidence: float
+    evidence_ids: tuple[str, ...]
+
+    @property
+    def current_stored_energy_wh(self) -> float:
+        return self.current_soc * self.usable_capacity_wh
+
+
+@dataclass(frozen=True, slots=True)
 class PlanningInputSnapshot:
     run_id: str
     snapshot_id: str

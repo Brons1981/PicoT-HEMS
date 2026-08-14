@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from picot.v2.contracts import CurrentStorageState
+from picot.v2.contracts import CurrentStorageState, PlanningInputSnapshot
 
 
 def test_current_storage_state_is_immutable_and_traceable() -> None:
@@ -71,3 +71,32 @@ def test_current_storage_state_rejects_invalid_energy_boundaries(
             confidence=1.0,
             evidence_ids=("measurement:invalid",),
         )
+
+
+def test_planning_input_snapshot_reuses_current_storage_state() -> None:
+    state = CurrentStorageState(
+        storage_state_id="storage-state-home-battery",
+        execution_scope_id="home-battery",
+        capability_id="storage-capability-home-battery",
+        current_soc=0.40,
+        usable_capacity_wh=8160.0,
+        measured_at=datetime(2026, 8, 14, 8, 0, tzinfo=UTC),
+        confidence=0.95,
+        evidence_ids=(
+            "ha:zendure-soc",
+            "config:usable-capacity",
+        ),
+    )
+    snapshot = PlanningInputSnapshot(
+        run_id="run-adr038",
+        snapshot_id="snapshot-adr038",
+        captured_at=datetime(2026, 8, 14, 8, 5, tzinfo=UTC),
+        picot_version="2.0.0-dev.9",
+        architecture_baseline_commit="baseline-adr038",
+        pipeline_contract_version=1,
+        strategy_id="strategy:no-objectives:v1",
+        current_storage_states=(state,),
+    )
+
+    assert snapshot.current_storage_states == (state,)
+    assert snapshot.current_storage_states[0] is state

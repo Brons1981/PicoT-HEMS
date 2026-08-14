@@ -197,6 +197,11 @@ DASHBOARD_HTML = """<!doctype html>
     <section id="pv-energy-timeline" class="timeline-panel" aria-live="polite">
       Nog geen PV-tijdlijn beschikbaar.
     </section>
+
+    <h2>Verwacht huishoudverbruik</h2>
+    <section id="household-load-forecast" class="timeline-panel" aria-live="polite">
+      Nog geen prognose voor huishoudverbruik beschikbaar.
+    </section>
   </main>
 
   <script>
@@ -252,6 +257,13 @@ DASHBOARD_HTML = """<!doctype html>
       return Number.isNaN(parsed.getTime())
         ? displayValue(value)
         : parsed.toLocaleString("nl-NL");
+    }
+
+    function formatConfidence(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric)
+        ? `${Math.round(numeric * 100)}%`
+        : "—";
     }
 
     function appendAttribute(list, label, value, fullValue = value) {
@@ -386,6 +398,99 @@ DASHBOARD_HTML = """<!doctype html>
       container.replaceChildren(fragment);
     }
 
+    function renderHouseholdLoadForecast(forecast) {
+      const container = element("household-load-forecast");
+      container.replaceChildren();
+
+      if (!forecast.available) {
+        container.textContent =
+          "Nog geen prognose voor huishoudverbruik beschikbaar.";
+        return;
+      }
+
+      const intervals = Array.isArray(forecast.intervals)
+        ? forecast.intervals
+        : [];
+      const attributes = document.createElement("dl");
+      appendAttribute(
+        attributes,
+        "Periode",
+        `${formatTimestamp(forecast.starts_at)} – ${formatTimestamp(forecast.ends_at)}`
+      );
+      appendAttribute(
+        attributes,
+        "Verwachte energie",
+        `${forecast.total_wh} Wh`
+      );
+      appendAttribute(
+        attributes,
+        "Kwartieren",
+        forecast.interval_count
+      );
+      appendAttribute(
+        attributes,
+        "Gemiddelde confidence",
+        formatConfidence(forecast.average_confidence)
+      );
+      appendAttribute(
+        attributes,
+        "Fallback",
+        forecast.fallback_active ? "Actief" : "Niet actief"
+      );
+      appendAttribute(
+        attributes,
+        "Reden fallback",
+        forecast.fallback_reason === "insufficient_history"
+          ? "Onvoldoende historische gegevens"
+          : forecast.fallback_reason
+      );
+      container.appendChild(attributes);
+
+      if (intervals.length === 0) return;
+
+      const details = document.createElement("details");
+      details.className = "technical-details";
+      const summary = document.createElement("summary");
+      summary.textContent = `Kwartierdetails (${intervals.length})`;
+      details.appendChild(summary);
+
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      for (const label of [
+        "Start",
+        "Einde",
+        "Verwacht verbruik",
+        "Confidence"
+      ]) {
+        const cell = document.createElement("th");
+        cell.textContent = label;
+        headerRow.appendChild(cell);
+      }
+      head.appendChild(headerRow);
+      table.appendChild(head);
+
+      const body = document.createElement("tbody");
+      for (const interval of intervals) {
+        const row = document.createElement("tr");
+        const values = [
+          formatTimestamp(interval.starts_at),
+          formatTimestamp(interval.ends_at),
+          `${interval.expected_energy_wh} Wh`,
+          formatConfidence(interval.confidence)
+        ];
+        for (const value of values) {
+          const cell = document.createElement("td");
+          cell.textContent = displayValue(value);
+          row.appendChild(cell);
+        }
+        body.appendChild(row);
+      }
+      table.appendChild(body);
+      details.appendChild(table);
+      container.appendChild(details);
+    }
+
     function renderTimeline(timeline) {
       const container = element("pv-energy-timeline");
       container.replaceChildren();
@@ -453,6 +558,18 @@ DASHBOARD_HTML = """<!doctype html>
           available: false,
           interval_count: 0,
           total_wh: 0,
+          intervals: []
+        });
+        renderHouseholdLoadForecast(view.household_load_forecast ?? {
+          available: false,
+          forecast_id: null,
+          interval_count: 0,
+          total_wh: 0,
+          average_confidence: 0,
+          starts_at: null,
+          ends_at: null,
+          fallback_active: false,
+          fallback_reason: null,
           intervals: []
         });
         status.dataset.state = "ready";
@@ -597,6 +714,12 @@ def build_web_view(
     """Build one JSON-serializable observer view without side effects."""
     planning_input = run.planning_input
     timeline = planning_input.pv_energy_timeline
+    household_forecast = planning_input.household_load_forecast
+    household_intervals = (
+        household_forecast.intervals
+        if household_forecast is not None
+        else ()
+    )
     intervals = (
         timeline.intervals
         if timeline is not None
@@ -658,6 +781,63 @@ def build_web_view(
         ],
     }
 
+    household_load_forecast: dict[str, object] = {
+        "available": household_forecast is not None,
+        "forecast_id": (
+            household_forecast.forecast_id
+            if household_forecast is not None
+            else None
+        ),
+        "run_id": planning_input.run_id,
+        "snapshot_id": planning_input.snapshot_id,
+        "interval_count": len(household_intervals),
+        "total_wh": sum(
+            interval.expected_energy_wh
+            for interval in household_intervals
+        ),
+        "average_confidence": (
+            sum(
+                interval.confidence
+                for interval in household_intervals
+            )
+            / len(household_intervals)
+            if household_intervals
+            else 0.0
+        ),
+        "starts_at": (
+            household_intervals[0].starts_at.isoformat()
+            if household_intervals
+            else None
+        ),
+        "ends_at": (
+            household_intervals[-1].ends_at.isoformat()
+            if household_intervals
+            else None
+        ),
+        "fallback_active": (
+            household_forecast.fallback_active
+            if household_forecast is not None
+            else False
+        ),
+        "fallback_reason": (
+            household_forecast.fallback_reason
+            if household_forecast is not None
+            else None
+        ),
+        "intervals": [
+            {
+                "interval_id": interval.interval_id,
+                "starts_at": interval.starts_at.isoformat(),
+                "ends_at": interval.ends_at.isoformat(),
+                "expected_energy_wh": interval.expected_energy_wh,
+                "confidence": interval.confidence,
+                "source_reference": interval.source_reference,
+                "method_version": interval.method_version,
+            }
+            for interval in household_intervals
+        ],
+    }
+
     return {
         "schema_version": 1,
         "observer_only": True,
@@ -667,4 +847,5 @@ def build_web_view(
         "captured_at": planning_input.captured_at.isoformat(),
         "pipeline": pipeline,
         "pv_energy_timeline": pv_energy_timeline,
+        "household_load_forecast": household_load_forecast,
     }

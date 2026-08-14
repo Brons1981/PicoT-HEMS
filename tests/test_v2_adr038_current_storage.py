@@ -45,6 +45,7 @@ def test_current_stored_energy_uses_the_canonical_adr038_formula() -> None:
         evidence_ids=("measurement:1",),
     ).current_stored_energy_wh == pytest.approx(5000.0)
 
+
 @pytest.mark.parametrize(
     ("current_soc", "usable_capacity_wh", "message"),
     (

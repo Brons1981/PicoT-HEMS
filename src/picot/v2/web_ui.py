@@ -400,6 +400,8 @@ DASHBOARD_HTML = """<!doctype html>
 
     function renderHouseholdLoadForecast(forecast) {
       const container = element("household-load-forecast");
+      const quarterDetailsOpen =
+        container.querySelector("details")?.open ?? false;
       container.replaceChildren();
 
       if (!forecast.available) {
@@ -450,6 +452,7 @@ DASHBOARD_HTML = """<!doctype html>
 
       const details = document.createElement("details");
       details.className = "technical-details";
+      details.open = quarterDetailsOpen;
       const summary = document.createElement("summary");
       summary.textContent = `Kwartierdetails (${intervals.length})`;
       details.appendChild(summary);

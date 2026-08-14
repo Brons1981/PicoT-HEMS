@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
-from picot.v2.contracts import CanonicalPipelineRun
+from picot.v2.contracts import CanonicalPipelineRun, PriceForecastPoint
 from picot.v2.projection import Projection
 
 DASHBOARD_HTML = """<!doctype html>
@@ -185,6 +187,16 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .price-chart .price-bar.low { fill: #35a862; }
     .price-chart .price-bar.high { fill: #df6b57; }
+    .price-chart .price-bar.past { opacity: 0.30; }
+    .price-chart .now-line {
+      stroke: #eef4fb;
+      stroke-width: 1.5;
+      stroke-dasharray: 3 4;
+    }
+    .price-chart .now-label {
+      fill: #eef4fb;
+      font-size: 12px;
+    }
     .price-chart .horizon-line {
       stroke: #ffd77a;
       stroke-width: 2;
@@ -252,7 +264,7 @@ DASHBOARD_HTML = """<!doctype html>
       Nog geen brongegevens beschikbaar.
     </section>
 
-    <h2>Prijsverloop komende 48 uur</h2>
+    <h2>Prijsverloop vandaag en morgen</h2>
     <section id="price-timeline" class="price-panel" aria-live="polite">
       Nog geen prijsgegevens beschikbaar.
     </section>
@@ -375,9 +387,16 @@ DASHBOARD_HTML = """<!doctype html>
       const container = element("price-timeline");
       container.replaceChildren();
 
-      const start = new Date(capturedAt);
-      if (Number.isNaN(start.getTime())) {
-        container.textContent = "Geen geldig begintijdstip beschikbaar.";
+      const start = new Date(timeline.display_starts_at);
+      const end = new Date(timeline.display_ends_at);
+      const captured = new Date(capturedAt);
+      if (
+        Number.isNaN(start.getTime()) ||
+        Number.isNaN(end.getTime()) ||
+        Number.isNaN(captured.getTime()) ||
+        end <= start
+      ) {
+        container.textContent = "Geen geldige kalenderperiode beschikbaar.";
         return;
       }
 
@@ -389,11 +408,11 @@ DASHBOARD_HTML = """<!doctype html>
         : [];
       const timezone =
         timeline.market_timezone ?? "Europe/Amsterdam";
-      const displayHours =
-        Number(timeline.display_hours) || PRICE_DISPLAY_HOURS;
       const startsAtMs = start.getTime();
-      const endsAtMs =
-        startsAtMs + displayHours * 60 * 60 * 1000;
+      const endsAtMs = end.getTime();
+      const capturedAtMs = captured.getTime();
+      const displayHours =
+        (endsAtMs - startsAtMs) / (60 * 60 * 1000);
       const visiblePoints = points.filter((point) => {
         const pointStart = new Date(point.starts_at).getTime();
         const pointEnd = new Date(point.ends_at).getTime();
@@ -508,9 +527,7 @@ DASHBOARD_HTML = """<!doctype html>
         );
         appendSvgText(
           svg,
-          hour === 0
-            ? "Nu"
-            : formatChartTime(timestamp, timezone),
+          formatChartTime(timestamp, timezone),
           {
             x,
             y: height - 20,
@@ -546,9 +563,10 @@ DASHBOARD_HTML = """<!doctype html>
         }
 
         const kind = priceWindowKind(point, opportunities);
+        const isPast = pointEnd <= capturedAtMs;
         const valueY = yPosition(value);
         const bar = createSvgElement("rect", {
-          class: `price-bar ${kind}`,
+          class: `price-bar ${kind}${isPast ? " past" : ""}`,
           x: xPosition(pointStart) + 0.5,
           y: Math.min(valueY, zeroY),
           width: Math.max(
@@ -572,6 +590,32 @@ DASHBOARD_HTML = """<!doctype html>
         bar.addEventListener("focus", showDetail);
         bar.addEventListener("click", showDetail);
         svg.appendChild(bar);
+      }
+
+      if (
+        capturedAtMs > startsAtMs &&
+        capturedAtMs < endsAtMs
+      ) {
+        const x = xPosition(capturedAtMs);
+        svg.appendChild(
+          createSvgElement("line", {
+            class: "now-line",
+            x1: x,
+            x2: x,
+            y1: margin.top,
+            y2: height - margin.bottom
+          })
+        );
+        appendSvgText(
+          svg,
+          "Nu",
+          {
+            x: x + 6,
+            y: margin.top + 16,
+            "text-anchor": "start"
+          },
+          "now-label"
+        );
       }
 
       const horizonEnd = new Date(
@@ -935,6 +979,8 @@ DASHBOARD_HTML = """<!doctype html>
           view.price_timeline ?? {
             available: false,
             display_hours: PRICE_DISPLAY_HOURS,
+            display_starts_at: null,
+            display_ends_at: null,
             market_timezone: "Europe/Amsterdam",
             planning_horizon_ends_at: null,
             points: [],
@@ -1099,6 +1145,8 @@ def create_web_server(
 def build_web_view(
     run: CanonicalPipelineRun,
     projection: Projection,
+    *,
+    display_price_points: tuple[PriceForecastPoint, ...] | None = None,
 ) -> dict[str, object]:
     """Build one JSON-serializable observer view without side effects."""
     planning_input = run.planning_input
@@ -1109,9 +1157,19 @@ def build_web_view(
         if household_forecast is not None
         else ()
     )
+    market_timezone = ZoneInfo("Europe/Amsterdam")
+    display_starts_at = planning_input.captured_at.astimezone(
+        market_timezone
+    ).replace(hour=0, minute=0, second=0, microsecond=0)
+    display_ends_at = display_starts_at + timedelta(days=2)
+    selected_display_price_points = (
+        planning_input.price_points
+        if display_price_points is None
+        else display_price_points
+    )
     price_points = tuple(
         sorted(
-            planning_input.price_points,
+            selected_display_price_points,
             key=lambda point: (
                 point.starts_at,
                 point.ends_at,
@@ -1241,6 +1299,8 @@ def build_web_view(
     price_timeline: dict[str, object] = {
         "available": bool(price_points),
         "display_hours": 48,
+        "display_starts_at": display_starts_at.isoformat(),
+        "display_ends_at": display_ends_at.isoformat(),
         "market_timezone": "Europe/Amsterdam",
         "planning_horizon_ends_at": (
             planning_input.horizon_end.isoformat()

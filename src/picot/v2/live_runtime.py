@@ -362,7 +362,18 @@ def _execute_planning_bundle(
         )
     )
 
-    web_view_store.publish(build_web_view(run, projection))
+    display_price_points = tuple(
+        point
+        for evidence in bundle.evidence
+        for point in evidence.price_points
+    )
+    web_view_store.publish(
+        build_web_view(
+            run,
+            projection,
+            display_price_points=display_price_points,
+        )
+    )
 
     print(
         json.dumps(

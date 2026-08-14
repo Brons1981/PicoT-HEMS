@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from picot.v2 import household_load_forecast
 from picot.v2.contracts import (
     PriceForecastPoint,
     PVEnergyTimelineInterval,
@@ -12,6 +13,7 @@ from picot.v2.household_load_forecast import (
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.planning_input import (
     HomeAssistantStateReader,
+    HouseholdLoadObservation,
     SourceBinding,
     SourceEvidence,
     StorageStateConfig,
@@ -93,6 +95,56 @@ def test_fallback_forecast_is_deterministic() -> None:
     second = build()
 
     assert first == second
+
+
+def test_historical_forecast_requires_two_periods_and_weights_recency() -> None:
+    observations = tuple(
+        HouseholdLoadObservation(
+            power_w=power_w,
+            sampled_at=(
+                BASE
+                - timedelta(days=days_ago)
+                + timedelta(minutes=minute)
+            ),
+            evidence_ids=(f"evidence-{days_ago}-{minute}",),
+            method_version="complete-power-balance:v1",
+        )
+        for days_ago, power_w in ((2, 400.0), (1, 800.0))
+        for minute in (0, 10)
+    )
+
+    def historical(
+        history: tuple[HouseholdLoadObservation, ...],
+    ):
+        return (
+            household_load_forecast
+            .build_historical_household_load_forecast(
+                run_id="run-historical-load",
+                snapshot_id="snapshot-historical-load",
+                starts_at=BASE,
+                horizon_end=BASE + timedelta(minutes=15),
+                observations=history,
+            )
+        )
+
+    assert historical(observations[:2]) is None
+
+    result = historical(observations)
+
+    assert result is not None
+    assert result.fallback_active is False
+    assert result.fallback_reason is None
+    assert len(result.intervals) == 1
+    interval = result.intervals[0]
+    assert interval.expected_energy_wh == pytest.approx(500.0 / 3.0)
+    assert interval.confidence == pytest.approx(2.0 / 7.0)
+    assert interval.source_reference == (
+        "history:2026-08-12T10:00:00+00:00"
+        "..2026-08-13T10:10:00+00:00"
+    )
+    assert interval.method_version == (
+        "weighted-rolling-24h-periods:v1"
+    )
 
 
 @pytest.mark.parametrize(

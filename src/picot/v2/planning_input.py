@@ -52,6 +52,7 @@ class SourceEvidence:
     mapping_version: str
     error: str | None = None
     price_points: tuple[PriceForecastPoint, ...] = ()
+    pv_energy_intervals: tuple[PVEnergyTimelineInterval, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,8 +383,14 @@ class HomeAssistantStateReader:
         unit = typed_attributes.get("unit_of_measurement")
         unavailable = raw_state in {"unknown", "unavailable", None}
         price_points: tuple[PriceForecastPoint, ...] = ()
+        pv_energy_intervals: tuple[PVEnergyTimelineInterval, ...] = ()
         if binding.category == "nordpool" and not unavailable:
             price_points = _price_points_from_attributes(
+                typed_attributes,
+                evidence_id=evidence_id,
+            )
+        if binding.category == "solcast" and not unavailable:
+            pv_energy_intervals = _pv_forecast_intervals_from_attributes(
                 typed_attributes,
                 evidence_id=evidence_id,
             )
@@ -403,6 +410,7 @@ class HomeAssistantStateReader:
                 else None
             ),
             price_points=price_points,
+            pv_energy_intervals=pv_energy_intervals,
         )
 
 

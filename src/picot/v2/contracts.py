@@ -51,6 +51,14 @@ class PlanningInputSnapshot:
     price_points: tuple[PriceForecastPoint, ...] = ()
     current_storage_states: tuple[CurrentStorageState, ...] = ()
 
+    def __post_init__(self) -> None:
+        for state in self.current_storage_states:
+            if state.measured_at > self.captured_at:
+                raise ValueError(
+                    f"current storage state {state.storage_state_id} "
+                    "must not be measured after snapshot capture"
+                )
+
 
 @dataclass(frozen=True, slots=True)
 class OpportunityEvidenceRef:

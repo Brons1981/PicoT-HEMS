@@ -100,3 +100,34 @@ def test_planning_input_snapshot_reuses_current_storage_state() -> None:
 
     assert snapshot.current_storage_states == (state,)
     assert snapshot.current_storage_states[0] is state
+
+
+def test_planning_input_snapshot_rejects_future_storage_measurement() -> None:
+    state = CurrentStorageState(
+        storage_state_id="storage-state-future",
+        execution_scope_id="home-battery",
+        capability_id="storage-capability-home-battery",
+        current_soc=0.40,
+        usable_capacity_wh=8160.0,
+        measured_at=datetime(2026, 8, 14, 8, 6, tzinfo=UTC),
+        confidence=0.95,
+        evidence_ids=("ha:zendure-soc",),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "current storage state storage-state-future "
+            "must not be measured after snapshot capture"
+        ),
+    ):
+        PlanningInputSnapshot(
+            run_id="run-adr038-future",
+            snapshot_id="snapshot-adr038-future",
+            captured_at=datetime(2026, 8, 14, 8, 5, tzinfo=UTC),
+            picot_version="2.0.0-dev.9",
+            architecture_baseline_commit="baseline-adr038",
+            pipeline_contract_version=1,
+            strategy_id="strategy:no-objectives:v1",
+            current_storage_states=(state,),
+        )

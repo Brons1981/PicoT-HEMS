@@ -34,12 +34,14 @@ def _pv_interval(
     interval_id: str,
     starts_at: datetime,
     ends_at: datetime,
+    *,
+    pv_energy_wh: float = 100.0,
 ) -> PVEnergyTimelineInterval:
     return PVEnergyTimelineInterval(
         interval_id=interval_id,
         starts_at=starts_at,
         ends_at=ends_at,
-        pv_energy_wh=100.0,
+        pv_energy_wh=pv_energy_wh,
         evidence_type="FORECAST",
         confidence=0.8,
         actual_evidence_ids=(),
@@ -121,6 +123,30 @@ def test_pv_energy_interval_requires_positive_duration(
         match="starts_at must be before ends_at",
     ):
         _pv_interval("invalid-duration", BASE, ends_at)
+
+
+def test_pv_energy_interval_rejects_negative_energy() -> None:
+    with pytest.raises(
+        ValueError,
+        match="pv_energy_wh must not be negative",
+    ):
+        _pv_interval(
+            "negative-energy",
+            BASE,
+            BASE + timedelta(minutes=15),
+            pv_energy_wh=-0.01,
+        )
+
+
+def test_pv_energy_interval_allows_zero_energy() -> None:
+    interval = _pv_interval(
+        "zero-energy",
+        BASE,
+        BASE + timedelta(minutes=15),
+        pv_energy_wh=0.0,
+    )
+
+    assert interval.pv_energy_wh == pytest.approx(0.0)
 
 
 def test_pv_energy_timeline_rejects_out_of_order_intervals() -> None:

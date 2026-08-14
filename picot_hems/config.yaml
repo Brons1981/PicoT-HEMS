@@ -17,6 +17,9 @@ options:
   p1_power_entity: "sensor.ct_shelly_pro_3em_api"
   pv_power_entity: "sensor.inverter_54200dsn211r0265_vermogen"
   zendure_soc_entity: ""
+  zendure_signed_power_entity: "sensor.zendure_2400_ac_vermogen_aansturing"
+  zendure_power_to_house_entity: "sensor.zendure_2400_ac_vermogen_naar_huis"
+  zendure_power_from_house_entity: "sensor.zendure_2400_ac_vermogen_van_huis"
   storage_execution_scope_id: "home-battery"
   storage_capability_id: "storage-capability-home-battery"
   storage_usable_capacity_wh: 8160.0
@@ -31,6 +34,9 @@ schema:
   p1_power_entity: str
   pv_power_entity: str
   zendure_soc_entity: str
+  zendure_signed_power_entity: str
+  zendure_power_to_house_entity: str
+  zendure_power_from_house_entity: str
   storage_execution_scope_id: str
   storage_capability_id: str
   storage_usable_capacity_wh: float(0,)

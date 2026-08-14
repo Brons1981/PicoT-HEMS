@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,7 @@ from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __
 from picot.v2.contracts import (
     CurrentStorageState,
     PlanningInputSnapshot,
+    PVEnergyTimelineInterval,
     PriceForecastPoint,
 )
 
@@ -155,6 +156,93 @@ def _current_storage_states_from_evidence(
             )
         )
     return tuple(states)
+
+
+def _pv_forecast_intervals_from_attributes(
+    attributes: dict[str, Any],
+    *,
+    evidence_id: str,
+) -> tuple[PVEnergyTimelineInterval, ...]:
+    if attributes.get("dataCorrect") is not True:
+        return ()
+
+    raw_forecast = attributes.get("detailedForecast")
+    analysis = attributes.get("analysis")
+    if not isinstance(raw_forecast, list):
+        return ()
+    if not isinstance(analysis, dict):
+        return ()
+
+    confidence_by_start: dict[str, float] = {}
+    raw_confidence_intervals = analysis.get("intervals", [])
+    if isinstance(raw_confidence_intervals, list):
+        for item in raw_confidence_intervals:
+            if not isinstance(item, dict):
+                continue
+            period_start = item.get("period_start")
+            confidence = item.get("confidence")
+            if (
+                isinstance(period_start, str)
+                and not isinstance(confidence, bool)
+                and isinstance(confidence, (int, float))
+            ):
+                confidence_by_start[period_start] = float(confidence)
+
+    method_version = (
+        "solcast-detailed-forecast-average-kw-30m:v1"
+    )
+    result: list[PVEnergyTimelineInterval] = []
+    for item in raw_forecast:
+        if not isinstance(item, dict):
+            continue
+        raw_start = item.get("period_start")
+        starts_at = _parse_datetime(raw_start)
+        raw_power_kw = item.get("pv_estimate")
+        confidence = (
+            confidence_by_start.get(raw_start)
+            if isinstance(raw_start, str)
+            else None
+        )
+        if (
+            starts_at is None
+            or isinstance(raw_power_kw, bool)
+            or not isinstance(raw_power_kw, (int, float))
+            or confidence is None
+        ):
+            continue
+
+        average_power_kw = float(raw_power_kw)
+        if average_power_kw < 0.0:
+            continue
+        ends_at = starts_at + timedelta(minutes=30)
+        seed = (
+            f"{evidence_id}|{starts_at.isoformat()}|"
+            f"{ends_at.isoformat()}|{average_power_kw}|"
+            f"{method_version}"
+        )
+        result.append(
+            PVEnergyTimelineInterval(
+                interval_id=_stable_id(
+                    "pv-energy-interval",
+                    seed,
+                ),
+                starts_at=starts_at,
+                ends_at=ends_at,
+                pv_energy_wh=average_power_kw * 0.5 * 1000.0,
+                evidence_type="FORECAST",
+                confidence=confidence,
+                actual_evidence_ids=(),
+                forecast_evidence_ids=(evidence_id,),
+                conversion_method_version=method_version,
+            )
+        )
+
+    return tuple(
+        sorted(
+            result,
+            key=lambda interval: interval.starts_at,
+        )
+    )
 
 
 def _price_points_from_attributes(

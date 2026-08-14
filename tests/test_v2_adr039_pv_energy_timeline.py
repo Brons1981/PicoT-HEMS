@@ -26,6 +26,24 @@ def _pv_interval(
     )
 
 
+def _evidence_interval(
+    evidence_type: str,
+    actual_evidence_ids: tuple[str, ...],
+    forecast_evidence_ids: tuple[str, ...],
+) -> PVEnergyTimelineInterval:
+    return PVEnergyTimelineInterval(
+        interval_id="pv-energy-evidence-test",
+        starts_at=BASE,
+        ends_at=BASE + timedelta(minutes=15),
+        pv_energy_wh=100.0,
+        evidence_type=evidence_type,
+        confidence=0.8,
+        actual_evidence_ids=actual_evidence_ids,
+        forecast_evidence_ids=forecast_evidence_ids,
+        conversion_method_version="forecast-energy-v1",
+    )
+
+
 def test_pv_energy_timeline_is_immutable_and_traceable() -> None:
     interval = PVEnergyTimelineInterval(
         interval_id="pv-energy-interval-mixed",
@@ -148,3 +166,81 @@ def test_pv_energy_timeline_preserves_visible_gaps() -> None:
     )
 
     assert timeline.intervals == (first, after_gap)
+
+@pytest.mark.parametrize(
+    "evidence_type",
+    ("", "UNKNOWN", "actual"),
+)
+def test_pv_energy_interval_rejects_unknown_evidence_type(
+    evidence_type: str,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="evidence_type must be ACTUAL, FORECAST, or MIXED",
+    ):
+        _evidence_interval(
+            evidence_type,
+            ("evidence-actual",),
+            ("evidence-forecast",),
+        )
+
+
+@pytest.mark.parametrize(
+    (
+        "evidence_type",
+        "actual_evidence_ids",
+        "forecast_evidence_ids",
+        "expected_message",
+    ),
+    (
+        (
+            "ACTUAL",
+            (),
+            ("evidence-forecast",),
+            "ACTUAL interval requires actual evidence",
+        ),
+        (
+            "FORECAST",
+            ("evidence-actual",),
+            (),
+            "FORECAST interval requires forecast evidence",
+        ),
+        (
+            "MIXED",
+            ("evidence-actual",),
+            (),
+            "MIXED interval requires actual and forecast evidence",
+        ),
+        (
+            "MIXED",
+            (),
+            ("evidence-forecast",),
+            "MIXED interval requires actual and forecast evidence",
+        ),
+    ),
+)
+def test_pv_energy_interval_requires_matching_evidence(
+    evidence_type: str,
+    actual_evidence_ids: tuple[str, ...],
+    forecast_evidence_ids: tuple[str, ...],
+    expected_message: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_message):
+        _evidence_interval(
+            evidence_type,
+            actual_evidence_ids,
+            forecast_evidence_ids,
+        )
+
+
+def test_actual_interval_may_retain_forecast_diagnostics() -> None:
+    interval = _evidence_interval(
+        "ACTUAL",
+        ("evidence-actual",),
+        ("evidence-old-forecast",),
+    )
+
+    assert interval.actual_evidence_ids == ("evidence-actual",)
+    assert interval.forecast_evidence_ids == (
+        "evidence-old-forecast",
+    )

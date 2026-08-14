@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.9"
+version: "2.0.0-dev.10"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -13,6 +13,9 @@ options:
   p1_power_entity: "sensor.ct_shelly_pro_3em_api"
   pv_power_entity: "sensor.inverter_54200dsn211r0265_vermogen"
   zendure_soc_entity: ""
+  storage_execution_scope_id: "home-battery"
+  storage_capability_id: "storage-capability-home-battery"
+  storage_usable_capacity_wh: 8160.0
   solcast_forecast_entity: "sensor.solcast_pv_forecast_voorspelling_volgende_x_uren"
   nordpool_price_entity: "sensor.nordpool_kwh_nl_eur_3_095_0"
   price_low_margin_eur_per_kwh: 0.04
@@ -23,6 +26,9 @@ schema:
   p1_power_entity: str
   pv_power_entity: str
   zendure_soc_entity: str
+  storage_execution_scope_id: str
+  storage_capability_id: str
+  storage_usable_capacity_wh: float(0,)
   solcast_forecast_entity: str
   nordpool_price_entity: str
   price_low_margin_eur_per_kwh: float(0,1)

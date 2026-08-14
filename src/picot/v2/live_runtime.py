@@ -12,19 +12,30 @@ from dataclasses import asdict
 from hashlib import sha256
 from http.server import ThreadingHTTPServer
 from math import isfinite
+from pathlib import Path
 from threading import Thread
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
+from picot.v2.household_load_history import HouseholdLoadHistoryStore
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
-from picot.v2.planning_input import PlanningInputBundle, assemble_planning_input, load_options
+from picot.v2.planning_input import (
+    HouseholdLoadObservation,
+    PlanningInputBundle,
+    assemble_planning_input,
+    load_options,
+)
 from picot.v2.projection import Card, Projection, project
 from picot.v2.web_ui import (
     WebViewStore,
     build_web_view,
     create_web_server,
+)
+
+HOUSEHOLD_LOAD_HISTORY_PATH = Path(
+    "/data/picot_v2_household_load_history.jsonl"
 )
 
 
@@ -114,9 +125,27 @@ def _poll_live_cycle(
     previous_signature: str | None,
     load_bundle: Any,
     execute: Any,
+    persist_observation: (
+        Callable[[HouseholdLoadObservation], None] | None
+    ) = None,
 ) -> str:
     """Load fresh Planning Input and execute only when decision input changed."""
     bundle = load_bundle()
+    observation = bundle.household_load_observation
+    if persist_observation is not None and observation is not None:
+        try:
+            persist_observation(observation)
+        except OSError as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_household_load_history_unavailable",
+                        "error": type(exc).__name__,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
     return _run_live_cycle(
         previous_signature=previous_signature,
         bundle=bundle,
@@ -356,6 +385,9 @@ def main() -> None:
     options = load_options()
     price_config = _price_opportunity_config(options)
     web_view_store = WebViewStore()
+    household_load_history = HouseholdLoadHistoryStore(
+        HOUSEHOLD_LOAD_HISTORY_PATH
+    )
     _start_web_server(web_view_store)
     raw_poll_interval = options.get("live_poll_interval_seconds", 60.0)
     try:
@@ -381,6 +413,7 @@ def main() -> None:
             previous_signature=previous_signature,
             load_bundle=load_bundle,
             execute=execute,
+            persist_observation=household_load_history.append,
         )
         time.sleep(poll_interval_seconds)
 

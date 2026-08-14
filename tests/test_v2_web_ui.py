@@ -5,9 +5,9 @@ from datetime import UTC, datetime, timedelta
 from picot.v2.contracts import (
     HouseholdLoadForecast,
     HouseholdLoadForecastInterval,
+    PriceForecastPoint,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
-    PriceForecastPoint,
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline

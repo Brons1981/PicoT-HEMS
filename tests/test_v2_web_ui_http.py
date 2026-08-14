@@ -97,7 +97,17 @@ def test_web_server_exposes_auto_refreshing_read_only_dashboard() -> None:
     assert not thread.is_alive()
     assert "<title>PicoT v2 — Canonical Pipeline</title>" in html
     assert 'data-observer-only="true"' in html
+    assert 'id="sources"' in html
+    assert 'aria-label="Brongegevens"' in html
     assert 'id="pipeline"' in html
     assert 'id="pv-energy-timeline"' in html
+    assert "renderSources" in html
+    assert '"p1": "P1 netmeting"' in html
+    assert '"pv": "Zonnepanelen"' in html
+    assert '"zendure": "Zendure batterij"' in html
+    assert '"solcast": "Solcast voorspelling"' in html
+    assert '"nordpool": "Nord Pool prijzen"' in html
+    assert "Technische details" in html
+    assert "compactReference" in html
     assert 'fetch("api/view"' in html
     assert "setInterval(loadView, 5000)" in html

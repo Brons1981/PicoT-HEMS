@@ -10,6 +10,8 @@ import os
 import time
 from dataclasses import asdict
 from hashlib import sha256
+from http.server import ThreadingHTTPServer
+from threading import Thread
 from time import perf_counter
 from typing import Any
 
@@ -18,7 +20,11 @@ from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.planning_input import PlanningInputBundle, assemble_planning_input, load_options
 from picot.v2.projection import Card, Projection, project
-from picot.v2.web_ui import WebViewStore, build_web_view
+from picot.v2.web_ui import (
+    WebViewStore,
+    build_web_view,
+    create_web_server,
+)
 
 
 def _planning_input_signature(bundle: PlanningInputBundle) -> str:
@@ -204,6 +210,24 @@ def _price_opportunity_config(options: dict[str, Any]) -> PriceOpportunityConfig
     )
 
 
+def _start_web_server(
+    store: WebViewStore,
+) -> tuple[ThreadingHTTPServer, Thread]:
+    """Start the read-only observer server beside the main pipeline loop."""
+    server = create_web_server(
+        store,
+        host="0.0.0.0",
+        port=8099,
+    )
+    thread = Thread(
+        target=server.serve_forever,
+        name="picot-v2-web-ui",
+        daemon=True,
+    )
+    thread.start()
+    return server, thread
+
+
 def _execute_planning_bundle(
     *,
     token: str,
@@ -307,6 +331,7 @@ def main() -> None:
     options = load_options()
     price_config = _price_opportunity_config(options)
     web_view_store = WebViewStore()
+    _start_web_server(web_view_store)
     raw_poll_interval = options.get("live_poll_interval_seconds", 60.0)
     try:
         poll_interval_seconds = float(raw_poll_interval)

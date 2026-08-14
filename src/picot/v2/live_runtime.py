@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import asdict
 from hashlib import sha256
 from http.server import ThreadingHTTPServer
@@ -15,7 +16,7 @@ from math import isfinite
 from pathlib import Path
 from threading import Thread
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any
 
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore

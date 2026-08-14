@@ -67,4 +67,4 @@ def test_projected_balance_and_storage_requirement_are_immutable_and_traceable()
     assert requirement.evidence_ids == evidence_ids
 
     with pytest.raises(FrozenInstanceError):
-        setattr(requirement, "required_energy_wh", 0.0)
+        requirement.required_energy_wh = 0.0  # type: ignore[misc]

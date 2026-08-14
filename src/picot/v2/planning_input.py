@@ -24,6 +24,9 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
+from picot.v2.household_load_forecast import (
+    build_fallback_household_load_forecast,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +425,7 @@ def assemble_planning_input(
     storage_state_config: StorageStateConfig | None = None,
     options_path: str = "/data/options.json",
     captured_at: datetime | None = None,
+    household_load_fallback_power_w: float | None = None,
 ) -> PlanningInputBundle:
     started = datetime.now(UTC)
     reader = HomeAssistantStateReader(token)
@@ -466,7 +470,16 @@ def assemble_planning_input(
         for point in item.price_points
         if point.ends_at > capture
     )
-    horizon_end = max((point.ends_at for point in price_points), default=None)
+    price_horizon_end = max(
+        (point.ends_at for point in price_points),
+        default=None,
+    )
+    household_load_horizon_end = capture + timedelta(hours=36)
+    horizon_end = (
+        household_load_horizon_end
+        if household_load_fallback_power_w is not None
+        else price_horizon_end
+    )
     current_storage_states = _current_storage_states_from_evidence(
         evidence,
         config=selected_storage_config,
@@ -494,6 +507,17 @@ def assemble_planning_input(
         if pv_energy_intervals
         else None
     )
+    household_load_forecast = (
+        build_fallback_household_load_forecast(
+            run_id=run_id,
+            snapshot_id=snapshot_id,
+            starts_at=capture,
+            horizon_end=household_load_horizon_end,
+            fallback_power_w=household_load_fallback_power_w,
+        )
+        if household_load_fallback_power_w is not None
+        else None
+    )
 
     snapshot = PlanningInputSnapshot(
         run_id=run_id,
@@ -507,5 +531,6 @@ def assemble_planning_input(
         price_points=price_points,
         current_storage_states=current_storage_states,
         pv_energy_timeline=pv_energy_timeline,
+        household_load_forecast=household_load_forecast,
     )
     return PlanningInputBundle(snapshot, evidence, facts, started, finished)

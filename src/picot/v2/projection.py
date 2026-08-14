@@ -54,7 +54,28 @@ def project(run: CanonicalPipelineRun) -> Projection:
         Card(
             "sensor.picot_v2_pipeline_01_planning_input",
             "ready",
-            base("bootstrap", p.snapshot_id, "unchanged"),
+            base("bootstrap", p.snapshot_id, "unchanged")
+            | {
+                "current_storage_state_count": len(
+                    p.current_storage_states
+                ),
+                "current_storage_states": [
+                    {
+                        "storage_state_id": state.storage_state_id,
+                        "execution_scope_id": state.execution_scope_id,
+                        "capability_id": state.capability_id,
+                        "current_soc": state.current_soc,
+                        "usable_capacity_wh": state.usable_capacity_wh,
+                        "current_stored_energy_wh": (
+                            state.current_stored_energy_wh
+                        ),
+                        "measured_at": state.measured_at.isoformat(),
+                        "confidence": state.confidence,
+                        "evidence_ids": list(state.evidence_ids),
+                    }
+                    for state in p.current_storage_states
+                ],
+            },
         ),
         Card(
             "sensor.picot_v2_pipeline_02_opportunity_engine",

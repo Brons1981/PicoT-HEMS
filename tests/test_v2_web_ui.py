@@ -227,6 +227,14 @@ def test_dashboard_contains_readable_household_load_forecast_panel() -> None:
     assert "view.household_load_forecast" in DASHBOARD_HTML
 
 
+def test_dashboard_preserves_open_quarter_details_during_refresh() -> None:
+    assert (
+        'container.querySelector("details")?.open ?? false'
+        in DASHBOARD_HTML
+    )
+    assert "details.open = quarterDetailsOpen" in DASHBOARD_HTML
+
+
 def test_web_view_represents_missing_pv_timeline_without_intervals() -> None:
     run = CanonicalPipeline().run(
         captured_at=datetime(2026, 8, 14, 10, 0, tzinfo=UTC)

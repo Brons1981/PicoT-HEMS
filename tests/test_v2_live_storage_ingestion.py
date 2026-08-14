@@ -105,3 +105,65 @@ def test_storage_state_config_is_absent_without_positive_capacity(
     )
 
     assert load_storage_state_config(str(options_path)) is None
+
+
+def test_default_assembly_loads_storage_config_from_same_options(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    options_path = tmp_path / "options.json"
+    options_path.write_text(
+        json.dumps(
+            {
+                "zendure_soc_entity": "sensor.zendure_battery_soc",
+                "storage_execution_scope_id": "home-battery",
+                "storage_capability_id": "storage-capability-home-battery",
+                "storage_usable_capacity_wh": 8160.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    observed_at = BASE - timedelta(seconds=5)
+
+    def fake_read(
+        self: HomeAssistantStateReader,
+        binding: SourceBinding,
+    ) -> SourceEvidence:
+        del self
+        if binding.category == "zendure":
+            return SourceEvidence(
+                evidence_id="evidence-zendure-live",
+                category=binding.category,
+                semantic_role=binding.semantic_role,
+                entity_id=binding.entity_id,
+                raw_state="40",
+                raw_unit="%",
+                observed_at=observed_at,
+                availability="available",
+                mapping_version="mapping-zendure-live",
+            )
+        return SourceEvidence(
+            evidence_id=f"evidence-{binding.category}-unconfigured",
+            category=binding.category,
+            semantic_role=binding.semantic_role,
+            entity_id=None,
+            raw_state=None,
+            raw_unit=None,
+            observed_at=None,
+            availability="unconfigured",
+            mapping_version=f"mapping-{binding.category}-unconfigured",
+        )
+
+    monkeypatch.setattr(HomeAssistantStateReader, "read", fake_read)  # type: ignore[attr-defined]
+    bundle = assemble_planning_input(
+        "token",
+        options_path=str(options_path),
+        captured_at=BASE,
+    )
+
+    assert len(bundle.snapshot.current_storage_states) == 1
+    state = bundle.snapshot.current_storage_states[0]
+    assert state.current_soc == pytest.approx(0.40)
+    assert state.usable_capacity_wh == pytest.approx(8160.0)
+    assert state.current_stored_energy_wh == pytest.approx(3264.0)
+    assert state.evidence_ids == ("evidence-zendure-live",)

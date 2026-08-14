@@ -7,7 +7,9 @@ from picot.v2.contracts import (
     HouseholdLoadForecastInterval,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
+    PriceForecastPoint,
 )
+from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.projection import project
 from picot.v2.web_ui import (
@@ -233,6 +235,84 @@ def test_dashboard_preserves_open_quarter_details_during_refresh() -> None:
         in DASHBOARD_HTML
     )
     assert "details.open = quarterDetailsOpen" in DASHBOARD_HTML
+
+
+def test_web_view_exposes_prices_and_detected_windows_for_48_hour_chart() -> None:
+    captured_at = datetime(2026, 8, 14, 10, 0, tzinfo=UTC)
+    bootstrap = CanonicalPipeline().run(
+        captured_at=captured_at
+    ).planning_input
+    price_points = (
+        PriceForecastPoint(
+            point_id="price-low",
+            starts_at=captured_at,
+            ends_at=captured_at + timedelta(minutes=15),
+            value_eur_per_kwh=-0.02,
+            confidence=1.0,
+            evidence_id="nordpool-day-1",
+        ),
+        PriceForecastPoint(
+            point_id="price-high",
+            starts_at=captured_at + timedelta(minutes=15),
+            ends_at=captured_at + timedelta(minutes=30),
+            value_eur_per_kwh=0.38,
+            confidence=1.0,
+            evidence_id="nordpool-day-1",
+        ),
+        PriceForecastPoint(
+            point_id="price-outside-planning-horizon",
+            starts_at=captured_at + timedelta(hours=47),
+            ends_at=captured_at + timedelta(
+                hours=47,
+                minutes=15,
+            ),
+            value_eur_per_kwh=0.21,
+            confidence=1.0,
+            evidence_id="nordpool-day-2",
+        ),
+    )
+    run = CanonicalPipeline().run(
+        planning_input=replace(
+            bootstrap,
+            horizon_end=captured_at + timedelta(hours=36),
+            price_points=price_points,
+        ),
+        price_opportunity_config=PriceOpportunityConfig(
+            low_price_margin_eur_per_kwh=0.0,
+            high_price_margin_eur_per_kwh=0.0,
+            config_version="price-chart-test:v1",
+        ),
+    )
+
+    view = build_web_view(run, project(run))
+
+    price_timeline = view["price_timeline"]
+    assert price_timeline["display_hours"] == 48
+    assert price_timeline["market_timezone"] == "Europe/Amsterdam"
+    assert price_timeline["planning_horizon_ends_at"] == (
+        "2026-08-15T22:00:00+00:00"
+    )
+    assert [point["point_id"] for point in price_timeline["points"]] == [
+        "price-low",
+        "price-high",
+        "price-outside-planning-horizon",
+    ]
+    assert {
+        opportunity["kind"]
+        for opportunity in price_timeline["opportunities"]
+    } >= {
+        "LOWEST_PRICE_WINDOW",
+        "HIGH_EXPORT_VALUE_WINDOW",
+    }
+
+
+def test_dashboard_contains_48_hour_price_window_chart() -> None:
+    assert "Prijsverloop komende 48 uur" in DASHBOARD_HTML
+    assert 'id="price-timeline"' in DASHBOARD_HTML
+    assert "renderPriceTimeline" in DASHBOARD_HTML
+    assert "Nog niet gepubliceerd" in DASHBOARD_HTML
+    assert "LOWEST_PRICE_WINDOW" in DASHBOARD_HTML
+    assert "HIGH_EXPORT_VALUE_WINDOW" in DASHBOARD_HTML
 
 
 def test_web_view_represents_missing_pv_timeline_without_intervals() -> None:

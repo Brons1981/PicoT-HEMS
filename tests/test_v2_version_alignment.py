@@ -16,8 +16,26 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_ingress_release_uses_dev_13() -> None:
-    assert __version__ == "2.0.0-dev.13"
+def test_v2_readable_sources_release_uses_dev_14() -> None:
+    assert __version__ == "2.0.0-dev.14"
+
+
+def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:
+    config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
+    lines = config_path.read_text(encoding="utf-8").splitlines()
+    option_lines = lines[
+        lines.index("options:") + 1 : lines.index("schema:")
+    ]
+    options = {
+        key.strip(): value.strip().strip('"')
+        for line in option_lines
+        if line.startswith("  ") and ":" in line
+        for key, _, value in (line.partition(":"),)
+    }
+
+    assert options.get("solcast_forecast_entity") == (
+        "sensor.solcast_pv_forecast_voorspelling_vandaag"
+    )
 
 
 def test_v2_addon_exposes_pipeline_dashboard_via_ingress() -> None:

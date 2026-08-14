@@ -167,6 +167,7 @@ def test_pv_energy_timeline_preserves_visible_gaps() -> None:
 
     assert timeline.intervals == (first, after_gap)
 
+
 @pytest.mark.parametrize(
     "evidence_type",
     ("", "UNKNOWN", "actual"),

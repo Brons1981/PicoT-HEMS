@@ -199,6 +199,35 @@ def load_options(options_path: str = "/data/options.json") -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def load_storage_state_config(
+    options_path: str = "/data/options.json",
+) -> StorageStateConfig | None:
+    options = load_options(options_path)
+    execution_scope_id = options.get("storage_execution_scope_id")
+    capability_id = options.get("storage_capability_id")
+    raw_capacity = options.get("storage_usable_capacity_wh")
+
+    if (
+        not isinstance(execution_scope_id, str)
+        or not execution_scope_id.strip()
+        or not isinstance(capability_id, str)
+        or not capability_id.strip()
+        or isinstance(raw_capacity, bool)
+        or not isinstance(raw_capacity, (int, float))
+    ):
+        return None
+
+    usable_capacity_wh = float(raw_capacity)
+    if usable_capacity_wh <= 0.0:
+        return None
+
+    return StorageStateConfig(
+        execution_scope_id=execution_scope_id.strip(),
+        capability_id=capability_id.strip(),
+        usable_capacity_wh=usable_capacity_wh,
+    )
+
+
 def load_bindings(options_path: str = "/data/options.json") -> tuple[SourceBinding, ...]:
     options = load_options(options_path)
     result: list[SourceBinding] = []

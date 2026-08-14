@@ -1,0 +1,64 @@
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from picot.v2.planning_input import (
+    HomeAssistantStateReader,
+    SourceBinding,
+    SourceEvidence,
+    StorageStateConfig,
+    assemble_planning_input,
+)
+
+BASE = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
+
+
+def test_available_zendure_soc_becomes_current_storage_state(
+    monkeypatch: object,
+) -> None:
+    observed_at = BASE - timedelta(seconds=5)
+
+    def fake_read(
+        self: HomeAssistantStateReader,
+        binding: SourceBinding,
+    ) -> SourceEvidence:
+        del self
+        return SourceEvidence(
+            evidence_id="evidence-zendure-soc",
+            category=binding.category,
+            semantic_role=binding.semantic_role,
+            entity_id=binding.entity_id,
+            raw_state="40",
+            raw_unit="%",
+            observed_at=observed_at,
+            availability="available",
+            mapping_version="mapping-zendure-soc",
+        )
+
+    monkeypatch.setattr(HomeAssistantStateReader, "read", fake_read)  # type: ignore[attr-defined]
+    bundle = assemble_planning_input(
+        "token",
+        bindings=(
+            SourceBinding(
+                "zendure",
+                "storage_soc",
+                "sensor.zendure_battery_soc",
+            ),
+        ),
+        storage_state_config=StorageStateConfig(
+            execution_scope_id="home-battery",
+            capability_id="storage-capability-home-battery",
+            usable_capacity_wh=8160.0,
+        ),
+        captured_at=BASE,
+    )
+
+    assert len(bundle.snapshot.current_storage_states) == 1
+    state = bundle.snapshot.current_storage_states[0]
+    assert state.execution_scope_id == "home-battery"
+    assert state.capability_id == "storage-capability-home-battery"
+    assert state.current_soc == pytest.approx(0.40)
+    assert state.usable_capacity_wh == pytest.approx(8160.0)
+    assert state.current_stored_energy_wh == pytest.approx(3264.0)
+    assert state.measured_at == observed_at
+    assert state.evidence_ids == ("evidence-zendure-soc",)

@@ -17,7 +17,11 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
-from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
+from picot.v2.contracts import (
+    CurrentStorageState,
+    PlanningInputSnapshot,
+    PriceForecastPoint,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +29,13 @@ class SourceBinding:
     category: str
     semantic_role: str
     entity_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class StorageStateConfig:
+    execution_scope_id: str
+    capability_id: str
+    usable_capacity_wh: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +109,52 @@ def _canonical_value(raw_state: str | None) -> float | str | None:
         return float(raw_state)
     except ValueError:
         return raw_state
+
+
+def _current_storage_states_from_evidence(
+    evidence: tuple[SourceEvidence, ...],
+    *,
+    config: StorageStateConfig | None,
+) -> tuple[CurrentStorageState, ...]:
+    if config is None or config.usable_capacity_wh <= 0.0:
+        return ()
+
+    states: list[CurrentStorageState] = []
+    for item in evidence:
+        if (
+            item.category != "zendure"
+            or item.semantic_role != "storage_soc"
+            or item.availability != "available"
+            or item.raw_state is None
+            or item.observed_at is None
+        ):
+            continue
+        try:
+            raw_soc = float(item.raw_state)
+        except ValueError:
+            continue
+
+        current_soc = raw_soc / 100.0 if item.raw_unit == "%" else raw_soc
+        if not 0.0 <= current_soc <= 1.0:
+            continue
+
+        seed = (
+            f"{item.evidence_id}|{config.execution_scope_id}|"
+            f"{config.capability_id}|{config.usable_capacity_wh}"
+        )
+        states.append(
+            CurrentStorageState(
+                storage_state_id=_stable_id("storage-state", seed),
+                execution_scope_id=config.execution_scope_id,
+                capability_id=config.capability_id,
+                current_soc=current_soc,
+                usable_capacity_wh=config.usable_capacity_wh,
+                measured_at=item.observed_at,
+                confidence=0.0,
+                evidence_ids=(item.evidence_id,),
+            )
+        )
+    return tuple(states)
 
 
 def _price_points_from_attributes(
@@ -236,6 +293,7 @@ def assemble_planning_input(
     token: str,
     *,
     bindings: tuple[SourceBinding, ...] | None = None,
+    storage_state_config: StorageStateConfig | None = None,
     captured_at: datetime | None = None,
 ) -> PlanningInputBundle:
     started = datetime.now(UTC)
@@ -278,6 +336,10 @@ def assemble_planning_input(
         if point.ends_at > capture
     )
     horizon_end = max((point.ends_at for point in price_points), default=None)
+    current_storage_states = _current_storage_states_from_evidence(
+        evidence,
+        config=storage_state_config,
+    )
 
     snapshot = PlanningInputSnapshot(
         run_id=run_id,
@@ -289,5 +351,6 @@ def assemble_planning_input(
         strategy_id="strategy:no-objectives:v1",
         horizon_end=horizon_end,
         price_points=price_points,
+        current_storage_states=current_storage_states,
     )
     return PlanningInputBundle(snapshot, evidence, facts, started, finished)

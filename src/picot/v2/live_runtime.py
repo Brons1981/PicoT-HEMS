@@ -45,6 +45,24 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
         }
         for point in bundle.snapshot.price_points
     ]
+    pv_timeline = bundle.snapshot.pv_energy_timeline
+    pv_energy_intervals = [
+        {
+            "starts_at": interval.starts_at.isoformat(),
+            "ends_at": interval.ends_at.isoformat(),
+            "pv_energy_wh": interval.pv_energy_wh,
+            "evidence_type": interval.evidence_type,
+            "confidence": interval.confidence,
+            "conversion_method_version": (
+                interval.conversion_method_version
+            ),
+        }
+        for interval in (
+            pv_timeline.intervals
+            if pv_timeline is not None
+            else ()
+        )
+    ]
     payload = {
         "strategy_id": bundle.snapshot.strategy_id,
         "horizon_end": (
@@ -52,6 +70,7 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
         ),
         "facts": facts,
         "price_points": price_points,
+        "pv_energy_intervals": pv_energy_intervals,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return sha256(canonical.encode("utf-8")).hexdigest()

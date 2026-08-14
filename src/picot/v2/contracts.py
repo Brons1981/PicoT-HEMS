@@ -66,6 +66,7 @@ class PVEnergyTimeline:
         for previous, current in zip(
             self.intervals,
             self.intervals[1:],
+            strict=False,
         ):
             if current.starts_at < previous.starts_at:
                 raise ValueError(

@@ -39,6 +39,27 @@ class CurrentStorageState:
 
 
 @dataclass(frozen=True, slots=True)
+class PVEnergyTimelineInterval:
+    interval_id: str
+    starts_at: datetime
+    ends_at: datetime
+    pv_energy_wh: float
+    evidence_type: str
+    confidence: float
+    actual_evidence_ids: tuple[str, ...]
+    forecast_evidence_ids: tuple[str, ...]
+    conversion_method_version: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PVEnergyTimeline:
+    timeline_id: str
+    run_id: str
+    snapshot_id: str
+    intervals: tuple[PVEnergyTimelineInterval, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PlanningInputSnapshot:
     run_id: str
     snapshot_id: str

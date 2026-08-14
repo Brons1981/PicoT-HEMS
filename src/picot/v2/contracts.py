@@ -73,6 +73,47 @@ class OpportunitySet:
 
 
 @dataclass(frozen=True, slots=True)
+class ProjectedHouseholdEnergyBalanceInterval:
+    starts_at: datetime
+    ends_at: datetime
+    current_usable_storage_energy_wh: float
+    expected_usable_pv_energy_wh: float
+    planned_grid_energy_wh: float
+    household_load_forecast_energy_wh: float
+    known_future_demand_energy_wh: float
+    conversion_losses_wh: float
+    other_planned_household_energy_flows_wh: float
+    projected_storage_energy_wh: float
+    confidence: float
+    evidence_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectedHouseholdEnergyBalance:
+    balance_id: str
+    run_id: str
+    snapshot_id: str
+    storage_state_id: str
+    intervals: tuple[ProjectedHouseholdEnergyBalanceInterval, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StorageEnergyRequirement:
+    requirement_id: str
+    run_id: str
+    snapshot_id: str
+    storage_state_id: str
+    projected_balance_id: str
+    required_energy_wh: float
+    required_soc: float
+    required_by: datetime
+    reason: str
+    confidence: float
+    evidence_ids: tuple[str, ...]
+    reserve_contribution_wh: float
+
+
+@dataclass(frozen=True, slots=True)
 class EnergyPath:
     run_id: str
     snapshot_id: str

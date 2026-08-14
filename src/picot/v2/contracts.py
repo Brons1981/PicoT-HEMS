@@ -113,6 +113,7 @@ class PlanningInputSnapshot:
     horizon_end: datetime | None = None
     price_points: tuple[PriceForecastPoint, ...] = ()
     current_storage_states: tuple[CurrentStorageState, ...] = ()
+    pv_energy_timeline: PVEnergyTimeline | None = None
 
     def __post_init__(self) -> None:
         for state in self.current_storage_states:
@@ -120,6 +121,17 @@ class PlanningInputSnapshot:
                 raise ValueError(
                     f"current storage state {state.storage_state_id} "
                     "must not be measured after snapshot capture"
+                )
+        if self.pv_energy_timeline is not None:
+            if self.pv_energy_timeline.run_id != self.run_id:
+                raise ValueError(
+                    "PV energy timeline run_id must match "
+                    "planning input snapshot run_id"
+                )
+            if self.pv_energy_timeline.snapshot_id != self.snapshot_id:
+                raise ValueError(
+                    "PV energy timeline snapshot_id must match "
+                    "planning input snapshot snapshot_id"
                 )
 
 

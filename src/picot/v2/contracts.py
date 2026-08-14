@@ -50,6 +50,10 @@ class PVEnergyTimelineInterval:
     forecast_evidence_ids: tuple[str, ...]
     conversion_method_version: str | None
 
+    def __post_init__(self) -> None:
+        if self.starts_at >= self.ends_at:
+            raise ValueError("starts_at must be before ends_at")
+
 
 @dataclass(frozen=True, slots=True)
 class PVEnergyTimeline:
@@ -57,6 +61,18 @@ class PVEnergyTimeline:
     run_id: str
     snapshot_id: str
     intervals: tuple[PVEnergyTimelineInterval, ...]
+
+    def __post_init__(self) -> None:
+        for previous, current in zip(
+            self.intervals,
+            self.intervals[1:],
+        ):
+            if current.starts_at < previous.starts_at:
+                raise ValueError(
+                    "intervals must be chronologically ordered"
+                )
+            if current.starts_at < previous.ends_at:
+                raise ValueError("intervals must not overlap")
 
 
 @dataclass(frozen=True, slots=True)

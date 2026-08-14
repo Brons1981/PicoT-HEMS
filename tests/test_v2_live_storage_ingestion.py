@@ -205,3 +205,71 @@ def test_default_assembly_loads_storage_config_from_same_options(
     assert state.usable_capacity_wh == pytest.approx(8160.0)
     assert state.current_stored_energy_wh == pytest.approx(3264.0)
     assert state.evidence_ids == ("evidence-zendure-live",)
+
+
+def test_live_power_evidence_becomes_household_load_observation(
+    monkeypatch: object,
+) -> None:
+    source_observed_at = BASE - timedelta(seconds=5)
+    values = {
+        "grid_power": "200",
+        "pv_power": "1000",
+        "storage_power_signed": "300",
+        "storage_power_to_house": "0",
+        "storage_power_from_house": "300",
+    }
+
+    def fake_read(
+        self: HomeAssistantStateReader,
+        binding: SourceBinding,
+    ) -> SourceEvidence:
+        del self
+        return SourceEvidence(
+            evidence_id=f"evidence-{binding.semantic_role}",
+            category=binding.category,
+            semantic_role=binding.semantic_role,
+            entity_id=binding.entity_id,
+            raw_state=values[binding.semantic_role],
+            raw_unit="W",
+            observed_at=source_observed_at,
+            availability="available",
+            mapping_version=f"mapping-{binding.semantic_role}",
+        )
+
+    monkeypatch.setattr(HomeAssistantStateReader, "read", fake_read)
+    bundle = assemble_planning_input(
+        "token",
+        bindings=(
+            SourceBinding("p1", "grid_power", "sensor.grid"),
+            SourceBinding("pv", "pv_power", "sensor.pv"),
+            SourceBinding(
+                "zendure",
+                "storage_power_signed",
+                "sensor.storage_signed",
+            ),
+            SourceBinding(
+                "zendure",
+                "storage_power_to_house",
+                "sensor.storage_to_house",
+            ),
+            SourceBinding(
+                "zendure",
+                "storage_power_from_house",
+                "sensor.storage_from_house",
+            ),
+        ),
+        captured_at=BASE,
+    )
+
+    assert bundle.household_load_observation is not None
+    observation = bundle.household_load_observation
+    assert observation.power_w == pytest.approx(900.0)
+    assert observation.sampled_at == BASE
+    assert observation.evidence_ids == (
+        "evidence-grid_power",
+        "evidence-pv_power",
+        "evidence-storage_power_signed",
+        "evidence-storage_power_to_house",
+        "evidence-storage_power_from_house",
+    )
+    assert observation.method_version == "complete-power-balance:v1"

@@ -27,6 +27,7 @@ from picot.v2.contracts import (
 )
 from picot.v2.household_load_forecast import (
     build_fallback_household_load_forecast,
+    derive_household_load_power_w,
 )
 
 
@@ -78,12 +79,31 @@ class CanonicalInputFact:
 
 
 @dataclass(frozen=True, slots=True)
+class HouseholdLoadObservation:
+    power_w: float
+    sampled_at: datetime
+    evidence_ids: tuple[str, ...]
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if not isfinite(self.power_w) or self.power_w < 0.0:
+            raise ValueError("power_w must be finite and non-negative")
+        if self.sampled_at.tzinfo is None:
+            raise ValueError("sampled_at must be timezone-aware")
+        if not self.evidence_ids:
+            raise ValueError("evidence_ids must not be empty")
+        if not self.method_version.strip():
+            raise ValueError("method_version must be explicit")
+
+
+@dataclass(frozen=True, slots=True)
 class PlanningInputBundle:
     snapshot: PlanningInputSnapshot
     evidence: tuple[SourceEvidence, ...]
     facts: tuple[CanonicalInputFact, ...]
     assembly_started_at: datetime
     assembly_finished_at: datetime
+    household_load_observation: HouseholdLoadObservation | None = None
 
 
 DEFAULT_BINDINGS = (
@@ -110,6 +130,7 @@ DEFAULT_BINDINGS = (
 )
 
 DEFAULT_STORAGE_POWER_CONSISTENCY_TOLERANCE_W = 25.0
+HOUSEHOLD_LOAD_OBSERVATION_METHOD_VERSION = "complete-power-balance:v1"
 
 
 def _stable_id(prefix: str, seed: str) -> str:
@@ -160,6 +181,65 @@ def derive_validated_storage_power_w(
     ):
         return None
     return signed_power_w
+
+
+def _household_load_observation_from_evidence(
+    evidence: tuple[SourceEvidence, ...],
+    *,
+    sampled_at: datetime,
+) -> HouseholdLoadObservation | None:
+    required_roles = (
+        "grid_power",
+        "pv_power",
+        "storage_power_signed",
+        "storage_power_to_house",
+        "storage_power_from_house",
+    )
+    available: dict[str, tuple[float, str]] = {}
+
+    for item in evidence:
+        if item.semantic_role not in required_roles:
+            continue
+        if item.semantic_role in available:
+            return None
+        if (
+            item.availability != "available"
+            or item.raw_state is None
+            or item.raw_unit != "W"
+            or item.observed_at is None
+        ):
+            return None
+        try:
+            value = float(item.raw_state)
+        except ValueError:
+            return None
+        available[item.semantic_role] = (value, item.evidence_id)
+
+    if set(available) != set(required_roles):
+        return None
+
+    storage_power_w = derive_validated_storage_power_w(
+        signed_power_w=available["storage_power_signed"][0],
+        power_to_house_w=available["storage_power_to_house"][0],
+        power_from_house_w=available["storage_power_from_house"][0],
+    )
+    household_load_power_w = derive_household_load_power_w(
+        grid_power_w=available["grid_power"][0],
+        pv_power_w=available["pv_power"][0],
+        battery_power_w=storage_power_w,
+    )
+    if household_load_power_w is None:
+        return None
+
+    return HouseholdLoadObservation(
+        power_w=household_load_power_w,
+        sampled_at=sampled_at,
+        evidence_ids=tuple(
+            available[role][1]
+            for role in required_roles
+        ),
+        method_version=HOUSEHOLD_LOAD_OBSERVATION_METHOD_VERSION,
+    )
 
 
 def _parse_datetime(value: object) -> datetime | None:
@@ -504,6 +584,13 @@ def assemble_planning_input(
     if capture.tzinfo is None or capture.utcoffset() is None:
         raise ValueError("captured_at must be timezone-aware")
 
+    household_load_observation = (
+        _household_load_observation_from_evidence(
+            evidence,
+            sampled_at=capture,
+        )
+    )
+
     evidence_seed = "|".join(
         f"{item.mapping_version}:{item.raw_state}:{item.observed_at}" for item in evidence
     )
@@ -597,4 +684,11 @@ def assemble_planning_input(
         pv_energy_timeline=pv_energy_timeline,
         household_load_forecast=household_load_forecast,
     )
-    return PlanningInputBundle(snapshot, evidence, facts, started, finished)
+    return PlanningInputBundle(
+        snapshot,
+        evidence,
+        facts,
+        started,
+        finished,
+        household_load_observation,
+    )

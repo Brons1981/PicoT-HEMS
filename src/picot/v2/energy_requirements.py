@@ -60,12 +60,10 @@ def derive_storage_energy_requirement(
 ) -> StorageEnergyRequirement:
     confidence = min(interval.confidence for interval in balance.intervals)
     evidence_ids = tuple(
-        sorted(
-            {
-                evidence_id
-                for interval in balance.intervals
-                for evidence_id in interval.evidence_ids
-            }
+        dict.fromkeys(
+            evidence_id
+            for interval in balance.intervals
+            for evidence_id in interval.evidence_ids
         )
     )
     seed = (

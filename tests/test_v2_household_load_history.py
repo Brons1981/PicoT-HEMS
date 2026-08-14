@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
+
 from picot.v2.planning_input import HouseholdLoadObservation
 
 BASE = datetime(2026, 8, 14, 16, 0, tzinfo=UTC)

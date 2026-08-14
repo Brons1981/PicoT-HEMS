@@ -49,6 +49,7 @@ class PlanningInputSnapshot:
     strategy_id: str
     horizon_end: datetime | None = None
     price_points: tuple[PriceForecastPoint, ...] = ()
+    current_storage_states: tuple[CurrentStorageState, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -846,7 +846,7 @@ def main() -> None:
         raise ValueError("pv_power_entity must be explicit")
 
     pv_installation_scope_id = str(
-        options.get("pv_installation_scope_id", "")
+        options.get("pv_installation_scope_id", "pv-installation-home")
     ).strip()
     if not pv_installation_scope_id:
         raise ValueError("pv_installation_scope_id must be explicit")

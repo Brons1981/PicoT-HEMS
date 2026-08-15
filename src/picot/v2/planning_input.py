@@ -341,6 +341,14 @@ def _pv_forecast_intervals_from_attributes(
     method_version = (
         "solcast-detailed-forecast-average-kw-30m:v1"
     )
+    range_method_version = (
+        "solcast-pv-estimate-range-average-kw-30m:v1"
+    )
+    range_source_fields = (
+        "pv_estimate10",
+        "pv_estimate",
+        "pv_estimate90",
+    )
     result: list[PVEnergyTimelineInterval] = []
     for item in raw_forecast:
         if not isinstance(item, dict):
@@ -348,6 +356,8 @@ def _pv_forecast_intervals_from_attributes(
         raw_start = item.get("period_start")
         starts_at = _parse_datetime(raw_start)
         raw_power_kw = item.get("pv_estimate")
+        raw_lower_power_kw = item.get("pv_estimate10")
+        raw_upper_power_kw = item.get("pv_estimate90")
         confidence = (
             confidence_by_start.get(raw_start)
             if isinstance(raw_start, str)
@@ -364,6 +374,37 @@ def _pv_forecast_intervals_from_attributes(
         average_power_kw = float(raw_power_kw)
         if average_power_kw < 0.0:
             continue
+
+        range_values_are_numeric = all(
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            for value in (raw_lower_power_kw, raw_upper_power_kw)
+        )
+        lower_energy_wh: float | None = None
+        central_energy_wh: float | None = None
+        upper_energy_wh: float | None = None
+        range_status = "unavailable"
+        range_fields: tuple[str, ...] = ()
+        range_version: str | None = None
+        if range_values_are_numeric:
+            lower_power_kw = float(raw_lower_power_kw)
+            upper_power_kw = float(raw_upper_power_kw)
+            if (
+                isfinite(lower_power_kw)
+                and isfinite(average_power_kw)
+                and isfinite(upper_power_kw)
+                and 0.0
+                <= lower_power_kw
+                <= average_power_kw
+                <= upper_power_kw
+            ):
+                lower_energy_wh = lower_power_kw * 0.5 * 1000.0
+                central_energy_wh = average_power_kw * 0.5 * 1000.0
+                upper_energy_wh = upper_power_kw * 0.5 * 1000.0
+                range_status = "available"
+                range_fields = range_source_fields
+                range_version = range_method_version
+
         ends_at = starts_at + timedelta(minutes=30)
         seed = (
             f"{evidence_id}|{starts_at.isoformat()}|"
@@ -380,6 +421,12 @@ def _pv_forecast_intervals_from_attributes(
                 ends_at=ends_at,
                 pv_energy_wh=average_power_kw * 0.5 * 1000.0,
                 evidence_type="FORECAST",
+                forecast_lower_energy_wh=lower_energy_wh,
+                forecast_central_energy_wh=central_energy_wh,
+                forecast_upper_energy_wh=upper_energy_wh,
+                forecast_range_status=range_status,
+                forecast_range_source_fields=range_fields,
+                forecast_range_method_version=range_version,
                 confidence=confidence,
                 actual_evidence_ids=(),
                 forecast_evidence_ids=(evidence_id,),

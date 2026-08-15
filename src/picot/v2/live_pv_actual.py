@@ -35,6 +35,9 @@ class LivePVActualDiagnostics:
     last_observed_at: datetime | None = None
     maximum_observed_gap_seconds: float | None = None
     allowed_gap_seconds: float | None = None
+    history_semantics: str | None = None
+    interruption_state: str | None = None
+    interrupted_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +241,21 @@ def apply_latest_closed_actual_pv(
             if diagnosis is not None
             else None
         ),
+        history_semantics=(
+            diagnosis.history_semantics
+            if diagnosis is not None
+            else None
+        ),
+        interruption_state=(
+            diagnosis.interruption_state
+            if diagnosis is not None
+            else None
+        ),
+        interrupted_at=(
+            diagnosis.interrupted_at
+            if diagnosis is not None
+            else None
+        ),
     )
     return enriched, diagnostics
 
@@ -261,6 +279,9 @@ def _diagnostics(
     last_observed_at: datetime | None = None,
     maximum_observed_gap_seconds: float | None = None,
     allowed_gap_seconds: float | None = None,
+    history_semantics: str | None = None,
+    interruption_state: str | None = None,
+    interrupted_at: datetime | None = None,
 ) -> LivePVActualDiagnostics:
     return LivePVActualDiagnostics(
         history_status=history_status,
@@ -285,4 +306,7 @@ def _diagnostics(
             maximum_observed_gap_seconds
         ),
         allowed_gap_seconds=allowed_gap_seconds,
+        history_semantics=history_semantics,
+        interruption_state=interruption_state,
+        interrupted_at=interrupted_at,
     )

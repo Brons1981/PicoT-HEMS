@@ -1,11 +1,5 @@
 from datetime import UTC, datetime, timedelta
 
-from picot.v2.pv_attenuation_runtime import (
-    ATTENUATION_RUNTIME_PROJECTION_METHOD_VERSION,
-    attach_pv_attenuation_runtime_diagnostics,
-    project_live_pv_attenuation_ranges,
-)
-
 from picot.v2.contracts import (
     PVAttenuationBucket,
     PVEnergyTimelineInterval,
@@ -15,6 +9,11 @@ from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.projection import project
 from picot.v2.pv_attenuation_range import (
     derive_pv_attenuated_forecast_range,
+)
+from picot.v2.pv_attenuation_runtime import (
+    ATTENUATION_RUNTIME_PROJECTION_METHOD_VERSION,
+    attach_pv_attenuation_runtime_diagnostics,
+    project_live_pv_attenuation_ranges,
 )
 
 START = datetime(2026, 8, 16, 17, 0, tzinfo=UTC)

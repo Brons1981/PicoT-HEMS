@@ -9,7 +9,6 @@ from math import isfinite
 
 from picot.v2.contracts import PVEnergyTimelineInterval
 
-
 INTEGRATION_METHOD_VERSION = "goodwe-sample-hold-energy:v1"
 
 

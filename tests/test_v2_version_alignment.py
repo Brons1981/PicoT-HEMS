@@ -99,3 +99,21 @@ def test_v2_addon_exposes_household_load_fallback_power() -> None:
         "  household_load_fallback_power_w: float(0,)"
         in schema_lines
     )
+
+
+def test_v2_addon_exposes_explicit_pv_local_timezone() -> None:
+    config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
+    lines = config_path.read_text(encoding="utf-8").splitlines()
+    option_lines = lines[
+        lines.index("options:") + 1 : lines.index("schema:")
+    ]
+    schema_lines = lines[lines.index("schema:") + 1 :]
+    options = {
+        key.strip(): value.strip().strip('"')
+        for line in option_lines
+        if line.startswith("  ") and ":" in line
+        for key, _, value in (line.partition(":"),)
+    }
+
+    assert options.get("pv_local_timezone") == "Europe/Amsterdam"
+    assert "  pv_local_timezone: str" in schema_lines

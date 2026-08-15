@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from math import isfinite
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +148,284 @@ class PVEnergyTimeline:
                 )
             if current.starts_at < previous.ends_at:
                 raise ValueError("intervals must not overlap")
+
+
+@dataclass(frozen=True, slots=True)
+class PVAttenuationObservation:
+    observation_id: str
+    installation_scope_id: str
+    starts_at: datetime
+    ends_at: datetime
+    forecast_captured_at: datetime
+    forecast_lower_energy_wh: float
+    forecast_central_energy_wh: float
+    forecast_upper_energy_wh: float
+    forecast_confidence: float
+    actual_energy_wh: float
+    actual_confidence: float
+    solar_azimuth_degrees: float
+    solar_elevation_degrees: float
+    minutes_from_sunset: float
+    forecast_evidence_ids: tuple[str, ...]
+    actual_evidence_ids: tuple[str, ...]
+    forecast_mapping_version: str
+    forecast_conversion_method_version: str
+    actual_conversion_method_version: str
+    eligibility_status: str
+    eligibility_reason: str | None
+    eligibility_method_version: str
+
+    def __post_init__(self) -> None:
+        datetimes = (
+            self.starts_at,
+            self.ends_at,
+            self.forecast_captured_at,
+        )
+        if any(
+            value.tzinfo is None or value.utcoffset() is None
+            for value in datetimes
+        ):
+            raise ValueError(
+                "observation datetimes must be timezone-aware"
+            )
+        if self.starts_at >= self.ends_at:
+            raise ValueError("starts_at must be before ends_at")
+        forecast_values = (
+            self.forecast_lower_energy_wh,
+            self.forecast_central_energy_wh,
+            self.forecast_upper_energy_wh,
+        )
+        if (
+            not all(isfinite(value) for value in forecast_values)
+            or not 0.0
+            <= self.forecast_lower_energy_wh
+            <= self.forecast_central_energy_wh
+            <= self.forecast_upper_energy_wh
+        ):
+            raise ValueError(
+                "forecast range must satisfy "
+                "0 <= lower <= central <= upper"
+            )
+        if (
+            not isfinite(self.actual_energy_wh)
+            or self.actual_energy_wh < 0.0
+        ):
+            raise ValueError(
+                "actual_energy_wh must not be negative"
+            )
+        if not 0.0 <= self.forecast_confidence <= 1.0:
+            raise ValueError(
+                "forecast_confidence must be between 0 and 1"
+            )
+        if not 0.0 <= self.actual_confidence <= 1.0:
+            raise ValueError(
+                "actual_confidence must be between 0 and 1"
+            )
+        if (
+            not isfinite(self.solar_azimuth_degrees)
+            or not 0.0 <= self.solar_azimuth_degrees <= 360.0
+        ):
+            raise ValueError(
+                "solar_azimuth_degrees must be between 0 and 360"
+            )
+        if (
+            not isfinite(self.solar_elevation_degrees)
+            or not -90.0 <= self.solar_elevation_degrees <= 90.0
+        ):
+            raise ValueError(
+                "solar_elevation_degrees must be between -90 and 90"
+            )
+        if not isfinite(self.minutes_from_sunset):
+            raise ValueError("minutes_from_sunset must be finite")
+        if not self.forecast_evidence_ids:
+            raise ValueError("forecast evidence must be explicit")
+        if not self.actual_evidence_ids:
+            raise ValueError("actual evidence must be explicit")
+        if self.eligibility_status not in ("eligible", "rejected"):
+            raise ValueError(
+                "eligibility_status must be eligible or rejected"
+            )
+        if (
+            self.eligibility_status == "rejected"
+            and not self.eligibility_reason
+        ):
+            raise ValueError(
+                "rejected observation requires eligibility_reason"
+            )
+        versions = (
+            self.forecast_mapping_version,
+            self.forecast_conversion_method_version,
+            self.actual_conversion_method_version,
+            self.eligibility_method_version,
+        )
+        if any(not value.strip() for value in versions):
+            raise ValueError("method versions must be explicit")
+
+
+@dataclass(frozen=True, slots=True)
+class PVAttenuationBucket:
+    bucket_id: str
+    installation_scope_id: str
+    sunset_offset_starts_minutes: float
+    sunset_offset_ends_minutes: float
+    attenuation_factor: float
+    status: str
+    unavailable_reason: str | None
+    sample_count: int
+    distinct_day_count: int
+    dispersion: float
+    profile_confidence: float
+    evidence_starts_at: datetime
+    evidence_ends_at: datetime
+    updated_at: datetime
+    observation_ids: tuple[str, ...]
+    rejected_observation_ids: tuple[str, ...]
+    aggregation_method_version: str
+    configuration_version: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isfinite(self.sunset_offset_starts_minutes)
+            or not isfinite(self.sunset_offset_ends_minutes)
+            or self.sunset_offset_starts_minutes
+            >= self.sunset_offset_ends_minutes
+        ):
+            raise ValueError(
+                "sunset offset start must be before end"
+            )
+        if (
+            not isfinite(self.attenuation_factor)
+            or not 0.0 <= self.attenuation_factor <= 1.0
+        ):
+            raise ValueError(
+                "attenuation_factor must be between 0 and 1"
+            )
+        if self.sample_count < 0:
+            raise ValueError("sample_count must not be negative")
+        if (
+            self.distinct_day_count < 0
+            or self.distinct_day_count > self.sample_count
+        ):
+            raise ValueError(
+                "distinct_day_count must not exceed sample_count"
+            )
+        if not isfinite(self.dispersion) or self.dispersion < 0.0:
+            raise ValueError("dispersion must not be negative")
+        if (
+            not isfinite(self.profile_confidence)
+            or not 0.0 <= self.profile_confidence <= 1.0
+        ):
+            raise ValueError(
+                "profile_confidence must be between 0 and 1"
+            )
+        datetimes = (
+            self.evidence_starts_at,
+            self.evidence_ends_at,
+            self.updated_at,
+        )
+        if any(
+            value.tzinfo is None or value.utcoffset() is None
+            for value in datetimes
+        ):
+            raise ValueError("bucket datetimes must be timezone-aware")
+        if self.evidence_starts_at >= self.evidence_ends_at:
+            raise ValueError(
+                "evidence_starts_at must be before evidence_ends_at"
+            )
+        if self.status not in ("available", "unavailable"):
+            raise ValueError(
+                "bucket status must be available or unavailable"
+            )
+        if self.status == "unavailable":
+            if not self.unavailable_reason:
+                raise ValueError(
+                    "unavailable bucket requires unavailable_reason"
+                )
+            if self.attenuation_factor != 1.0:
+                raise ValueError(
+                    "unavailable bucket must use attenuation_factor 1"
+                )
+        if not self.aggregation_method_version.strip():
+            raise ValueError(
+                "aggregation_method_version must be explicit"
+            )
+        if not self.configuration_version.strip():
+            raise ValueError(
+                "configuration_version must be explicit"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class PVForecastAttenuationProfile:
+    profile_id: str
+    installation_scope_id: str
+    status: str
+    unavailable_reason: str | None
+    valid_from: datetime
+    valid_until: datetime
+    updated_at: datetime
+    observer_only: bool
+    buckets: tuple[PVAttenuationBucket, ...]
+    method_version: str
+
+    def __post_init__(self) -> None:
+        datetimes = (
+            self.valid_from,
+            self.valid_until,
+            self.updated_at,
+        )
+        if any(
+            value.tzinfo is None or value.utcoffset() is None
+            for value in datetimes
+        ):
+            raise ValueError("profile datetimes must be timezone-aware")
+        if self.valid_from >= self.valid_until:
+            raise ValueError("valid_from must be before valid_until")
+        if not self.observer_only:
+            raise ValueError(
+                "attenuation profile must remain observer-only"
+            )
+        if self.status not in ("available", "unavailable"):
+            raise ValueError(
+                "profile status must be available or unavailable"
+            )
+        if self.status == "unavailable" and not self.unavailable_reason:
+            raise ValueError(
+                "unavailable profile requires unavailable_reason"
+            )
+        if self.status == "available" and not self.buckets:
+            raise ValueError(
+                "available profile requires attenuation buckets"
+            )
+        for previous, current in zip(
+            self.buckets,
+            self.buckets[1:],
+            strict=False,
+        ):
+            if (
+                current.sunset_offset_starts_minutes
+                < previous.sunset_offset_starts_minutes
+            ):
+                raise ValueError(
+                    "profile buckets must be chronologically ordered"
+                )
+            if (
+                current.sunset_offset_starts_minutes
+                < previous.sunset_offset_ends_minutes
+            ):
+                raise ValueError(
+                    "profile buckets must not overlap"
+                )
+        if any(
+            bucket.installation_scope_id
+            != self.installation_scope_id
+            for bucket in self.buckets
+        ):
+            raise ValueError(
+                "bucket installation scope must match profile"
+            )
+        if not self.method_version.strip():
+            raise ValueError("method_version must be explicit")
 
 
 @dataclass(frozen=True, slots=True)

@@ -9,7 +9,6 @@ from picot.v2.pv_cumulative_evidence import (
 )
 from picot.v2.pv_deviation import evaluate_pv_energy_deviation
 
-
 EVALUATED_AT = datetime(2026, 8, 15, 10, 5, tzinfo=UTC)
 
 

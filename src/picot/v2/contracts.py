@@ -174,6 +174,9 @@ class PVAttenuationObservation:
     eligibility_status: str
     eligibility_reason: str | None
     eligibility_method_version: str
+    alignment_status: str = "aligned"
+    coverage_status: str = "complete"
+    observation_method_version: str = "pv-attenuation-observation:v1"
 
     def __post_init__(self) -> None:
         datetimes = (
@@ -241,22 +244,36 @@ class PVAttenuationObservation:
             raise ValueError("forecast evidence must be explicit")
         if not self.actual_evidence_ids:
             raise ValueError("actual evidence must be explicit")
-        if self.eligibility_status not in ("eligible", "rejected"):
+        if self.alignment_status not in ("aligned", "unaligned"):
             raise ValueError(
-                "eligibility_status must be eligible or rejected"
+                "alignment_status must be aligned or unaligned"
+            )
+        if self.coverage_status not in ("complete", "partial"):
+            raise ValueError(
+                "coverage_status must be complete or partial"
+            )
+        if self.eligibility_status not in (
+            "unassessed",
+            "eligible",
+            "rejected",
+        ):
+            raise ValueError(
+                "eligibility_status must be unassessed, eligible, or rejected"
             )
         if (
-            self.eligibility_status == "rejected"
+            self.eligibility_status in ("unassessed", "rejected")
             and not self.eligibility_reason
         ):
             raise ValueError(
-                "rejected observation requires eligibility_reason"
+                "unassessed or rejected observation requires "
+                "eligibility_reason"
             )
         versions = (
             self.forecast_mapping_version,
             self.forecast_conversion_method_version,
             self.actual_conversion_method_version,
             self.eligibility_method_version,
+            self.observation_method_version,
         )
         if any(not value.strip() for value in versions):
             raise ValueError("method versions must be explicit")

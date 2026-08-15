@@ -27,9 +27,9 @@ class PVHistoryReadResult:
 def _evidence_id(
     entity_id: str,
     sampled_at: datetime,
-    power_w: float,
+    raw_state: str,
 ) -> str:
-    seed = f"{entity_id}|{sampled_at.isoformat()}|{power_w}"
+    seed = f"{entity_id}|{sampled_at.isoformat()}|{raw_state}"
     digest = sha256(seed.encode("utf-8")).hexdigest()[:16]
     return f"evidence-pv-history-{digest}"
 
@@ -149,20 +149,30 @@ def _decode_observation(
         return None
 
     try:
-        power_w = float(raw_state)
         sampled_at = datetime.fromisoformat(
             raw_timestamp.replace("Z", "+00:00")
         )
     except ValueError:
         return None
     if (
-        not isfinite(power_w)
-        or power_w < 0.0
-        or sampled_at.tzinfo is None
+        sampled_at.tzinfo is None
         or sampled_at.utcoffset() is None
         or not starts_at <= sampled_at <= ends_at
     ):
         return None
+
+    normalized_state = raw_state.strip().lower()
+    if normalized_state in {"unknown", "unavailable"}:
+        power_w = None
+        source_state = normalized_state
+    else:
+        try:
+            power_w = float(raw_state)
+        except ValueError:
+            return None
+        if not isfinite(power_w) or power_w < 0.0:
+            return None
+        source_state = "numeric"
 
     return PVPowerObservation(
         power_w=power_w,
@@ -170,6 +180,7 @@ def _decode_observation(
         evidence_id=_evidence_id(
             entity_id,
             sampled_at,
-            power_w,
+            raw_state,
         ),
+        source_state=source_state,
     )

@@ -10,7 +10,10 @@ from time import perf_counter
 from picot.v2.contracts import PVEnergyTimelineInterval
 from picot.v2.planning_input import PlanningInputBundle
 from picot.v2.pv_actual_history import PVHistoryReadResult
-from picot.v2.pv_actual_intervals import build_actual_pv_interval
+from picot.v2.pv_actual_intervals import (
+    PVActualIntervalDiagnosis,
+    diagnose_actual_pv_interval,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +29,12 @@ class LivePVActualDiagnostics:
     conversion_method_version: str | None
     actual_evidence_ids: tuple[str, ...]
     processing_ms: float
+    gap_reason: str | None = None
+    observation_count: int = 0
+    first_observed_at: datetime | None = None
+    last_observed_at: datetime | None = None
+    maximum_observed_gap_seconds: float | None = None
+    allowed_gap_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +42,7 @@ class _CachedResult:
     history_status: str
     error: str | None
     interval: PVEnergyTimelineInterval | None
+    diagnosis: PVActualIntervalDiagnosis | None
 
 
 class LivePVActualCache:
@@ -128,9 +138,9 @@ def apply_latest_closed_actual_pv(
             starts_at=lookup_starts_at,
             ends_at=selected.ends_at,
         )
-        actual = None
+        diagnosis = None
         if history.status == "available":
-            actual = build_actual_pv_interval(
+            diagnosis = diagnose_actual_pv_interval(
                 interval_id=(
                     "pv-actual-"
                     f"{selected.starts_at.isoformat()}"
@@ -146,11 +156,17 @@ def apply_latest_closed_actual_pv(
         cached = _CachedResult(
             history_status=history.status,
             error=history.error,
-            interval=actual,
+            interval=(
+                diagnosis.interval
+                if diagnosis is not None
+                else None
+            ),
+            diagnosis=diagnosis,
         )
         cache.store(key, cached)
 
     actual = cached.interval
+    diagnosis = cached.diagnosis
     interval_status = "actual" if actual is not None else "gap"
     enriched = bundle
 
@@ -192,6 +208,36 @@ def apply_latest_closed_actual_pv(
             if actual is not None
             else ()
         ),
+        gap_reason=(
+            diagnosis.reason
+            if diagnosis is not None
+            else None
+        ),
+        observation_count=(
+            diagnosis.observation_count
+            if diagnosis is not None
+            else 0
+        ),
+        first_observed_at=(
+            diagnosis.first_observed_at
+            if diagnosis is not None
+            else None
+        ),
+        last_observed_at=(
+            diagnosis.last_observed_at
+            if diagnosis is not None
+            else None
+        ),
+        maximum_observed_gap_seconds=(
+            diagnosis.maximum_observed_gap_seconds
+            if diagnosis is not None
+            else None
+        ),
+        allowed_gap_seconds=(
+            diagnosis.allowed_gap_seconds
+            if diagnosis is not None
+            else None
+        ),
     )
     return enriched, diagnostics
 
@@ -209,6 +255,12 @@ def _diagnostics(
     error: str | None = None,
     conversion_method_version: str | None = None,
     actual_evidence_ids: tuple[str, ...] = (),
+    gap_reason: str | None = None,
+    observation_count: int = 0,
+    first_observed_at: datetime | None = None,
+    last_observed_at: datetime | None = None,
+    maximum_observed_gap_seconds: float | None = None,
+    allowed_gap_seconds: float | None = None,
 ) -> LivePVActualDiagnostics:
     return LivePVActualDiagnostics(
         history_status=history_status,
@@ -225,4 +277,12 @@ def _diagnostics(
             (perf_counter() - started) * 1000.0,
             3,
         ),
+        gap_reason=gap_reason,
+        observation_count=observation_count,
+        first_observed_at=first_observed_at,
+        last_observed_at=last_observed_at,
+        maximum_observed_gap_seconds=(
+            maximum_observed_gap_seconds
+        ),
+        allowed_gap_seconds=allowed_gap_seconds,
     )

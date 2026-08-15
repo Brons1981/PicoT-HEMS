@@ -5,6 +5,7 @@ import pytest
 from picot.v2.pv_actual_intervals import (
     PVPowerObservation,
     build_actual_pv_interval,
+    diagnose_actual_pv_interval,
 )
 
 BASE = datetime(2026, 8, 15, 8, 30, tzinfo=UTC)
@@ -90,3 +91,28 @@ def test_goodwe_interval_requires_complete_boundary_coverage() -> None:
     )
 
     assert interval is None
+
+
+def test_rejected_goodwe_interval_exposes_exact_gap_diagnostics(
+) -> None:
+    result = diagnose_actual_pv_interval(
+        interval_id="pv-actual-gap",
+        starts_at=BASE,
+        ends_at=END,
+        captured_at=END + timedelta(minutes=5),
+        observations=(
+            observation(-5, 600.0, "goodwe-anchor"),
+            observation(60, 620.0, "goodwe-0831"),
+            observation(1800, 600.0, "goodwe-0900"),
+        ),
+        telemetry_interval_seconds=5,
+    )
+
+    assert result.interval is None
+    assert result.status == "gap"
+    assert result.reason == "observation_gap_exceeds_limit"
+    assert result.observation_count == 3
+    assert result.first_observed_at == BASE - timedelta(seconds=5)
+    assert result.last_observed_at == END
+    assert result.maximum_observed_gap_seconds == 1740.0
+    assert result.allowed_gap_seconds == 30.0

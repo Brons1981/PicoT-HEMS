@@ -79,6 +79,78 @@ def test_pv_deviation_preserves_both_energy_lineages() -> None:
         == "goodwe-state-transition-step-hold-energy:v1"
     )
     assert result.evaluation_method_version == "pv-energy-deviation:v1"
+    assert result.forecast_range_status == "unavailable"
+    assert result.range_assessment == "unavailable"
+    assert result.range_distance_wh is None
+    assert result.range_assessment_method_version == (
+        "pv-forecast-range-assessment:v1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("actual_energy_wh", "assessment", "distance_wh"),
+    (
+        (300.0, "below_range", 100.0),
+        (450.0, "within_range", 0.0),
+        (700.0, "above_range", 50.0),
+    ),
+)
+def test_pv_deviation_classifies_actual_against_forecast_range(
+    actual_energy_wh: float,
+    assessment: str,
+    distance_wh: float,
+) -> None:
+    forecast = PVEnergyTimelineInterval(
+        interval_id="pv-forecast-range",
+        starts_at=START,
+        ends_at=END,
+        pv_energy_wh=500.0,
+        evidence_type="FORECAST",
+        confidence=0.42,
+        actual_evidence_ids=(),
+        forecast_evidence_ids=("forecast-range-1",),
+        conversion_method_version="solcast-interval-energy:v1",
+        forecast_lower_energy_wh=400.0,
+        forecast_central_energy_wh=500.0,
+        forecast_upper_energy_wh=650.0,
+        forecast_range_status="available",
+        forecast_range_source_fields=(
+            "pv_estimate10",
+            "pv_estimate",
+            "pv_estimate90",
+        ),
+        forecast_range_method_version=(
+            "solcast-pv-estimate-range-average-kw-30m:v1"
+        ),
+    )
+
+    result = evaluate_pv_energy_deviation(
+        evaluated_at=EVALUATED_AT,
+        forecast=forecast,
+        actual=interval(
+            energy_wh=actual_energy_wh,
+            evidence_type="ACTUAL",
+            confidence=1.0,
+        ),
+    )
+
+    assert result.forecast_lower_energy_wh == 400.0
+    assert result.forecast_central_energy_wh == 500.0
+    assert result.forecast_upper_energy_wh == 650.0
+    assert result.forecast_range_status == "available"
+    assert result.forecast_range_source_fields == (
+        "pv_estimate10",
+        "pv_estimate",
+        "pv_estimate90",
+    )
+    assert result.forecast_range_method_version == (
+        "solcast-pv-estimate-range-average-kw-30m:v1"
+    )
+    assert result.range_assessment == assessment
+    assert result.range_distance_wh == distance_wh
+    assert result.range_assessment_method_version == (
+        "pv-forecast-range-assessment:v1"
+    )
 
 
 def test_nonzero_actual_against_zero_forecast_has_no_hidden_percent() -> None:

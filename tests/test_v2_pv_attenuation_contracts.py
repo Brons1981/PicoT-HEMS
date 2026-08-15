@@ -113,7 +113,7 @@ def make_profile(
         "valid_until": START + timedelta(days=30),
         "updated_at": UPDATED,
         "observer_only": True,
-        "buckets": buckets or (make_bucket(),),
+        "buckets": (make_bucket(),) if buckets is None else buckets,
         "method_version": "pv-attenuation-profile:v1",
     }
     values.update(overrides)

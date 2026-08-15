@@ -433,8 +433,9 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         bundle: PlanningInputBundle,
         web_view_store: object,
         pv_actual_diagnostics: LivePVActualDiagnostics,
+        pv_attenuated_ranges: tuple[object, ...],
     ) -> None:
-        del price_config, web_view_store
+        del price_config, web_view_store, pv_attenuated_ranges
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))
 

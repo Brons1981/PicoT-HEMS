@@ -261,12 +261,18 @@ class PVAttenuationObservation:
                 "eligibility_status must be unassessed, eligible, or rejected"
             )
         if (
-            self.eligibility_status in ("unassessed", "rejected")
+            self.eligibility_status == "unassessed"
             and not self.eligibility_reason
         ):
             raise ValueError(
-                "unassessed or rejected observation requires "
-                "eligibility_reason"
+                "unassessed observation requires eligibility_reason"
+            )
+        if (
+            self.eligibility_status == "rejected"
+            and not self.eligibility_reason
+        ):
+            raise ValueError(
+                "rejected observation requires eligibility_reason"
             )
         versions = (
             self.forecast_mapping_version,

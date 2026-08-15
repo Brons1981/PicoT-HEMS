@@ -141,6 +141,27 @@ def project(run: CanonicalPipelineRun) -> Projection:
             | {
                 "candidate_count": len(c.candidates),
                 "energy_path_ids": [path.path_id for path in c.energy_paths],
+                "projected_balance_count": len(
+                    c.projected_balances
+                ),
+                "storage_requirement_count": len(
+                    c.storage_requirements
+                ),
+                "derivation_status": c.derivation_status,
+                "derivation_reason": c.derivation_reason,
+                "storage_requirements": [
+                    {
+                        "required_energy_wh": requirement.required_energy_wh,
+                        "required_soc": requirement.required_soc,
+                        "required_by": requirement.required_by.isoformat(),
+                        "reason": requirement.reason,
+                        "confidence": requirement.confidence,
+                        "reserve_contribution_wh": (
+                            requirement.reserve_contribution_wh
+                        ),
+                    }
+                    for requirement in c.storage_requirements
+                ],
             },
         ),
         Card(

@@ -1,4 +1,5 @@
 import json
+from itertools import pairwise
 from datetime import datetime, timedelta
 
 import pytest
@@ -426,10 +427,7 @@ def test_three_solcast_sources_form_one_traceable_bounded_timeline(
     }
     assert all(
         left.ends_at == right.starts_at
-        for left, right in zip(
-            timeline.intervals,
-            timeline.intervals[1:],
-        )
+        for left, right in pairwise(timeline.intervals)
     )
 
 

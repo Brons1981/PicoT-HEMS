@@ -14,6 +14,10 @@ from picot.v2.pv_actual_intervals import (
     PVActualIntervalDiagnosis,
     diagnose_actual_pv_interval,
 )
+from picot.v2.pv_cumulative_evidence import (
+    PVCumulativeEvidence,
+    build_pv_cumulative_evidence,
+)
 from picot.v2.pv_deviation import (
     PVDeviationResult,
     evaluate_pv_energy_deviation,
@@ -44,6 +48,7 @@ class LivePVActualDiagnostics:
     interrupted_at: datetime | None = None
     deviation_result: PVDeviationResult | None = None
     deviation_results: tuple[PVDeviationResult, ...] = ()
+    cumulative_evidence: PVCumulativeEvidence | None = None
     closed_forecast_count: int = 0
     actual_interval_count: int = 0
     gap_interval_count: int = 0
@@ -236,6 +241,11 @@ def apply_latest_closed_actual_pv(
         else ()
     )
     deviations = tuple(deviation_results)
+    cumulative_evidence = build_pv_cumulative_evidence(
+        deviations,
+        closed_interval_count=len(closed_forecasts),
+        evaluated_at=bundle.snapshot.captured_at,
+    )
 
     diagnostics = _diagnostics(
         started=started,
@@ -304,6 +314,7 @@ def apply_latest_closed_actual_pv(
             deviations[-1] if deviations else None
         ),
         deviation_results=deviations,
+        cumulative_evidence=cumulative_evidence,
         closed_forecast_count=len(closed_forecasts),
         actual_interval_count=actual_count,
         gap_interval_count=gap_count,
@@ -334,6 +345,7 @@ def _diagnostics(
     interrupted_at: datetime | None = None,
     deviation_result: PVDeviationResult | None = None,
     deviation_results: tuple[PVDeviationResult, ...] = (),
+    cumulative_evidence: PVCumulativeEvidence | None = None,
     closed_forecast_count: int = 0,
     actual_interval_count: int = 0,
     gap_interval_count: int = 0,
@@ -366,6 +378,7 @@ def _diagnostics(
         interrupted_at=interrupted_at,
         deviation_result=deviation_result,
         deviation_results=deviation_results,
+        cumulative_evidence=cumulative_evidence,
         closed_forecast_count=closed_forecast_count,
         actual_interval_count=actual_interval_count,
         gap_interval_count=gap_interval_count,

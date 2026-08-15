@@ -790,3 +790,190 @@ def test_unavailable_day_history_remains_explicit_closed_interval_gaps() -> None
     assert diagnostics.gap_interval_count == 1
     assert diagnostics.deviation_results == ()
     assert diagnostics.deviation_result is None
+
+
+def test_live_actualisation_builds_cumulative_closed_interval_evidence() -> None:
+    bundle = _bundle(captured_at=CAPTURED_AT)
+
+    def history_reader(
+        *,
+        entity_id: str,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> PVHistoryReadResult:
+        return PVHistoryReadResult(
+            entity_id=entity_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            status="available",
+            error=None,
+            observations=(
+                PVPowerObservation(
+                    power_w=600.0,
+                    sampled_at=CLOSED_START - timedelta(seconds=5),
+                    evidence_id="goodwe-anchor",
+                ),
+                PVPowerObservation(
+                    power_w=600.0,
+                    sampled_at=CLOSED_END,
+                    evidence_id="goodwe-end",
+                ),
+            ),
+        )
+
+    _, diagnostics = apply_latest_closed_actual_pv(
+        bundle,
+        entity_id=ENTITY_ID,
+        history_reader=history_reader,
+        cache=LivePVActualCache(),
+        telemetry_interval_seconds=5,
+    )
+
+    cumulative = diagnostics.cumulative_evidence
+    assert cumulative is not None
+    assert cumulative.coverage_status == "complete"
+    assert cumulative.closed_interval_count == 1
+    assert cumulative.assessed_interval_count == 1
+    assert cumulative.gap_interval_count == 0
+    assert cumulative.coverage_ratio == 1.0
+    assert cumulative.forecast_central_energy_wh == 500.0
+    assert cumulative.actual_energy_wh == 300.0
+    assert cumulative.net_deviation_energy_wh == -200.0
+    assert cumulative.forecast_lower_energy_wh == 400.0
+    assert cumulative.forecast_upper_energy_wh == 650.0
+    assert cumulative.range_assessment == "below_range"
+    assert cumulative.below_range_interval_count == 1
+    assert cumulative.interval_deviation_ids == (
+        diagnostics.deviation_results[0].deviation_id,
+    )
+
+
+def test_planning_card_projects_cumulative_and_all_interval_evidence() -> None:
+    bundle = _bundle(captured_at=CAPTURED_AT)
+
+    def history_reader(
+        *,
+        entity_id: str,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> PVHistoryReadResult:
+        return PVHistoryReadResult(
+            entity_id=entity_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            status="available",
+            error=None,
+            observations=(
+                PVPowerObservation(
+                    power_w=600.0,
+                    sampled_at=CLOSED_START - timedelta(seconds=5),
+                    evidence_id="goodwe-anchor",
+                ),
+                PVPowerObservation(
+                    power_w=600.0,
+                    sampled_at=CLOSED_END,
+                    evidence_id="goodwe-end",
+                ),
+            ),
+        )
+
+    enriched, diagnostics = apply_latest_closed_actual_pv(
+        bundle,
+        entity_id=ENTITY_ID,
+        history_reader=history_reader,
+        cache=LivePVActualCache(),
+        telemetry_interval_seconds=5,
+    )
+    projection = _with_planning_input_diagnostics(
+        project(
+            CanonicalPipeline().run(
+                planning_input=enriched.snapshot,
+            )
+        ),
+        enriched,
+        pv_actual_diagnostics=diagnostics,
+    )
+
+    attributes = projection.cards[0].attributes
+    cumulative = diagnostics.cumulative_evidence
+    assert cumulative is not None
+    assert attributes["pv_cumulative_evidence_status"] == "available"
+    assert attributes["pv_cumulative_evidence_id"] == cumulative.evidence_id
+    assert attributes["pv_cumulative_coverage_status"] == "complete"
+    assert attributes["pv_cumulative_starts_at"] == CLOSED_START.isoformat()
+    assert attributes["pv_cumulative_ends_at"] == CLOSED_END.isoformat()
+    assert attributes["pv_cumulative_evaluated_at"] == (
+        CAPTURED_AT.isoformat()
+    )
+    assert attributes["pv_cumulative_closed_interval_count"] == 1
+    assert attributes["pv_cumulative_assessed_interval_count"] == 1
+    assert attributes["pv_cumulative_gap_interval_count"] == 0
+    assert attributes["pv_cumulative_coverage_ratio"] == 1.0
+    assert attributes["pv_cumulative_forecast_central_energy_wh"] == 500.0
+    assert attributes["pv_cumulative_actual_energy_wh"] == 300.0
+    assert attributes["pv_cumulative_net_deviation_energy_wh"] == -200.0
+    assert (
+        attributes["pv_cumulative_absolute_net_deviation_energy_wh"]
+        == 200.0
+    )
+    assert (
+        attributes[
+            "pv_cumulative_total_absolute_interval_deviation_energy_wh"
+        ]
+        == 200.0
+    )
+    assert attributes["pv_cumulative_deviation_percent"] == -40.0
+    assert attributes["pv_cumulative_percentage_status"] == "available"
+    assert attributes["pv_cumulative_forecast_lower_energy_wh"] == 400.0
+    assert attributes["pv_cumulative_forecast_upper_energy_wh"] == 650.0
+    assert attributes["pv_cumulative_forecast_range_status"] == "available"
+    assert attributes["pv_cumulative_range_assessment"] == "below_range"
+    assert attributes["pv_cumulative_range_distance_wh"] == 100.0
+    assert attributes["pv_cumulative_range_assessed_interval_count"] == 1
+    assert attributes["pv_cumulative_below_range_interval_count"] == 1
+    assert attributes["pv_cumulative_within_range_interval_count"] == 0
+    assert attributes["pv_cumulative_above_range_interval_count"] == 0
+    assert attributes["pv_cumulative_unavailable_range_interval_count"] == 0
+    assert attributes["pv_cumulative_interval_deviation_ids"] == [
+        diagnostics.deviation_results[0].deviation_id
+    ]
+    assert attributes["pv_cumulative_method_version"] == (
+        "pv-cumulative-deviation:aligned-closed-intervals:v1"
+    )
+
+    interval_evidence = attributes["pv_interval_deviations"]
+    assert len(interval_evidence) == 1
+    assert interval_evidence[0] == {
+        "deviation_id": diagnostics.deviation_results[0].deviation_id,
+        "starts_at": CLOSED_START.isoformat(),
+        "ends_at": CLOSED_END.isoformat(),
+        "forecast_interval_id": "solcast-0830",
+        "actual_interval_id": (
+            f"pv-actual-{CLOSED_START.isoformat()}"
+        ),
+        "forecast_central_energy_wh": 500.0,
+        "forecast_lower_energy_wh": 400.0,
+        "forecast_upper_energy_wh": 650.0,
+        "actual_energy_wh": 300.0,
+        "deviation_energy_wh": -200.0,
+        "absolute_deviation_energy_wh": 200.0,
+        "deviation_percent": -40.0,
+        "percentage_status": "available",
+        "direction": "below_forecast",
+        "range_assessment": "below_range",
+        "range_distance_wh": 100.0,
+        "forecast_confidence": 0.42,
+        "actual_confidence": 1.0,
+        "forecast_evidence_ids": ["evidence-solcast-0830"],
+        "actual_evidence_ids": ["goodwe-anchor", "goodwe-end"],
+        "forecast_conversion_method_version": (
+            "solcast-detailed-forecast-average-kw-30m:v1"
+        ),
+        "actual_conversion_method_version": (
+            "goodwe-state-transition-step-hold-energy:v1"
+        ),
+        "range_assessment_method_version": (
+            "pv-forecast-range-assessment:v1"
+        ),
+        "evaluation_method_version": "pv-energy-deviation:v1",
+    }

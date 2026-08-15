@@ -335,7 +335,7 @@ def test_load_bindings_exposes_three_explicit_solcast_day_sources(
     )
 
 
-def test_three_solcast_sources_form_one_traceable_bounded_timeline(
+def test_multisource_timeline_keeps_interval_overlapping_horizon_end(
     monkeypatch: object,
     tmp_path: object,
 ) -> None:
@@ -406,15 +406,23 @@ def test_three_solcast_sources_form_one_traceable_bounded_timeline(
     assert bundle.snapshot.horizon_end == (
         captured_at + timedelta(hours=36)
     )
-    assert len(timeline.intervals) == 111
+    assert len(timeline.intervals) == 112
     assert timeline.intervals[0].starts_at == datetime.fromisoformat(
         "2026-08-15T00:00:00+02:00"
     )
-    assert timeline.intervals[-1].ends_at == datetime.fromisoformat(
+    assert timeline.intervals[-1].starts_at == datetime.fromisoformat(
         "2026-08-17T07:30:00+02:00"
     )
+    assert timeline.intervals[-1].ends_at == datetime.fromisoformat(
+        "2026-08-17T08:00:00+02:00"
+    )
+    assert (
+        timeline.intervals[-1].starts_at
+        < bundle.snapshot.horizon_end
+        < timeline.intervals[-1].ends_at
+    )
     assert all(
-        interval.ends_at <= bundle.snapshot.horizon_end
+        interval.starts_at < bundle.snapshot.horizon_end
         for interval in timeline.intervals
     )
     assert {

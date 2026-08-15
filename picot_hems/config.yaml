@@ -25,6 +25,8 @@ options:
   storage_usable_capacity_wh: 8160.0
   household_load_fallback_power_w: 500.0
   solcast_forecast_entity: "sensor.solcast_pv_forecast_voorspelling_vandaag"
+  solcast_forecast_tomorrow_entity: "sensor.solcast_pv_forecast_voorspelling_morgen"
+  solcast_forecast_day_3_entity: "sensor.solcast_pv_forecast_voorspelling_dag_3"
   nordpool_price_entity: "sensor.nordpool_kwh_nl_eur_3_095_0"
   price_low_margin_eur_per_kwh: 0.04
   price_high_margin_eur_per_kwh: 0.04
@@ -42,6 +44,8 @@ schema:
   storage_usable_capacity_wh: float(0,)
   household_load_fallback_power_w: float(0,)
   solcast_forecast_entity: str
+  solcast_forecast_tomorrow_entity: str
+  solcast_forecast_day_3_entity: str
   nordpool_price_entity: str
   price_low_margin_eur_per_kwh: float(0,1)
   price_high_margin_eur_per_kwh: float(0,1)

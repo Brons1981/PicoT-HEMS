@@ -109,3 +109,97 @@ def test_candidate_engine_derives_conservative_storage_requirement() -> None:
         "pv-evidence",
         "load:forecast",
     }
+
+
+def test_candidate_engine_aggregates_quarter_hour_load_for_half_hour_pv() -> None:
+    storage = CurrentStorageState(
+        storage_state_id="storage-home",
+        execution_scope_id="home-battery",
+        capability_id="storage-capability-home",
+        current_soc=0.50,
+        usable_capacity_wh=8000.0,
+        measured_at=BASE,
+        confidence=0.90,
+        evidence_ids=("storage-evidence",),
+    )
+    pv_timeline = PVEnergyTimeline(
+        timeline_id="pv-timeline",
+        run_id="run-1",
+        snapshot_id="snapshot-1",
+        intervals=(
+            PVEnergyTimelineInterval(
+                interval_id="pv-half-hour",
+                starts_at=BASE,
+                ends_at=BASE + timedelta(minutes=30),
+                pv_energy_wh=1000.0,
+                evidence_type="FORECAST",
+                confidence=0.80,
+                actual_evidence_ids=(),
+                forecast_evidence_ids=("pv-evidence",),
+                conversion_method_version="forecast-energy:v1",
+            ),
+        ),
+    )
+    load_forecast = HouseholdLoadForecast(
+        forecast_id="load-forecast",
+        run_id="run-1",
+        snapshot_id="snapshot-1",
+        intervals=(
+            HouseholdLoadForecastInterval(
+                interval_id="load-quarter-1",
+                starts_at=BASE,
+                ends_at=BASE + timedelta(minutes=15),
+                expected_energy_wh=750.0,
+                confidence=0.70,
+                source_reference="load:quarter-1",
+                method_version="deterministic-test:v1",
+            ),
+            HouseholdLoadForecastInterval(
+                interval_id="load-quarter-2",
+                starts_at=BASE + timedelta(minutes=15),
+                ends_at=BASE + timedelta(minutes=30),
+                expected_energy_wh=750.0,
+                confidence=0.75,
+                source_reference="load:quarter-2",
+                method_version="deterministic-test:v1",
+            ),
+        ),
+        fallback_active=False,
+        fallback_reason=None,
+    )
+    snapshot = PlanningInputSnapshot(
+        run_id="run-1",
+        snapshot_id="snapshot-1",
+        captured_at=BASE,
+        picot_version=__version__,
+        architecture_baseline_commit=ARCHITECTURE_BASELINE_COMMIT,
+        pipeline_contract_version=PIPELINE_CONTRACT_VERSION,
+        strategy_id="strategy:test",
+        horizon_end=BASE + timedelta(minutes=30),
+        current_storage_states=(storage,),
+        pv_energy_timeline=pv_timeline,
+        household_load_forecast=load_forecast,
+    )
+
+    result = CandidateEngine().derive_storage_requirements(snapshot)
+
+    assert len(result.balances) == 1
+    assert len(result.balances[0].intervals) == 1
+
+    interval = result.balances[0].intervals[0]
+    requirement = result.requirements[0]
+
+    assert interval.starts_at == BASE
+    assert interval.ends_at == BASE + timedelta(minutes=30)
+    assert interval.current_usable_storage_energy_wh == pytest.approx(4000.0)
+    assert interval.expected_usable_pv_energy_wh == pytest.approx(1000.0)
+    assert interval.household_load_forecast_energy_wh == pytest.approx(1500.0)
+    assert interval.projected_storage_energy_wh == pytest.approx(3500.0)
+    assert interval.confidence == pytest.approx(0.70)
+    assert set(interval.evidence_ids) == {
+        "storage-evidence",
+        "pv-evidence",
+        "load:quarter-1",
+        "load:quarter-2",
+    }
+    assert requirement.reserve_contribution_wh == pytest.approx(4500.0)

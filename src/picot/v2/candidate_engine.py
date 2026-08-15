@@ -47,8 +47,6 @@ class CandidateEngine:
 
         load_intervals = snapshot.household_load_forecast.intervals
         pv_intervals = snapshot.pv_energy_timeline.intervals
-        if len(load_intervals) != len(pv_intervals):
-            raise ValueError("PV and household-load intervals must align")
 
         balances: list[ProjectedHouseholdEnergyBalance] = []
         requirements: list[StorageEnergyRequirement] = []
@@ -61,39 +59,65 @@ class CandidateEngine:
             evidence_ids: list[str] = list(storage.evidence_ids)
             confidence_values = [storage.confidence]
 
-            for pv_interval, load_interval in zip(
-                pv_intervals,
-                load_intervals,
-                strict=True,
-            ):
+            for pv_interval in pv_intervals:
+                matching_load_intervals = tuple(
+                    interval
+                    for interval in load_intervals
+                    if interval.starts_at >= pv_interval.starts_at
+                    and interval.ends_at <= pv_interval.ends_at
+                )
                 if (
-                    pv_interval.starts_at != load_interval.starts_at
-                    or pv_interval.ends_at != load_interval.ends_at
+                    not matching_load_intervals
+                    or matching_load_intervals[0].starts_at
+                    != pv_interval.starts_at
+                    or matching_load_intervals[-1].ends_at
+                    != pv_interval.ends_at
+                    or any(
+                        previous.ends_at != current.starts_at
+                        for previous, current in zip(
+                            matching_load_intervals,
+                            matching_load_intervals[1:],
+                            strict=False,
+                        )
+                    )
                 ):
                     raise ValueError(
                         "PV and household-load intervals must align"
                     )
 
+                load_energy_wh = sum(
+                    interval.expected_energy_wh
+                    for interval in matching_load_intervals
+                )
+                load_confidence = min(
+                    interval.confidence
+                    for interval in matching_load_intervals
+                )
                 interval_start_energy_wh = projected_energy_wh
                 projected_energy_wh = (
                     interval_start_energy_wh
                     + pv_interval.pv_energy_wh
-                    - load_interval.expected_energy_wh
+                    - load_energy_wh
                 )
                 confidence = min(
                     storage.confidence,
                     pv_interval.confidence,
-                    load_interval.confidence,
+                    load_confidence,
                 )
                 interval_evidence = _ordered_unique(
                     storage.evidence_ids
                     + pv_interval.actual_evidence_ids
                     + pv_interval.forecast_evidence_ids
-                    + (load_interval.source_reference,)
+                    + tuple(
+                        interval.source_reference
+                        for interval in matching_load_intervals
+                    )
                 )
                 evidence_ids.extend(interval_evidence)
+                confidence_values.append(pv_interval.confidence)
                 confidence_values.extend(
-                    (pv_interval.confidence, load_interval.confidence)
+                    interval.confidence
+                    for interval in matching_load_intervals
                 )
                 projected_intervals.append(
                     ProjectedHouseholdEnergyBalanceInterval(
@@ -107,7 +131,7 @@ class CandidateEngine:
                         ),
                         planned_grid_energy_wh=0.0,
                         household_load_forecast_energy_wh=(
-                            load_interval.expected_energy_wh
+                            load_energy_wh
                         ),
                         known_future_demand_energy_wh=0.0,
                         conversion_losses_wh=0.0,

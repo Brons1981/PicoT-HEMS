@@ -17,6 +17,7 @@ from pathlib import Path
 from threading import Thread
 from time import perf_counter
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
@@ -44,6 +45,14 @@ from picot.v2.pv_attenuation_runtime_derivation import (
 )
 from picot.v2.pv_cumulative_evidence import PVCumulativeEvidence
 from picot.v2.pv_deviation import PVDeviationResult
+from picot.v2.pv_sunset_offsets import derive_pv_sunset_offsets
+from picot.v2.pv_sunset_runtime import (
+    attach_pv_sunset_runtime_diagnostics,
+)
+from picot.v2.pv_sunset_source import (
+    HomeAssistantSunsetReader,
+    SunsetReadResult,
+)
 from picot.v2.web_ui import (
     WebViewStore,
     build_web_view,
@@ -718,6 +727,9 @@ def _execute_planning_bundle(
         PVAttenuatedForecastRange,
         ...,
     ] = (),
+    pv_sunset_source: SunsetReadResult | None = None,
+    pv_sunset_local_timezone: str | None = None,
+    pv_sunset_offsets: dict[str, float] | None = None,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -741,6 +753,17 @@ def _execute_planning_bundle(
         projection,
         pv_attenuated_ranges,
     )
+    if pv_sunset_source is not None:
+        if pv_sunset_local_timezone is None:
+            raise ValueError(
+                "pv_sunset_local_timezone is required with sunset evidence"
+            )
+        projection = attach_pv_sunset_runtime_diagnostics(
+            projection,
+            source=pv_sunset_source,
+            local_timezone=pv_sunset_local_timezone,
+            offsets_by_interval_id=pv_sunset_offsets or {},
+        )
     projection = _with_stage_timing_diagnostics(
         projection,
         planning_input_ms=planning_input_ms,
@@ -839,6 +862,18 @@ def main() -> None:
     )
     pv_history_reader = HomeAssistantPVHistoryReader(token)
     pv_actual_cache = LivePVActualCache()
+    pv_sunset_local_timezone = str(
+        options.get("pv_local_timezone", "Europe/Amsterdam")
+    ).strip()
+    if not pv_sunset_local_timezone:
+        raise ValueError("pv_local_timezone must be explicit")
+    try:
+        pv_sunset_timezone = ZoneInfo(pv_sunset_local_timezone)
+    except ZoneInfoNotFoundError:
+        raise ValueError(
+            "pv_local_timezone must be a valid IANA timezone"
+        ) from None
+    pv_sunset_reader = HomeAssistantSunsetReader(token)
     pv_power_entity = str(
         options.get("pv_power_entity", "")
     ).strip()
@@ -907,12 +942,29 @@ def main() -> None:
         pv_actual_diagnostics: LivePVActualDiagnostics,
     ) -> None:
         timeline = bundle.snapshot.pv_energy_timeline
+        pv_sunset_source = pv_sunset_reader.read(
+            local_timezone=pv_sunset_timezone
+        )
+        pv_sunset_offsets = (
+            derive_pv_sunset_offsets(
+                timeline=timeline,
+                sunsets_by_local_date=dict(
+                    pv_sunset_source.sunsets_by_local_date
+                ),
+                projected_at=bundle.snapshot.captured_at,
+            )
+            if (
+                timeline is not None
+                and pv_sunset_source.status == "available"
+            )
+            else {}
+        )
         pv_attenuated_ranges = (
             derive_live_pv_attenuation_ranges(
                 installation_scope_id=pv_installation_scope_id,
                 timeline=timeline,
                 profile=None,
-                minutes_from_sunset_by_interval_id={},
+                minutes_from_sunset_by_interval_id=pv_sunset_offsets,
                 projected_at=bundle.snapshot.captured_at,
             )
             if timeline is not None
@@ -925,6 +977,9 @@ def main() -> None:
             web_view_store=web_view_store,
             pv_actual_diagnostics=pv_actual_diagnostics,
             pv_attenuated_ranges=pv_attenuated_ranges,
+            pv_sunset_source=pv_sunset_source,
+            pv_sunset_local_timezone=pv_sunset_local_timezone,
+            pv_sunset_offsets=pv_sunset_offsets,
         )
 
     previous_signature: str | None = None

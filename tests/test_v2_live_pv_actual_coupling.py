@@ -1,5 +1,6 @@
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -26,6 +27,7 @@ from picot.v2.projection import project
 from picot.v2.pv_actual_history import PVHistoryReadResult
 from picot.v2.pv_actual_intervals import PVPowerObservation
 from picot.v2.pv_deviation import evaluate_pv_energy_deviation
+from picot.v2.pv_sunset_source import SunsetReadResult
 
 CAPTURED_AT = datetime(2026, 8, 15, 9, 5, tzinfo=UTC)
 CLOSED_START = datetime(2026, 8, 15, 8, 30, tzinfo=UTC)
@@ -434,8 +436,18 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         web_view_store: object,
         pv_actual_diagnostics: LivePVActualDiagnostics,
         pv_attenuated_ranges: tuple[object, ...],
+        pv_sunset_source: SunsetReadResult,
+        pv_sunset_local_timezone: str,
+        pv_sunset_offsets: dict[str, float],
     ) -> None:
-        del price_config, web_view_store, pv_attenuated_ranges
+        del (
+            price_config,
+            web_view_store,
+            pv_attenuated_ranges,
+            pv_sunset_source,
+            pv_sunset_local_timezone,
+            pv_sunset_offsets,
+        )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))
 
@@ -978,3 +990,118 @@ def test_planning_card_projects_cumulative_and_all_interval_evidence() -> None:
         ),
         "evaluation_method_version": "pv-energy-deviation:v1",
     }
+
+
+def test_main_feeds_visible_sunset_evidence_into_attenuation_ranges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _bundle(captured_at=CLOSED_END)
+    diagnostics = object()
+    executed: list[dict[str, object]] = []
+    read_timezones: list[object] = []
+    sunset_at = datetime(
+        2026,
+        8,
+        15,
+        20,
+        55,
+        tzinfo=ZoneInfo("Europe/Amsterdam"),
+    )
+    source = SunsetReadResult(
+        source_entity_id="sun.sun",
+        status="available",
+        error=None,
+        source_updated_at=datetime(
+            2026,
+            8,
+            15,
+            9,
+            0,
+            tzinfo=UTC,
+        ),
+        sunsets_by_local_date=((date(2026, 8, 15), sunset_at),),
+        method_version="home-assistant-sun-next-setting:v1",
+    )
+
+    class StopLoop(Exception):
+        pass
+
+    class FakeSunsetReader:
+        def __init__(self, token: str) -> None:
+            assert token == "supervisor-token"
+
+        def read(self, *, local_timezone: object) -> SunsetReadResult:
+            read_timezones.append(local_timezone)
+            return source
+
+    def capture_execution(**kwargs: object) -> None:
+        executed.append(kwargs)
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "supervisor-token")
+    monkeypatch.setattr(
+        live_runtime,
+        "load_options",
+        lambda: {
+            "price_low_margin_eur_per_kwh": 0.02,
+            "price_high_margin_eur_per_kwh": 0.02,
+            "live_poll_interval_seconds": 60,
+            "pv_power_entity": ENTITY_ID,
+            "pv_power_telemetry_interval_seconds": 5,
+            "pv_local_timezone": "Europe/Amsterdam",
+        },
+    )
+    monkeypatch.setattr(
+        live_runtime,
+        "_load_live_planning_input",
+        lambda token, options, household_load_history: bundle,
+    )
+    monkeypatch.setattr(
+        live_runtime,
+        "apply_latest_closed_actual_pv",
+        lambda *args, **kwargs: (bundle, diagnostics),
+    )
+    monkeypatch.setattr(
+        live_runtime,
+        "HomeAssistantSunsetReader",
+        FakeSunsetReader,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        live_runtime,
+        "_start_web_server",
+        lambda store: (object(), object()),
+    )
+    monkeypatch.setattr(
+        live_runtime,
+        "_execute_planning_bundle",
+        capture_execution,
+    )
+    monkeypatch.setattr(
+        live_runtime.time,
+        "sleep",
+        lambda seconds: (_ for _ in ()).throw(StopLoop()),
+    )
+
+    with pytest.raises(StopLoop):
+        live_runtime.main()
+
+    assert [str(value) for value in read_timezones] == [
+        "Europe/Amsterdam"
+    ]
+    assert len(executed) == 1
+    call = executed[0]
+    assert call["pv_sunset_source"] == source
+    assert call["pv_sunset_local_timezone"] == "Europe/Amsterdam"
+    offsets = call["pv_sunset_offsets"]
+    assert isinstance(offsets, dict)
+    assert offsets == {
+        "solcast-0900": pytest.approx(-580.0),
+    }
+    ranges = call["pv_attenuated_ranges"]
+    assert isinstance(ranges, tuple)
+    assert len(ranges) == 1
+    derived = ranges[0]
+    assert derived.source_interval_id == "solcast-0900"
+    assert derived.minutes_from_sunset == pytest.approx(-580.0)
+    assert derived.status == "unavailable"
+    assert derived.unavailable_reason == "profile_missing"

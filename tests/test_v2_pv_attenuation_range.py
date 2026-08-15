@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
 from picot.v2.contracts import (
     PVAttenuationBucket,
     PVEnergyTimelineInterval,

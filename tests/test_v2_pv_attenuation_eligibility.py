@@ -2,13 +2,12 @@ from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
-from picot.v2.contracts import PVAttenuationObservation
 from picot.v2.pv_attenuation_eligibility import (
     ELIGIBILITY_METHOD_VERSION,
     PVAttenuationEligibilityConfig,
     classify_pv_attenuation_observation,
 )
+from picot.v2.contracts import PVAttenuationObservation
 
 BASE_START = datetime(2026, 8, 15, 17, 0, tzinfo=UTC)
 EVALUATED_AT = datetime(2026, 8, 16, 0, 0, tzinfo=UTC)

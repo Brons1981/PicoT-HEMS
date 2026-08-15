@@ -375,18 +375,18 @@ def _pv_forecast_intervals_from_attributes(
         if average_power_kw < 0.0:
             continue
 
-        range_values_are_numeric = all(
-            not isinstance(value, bool)
-            and isinstance(value, (int, float))
-            for value in (raw_lower_power_kw, raw_upper_power_kw)
-        )
         lower_energy_wh: float | None = None
         central_energy_wh: float | None = None
         upper_energy_wh: float | None = None
         range_status = "unavailable"
         range_fields: tuple[str, ...] = ()
         range_version: str | None = None
-        if range_values_are_numeric:
+        if (
+            not isinstance(raw_lower_power_kw, bool)
+            and isinstance(raw_lower_power_kw, (int, float))
+            and not isinstance(raw_upper_power_kw, bool)
+            and isinstance(raw_upper_power_kw, (int, float))
+        ):
             lower_power_kw = float(raw_lower_power_kw)
             upper_power_kw = float(raw_upper_power_kw)
             if (

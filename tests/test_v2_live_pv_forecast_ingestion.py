@@ -225,3 +225,273 @@ def test_planning_input_snapshot_reuses_solcast_evidence_as_one_timeline(
     assert timeline.run_id == bundle.snapshot.run_id
     assert timeline.snapshot_id == bundle.snapshot.snapshot_id
     assert timeline.intervals == (interval,)
+
+
+def _forecast_source_evidence(
+    binding: planning_input.SourceBinding,
+    *,
+    observed_at: datetime,
+) -> planning_input.SourceEvidence:
+    source_dates = {
+        "pv_forecast": "2026-08-15",
+        "pv_forecast_tomorrow": "2026-08-16",
+        "pv_forecast_day_3": "2026-08-17",
+    }
+    if binding.entity_id is None:
+        return planning_input.SourceEvidence(
+            evidence_id=f"evidence-{binding.semantic_role}",
+            category=binding.category,
+            semantic_role=binding.semantic_role,
+            entity_id=None,
+            raw_state=None,
+            raw_unit=None,
+            observed_at=None,
+            availability="unconfigured",
+            mapping_version=f"mapping-{binding.semantic_role}",
+        )
+
+    source_date = source_dates[binding.semantic_role]
+    starts_at = datetime.fromisoformat(
+        f"{source_date}T00:00:00+02:00"
+    )
+    evidence_id = f"evidence-{binding.semantic_role}"
+    intervals = tuple(
+        PVEnergyTimelineInterval(
+            interval_id=(
+                f"interval-{binding.semantic_role}-{index:02d}"
+            ),
+            starts_at=starts_at + timedelta(minutes=30 * index),
+            ends_at=starts_at + timedelta(minutes=30 * (index + 1)),
+            pv_energy_wh=float(index),
+            evidence_type="FORECAST",
+            confidence=0.5,
+            actual_evidence_ids=(),
+            forecast_evidence_ids=(evidence_id,),
+            conversion_method_version=(
+                "solcast-detailed-forecast-average-kw-30m:v1"
+            ),
+        )
+        for index in range(48)
+    )
+    return planning_input.SourceEvidence(
+        evidence_id=evidence_id,
+        category=binding.category,
+        semantic_role=binding.semantic_role,
+        entity_id=binding.entity_id,
+        raw_state="1.0",
+        raw_unit="kWh",
+        observed_at=observed_at,
+        availability="available",
+        mapping_version=f"mapping-{binding.semantic_role}",
+        pv_energy_intervals=intervals,
+    )
+
+
+def test_load_bindings_exposes_three_explicit_solcast_day_sources(
+    tmp_path: object,
+) -> None:
+    options_path = tmp_path / "options.json"  # type: ignore[operator]
+    options_path.write_text(
+        json.dumps(
+            {
+                "solcast_forecast_entity": (
+                    "sensor.solcast_pv_forecast_voorspelling_vandaag"
+                ),
+                "solcast_forecast_tomorrow_entity": (
+                    "sensor.solcast_pv_forecast_voorspelling_morgen"
+                ),
+                "solcast_forecast_day_3_entity": (
+                    "sensor.solcast_pv_forecast_voorspelling_dag_3"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bindings = planning_input.load_bindings(str(options_path))
+    solcast_bindings = tuple(
+        (
+            binding.semantic_role,
+            binding.entity_id,
+        )
+        for binding in bindings
+        if binding.category == "solcast"
+    )
+
+    assert solcast_bindings == (
+        (
+            "pv_forecast",
+            "sensor.solcast_pv_forecast_voorspelling_vandaag",
+        ),
+        (
+            "pv_forecast_tomorrow",
+            "sensor.solcast_pv_forecast_voorspelling_morgen",
+        ),
+        (
+            "pv_forecast_day_3",
+            "sensor.solcast_pv_forecast_voorspelling_dag_3",
+        ),
+    )
+
+
+def test_three_solcast_sources_form_one_traceable_bounded_timeline(
+    monkeypatch: object,
+    tmp_path: object,
+) -> None:
+    captured_at = datetime.fromisoformat(
+        "2026-08-15T19:45:00+02:00"
+    )
+    options_path = tmp_path / "options.json"  # type: ignore[operator]
+    options_path.write_text(
+        json.dumps(
+            {
+                "solcast_forecast_entity": "sensor.solcast.today",
+                "solcast_forecast_tomorrow_entity": (
+                    "sensor.solcast.tomorrow"
+                ),
+                "solcast_forecast_day_3_entity": "sensor.solcast.day_3",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_read(
+        self: planning_input.HomeAssistantStateReader,
+        binding: planning_input.SourceBinding,
+    ) -> planning_input.SourceEvidence:
+        del self
+        if binding.category != "solcast":
+            return planning_input.SourceEvidence(
+                evidence_id=f"evidence-{binding.semantic_role}",
+                category=binding.category,
+                semantic_role=binding.semantic_role,
+                entity_id=binding.entity_id,
+                raw_state=None,
+                raw_unit=None,
+                observed_at=None,
+                availability="unconfigured",
+                mapping_version=f"mapping-{binding.semantic_role}",
+            )
+        return _forecast_source_evidence(
+            binding,
+            observed_at=captured_at,
+        )
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        planning_input.HomeAssistantStateReader,
+        "read",
+        fake_read,
+    )
+    bundle = planning_input.assemble_planning_input(
+        "token",
+        options_path=str(options_path),
+        captured_at=captured_at,
+        household_load_fallback_power_w=500.0,
+    )
+
+    solcast_evidence = tuple(
+        item
+        for item in bundle.evidence
+        if item.category == "solcast"
+    )
+    assert len(solcast_evidence) == 3
+    assert all(
+        len(item.pv_energy_intervals) == 48
+        for item in solcast_evidence
+    )
+
+    timeline = bundle.snapshot.pv_energy_timeline
+    assert timeline is not None
+    assert bundle.snapshot.horizon_end == (
+        captured_at + timedelta(hours=36)
+    )
+    assert len(timeline.intervals) == 111
+    assert timeline.intervals[0].starts_at == datetime.fromisoformat(
+        "2026-08-15T00:00:00+02:00"
+    )
+    assert timeline.intervals[-1].ends_at == datetime.fromisoformat(
+        "2026-08-17T07:30:00+02:00"
+    )
+    assert all(
+        interval.ends_at <= bundle.snapshot.horizon_end
+        for interval in timeline.intervals
+    )
+    assert {
+        interval.forecast_evidence_ids[0]
+        for interval in timeline.intervals
+    } == {
+        "evidence-pv_forecast",
+        "evidence-pv_forecast_tomorrow",
+        "evidence-pv_forecast_day_3",
+    }
+    assert all(
+        left.ends_at == right.starts_at
+        for left, right in zip(
+            timeline.intervals,
+            timeline.intervals[1:],
+            strict=True,
+        )
+    )
+
+
+def test_missing_day_3_stays_visible_and_is_not_synthesized(
+    monkeypatch: object,
+) -> None:
+    captured_at = datetime.fromisoformat(
+        "2026-08-15T19:45:00+02:00"
+    )
+    bindings = (
+        planning_input.SourceBinding(
+            "solcast",
+            "pv_forecast",
+            "sensor.solcast.today",
+        ),
+        planning_input.SourceBinding(
+            "solcast",
+            "pv_forecast_tomorrow",
+            "sensor.solcast.tomorrow",
+        ),
+        planning_input.SourceBinding(
+            "solcast",
+            "pv_forecast_day_3",
+            None,
+        ),
+    )
+
+    def fake_read(
+        self: planning_input.HomeAssistantStateReader,
+        binding: planning_input.SourceBinding,
+    ) -> planning_input.SourceEvidence:
+        del self
+        return _forecast_source_evidence(
+            binding,
+            observed_at=captured_at,
+        )
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        planning_input.HomeAssistantStateReader,
+        "read",
+        fake_read,
+    )
+    bundle = planning_input.assemble_planning_input(
+        "token",
+        bindings=bindings,
+        captured_at=captured_at,
+        household_load_fallback_power_w=500.0,
+    )
+
+    day_3_evidence = next(
+        item
+        for item in bundle.evidence
+        if item.semantic_role == "pv_forecast_day_3"
+    )
+    assert day_3_evidence.availability == "unconfigured"
+    assert day_3_evidence.pv_energy_intervals == ()
+
+    timeline = bundle.snapshot.pv_energy_timeline
+    assert timeline is not None
+    assert len(timeline.intervals) == 96
+    assert timeline.intervals[-1].ends_at == datetime.fromisoformat(
+        "2026-08-17T00:00:00+02:00"
+    )
+    assert timeline.intervals[-1].ends_at < bundle.snapshot.horizon_end

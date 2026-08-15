@@ -631,3 +631,162 @@ def test_planning_input_card_exposes_actual_pv_gap_diagnostics(
     assert attributes["pv_actual_interrupted_at"] == (
         CLOSED_START + timedelta(minutes=10)
     ).isoformat()
+
+
+def test_one_bounded_history_read_actualises_all_closed_forecasts() -> None:
+    captured_at = datetime(2026, 8, 15, 9, 5, tzinfo=UTC)
+    first_start = datetime(2026, 8, 15, 8, 0, tzinfo=UTC)
+    first_end = first_start + timedelta(minutes=30)
+    second_end = first_end + timedelta(minutes=30)
+    future_end = second_end + timedelta(minutes=30)
+    base = _bundle(captured_at=captured_at)
+    timeline = base.snapshot.pv_energy_timeline
+    assert timeline is not None
+    bundle = replace(
+        base,
+        snapshot=replace(
+            base.snapshot,
+            pv_energy_timeline=replace(
+                timeline,
+                intervals=(
+                    _forecast_interval(
+                        interval_id="solcast-0800",
+                        starts_at=first_start,
+                        ends_at=first_end,
+                        energy_wh=400.0,
+                    ),
+                    _forecast_interval(
+                        interval_id="solcast-0830",
+                        starts_at=first_end,
+                        ends_at=second_end,
+                        energy_wh=500.0,
+                    ),
+                    _forecast_interval(
+                        interval_id="solcast-0900",
+                        starts_at=second_end,
+                        ends_at=future_end,
+                        energy_wh=600.0,
+                    ),
+                ),
+            ),
+        ),
+    )
+    read_windows: list[tuple[datetime, datetime]] = []
+
+    def history_reader(
+        *,
+        entity_id: str,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> PVHistoryReadResult:
+        assert entity_id == ENTITY_ID
+        read_windows.append((starts_at, ends_at))
+        return PVHistoryReadResult(
+            entity_id=entity_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            status="available",
+            error=None,
+            observations=(
+                PVPowerObservation(
+                    power_w=600.0,
+                    sampled_at=first_start - timedelta(seconds=5),
+                    evidence_id="goodwe-before-0800",
+                ),
+                PVPowerObservation(
+                    power_w=400.0,
+                    sampled_at=first_end,
+                    evidence_id="goodwe-0830",
+                ),
+                PVPowerObservation(
+                    power_w=200.0,
+                    sampled_at=second_end,
+                    evidence_id="goodwe-0900",
+                ),
+            ),
+        )
+
+    enriched, diagnostics = apply_latest_closed_actual_pv(
+        bundle,
+        entity_id=ENTITY_ID,
+        history_reader=history_reader,
+        cache=LivePVActualCache(),
+        telemetry_interval_seconds=5,
+    )
+
+    assert read_windows == [
+        (first_start - timedelta(seconds=30), second_end)
+    ]
+    actualised = enriched.snapshot.pv_energy_timeline
+    assert actualised is not None
+    assert [
+        interval.evidence_type for interval in actualised.intervals
+    ] == ["ACTUAL", "ACTUAL", "FORECAST"]
+    assert [
+        interval.pv_energy_wh for interval in actualised.intervals
+    ] == pytest.approx([300.0, 200.0, 600.0])
+    assert diagnostics.closed_forecast_count == 2
+    assert diagnostics.actual_interval_count == 2
+    assert diagnostics.gap_interval_count == 0
+    assert diagnostics.starts_at == first_start
+    assert diagnostics.ends_at == second_end
+    assert len(diagnostics.deviation_results) == 2
+    assert [
+        result.forecast_interval_id
+        for result in diagnostics.deviation_results
+    ] == ["solcast-0800", "solcast-0830"]
+    assert diagnostics.deviation_result == diagnostics.deviation_results[-1]
+
+    run = CanonicalPipeline().run(
+        planning_input=enriched.snapshot,
+    )
+    projection = _with_planning_input_diagnostics(
+        project(run),
+        enriched,
+        pv_actual_diagnostics=diagnostics,
+    )
+    attributes = projection.cards[0].attributes
+    assert attributes["pv_actual_closed_forecast_count"] == 2
+    assert attributes["pv_actual_interval_count"] == 2
+    assert attributes["pv_actual_gap_interval_count"] == 0
+    assert attributes["pv_deviation_result_count"] == 2
+
+
+def test_unavailable_day_history_remains_explicit_closed_interval_gaps() -> None:
+    bundle = _bundle(captured_at=CAPTURED_AT)
+
+    def history_reader(
+        *,
+        entity_id: str,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> PVHistoryReadResult:
+        return PVHistoryReadResult(
+            entity_id=entity_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            status="unavailable",
+            error="history unavailable",
+            observations=(),
+        )
+
+    enriched, diagnostics = apply_latest_closed_actual_pv(
+        bundle,
+        entity_id=ENTITY_ID,
+        history_reader=history_reader,
+        cache=LivePVActualCache(),
+        telemetry_interval_seconds=5,
+    )
+
+    timeline = enriched.snapshot.pv_energy_timeline
+    assert timeline is not None
+    assert [
+        interval.evidence_type for interval in timeline.intervals
+    ] == ["FORECAST", "FORECAST"]
+    assert diagnostics.history_status == "unavailable"
+    assert diagnostics.interval_status == "gap"
+    assert diagnostics.closed_forecast_count == 1
+    assert diagnostics.actual_interval_count == 0
+    assert diagnostics.gap_interval_count == 1
+    assert diagnostics.deviation_results == ()
+    assert diagnostics.deviation_result is None

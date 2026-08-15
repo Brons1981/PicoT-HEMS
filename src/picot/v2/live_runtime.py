@@ -256,6 +256,18 @@ def _with_planning_input_diagnostics(
             "pv_actual_processing_ms": (
                 pv_actual_diagnostics.processing_ms
             ),
+            "pv_actual_closed_forecast_count": (
+                pv_actual_diagnostics.closed_forecast_count
+            ),
+            "pv_actual_interval_count": (
+                pv_actual_diagnostics.actual_interval_count
+            ),
+            "pv_actual_gap_interval_count": (
+                pv_actual_diagnostics.gap_interval_count
+            ),
+            "pv_deviation_result_count": len(
+                pv_actual_diagnostics.deviation_results
+            ),
             "pv_actual_gap_reason": (
                 pv_actual_diagnostics.gap_reason
             ),

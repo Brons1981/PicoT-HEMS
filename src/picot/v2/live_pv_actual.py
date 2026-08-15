@@ -43,14 +43,17 @@ class LivePVActualDiagnostics:
     interruption_state: str | None = None
     interrupted_at: datetime | None = None
     deviation_result: PVDeviationResult | None = None
+    deviation_results: tuple[PVDeviationResult, ...] = ()
+    closed_forecast_count: int = 0
+    actual_interval_count: int = 0
+    gap_interval_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class _CachedResult:
     history_status: str
     error: str | None
-    interval: PVEnergyTimelineInterval | None
-    diagnosis: PVActualIntervalDiagnosis | None
+    diagnoses: tuple[PVActualIntervalDiagnosis, ...]
 
 
 class LivePVActualCache:
@@ -73,6 +76,9 @@ class LivePVActualCache:
         key: tuple[str, datetime, datetime],
         result: _CachedResult,
     ) -> None:
+        for existing in tuple(self._results):
+            if existing[0] == key[0] and existing != key:
+                del self._results[existing]
         self._results[key] = result
 
 
@@ -90,7 +96,7 @@ def apply_latest_closed_actual_pv(
     cache: LivePVActualCache,
     telemetry_interval_seconds: int,
 ) -> tuple[PlanningInputBundle, LivePVActualDiagnostics]:
-    """Replace only the latest closed forecast interval with actual PV."""
+    """Replace every valid closed forecast using one bounded history read."""
     started = perf_counter()
     timeline = bundle.snapshot.pv_energy_timeline
 
@@ -104,11 +110,20 @@ def apply_latest_closed_actual_pv(
         )
 
     closed_forecasts = tuple(
-        interval
-        for interval in timeline.intervals
-        if (
-            interval.evidence_type == "FORECAST"
-            and interval.ends_at <= bundle.snapshot.captured_at
+        sorted(
+            (
+                interval
+                for interval in timeline.intervals
+                if (
+                    interval.evidence_type == "FORECAST"
+                    and interval.ends_at <= bundle.snapshot.captured_at
+                )
+            ),
+            key=lambda interval: (
+                interval.starts_at,
+                interval.ends_at,
+                interval.interval_id,
+            ),
         )
     )
     if not closed_forecasts:
@@ -120,23 +135,12 @@ def apply_latest_closed_actual_pv(
             entity_id=entity_id,
         )
 
-    selected = max(
-        closed_forecasts,
-        key=lambda interval: (
-            interval.ends_at,
-            interval.starts_at,
-            interval.interval_id,
-        ),
-    )
-    key = (
-        entity_id,
-        selected.starts_at,
-        selected.ends_at,
-    )
+    first = closed_forecasts[0]
+    last = closed_forecasts[-1]
+    key = (entity_id, first.starts_at, last.ends_at)
     cached = cache.get(key)
     cache_hit = cached is not None
-
-    lookup_starts_at = selected.starts_at - timedelta(
+    lookup_starts_at = first.starts_at - timedelta(
         seconds=max(30, telemetry_interval_seconds * 3)
     )
 
@@ -144,56 +148,60 @@ def apply_latest_closed_actual_pv(
         history = history_reader(
             entity_id=entity_id,
             starts_at=lookup_starts_at,
-            ends_at=selected.ends_at,
+            ends_at=last.ends_at,
         )
-        diagnosis = None
-        if history.status == "available":
-            diagnosis = diagnose_actual_pv_interval(
+        diagnoses = tuple(
+            diagnose_actual_pv_interval(
                 interval_id=(
                     "pv-actual-"
-                    f"{selected.starts_at.isoformat()}"
+                    f"{forecast.starts_at.isoformat()}"
                 ),
-                starts_at=selected.starts_at,
-                ends_at=selected.ends_at,
+                starts_at=forecast.starts_at,
+                ends_at=forecast.ends_at,
                 captured_at=bundle.snapshot.captured_at,
                 observations=history.observations,
                 telemetry_interval_seconds=(
                     telemetry_interval_seconds
                 ),
             )
+            for forecast in closed_forecasts
+        )
         cached = _CachedResult(
             history_status=history.status,
             error=history.error,
-            interval=(
-                diagnosis.interval
-                if diagnosis is not None
-                else None
-            ),
-            diagnosis=diagnosis,
+            diagnoses=diagnoses,
         )
         cache.store(key, cached)
 
-    actual = cached.interval
-    deviation_result = None
-    if actual is not None:
+    actual_by_forecast_id: dict[str, PVEnergyTimelineInterval] = {}
+    deviation_results: list[PVDeviationResult] = []
+    actual_intervals: list[PVEnergyTimelineInterval] = []
+    for forecast, diagnosis in zip(
+        closed_forecasts,
+        cached.diagnoses,
+        strict=True,
+    ):
+        actual = diagnosis.interval
+        if actual is None:
+            continue
         actual = replace(
             actual,
-            forecast_evidence_ids=(
-                selected.forecast_evidence_ids
-            ),
+            forecast_evidence_ids=forecast.forecast_evidence_ids,
         )
-        deviation_result = evaluate_pv_energy_deviation(
-            forecast=selected,
-            actual=actual,
-            evaluated_at=bundle.snapshot.captured_at,
+        actual_by_forecast_id[forecast.interval_id] = actual
+        actual_intervals.append(actual)
+        deviation_results.append(
+            evaluate_pv_energy_deviation(
+                forecast=forecast,
+                actual=actual,
+                evaluated_at=bundle.snapshot.captured_at,
+            )
         )
-    diagnosis = cached.diagnosis
-    interval_status = "actual" if actual is not None else "gap"
-    enriched = bundle
 
-    if actual is not None:
+    enriched = bundle
+    if actual_by_forecast_id:
         intervals = tuple(
-            actual if interval is selected else interval
+            actual_by_forecast_id.get(interval.interval_id, interval)
             for interval in timeline.intervals
         )
         enriched = replace(
@@ -207,6 +215,28 @@ def apply_latest_closed_actual_pv(
             ),
         )
 
+    actual_count = len(actual_intervals)
+    gap_count = len(closed_forecasts) - actual_count
+    if actual_count == len(closed_forecasts):
+        interval_status = "actual"
+    elif actual_count:
+        interval_status = "partial"
+    else:
+        interval_status = "gap"
+
+    latest_diagnosis = (
+        cached.diagnoses[-1] if cached.diagnoses else None
+    )
+    latest_actual = (
+        actual_intervals[-1] if actual_intervals else None
+    )
+    evidence_ids = (
+        latest_actual.actual_evidence_ids
+        if latest_actual is not None
+        else ()
+    )
+    deviations = tuple(deviation_results)
+
     diagnostics = _diagnostics(
         started=started,
         history_status=(
@@ -215,69 +245,70 @@ def apply_latest_closed_actual_pv(
         interval_status=interval_status,
         cache_hit=cache_hit,
         entity_id=entity_id,
-        starts_at=selected.starts_at,
-        ends_at=selected.ends_at,
+        starts_at=first.starts_at,
+        ends_at=last.ends_at,
         lookup_starts_at=lookup_starts_at,
         error=cached.error,
         conversion_method_version=(
-            actual.conversion_method_version
-            if actual is not None
+            latest_actual.conversion_method_version
+            if latest_actual is not None
             else None
         ),
-        actual_evidence_ids=(
-            actual.actual_evidence_ids
-            if actual is not None
-            else ()
-        ),
+        actual_evidence_ids=evidence_ids,
         gap_reason=(
-            diagnosis.reason
-            if diagnosis is not None
+            latest_diagnosis.reason
+            if latest_diagnosis is not None
             else None
         ),
         observation_count=(
-            diagnosis.observation_count
-            if diagnosis is not None
+            latest_diagnosis.observation_count
+            if latest_diagnosis is not None
             else 0
         ),
         first_observed_at=(
-            diagnosis.first_observed_at
-            if diagnosis is not None
+            latest_diagnosis.first_observed_at
+            if latest_diagnosis is not None
             else None
         ),
         last_observed_at=(
-            diagnosis.last_observed_at
-            if diagnosis is not None
+            latest_diagnosis.last_observed_at
+            if latest_diagnosis is not None
             else None
         ),
         maximum_observed_gap_seconds=(
-            diagnosis.maximum_observed_gap_seconds
-            if diagnosis is not None
+            latest_diagnosis.maximum_observed_gap_seconds
+            if latest_diagnosis is not None
             else None
         ),
         allowed_gap_seconds=(
-            diagnosis.allowed_gap_seconds
-            if diagnosis is not None
+            latest_diagnosis.allowed_gap_seconds
+            if latest_diagnosis is not None
             else None
         ),
         history_semantics=(
-            diagnosis.history_semantics
-            if diagnosis is not None
+            latest_diagnosis.history_semantics
+            if latest_diagnosis is not None
             else None
         ),
         interruption_state=(
-            diagnosis.interruption_state
-            if diagnosis is not None
+            latest_diagnosis.interruption_state
+            if latest_diagnosis is not None
             else None
         ),
         interrupted_at=(
-            diagnosis.interrupted_at
-            if diagnosis is not None
+            latest_diagnosis.interrupted_at
+            if latest_diagnosis is not None
             else None
         ),
-        deviation_result=deviation_result,
+        deviation_result=(
+            deviations[-1] if deviations else None
+        ),
+        deviation_results=deviations,
+        closed_forecast_count=len(closed_forecasts),
+        actual_interval_count=actual_count,
+        gap_interval_count=gap_count,
     )
     return enriched, diagnostics
-
 
 def _diagnostics(
     *,
@@ -302,6 +333,10 @@ def _diagnostics(
     interruption_state: str | None = None,
     interrupted_at: datetime | None = None,
     deviation_result: PVDeviationResult | None = None,
+    deviation_results: tuple[PVDeviationResult, ...] = (),
+    closed_forecast_count: int = 0,
+    actual_interval_count: int = 0,
+    gap_interval_count: int = 0,
 ) -> LivePVActualDiagnostics:
     return LivePVActualDiagnostics(
         history_status=history_status,
@@ -330,4 +365,8 @@ def _diagnostics(
         interruption_state=interruption_state,
         interrupted_at=interrupted_at,
         deviation_result=deviation_result,
+        deviation_results=deviation_results,
+        closed_forecast_count=closed_forecast_count,
+        actual_interval_count=actual_interval_count,
+        gap_interval_count=gap_interval_count,
     )

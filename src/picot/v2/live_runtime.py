@@ -280,6 +280,18 @@ def _with_planning_input_diagnostics(
             "pv_actual_allowed_gap_seconds": (
                 pv_actual_diagnostics.allowed_gap_seconds
             ),
+            "pv_actual_history_semantics": (
+                pv_actual_diagnostics.history_semantics
+            ),
+            "pv_actual_interruption_state": (
+                pv_actual_diagnostics.interruption_state
+            ),
+            "pv_actual_interrupted_at": (
+                pv_actual_diagnostics.interrupted_at.isoformat()
+                if pv_actual_diagnostics.interrupted_at
+                is not None
+                else None
+            ),
         }
     first = projection.cards[0]
     enriched = Card(

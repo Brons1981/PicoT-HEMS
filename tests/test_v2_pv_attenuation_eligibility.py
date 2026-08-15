@@ -7,6 +7,7 @@ from picot.v2.pv_attenuation_eligibility import (
     PVAttenuationEligibilityConfig,
     classify_pv_attenuation_observation,
 )
+
 from picot.v2.contracts import PVAttenuationObservation
 
 BASE_START = datetime(2026, 8, 15, 17, 0, tzinfo=UTC)

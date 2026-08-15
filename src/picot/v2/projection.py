@@ -97,6 +97,43 @@ def project(run: CanonicalPipelineRun) -> Projection:
                     if pv_intervals
                     else None
                 ),
+                "pv_energy_confidence_min": (
+                    min(
+                        interval.confidence
+                        for interval in pv_intervals
+                    )
+                    if pv_intervals
+                    else None
+                ),
+                "pv_energy_confidence_average": (
+                    sum(
+                        interval.confidence
+                        for interval in pv_intervals
+                    )
+                    / len(pv_intervals)
+                    if pv_intervals
+                    else None
+                ),
+                "pv_energy_intervals": [
+                    {
+                        "interval_id": interval.interval_id,
+                        "starts_at": interval.starts_at.isoformat(),
+                        "ends_at": interval.ends_at.isoformat(),
+                        "pv_energy_wh": interval.pv_energy_wh,
+                        "evidence_type": interval.evidence_type,
+                        "confidence": interval.confidence,
+                        "actual_evidence_ids": list(
+                            interval.actual_evidence_ids
+                        ),
+                        "forecast_evidence_ids": list(
+                            interval.forecast_evidence_ids
+                        ),
+                        "conversion_method_version": (
+                            interval.conversion_method_version
+                        ),
+                    }
+                    for interval in pv_intervals
+                ],
             },
         ),
         Card(
@@ -172,6 +209,48 @@ def project(run: CanonicalPipelineRun) -> Projection:
                         ),
                     }
                     for requirement in c.storage_requirements
+                ],
+                "projected_balances": [
+                    {
+                        "balance_id": balance.balance_id,
+                        "storage_state_id": balance.storage_state_id,
+                        "intervals": [
+                            {
+                                "starts_at": interval.starts_at.isoformat(),
+                                "ends_at": interval.ends_at.isoformat(),
+                                "current_usable_storage_energy_wh": (
+                                    interval.current_usable_storage_energy_wh
+                                ),
+                                "expected_usable_pv_energy_wh": (
+                                    interval.expected_usable_pv_energy_wh
+                                ),
+                                "planned_grid_energy_wh": (
+                                    interval.planned_grid_energy_wh
+                                ),
+                                "household_load_forecast_energy_wh": (
+                                    interval.household_load_forecast_energy_wh
+                                ),
+                                "known_future_demand_energy_wh": (
+                                    interval.known_future_demand_energy_wh
+                                ),
+                                "conversion_losses_wh": (
+                                    interval.conversion_losses_wh
+                                ),
+                                "other_planned_household_energy_flows_wh": (
+                                    interval.other_planned_household_energy_flows_wh
+                                ),
+                                "projected_storage_energy_wh": (
+                                    interval.projected_storage_energy_wh
+                                ),
+                                "confidence": interval.confidence,
+                                "evidence_ids": list(
+                                    interval.evidence_ids
+                                ),
+                            }
+                            for interval in balance.intervals
+                        ],
+                    }
+                    for balance in c.projected_balances
                 ],
             },
         ),

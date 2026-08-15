@@ -134,3 +134,29 @@ def test_planning_input_card_projects_compact_pv_energy_summary() -> None:
         planning_input_card.attributes["pv_energy_ends_at"]
         == "2026-08-14T11:30:00+00:00"
     )
+    assert planning_input_card.attributes["pv_energy_confidence_min"] == 0.85
+    assert planning_input_card.attributes["pv_energy_confidence_average"] == 0.875
+    assert planning_input_card.attributes["pv_energy_intervals"] == [
+        {
+            "interval_id": "pv-interval-1",
+            "starts_at": "2026-08-14T10:30:00+00:00",
+            "ends_at": "2026-08-14T11:00:00+00:00",
+            "pv_energy_wh": 1200.0,
+            "evidence_type": "FORECAST",
+            "confidence": 0.90,
+            "actual_evidence_ids": [],
+            "forecast_evidence_ids": ["solcast-1"],
+            "conversion_method_version": "solcast:v1",
+        },
+        {
+            "interval_id": "pv-interval-2",
+            "starts_at": "2026-08-14T11:00:00+00:00",
+            "ends_at": "2026-08-14T11:30:00+00:00",
+            "pv_energy_wh": 1350.0,
+            "evidence_type": "FORECAST",
+            "confidence": 0.85,
+            "actual_evidence_ids": [],
+            "forecast_evidence_ids": ["solcast-2"],
+            "conversion_method_version": "solcast:v1",
+        },
+    ]

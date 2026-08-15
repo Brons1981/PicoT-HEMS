@@ -356,6 +356,40 @@ class Candidate:
 
 
 @dataclass(frozen=True, slots=True)
+class PVForecastBasisInterval:
+    source_interval_id: str
+    starts_at: datetime
+    ends_at: datetime
+    selected_energy_wh: float
+    confidence: float
+    forecast_evidence_ids: tuple[str, ...]
+    forecast_range_status: str
+    forecast_range_method_version: str | None
+    conversion_method_version: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PVForecastBasisAssumption:
+    assumption_id: str
+    basis: str
+    scope: str
+    status: str
+    unavailable_reason: str | None
+    intervals: tuple[PVForecastBasisInterval, ...]
+    method_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class PVForecastAssumptionSet:
+    assumption_set_id: str
+    run_id: str
+    snapshot_id: str
+    maximum_assumption_count: int
+    assumptions: tuple[PVForecastBasisAssumption, ...]
+    method_version: str
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateSet:
     run_id: str
     snapshot_id: str
@@ -368,6 +402,7 @@ class CandidateSet:
     ] = ()
     storage_requirements: tuple[StorageEnergyRequirement, ...] = ()
     planning_gaps: tuple[PlanningGap, ...] = ()
+    pv_forecast_assumption_set: PVForecastAssumptionSet | None = None
     derivation_status: str = "not_available"
     derivation_reason: str | None = "required_inputs_missing"
 

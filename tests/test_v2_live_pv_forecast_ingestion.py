@@ -57,6 +57,19 @@ def test_solcast_half_hour_power_forecast_becomes_pv_energy() -> None:
     assert first.starts_at == first_start
     assert first.ends_at == first_start + timedelta(minutes=30)
     assert first.pv_energy_wh == pytest.approx(1382.3)
+    assert first.forecast_lower_energy_wh == pytest.approx(1187.05)
+    assert first.forecast_central_energy_wh == pytest.approx(1382.3)
+    assert first.forecast_upper_energy_wh == pytest.approx(1382.3)
+    assert first.forecast_range_status == "available"
+    assert first.forecast_range_source_fields == (
+        "pv_estimate10",
+        "pv_estimate",
+        "pv_estimate90",
+    )
+    assert (
+        first.forecast_range_method_version
+        == "solcast-pv-estimate-range-average-kw-30m:v1"
+    )
     assert first.evidence_type == "FORECAST"
     assert first.confidence == pytest.approx(0.8587)
     assert first.actual_evidence_ids == ()
@@ -71,6 +84,9 @@ def test_solcast_half_hour_power_forecast_becomes_pv_energy() -> None:
     assert second.starts_at == first.ends_at
     assert second.ends_at == second.starts_at + timedelta(minutes=30)
     assert second.pv_energy_wh == pytest.approx(1393.75)
+    assert second.forecast_lower_energy_wh == pytest.approx(1183.85)
+    assert second.forecast_central_energy_wh == pytest.approx(1393.75)
+    assert second.forecast_upper_energy_wh == pytest.approx(1393.75)
     assert second.confidence == pytest.approx(0.8494)
 
 

@@ -90,6 +90,18 @@ def test_planning_input_card_projects_compact_pv_energy_summary() -> None:
             starts_at=starts_at,
             ends_at=starts_at + timedelta(minutes=30),
             pv_energy_wh=1200.0,
+            forecast_lower_energy_wh=900.0,
+            forecast_central_energy_wh=1200.0,
+            forecast_upper_energy_wh=1500.0,
+            forecast_range_status="available",
+            forecast_range_source_fields=(
+                "pv_estimate10",
+                "pv_estimate",
+                "pv_estimate90",
+            ),
+            forecast_range_method_version=(
+                "solcast-pv-estimate-range-average-kw-30m:v1"
+            ),
             evidence_type="FORECAST",
             confidence=0.90,
             actual_evidence_ids=(),
@@ -101,6 +113,18 @@ def test_planning_input_card_projects_compact_pv_energy_summary() -> None:
             starts_at=starts_at + timedelta(minutes=30),
             ends_at=starts_at + timedelta(minutes=60),
             pv_energy_wh=1350.0,
+            forecast_lower_energy_wh=1000.0,
+            forecast_central_energy_wh=1350.0,
+            forecast_upper_energy_wh=1650.0,
+            forecast_range_status="available",
+            forecast_range_source_fields=(
+                "pv_estimate10",
+                "pv_estimate",
+                "pv_estimate90",
+            ),
+            forecast_range_method_version=(
+                "solcast-pv-estimate-range-average-kw-30m:v1"
+            ),
             evidence_type="FORECAST",
             confidence=0.85,
             actual_evidence_ids=(),
@@ -142,6 +166,18 @@ def test_planning_input_card_projects_compact_pv_energy_summary() -> None:
             "starts_at": "2026-08-14T10:30:00+00:00",
             "ends_at": "2026-08-14T11:00:00+00:00",
             "pv_energy_wh": 1200.0,
+            "forecast_lower_energy_wh": 900.0,
+            "forecast_central_energy_wh": 1200.0,
+            "forecast_upper_energy_wh": 1500.0,
+            "forecast_range_status": "available",
+            "forecast_range_source_fields": [
+                "pv_estimate10",
+                "pv_estimate",
+                "pv_estimate90",
+            ],
+            "forecast_range_method_version": (
+                "solcast-pv-estimate-range-average-kw-30m:v1"
+            ),
             "evidence_type": "FORECAST",
             "confidence": 0.90,
             "actual_evidence_ids": [],
@@ -153,6 +189,18 @@ def test_planning_input_card_projects_compact_pv_energy_summary() -> None:
             "starts_at": "2026-08-14T11:00:00+00:00",
             "ends_at": "2026-08-14T11:30:00+00:00",
             "pv_energy_wh": 1350.0,
+            "forecast_lower_energy_wh": 1000.0,
+            "forecast_central_energy_wh": 1350.0,
+            "forecast_upper_energy_wh": 1650.0,
+            "forecast_range_status": "available",
+            "forecast_range_source_fields": [
+                "pv_estimate10",
+                "pv_estimate",
+                "pv_estimate90",
+            ],
+            "forecast_range_method_version": (
+                "solcast-pv-estimate-range-average-kw-30m:v1"
+            ),
             "evidence_type": "FORECAST",
             "confidence": 0.85,
             "actual_evidence_ids": [],

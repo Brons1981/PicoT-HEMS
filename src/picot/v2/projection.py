@@ -120,6 +120,24 @@ def project(run: CanonicalPipelineRun) -> Projection:
                         "starts_at": interval.starts_at.isoformat(),
                         "ends_at": interval.ends_at.isoformat(),
                         "pv_energy_wh": interval.pv_energy_wh,
+                        "forecast_lower_energy_wh": (
+                            interval.forecast_lower_energy_wh
+                        ),
+                        "forecast_central_energy_wh": (
+                            interval.forecast_central_energy_wh
+                        ),
+                        "forecast_upper_energy_wh": (
+                            interval.forecast_upper_energy_wh
+                        ),
+                        "forecast_range_status": (
+                            interval.forecast_range_status
+                        ),
+                        "forecast_range_source_fields": list(
+                            interval.forecast_range_source_fields
+                        ),
+                        "forecast_range_method_version": (
+                            interval.forecast_range_method_version
+                        ),
                         "evidence_type": interval.evidence_type,
                         "confidence": interval.confidence,
                         "actual_evidence_ids": list(

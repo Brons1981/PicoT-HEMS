@@ -436,8 +436,18 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         web_view_store: object,
         pv_actual_diagnostics: LivePVActualDiagnostics,
         pv_attenuated_ranges: tuple[object, ...],
+        pv_sunset_source: SunsetReadResult,
+        pv_sunset_local_timezone: str,
+        pv_sunset_offsets: dict[str, float],
     ) -> None:
-        del price_config, web_view_store, pv_attenuated_ranges
+        del (
+            price_config,
+            web_view_store,
+            pv_attenuated_ranges,
+            pv_sunset_source,
+            pv_sunset_local_timezone,
+            pv_sunset_offsets,
+        )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))
 

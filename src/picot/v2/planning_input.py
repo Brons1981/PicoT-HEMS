@@ -127,6 +127,16 @@ DEFAULT_BINDINGS = (
         "zendure_power_from_house_entity",
     ),
     ("solcast", "pv_forecast", "solcast_forecast_entity"),
+    (
+        "solcast",
+        "pv_forecast_tomorrow",
+        "solcast_forecast_tomorrow_entity",
+    ),
+    (
+        "solcast",
+        "pv_forecast_day_3",
+        "solcast_forecast_day_3_entity",
+    ),
     ("nordpool", "energy_price", "nordpool_price_entity"),
 )
 
@@ -695,6 +705,7 @@ def assemble_planning_input(
         interval
         for item in evidence
         for interval in item.pv_energy_intervals
+        if horizon_end is None or interval.ends_at <= horizon_end
     )
     pv_energy_timeline = (
         PVEnergyTimeline(

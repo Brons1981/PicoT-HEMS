@@ -1,4 +1,4 @@
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -233,12 +233,7 @@ def test_target_quality_rejections_are_visible_and_prioritised(
 def test_requires_forecast_tracking_immediately_before_window() -> None:
     observations = tuple(
         (
-            _observation(
-                day_offset=item.starts_at.date().toordinal()
-                - BASE_START.date().toordinal(),
-                position="preceding",
-                actual_energy_wh=80.0,
-            )
+            replace(item, actual_energy_wh=80.0)
             if item.observation_id == "observation-0-preceding"
             else item
         )
@@ -256,11 +251,7 @@ def test_requires_forecast_tracking_immediately_before_window() -> None:
 def test_requires_contiguous_neighbouring_attenuation() -> None:
     observations = tuple(
         (
-            _observation(
-                day_offset=0,
-                position="following",
-                actual_energy_wh=190.0,
-            )
+            replace(item, actual_energy_wh=190.0)
             if item.observation_id == "observation-0-following"
             else item
         )
@@ -304,13 +295,7 @@ def test_stale_evidence_is_rejected_without_hidden_reuse() -> None:
 
 def test_other_installation_scope_cannot_supply_recurrence() -> None:
     unrelated = tuple(
-        PVAttenuationObservation(
-            **{
-                field: getattr(item, field)
-                for field in item.__dataclass_fields__
-            }
-            | {"installation_scope_id": "other-installation"}
-        )
+        replace(item, installation_scope_id="other-installation")
         for item in _evidence_days()
         if item.observation_id.startswith("observation--2-")
     )

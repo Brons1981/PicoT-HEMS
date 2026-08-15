@@ -35,6 +35,8 @@ from picot.v2.planning_input import (
 )
 from picot.v2.projection import Card, Projection, project
 from picot.v2.pv_actual_history import HomeAssistantPVHistoryReader
+from picot.v2.pv_cumulative_evidence import PVCumulativeEvidence
+from picot.v2.pv_deviation import PVDeviationResult
 from picot.v2.web_ui import (
     WebViewStore,
     build_web_view,
@@ -186,6 +188,126 @@ def _poll_live_cycle(
         bundle=bundle,
         execute=execute,
     )
+
+
+def _project_cumulative_pv_evidence(
+    evidence: PVCumulativeEvidence | None,
+) -> dict[str, Any]:
+    if evidence is None:
+        return {
+            "pv_cumulative_evidence_status": "not_available",
+            "pv_interval_deviations": [],
+        }
+    return {
+        "pv_cumulative_evidence_status": "available",
+        "pv_cumulative_evidence_id": evidence.evidence_id,
+        "pv_cumulative_coverage_status": evidence.coverage_status,
+        "pv_cumulative_starts_at": (
+            evidence.starts_at.isoformat()
+            if evidence.starts_at is not None
+            else None
+        ),
+        "pv_cumulative_ends_at": (
+            evidence.ends_at.isoformat()
+            if evidence.ends_at is not None
+            else None
+        ),
+        "pv_cumulative_evaluated_at": evidence.evaluated_at.isoformat(),
+        "pv_cumulative_closed_interval_count": (
+            evidence.closed_interval_count
+        ),
+        "pv_cumulative_assessed_interval_count": (
+            evidence.assessed_interval_count
+        ),
+        "pv_cumulative_gap_interval_count": evidence.gap_interval_count,
+        "pv_cumulative_coverage_ratio": evidence.coverage_ratio,
+        "pv_cumulative_forecast_central_energy_wh": (
+            evidence.forecast_central_energy_wh
+        ),
+        "pv_cumulative_actual_energy_wh": evidence.actual_energy_wh,
+        "pv_cumulative_net_deviation_energy_wh": (
+            evidence.net_deviation_energy_wh
+        ),
+        "pv_cumulative_absolute_net_deviation_energy_wh": (
+            evidence.absolute_net_deviation_energy_wh
+        ),
+        "pv_cumulative_total_absolute_interval_deviation_energy_wh": (
+            evidence.total_absolute_interval_deviation_energy_wh
+        ),
+        "pv_cumulative_deviation_percent": evidence.deviation_percent,
+        "pv_cumulative_percentage_status": evidence.percentage_status,
+        "pv_cumulative_forecast_lower_energy_wh": (
+            evidence.forecast_lower_energy_wh
+        ),
+        "pv_cumulative_forecast_upper_energy_wh": (
+            evidence.forecast_upper_energy_wh
+        ),
+        "pv_cumulative_forecast_range_status": (
+            evidence.forecast_range_status
+        ),
+        "pv_cumulative_range_assessment": evidence.range_assessment,
+        "pv_cumulative_range_distance_wh": evidence.range_distance_wh,
+        "pv_cumulative_range_assessed_interval_count": (
+            evidence.range_assessed_interval_count
+        ),
+        "pv_cumulative_below_range_interval_count": (
+            evidence.below_range_interval_count
+        ),
+        "pv_cumulative_within_range_interval_count": (
+            evidence.within_range_interval_count
+        ),
+        "pv_cumulative_above_range_interval_count": (
+            evidence.above_range_interval_count
+        ),
+        "pv_cumulative_unavailable_range_interval_count": (
+            evidence.unavailable_range_interval_count
+        ),
+        "pv_cumulative_interval_deviation_ids": list(
+            evidence.interval_deviation_ids
+        ),
+        "pv_cumulative_method_version": evidence.method_version,
+    }
+
+
+def _project_interval_pv_deviation(
+    deviation: PVDeviationResult,
+) -> dict[str, Any]:
+    return {
+        "deviation_id": deviation.deviation_id,
+        "starts_at": deviation.starts_at.isoformat(),
+        "ends_at": deviation.ends_at.isoformat(),
+        "forecast_interval_id": deviation.forecast_interval_id,
+        "actual_interval_id": deviation.actual_interval_id,
+        "forecast_central_energy_wh": (
+            deviation.forecast_central_energy_wh
+        ),
+        "forecast_lower_energy_wh": deviation.forecast_lower_energy_wh,
+        "forecast_upper_energy_wh": deviation.forecast_upper_energy_wh,
+        "actual_energy_wh": deviation.actual_energy_wh,
+        "deviation_energy_wh": deviation.deviation_energy_wh,
+        "absolute_deviation_energy_wh": (
+            deviation.absolute_deviation_energy_wh
+        ),
+        "deviation_percent": deviation.deviation_percent,
+        "percentage_status": deviation.percentage_status,
+        "direction": deviation.direction,
+        "range_assessment": deviation.range_assessment,
+        "range_distance_wh": deviation.range_distance_wh,
+        "forecast_confidence": deviation.forecast_confidence,
+        "actual_confidence": deviation.actual_confidence,
+        "forecast_evidence_ids": list(deviation.forecast_evidence_ids),
+        "actual_evidence_ids": list(deviation.actual_evidence_ids),
+        "forecast_conversion_method_version": (
+            deviation.forecast_conversion_method_version
+        ),
+        "actual_conversion_method_version": (
+            deviation.actual_conversion_method_version
+        ),
+        "range_assessment_method_version": (
+            deviation.range_assessment_method_version
+        ),
+        "evaluation_method_version": deviation.evaluation_method_version,
+    }
 
 
 def _with_planning_input_diagnostics(
@@ -455,6 +577,13 @@ def _with_planning_input_diagnostics(
                 else None
             ),
         }
+        pv_actual_attributes |= _project_cumulative_pv_evidence(
+            pv_actual_diagnostics.cumulative_evidence
+        )
+        pv_actual_attributes["pv_interval_deviations"] = [
+            _project_interval_pv_deviation(result)
+            for result in pv_actual_diagnostics.deviation_results
+        ]
     first = projection.cards[0]
     enriched = Card(
         first.entity_id,

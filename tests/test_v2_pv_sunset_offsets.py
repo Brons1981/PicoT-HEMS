@@ -2,14 +2,14 @@ from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+from picot.v2.pv_sunset_offsets import (
+    SUNSET_OFFSET_METHOD_VERSION,
+    derive_pv_sunset_offsets,
+)
 
 from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
-)
-from picot.v2.pv_sunset_offsets import (
-    SUNSET_OFFSET_METHOD_VERSION,
-    derive_pv_sunset_offsets,
 )
 
 AMSTERDAM = ZoneInfo("Europe/Amsterdam")

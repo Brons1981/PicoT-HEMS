@@ -131,6 +131,7 @@ def test_runtime_projection_exposes_summary_and_interval_lineage() -> None:
             "pv_attenuation_starts_at": START.isoformat(),
             "pv_attenuation_ends_at": END.isoformat(),
             "pv_attenuation_projected_at": PROJECTED_AT.isoformat(),
+            "pv_attenuation_minutes_from_sunset": -75.0,
             "pv_attenuation_status": "available",
             "pv_attenuation_unavailable_reason": None,
             "pv_attenuation_observer_only": True,

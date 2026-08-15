@@ -39,6 +39,9 @@ from picot.v2.pv_attenuation_range import PVAttenuatedForecastRange
 from picot.v2.pv_attenuation_runtime import (
     attach_pv_attenuation_runtime_diagnostics,
 )
+from picot.v2.pv_attenuation_runtime_derivation import (
+    derive_live_pv_attenuation_ranges,
+)
 from picot.v2.pv_cumulative_evidence import PVCumulativeEvidence
 from picot.v2.pv_deviation import PVDeviationResult
 from picot.v2.web_ui import (
@@ -842,6 +845,12 @@ def main() -> None:
     if not pv_power_entity:
         raise ValueError("pv_power_entity must be explicit")
 
+    pv_installation_scope_id = str(
+        options.get("pv_installation_scope_id", "")
+    ).strip()
+    if not pv_installation_scope_id:
+        raise ValueError("pv_installation_scope_id must be explicit")
+
     raw_pv_telemetry_interval = options.get(
         "pv_power_telemetry_interval_seconds",
         options.get("telemetry_interval_seconds", 5),
@@ -897,12 +906,25 @@ def main() -> None:
         bundle: PlanningInputBundle,
         pv_actual_diagnostics: LivePVActualDiagnostics,
     ) -> None:
+        timeline = bundle.snapshot.pv_energy_timeline
+        pv_attenuated_ranges = (
+            derive_live_pv_attenuation_ranges(
+                installation_scope_id=pv_installation_scope_id,
+                timeline=timeline,
+                profile=None,
+                minutes_from_sunset_by_interval_id={},
+                projected_at=bundle.snapshot.captured_at,
+            )
+            if timeline is not None
+            else ()
+        )
         _execute_planning_bundle(
             token=token,
             price_config=price_config,
             bundle=bundle,
             web_view_store=web_view_store,
             pv_actual_diagnostics=pv_actual_diagnostics,
+            pv_attenuated_ranges=pv_attenuated_ranges,
         )
 
     previous_signature: str | None = None

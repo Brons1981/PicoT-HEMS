@@ -2,16 +2,15 @@ from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from picot.v2.pv_attenuation_range import (
-    ATTENUATED_RANGE_METHOD_VERSION,
-    derive_pv_attenuated_forecast_range,
-    project_pv_attenuated_forecast_range,
-)
-
 from picot.v2.contracts import (
     PVAttenuationBucket,
     PVEnergyTimelineInterval,
     PVForecastAttenuationProfile,
+)
+from picot.v2.pv_attenuation_range import (
+    ATTENUATED_RANGE_METHOD_VERSION,
+    derive_pv_attenuated_forecast_range,
+    project_pv_attenuated_forecast_range,
 )
 
 START = datetime(2026, 8, 16, 17, 0, tzinfo=UTC)

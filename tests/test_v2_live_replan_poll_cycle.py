@@ -149,3 +149,47 @@ def test_history_write_failure_does_not_stop_pipeline_cycle() -> None:
 
     assert executed == [fresh.snapshot.run_id]
     assert result == _planning_input_signature(fresh)
+
+
+def test_poll_cycle_prepares_actual_pv_before_signature_and_execution(
+) -> None:
+    loaded = _bundle(captured_at=BASE, price=0.20)
+    enriched = _bundle(
+        captured_at=BASE + timedelta(minutes=1),
+        price=0.10,
+    )
+    diagnostics = object()
+    events: list[tuple[str, object]] = []
+
+    def load_bundle() -> PlanningInputBundle:
+        events.append(("loaded", loaded))
+        return loaded
+
+    def prepare_bundle(
+        bundle: PlanningInputBundle,
+    ) -> tuple[PlanningInputBundle, object]:
+        assert bundle is loaded
+        events.append(("prepared", enriched))
+        return enriched, diagnostics
+
+    def execute(
+        bundle: PlanningInputBundle,
+        actual_pv_diagnostics: object,
+    ) -> None:
+        events.append(("executed", bundle))
+        assert bundle is enriched
+        assert actual_pv_diagnostics is diagnostics
+
+    result = _poll_live_cycle(
+        previous_signature=None,
+        load_bundle=load_bundle,
+        prepare_bundle=prepare_bundle,
+        execute=execute,
+    )
+
+    assert events == [
+        ("loaded", loaded),
+        ("prepared", enriched),
+        ("executed", enriched),
+    ]
+    assert result == _planning_input_signature(enriched)

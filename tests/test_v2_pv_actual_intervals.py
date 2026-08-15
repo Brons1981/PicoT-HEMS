@@ -7,7 +7,6 @@ from picot.v2.pv_actual_intervals import (
     build_actual_pv_interval,
 )
 
-
 BASE = datetime(2026, 8, 15, 8, 30, tzinfo=UTC)
 END = BASE + timedelta(minutes=30)
 

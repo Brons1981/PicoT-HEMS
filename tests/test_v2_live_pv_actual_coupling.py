@@ -736,3 +736,17 @@ def test_one_bounded_history_read_actualises_all_closed_forecasts() -> None:
         for result in diagnostics.deviation_results
     ] == ["solcast-0800", "solcast-0830"]
     assert diagnostics.deviation_result == diagnostics.deviation_results[-1]
+
+    run = CanonicalPipeline().run(
+        planning_input=enriched.snapshot,
+    )
+    projection = _with_planning_input_diagnostics(
+        project(run),
+        enriched,
+        pv_actual_diagnostics=diagnostics,
+    )
+    attributes = projection.cards[0].attributes
+    assert attributes["pv_actual_closed_forecast_count"] == 2
+    assert attributes["pv_actual_interval_count"] == 2
+    assert attributes["pv_actual_gap_interval_count"] == 0
+    assert attributes["pv_deviation_result_count"] == 2

@@ -750,3 +750,43 @@ def test_one_bounded_history_read_actualises_all_closed_forecasts() -> None:
     assert attributes["pv_actual_interval_count"] == 2
     assert attributes["pv_actual_gap_interval_count"] == 0
     assert attributes["pv_deviation_result_count"] == 2
+
+
+def test_unavailable_day_history_remains_explicit_closed_interval_gaps() -> None:
+    bundle = _bundle(captured_at=CAPTURED_AT)
+
+    def history_reader(
+        *,
+        entity_id: str,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> PVHistoryReadResult:
+        return PVHistoryReadResult(
+            entity_id=entity_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            status="unavailable",
+            error="history unavailable",
+            observations=(),
+        )
+
+    enriched, diagnostics = apply_latest_closed_actual_pv(
+        bundle,
+        entity_id=ENTITY_ID,
+        history_reader=history_reader,
+        cache=LivePVActualCache(),
+        telemetry_interval_seconds=5,
+    )
+
+    timeline = enriched.snapshot.pv_energy_timeline
+    assert timeline is not None
+    assert [
+        interval.evidence_type for interval in timeline.intervals
+    ] == ["FORECAST", "FORECAST"]
+    assert diagnostics.history_status == "unavailable"
+    assert diagnostics.interval_status == "gap"
+    assert diagnostics.closed_forecast_count == 1
+    assert diagnostics.actual_interval_count == 0
+    assert diagnostics.gap_interval_count == 1
+    assert diagnostics.deviation_results == ()
+    assert diagnostics.deviation_result is None

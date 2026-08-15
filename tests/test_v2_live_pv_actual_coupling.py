@@ -387,3 +387,124 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     assert diagnostics.interval_status == "actual"
     assert diagnostics.entity_id == ENTITY_ID
     assert diagnostics.cache_hit is False
+
+
+def test_live_actual_pv_gap_exposes_observation_coverage() -> None:
+    bundle = _bundle(captured_at=CAPTURED_AT)
+
+    def read_sparse_history(
+        *,
+        entity_id: str,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> PVHistoryReadResult:
+        return PVHistoryReadResult(
+            entity_id=entity_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            status="available",
+            error=None,
+            observations=(
+                PVPowerObservation(
+                    power_w=600.0,
+                    sampled_at=(
+                        CLOSED_START - timedelta(seconds=5)
+                    ),
+                    evidence_id="goodwe-anchor",
+                ),
+                PVPowerObservation(
+                    power_w=620.0,
+                    sampled_at=(
+                        CLOSED_START + timedelta(seconds=60)
+                    ),
+                    evidence_id="goodwe-0060",
+                ),
+                PVPowerObservation(
+                    power_w=600.0,
+                    sampled_at=CLOSED_END,
+                    evidence_id="goodwe-1800",
+                ),
+            ),
+        )
+
+    enriched, diagnostics = apply_latest_closed_actual_pv(
+        bundle,
+        entity_id=ENTITY_ID,
+        history_reader=read_sparse_history,
+        cache=LivePVActualCache(),
+        telemetry_interval_seconds=5,
+    )
+
+    assert enriched is bundle
+    assert diagnostics.interval_status == "gap"
+    assert (
+        diagnostics.gap_reason
+        == "observation_gap_exceeds_limit"
+    )
+    assert diagnostics.observation_count == 3
+    assert (
+        diagnostics.first_observed_at
+        == CLOSED_START - timedelta(seconds=5)
+    )
+    assert diagnostics.last_observed_at == CLOSED_END
+    assert diagnostics.maximum_observed_gap_seconds == 1740.0
+    assert diagnostics.allowed_gap_seconds == 30.0
+
+
+def test_planning_input_card_exposes_actual_pv_gap_diagnostics(
+) -> None:
+    bundle = _bundle(captured_at=CAPTURED_AT)
+    diagnostics = LivePVActualDiagnostics(
+        history_status="available",
+        interval_status="gap",
+        cache_hit=False,
+        entity_id=ENTITY_ID,
+        starts_at=CLOSED_START,
+        ends_at=CLOSED_END,
+        lookup_starts_at=(
+            CLOSED_START - timedelta(seconds=30)
+        ),
+        error=None,
+        conversion_method_version=None,
+        actual_evidence_ids=(),
+        processing_ms=21.68,
+        gap_reason="observation_gap_exceeds_limit",
+        observation_count=3,
+        first_observed_at=(
+            CLOSED_START - timedelta(seconds=5)
+        ),
+        last_observed_at=CLOSED_END,
+        maximum_observed_gap_seconds=1740.0,
+        allowed_gap_seconds=30.0,
+    )
+    run = CanonicalPipeline().run(
+        planning_input=bundle.snapshot,
+    )
+
+    projection = _with_planning_input_diagnostics(
+        project(run),
+        bundle,
+        pv_actual_diagnostics=diagnostics,
+    )
+
+    attributes = projection.cards[0].attributes
+    assert (
+        attributes["pv_actual_gap_reason"]
+        == "observation_gap_exceeds_limit"
+    )
+    assert attributes["pv_actual_observation_count"] == 3
+    assert (
+        attributes["pv_actual_first_observed_at"]
+        == (
+            CLOSED_START - timedelta(seconds=5)
+        ).isoformat()
+    )
+    assert (
+        attributes["pv_actual_last_observed_at"]
+        == CLOSED_END.isoformat()
+    )
+    assert (
+        attributes["pv_actual_maximum_observed_gap_seconds"]
+        == 1740.0
+    )
+    assert attributes["pv_actual_allowed_gap_seconds"] == 30.0

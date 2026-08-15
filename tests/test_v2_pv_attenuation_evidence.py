@@ -5,13 +5,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from picot.v2.pv_deviation import PVDeviationResult
 from picot.v2.pv_attenuation_evidence import (
     ATTENUATION_EVIDENCE_METHOD_VERSION,
     PVAttenuationEvidenceStore,
     build_pv_attenuation_observation,
     project_pv_attenuation_observation,
 )
+from picot.v2.pv_deviation import PVDeviationResult
 
 
 START = datetime(2026, 8, 15, 18, 0, tzinfo=UTC)

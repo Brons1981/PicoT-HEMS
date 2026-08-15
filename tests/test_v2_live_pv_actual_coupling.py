@@ -53,6 +53,18 @@ def _forecast_interval(
         conversion_method_version=(
             "solcast-detailed-forecast-average-kw-30m:v1"
         ),
+        forecast_lower_energy_wh=energy_wh * 0.8,
+        forecast_central_energy_wh=energy_wh,
+        forecast_upper_energy_wh=energy_wh * 1.3,
+        forecast_range_status="available",
+        forecast_range_source_fields=(
+            "pv_estimate10",
+            "pv_estimate",
+            "pv_estimate90",
+        ),
+        forecast_range_method_version=(
+            "solcast-pv-estimate-range-average-kw-30m:v1"
+        ),
     )
 
 
@@ -313,6 +325,23 @@ def test_planning_input_card_exposes_actual_pv_runtime_diagnostics(
         CAPTURED_AT.isoformat()
     )
     assert attributes["pv_deviation_forecast_energy_wh"] == 500.0
+    assert attributes["pv_deviation_forecast_lower_energy_wh"] == 400.0
+    assert attributes["pv_deviation_forecast_central_energy_wh"] == 500.0
+    assert attributes["pv_deviation_forecast_upper_energy_wh"] == 650.0
+    assert attributes["pv_deviation_forecast_range_status"] == "available"
+    assert attributes["pv_deviation_forecast_range_source_fields"] == [
+        "pv_estimate10",
+        "pv_estimate",
+        "pv_estimate90",
+    ]
+    assert attributes["pv_deviation_forecast_range_method_version"] == (
+        "solcast-pv-estimate-range-average-kw-30m:v1"
+    )
+    assert attributes["pv_deviation_range_assessment"] == "below_range"
+    assert attributes["pv_deviation_range_distance_wh"] == 100.0
+    assert attributes["pv_deviation_range_assessment_method_version"] == (
+        "pv-forecast-range-assessment:v1"
+    )
     assert attributes["pv_deviation_actual_energy_wh"] == 300.0
     assert attributes["pv_deviation_energy_wh"] == -200.0
     assert attributes["pv_deviation_absolute_energy_wh"] == 200.0

@@ -332,6 +332,51 @@ def _with_planning_input_diagnostics(
                 if deviation is not None
                 else None
             ),
+            "pv_deviation_forecast_lower_energy_wh": (
+                deviation.forecast_lower_energy_wh
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_forecast_central_energy_wh": (
+                deviation.forecast_central_energy_wh
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_forecast_upper_energy_wh": (
+                deviation.forecast_upper_energy_wh
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_forecast_range_status": (
+                deviation.forecast_range_status
+                if deviation is not None
+                else "unavailable"
+            ),
+            "pv_deviation_forecast_range_source_fields": (
+                list(deviation.forecast_range_source_fields)
+                if deviation is not None
+                else []
+            ),
+            "pv_deviation_forecast_range_method_version": (
+                deviation.forecast_range_method_version
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_range_assessment": (
+                deviation.range_assessment
+                if deviation is not None
+                else "unavailable"
+            ),
+            "pv_deviation_range_distance_wh": (
+                deviation.range_distance_wh
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_range_assessment_method_version": (
+                deviation.range_assessment_method_version
+                if deviation is not None
+                else None
+            ),
             "pv_deviation_actual_energy_wh": (
                 deviation.actual_energy_wh
                 if deviation is not None

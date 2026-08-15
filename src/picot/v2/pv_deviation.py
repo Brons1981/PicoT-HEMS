@@ -9,6 +9,7 @@ from hashlib import sha256
 from picot.v2.contracts import PVEnergyTimelineInterval
 
 EVALUATION_METHOD_VERSION = "pv-energy-deviation:v1"
+RANGE_ASSESSMENT_METHOD_VERSION = "pv-forecast-range-assessment:v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,15 @@ class PVDeviationResult:
     forecast_interval_id: str
     actual_interval_id: str
     forecast_energy_wh: float
+    forecast_lower_energy_wh: float | None
+    forecast_central_energy_wh: float | None
+    forecast_upper_energy_wh: float | None
+    forecast_range_status: str
+    forecast_range_source_fields: tuple[str, ...]
+    forecast_range_method_version: str | None
+    range_assessment: str
+    range_distance_wh: float | None
+    range_assessment_method_version: str
     actual_energy_wh: float
     deviation_energy_wh: float
     absolute_deviation_energy_wh: float
@@ -84,11 +94,33 @@ def evaluate_pv_energy_deviation(
     else:
         direction = "matches_forecast"
 
+    if forecast.forecast_range_status == "available":
+        lower = forecast.forecast_lower_energy_wh
+        upper = forecast.forecast_upper_energy_wh
+        assert lower is not None
+        assert upper is not None
+        if actual.pv_energy_wh < lower:
+            range_assessment = "below_range"
+            range_distance_wh = lower - actual.pv_energy_wh
+        elif actual.pv_energy_wh > upper:
+            range_assessment = "above_range"
+            range_distance_wh = actual.pv_energy_wh - upper
+        else:
+            range_assessment = "within_range"
+            range_distance_wh = 0.0
+    else:
+        range_assessment = "unavailable"
+        range_distance_wh = None
+
     seed = "|".join((
         forecast.interval_id,
         actual.interval_id,
         evaluated_at.isoformat(),
         str(forecast.pv_energy_wh),
+        str(forecast.forecast_lower_energy_wh),
+        str(forecast.forecast_upper_energy_wh),
+        forecast.forecast_range_status,
+        range_assessment,
         str(actual.pv_energy_wh),
         *forecast.forecast_evidence_ids,
         *actual.actual_evidence_ids,
@@ -106,6 +138,27 @@ def evaluate_pv_energy_deviation(
         forecast_interval_id=forecast.interval_id,
         actual_interval_id=actual.interval_id,
         forecast_energy_wh=forecast.pv_energy_wh,
+        forecast_lower_energy_wh=(
+            forecast.forecast_lower_energy_wh
+        ),
+        forecast_central_energy_wh=(
+            forecast.forecast_central_energy_wh
+        ),
+        forecast_upper_energy_wh=(
+            forecast.forecast_upper_energy_wh
+        ),
+        forecast_range_status=forecast.forecast_range_status,
+        forecast_range_source_fields=(
+            forecast.forecast_range_source_fields
+        ),
+        forecast_range_method_version=(
+            forecast.forecast_range_method_version
+        ),
+        range_assessment=range_assessment,
+        range_distance_wh=range_distance_wh,
+        range_assessment_method_version=(
+            RANGE_ASSESSMENT_METHOD_VERSION
+        ),
         actual_energy_wh=actual.pv_energy_wh,
         deviation_energy_wh=deviation_energy_wh,
         absolute_deviation_energy_wh=abs(deviation_energy_wh),

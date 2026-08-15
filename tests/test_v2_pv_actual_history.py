@@ -3,8 +3,6 @@ from datetime import UTC, datetime, timedelta
 from urllib.error import URLError
 from urllib.parse import parse_qs, unquote, urlparse
 
-import pytest
-
 from picot.v2 import pv_actual_history
 from picot.v2.pv_actual_intervals import build_actual_pv_interval
 
@@ -30,7 +28,7 @@ def test_home_assistant_goodwe_history_becomes_actual_pv_interval(
         },
         {
             "entity_id": ENTITY_ID,
-            "state": "300",
+            "state": "unavailable",
             "last_updated": "2026-08-15T08:50:00+00:00",
         },
         {
@@ -84,8 +82,14 @@ def test_home_assistant_goodwe_history_becomes_actual_pv_interval(
     assert [item.power_w for item in result.observations] == [
         600.0,
         900.0,
-        300.0,
+        None,
         600.0,
+    ]
+    assert [item.source_state for item in result.observations] == [
+        "numeric",
+        "numeric",
+        "unavailable",
+        "numeric",
     ]
     assert [item.sampled_at for item in result.observations] == [
         LOOKUP_START,
@@ -117,13 +121,7 @@ def test_home_assistant_goodwe_history_becomes_actual_pv_interval(
         telemetry_interval_seconds=300,
     )
 
-    assert interval is not None
-    assert interval.pv_energy_wh == pytest.approx(300.0)
-    assert interval.evidence_type == "ACTUAL"
-    assert interval.actual_evidence_ids == tuple(
-        item.evidence_id
-        for item in result.observations
-    )
+    assert interval is None
 
 
 def test_goodwe_history_failure_is_explicit(

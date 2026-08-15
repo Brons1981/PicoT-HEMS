@@ -1,6 +1,157 @@
 # PicoT v2 Development Log
 
 
+## 2026-08-15 — Actual PV evidence, confidence and sunset-relative attenuation foundation
+
+PicoT version: `2.0.0-dev.43`  
+Branch: `main`  
+Last verified main commit: `b33903cd2944e59434b2c1a08d363bd4eae0f608`  
+Architecture authority: ADR-001 through ADR-039 plus accepted V2ADRs  
+State: **CI_VERIFIED and LIVE_VERIFIED**
+
+### COMPLETED
+
+- Replaced inferred actual-PV behaviour with read-only GoodWe history from the configured Home Assistant power entity.
+- Defined deterministic GoodWe state-transition/sample-hold energy conversion with explicit method version and bounded history reads.
+- Preserved unavailable source states, interruptions and gaps instead of silently interpolating them.
+- Actualised all closed PV forecast intervals using one bounded history read and a bounded runtime cache.
+- Added complete per-interval actual-versus-forecast deviation evidence, including:
+  - central, lower and upper Solcast forecast energy;
+  - actual PV energy;
+  - signed and absolute deviation;
+  - percentage and direction;
+  - forecast-range assessment;
+  - forecast and actual confidence;
+  - evidence IDs and conversion/evaluation method versions.
+- Added cumulative closed-interval PV evidence with explicit coverage ratio, gap count, total actual/forecast energy and range assessment.
+- Preserved Solcast estimate10/central/estimate90 ranges and interval confidence as canonical, traceable Planning Input.
+- Added future PV forecast assumptions to Candidate Engine without allowing missing or weak evidence to become hidden certainty.
+- Accepted `V2ADR-048` for confidence-aware PV planning across the complete household HEMS scope, not only battery planning.
+- Accepted `V2ADR-049` for evidence-backed PV attenuation profiles.
+- Built the V2ADR-049 foundation in test-first slices:
+  - immutable attenuation evidence and profile contracts;
+  - evidence capture;
+  - eligibility classification;
+  - sunset-relative bucket aggregation;
+  - side-by-side original and corrected forecast ranges;
+  - observer-only runtime projection;
+  - live derivation of future attenuation ranges;
+  - deterministic interval-midpoint offsets relative to sunset;
+  - read-only Home Assistant `sun.sun.attributes.next_setting` source;
+  - visible sunset source, timezone and offset lineage;
+  - live coupling of sunset offsets into attenuation range derivation.
+- Added explicit add-on options:
+  - `pv_installation_scope_id`;
+  - `pv_local_timezone`, default `Europe/Amsterdam`.
+- Kept every attenuation result observer-only and prevented any Candidate, Evaluation, execution-plan or device-control influence.
+- Advanced and live-validated releases from dev.22 through `2.0.0-dev.43`.
+
+### DECISIONS MADE
+
+- ADR-001 through ADR-039 remain authoritative.
+- ADR-040 through ADR-047 are not reliable v2 authority and must not be used.
+- New v2 decisions use the `V2ADR-` namespace.
+- Solcast confidence is interval-specific. A poor earlier forecast may not invalidate a later interval with stronger confidence.
+- PV evidence and corrections apply to PicoT's complete household planning scope, including storage and future controllable devices.
+- Solcast's installation-wide dampening is insufficient for this installation because the east/west roof can have different shading behaviour.
+- The first generic PicoT attenuation implementation uses evidence-backed total-installation output versus forecast, grouped by time relative to sunset.
+- A fixed hard-coded evening reduction is forbidden.
+- A profile may only arise from eligible historical evidence with explicit sample count, confidence, method version, installation scope and local timezone.
+- Missing profile or missing sunset evidence must remain explicit. PicoT must use factor `1` and may not invent a correction.
+- Home Assistant currently proves only the next sunset. PicoT does not synthesize additional horizon-day sunsets.
+- The live runtime remains observer-only until a learned profile is separately validated and deliberately allowed into planning.
+
+### CI VERIFIED
+
+All feature and release pull requests through PR #260 completed with green PicoT Core CI, PicoT v2 Rebuild and Tests workflows.
+
+Relevant final slices:
+
+- PR #254 — live attenuation range derivation;
+- PR #256 — deterministic sunset offsets;
+- PR #257 — Home Assistant sunset source;
+- PR #258 — visible sunset runtime diagnostics;
+- PR #259 — live sunset attenuation coupling;
+- PR #260 — release alignment to `2.0.0-dev.43`.
+
+### LIVE VERIFIED
+
+The Home Assistant add-on is live on `2.0.0-dev.43`.
+
+Planning Input showed:
+
+- `pv_sunset_source_status: available`;
+- `pv_sunset_source_entity_id: sun.sun`;
+- `pv_sunset_local_timezone: Europe/Amsterdam`;
+- `pv_sunset_date_count: 1`;
+- `pv_sunset_offset_interval_count: 45`;
+- `pv_sunset_offset_method_version: pv-sunset-offset:interval-midpoint:v1`;
+- `pv_sunset_source_method_version: home-assistant-sun-next-setting:v1`;
+- no sunset source error.
+
+Attenuation runtime showed:
+
+- 72 future forecast intervals;
+- zero available corrected intervals;
+- `pv_attenuation_runtime_status: unavailable`;
+- `pv_attenuation_runtime_unavailable_reason: all_ranges_unavailable`;
+- original and corrected central totals both `28276.6 Wh`;
+- correction delta `0 Wh`;
+- `observer_only: true`.
+
+This is the expected safe state because sunset evidence is live but no learned attenuation profile exists yet.
+
+### INSTALLATION CONTEXT FOR TOMORROW
+
+- PV installation: east/west, tilt 24 degrees.
+- East: 10 panels × 330 Wp; Solcast resource capacity DC 3.3 kW.
+- West: 4 panels × 390 Wp; Solcast resource capacity DC 1.6 kW.
+- Solcast provides separate east/west daily resource entities but the detailed interval forecast currently used by PicoT is installation-wide.
+- GoodWe exposes total inverter power plus two PV-string currents and voltages; the validated actual-energy path currently uses total inverter power.
+- Trees cause a repeatable production falloff toward sunset. The effect is strongest on the west side and may also affect the east side.
+- Clear days show a recognisable, similarly shaped sunset-relative decline. This is evidence to evaluate, not permission to hard-code a curve.
+
+### NOT YET IMPLEMENTED
+
+- Historical attenuation evidence persistence across days.
+- Selection of sufficiently clear and comparable historical days.
+- Learned attenuation buckets with minimum sample count and bounded confidence.
+- A live non-empty attenuation profile.
+- Corrected future forecast totals other than the original factor-`1` fallback.
+- Any Candidate, Evaluation, planning or control response to attenuation.
+
+### DO NOT CHANGE / CRITICAL CONTEXT
+
+- Do not hide confidence, source ranges, profile factors or reasons inside calculations.
+- Do not use one unexplained whole-day percentage reduction.
+- Do not infer tomorrow's sunset from today's single `sun.sun` value.
+- Do not treat zero nighttime PV as useful attenuation evidence.
+- Do not learn from gaps, unavailable GoodWe states or intervals without aligned forecast ranges.
+- Do not let diagnostic projection become a second calculation or decision path.
+- Do not enable control while building or validating the profile.
+- Preserve the red-test → approved implementation → green CI → manual merge → separate release bump → live validation workflow.
+
+### EXACT CURRENT POSITION
+
+Phase: V2ADR-049 evidence-backed PV attenuation  
+Version: `2.0.0-dev.43`  
+Position: sunset evidence and sunset-relative offsets are live; the runtime can derive traceable future ranges but has no historical learned profile.  
+State: foundation complete, CI verified and live verified; correction intentionally remains zero.
+
+### FIRST NEXT ACTION
+
+Start the historical attenuation-profile slice read-only:
+
+1. inspect the accepted V2ADR-049 contract and the existing attenuation evidence, eligibility and bucket modules;
+2. identify the smallest persistence boundary for eligible closed-interval evidence across multiple days;
+3. define explicit clear/comparable-day eligibility without assuming that every forecast miss is shading;
+4. specify minimum sample count, bounded factor and confidence rules per sunset-relative bucket;
+5. preserve installation scope, local timezone, source evidence IDs and method versions;
+6. present one exact failing test patch before implementation.
+
+The first implementation must remain observer-only. It may produce and display a learned profile, but it may not alter Candidate Engine, Evaluation, execution planning or device control.
+
+
 ## 2026-08-14 — dev.20 live pipeline enrichment and dashboard
 
 PicoT version: `2.0.0-dev.20`  

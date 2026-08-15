@@ -52,13 +52,13 @@ def derive_pv_sunset_offsets(
         midpoint = interval.starts_at + (
             interval.ends_at - interval.starts_at
         ) / 2
-        sunset_at = sunsets_by_local_date.get(
+        matching_sunset = sunsets_by_local_date.get(
             midpoint.astimezone(local_timezone).date()
         )
-        if sunset_at is None:
+        if matching_sunset is None:
             continue
         minutes_from_sunset = (
-            midpoint - sunset_at
+            midpoint - matching_sunset
         ).total_seconds() / 60.0
         if not isfinite(minutes_from_sunset):
             raise ValueError("sunset offset must be finite")

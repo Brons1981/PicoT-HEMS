@@ -53,6 +53,7 @@ class CandidateEngine:
 
         for storage in snapshot.current_storage_states:
             projected_energy_wh = storage.current_stored_energy_wh
+            projection_cursor = snapshot.captured_at
             projected_intervals: list[
                 ProjectedHouseholdEnergyBalanceInterval
             ] = []
@@ -60,34 +61,74 @@ class CandidateEngine:
             confidence_values = [storage.confidence]
 
             for pv_interval in pv_intervals:
+                projection_start = max(
+                    pv_interval.starts_at,
+                    snapshot.captured_at,
+                )
+                projection_end = min(
+                    pv_interval.ends_at,
+                    snapshot.horizon_end,
+                )
+                if projection_start >= projection_end:
+                    continue
+                if projection_start != projection_cursor:
+                    raise ValueError(
+                        "PV and household-load intervals must align"
+                    )
+
                 matching_load_intervals = tuple(
                     interval
                     for interval in load_intervals
-                    if interval.starts_at >= pv_interval.starts_at
-                    and interval.ends_at <= pv_interval.ends_at
+                    if interval.starts_at < projection_end
+                    and interval.ends_at > projection_start
                 )
+                load_cursor = projection_start
+                load_energy_wh = 0.0
+                for load_interval in matching_load_intervals:
+                    overlap_start = max(
+                        load_interval.starts_at,
+                        projection_start,
+                    )
+                    overlap_end = min(
+                        load_interval.ends_at,
+                        projection_end,
+                    )
+                    if overlap_start != load_cursor:
+                        raise ValueError(
+                            "PV and household-load intervals must align"
+                        )
+                    overlap_seconds = (
+                        overlap_end - overlap_start
+                    ).total_seconds()
+                    interval_seconds = (
+                        load_interval.ends_at
+                        - load_interval.starts_at
+                    ).total_seconds()
+                    load_energy_wh += (
+                        load_interval.expected_energy_wh
+                        * overlap_seconds
+                        / interval_seconds
+                    )
+                    load_cursor = overlap_end
+
                 if (
                     not matching_load_intervals
-                    or matching_load_intervals[0].starts_at
-                    != pv_interval.starts_at
-                    or matching_load_intervals[-1].ends_at
-                    != pv_interval.ends_at
-                    or any(
-                        previous.ends_at != current.starts_at
-                        for previous, current in zip(
-                            matching_load_intervals,
-                            matching_load_intervals[1:],
-                            strict=False,
-                        )
-                    )
+                    or load_cursor != projection_end
                 ):
                     raise ValueError(
                         "PV and household-load intervals must align"
                     )
 
-                load_energy_wh = sum(
-                    interval.expected_energy_wh
-                    for interval in matching_load_intervals
+                pv_overlap_seconds = (
+                    projection_end - projection_start
+                ).total_seconds()
+                pv_interval_seconds = (
+                    pv_interval.ends_at - pv_interval.starts_at
+                ).total_seconds()
+                pv_energy_wh = (
+                    pv_interval.pv_energy_wh
+                    * pv_overlap_seconds
+                    / pv_interval_seconds
                 )
                 load_confidence = min(
                     interval.confidence
@@ -96,7 +137,7 @@ class CandidateEngine:
                 interval_start_energy_wh = projected_energy_wh
                 projected_energy_wh = (
                     interval_start_energy_wh
-                    + pv_interval.pv_energy_wh
+                    + pv_energy_wh
                     - load_energy_wh
                 )
                 confidence = min(
@@ -121,13 +162,13 @@ class CandidateEngine:
                 )
                 projected_intervals.append(
                     ProjectedHouseholdEnergyBalanceInterval(
-                        starts_at=pv_interval.starts_at,
-                        ends_at=pv_interval.ends_at,
+                        starts_at=projection_start,
+                        ends_at=projection_end,
                         current_usable_storage_energy_wh=(
                             interval_start_energy_wh
                         ),
                         expected_usable_pv_energy_wh=(
-                            pv_interval.pv_energy_wh
+                            pv_energy_wh
                         ),
                         planned_grid_energy_wh=0.0,
                         household_load_forecast_energy_wh=(
@@ -140,6 +181,12 @@ class CandidateEngine:
                         confidence=confidence,
                         evidence_ids=interval_evidence,
                     )
+                )
+                projection_cursor = projection_end
+
+            if projection_cursor != snapshot.horizon_end:
+                raise ValueError(
+                    "PV and household-load intervals must align"
                 )
 
             balance_id = _stable_id(

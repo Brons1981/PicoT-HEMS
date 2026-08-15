@@ -49,12 +49,58 @@ class PVEnergyTimelineInterval:
     actual_evidence_ids: tuple[str, ...]
     forecast_evidence_ids: tuple[str, ...]
     conversion_method_version: str | None
+    forecast_lower_energy_wh: float | None = None
+    forecast_central_energy_wh: float | None = None
+    forecast_upper_energy_wh: float | None = None
+    forecast_range_status: str = "unavailable"
+    forecast_range_source_fields: tuple[str, ...] = ()
+    forecast_range_method_version: str | None = None
 
     def __post_init__(self) -> None:
         if self.starts_at >= self.ends_at:
             raise ValueError("starts_at must be before ends_at")
         if self.pv_energy_wh < 0.0:
             raise ValueError("pv_energy_wh must not be negative")
+        if self.forecast_range_status not in ("available", "unavailable"):
+            raise ValueError(
+                "forecast_range_status must be available or unavailable"
+            )
+        if self.forecast_range_status == "available":
+            if self.evidence_type != "FORECAST":
+                raise ValueError(
+                    "available forecast range requires FORECAST evidence"
+                )
+            forecast_values = (
+                self.forecast_lower_energy_wh,
+                self.forecast_central_energy_wh,
+                self.forecast_upper_energy_wh,
+            )
+            if any(value is None for value in forecast_values):
+                raise ValueError(
+                    "available forecast range requires lower, central, "
+                    "and upper energy"
+                )
+            lower, central, upper = forecast_values
+            assert lower is not None
+            assert central is not None
+            assert upper is not None
+            if not 0.0 <= lower <= central <= upper:
+                raise ValueError(
+                    "forecast range must satisfy "
+                    "0 <= lower <= central <= upper"
+                )
+            if central != self.pv_energy_wh:
+                raise ValueError(
+                    "forecast central energy must equal pv_energy_wh"
+                )
+            if not self.forecast_range_source_fields:
+                raise ValueError(
+                    "available forecast range requires source fields"
+                )
+            if not self.forecast_range_method_version:
+                raise ValueError(
+                    "available forecast range requires method version"
+                )
         if self.evidence_type not in ("ACTUAL", "FORECAST", "MIXED"):
             raise ValueError(
                 "evidence_type must be ACTUAL, FORECAST, or MIXED"

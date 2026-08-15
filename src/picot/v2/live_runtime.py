@@ -44,6 +44,7 @@ from picot.v2.pv_attenuation_runtime_derivation import (
     derive_live_pv_attenuation_ranges,
 )
 from picot.v2.pv_cumulative_evidence import PVCumulativeEvidence
+from picot.v2.pv_deviation import PVDeviationResult
 from picot.v2.pv_sunset_offsets import derive_pv_sunset_offsets
 from picot.v2.pv_sunset_runtime import (
     attach_pv_sunset_runtime_diagnostics,
@@ -52,7 +53,6 @@ from picot.v2.pv_sunset_source import (
     HomeAssistantSunsetReader,
     SunsetReadResult,
 )
-from picot.v2.pv_deviation import PVDeviationResult
 from picot.v2.web_ui import (
     WebViewStore,
     build_web_view,

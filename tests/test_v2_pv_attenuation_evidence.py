@@ -6,7 +6,6 @@ import pytest
 from picot.v2 import pv_attenuation_evidence
 from picot.v2.pv_deviation import PVDeviationResult
 
-
 START = datetime(2026, 8, 15, 18, 0, tzinfo=UTC)
 END = START + timedelta(minutes=30)
 CAPTURED = START - timedelta(hours=3)

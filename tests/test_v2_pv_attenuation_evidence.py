@@ -3,12 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from picot.v2.pv_attenuation_evidence import (
-    ATTENUATION_EVIDENCE_METHOD_VERSION,
-    PVAttenuationEvidenceStore,
-    build_pv_attenuation_observation,
-    project_pv_attenuation_observation,
-)
+from picot.v2 import pv_attenuation_evidence
 from picot.v2.pv_deviation import PVDeviationResult
 
 
@@ -59,7 +54,7 @@ def _deviation(
 
 
 def _observation():
-    return build_pv_attenuation_observation(
+    return pv_attenuation_evidence.build_pv_attenuation_observation(
         deviation=_deviation(),
         installation_scope_id="pv-installation-home",
         forecast_captured_at=CAPTURED,
@@ -96,14 +91,14 @@ def test_builds_unassessed_sun_relative_observation_without_policy() -> None:
     assert observation.eligibility_reason == "eligibility_not_assessed"
     assert observation.eligibility_method_version == "not_applied"
     assert observation.observation_method_version == (
-        ATTENUATION_EVIDENCE_METHOD_VERSION
+        pv_attenuation_evidence.ATTENUATION_EVIDENCE_METHOD_VERSION
     )
 
 
 def test_observation_identity_is_deterministic_and_context_sensitive() -> None:
     first = _observation()
     second = _observation()
-    changed = build_pv_attenuation_observation(
+    changed = pv_attenuation_evidence.build_pv_attenuation_observation(
         deviation=_deviation(),
         installation_scope_id="pv-installation-home",
         forecast_captured_at=CAPTURED,
@@ -146,7 +141,7 @@ def test_rejects_ambiguous_solar_timing(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        build_pv_attenuation_observation(
+        pv_attenuation_evidence.build_pv_attenuation_observation(
             deviation=_deviation(),
             installation_scope_id="pv-installation-home",
             forecast_captured_at=captured_at,
@@ -164,7 +159,7 @@ def test_missing_original_forecast_range_is_visible_and_not_invented() -> None:
         ValueError,
         match="available original forecast range is required",
     ):
-        build_pv_attenuation_observation(
+        pv_attenuation_evidence.build_pv_attenuation_observation(
             deviation=_deviation(
                 lower=None,
                 central=None,
@@ -183,7 +178,7 @@ def test_missing_original_forecast_range_is_visible_and_not_invented() -> None:
 
 
 def test_store_round_trips_complete_observation_and_deduplicates(tmp_path) -> None:
-    store = PVAttenuationEvidenceStore(
+    store = pv_attenuation_evidence.PVAttenuationEvidenceStore(
         tmp_path / "pv-attenuation-observations.jsonl"
     )
     observation = _observation()
@@ -200,11 +195,11 @@ def test_store_skips_corrupt_or_unknown_schema_records(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    assert PVAttenuationEvidenceStore(path).load() == ()
+    assert pv_attenuation_evidence.PVAttenuationEvidenceStore(path).load() == ()
 
 
 def test_projection_exposes_complete_lineage_without_recalculation() -> None:
-    fields = project_pv_attenuation_observation(_observation())
+    fields = pv_attenuation_evidence.project_pv_attenuation_observation(_observation())
 
     assert fields == {
         "pv_attenuation_observation_status": "unassessed",
@@ -238,7 +233,7 @@ def test_projection_exposes_complete_lineage_without_recalculation() -> None:
             "goodwe-step-hold-energy:v1"
         ),
         "pv_attenuation_observation_method_version": (
-            ATTENUATION_EVIDENCE_METHOD_VERSION
+            pv_attenuation_evidence.ATTENUATION_EVIDENCE_METHOD_VERSION
         ),
         "pv_attenuation_eligibility_method_version": "not_applied",
     }

@@ -145,8 +145,12 @@ class CanonicalPipeline:
                 derivation_status = "blocked"
                 derivation_reason = str(exc)
             else:
-                derivation_status = "ready"
-                derivation_reason = None
+                if candidate_derivation.planning_gaps:
+                    derivation_status = "ready_with_gaps"
+                    derivation_reason = "pv_forecast_gap"
+                else:
+                    derivation_status = "ready"
+                    derivation_reason = None
         path = EnergyPath(
             run_id=run_id,
             snapshot_id=snapshot_id,
@@ -173,6 +177,11 @@ class CanonicalPipeline:
             ),
             storage_requirements=(
                 candidate_derivation.requirements
+                if candidate_derivation is not None
+                else ()
+            ),
+            planning_gaps=(
+                candidate_derivation.planning_gaps
                 if candidate_derivation is not None
                 else ()
             ),

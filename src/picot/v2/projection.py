@@ -204,6 +204,73 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 ),
                 "derivation_status": c.derivation_status,
                 "derivation_reason": c.derivation_reason,
+                "pv_forecast_assumption_set_id": (
+                    c.pv_forecast_assumption_set.assumption_set_id
+                    if c.pv_forecast_assumption_set is not None
+                    else None
+                ),
+                "pv_forecast_assumption_count": (
+                    len(c.pv_forecast_assumption_set.assumptions)
+                    if c.pv_forecast_assumption_set is not None
+                    else 0
+                ),
+                "pv_forecast_maximum_assumption_count": (
+                    c.pv_forecast_assumption_set
+                    .maximum_assumption_count
+                    if c.pv_forecast_assumption_set is not None
+                    else 3
+                ),
+                "pv_forecast_assumption_method_version": (
+                    c.pv_forecast_assumption_set.method_version
+                    if c.pv_forecast_assumption_set is not None
+                    else None
+                ),
+                "pv_forecast_assumptions": [
+                    {
+                        "assumption_id": assumption.assumption_id,
+                        "basis": assumption.basis,
+                        "scope": assumption.scope,
+                        "status": assumption.status,
+                        "unavailable_reason": (
+                            assumption.unavailable_reason
+                        ),
+                        "method_version": assumption.method_version,
+                        "intervals": [
+                            {
+                                "source_interval_id": (
+                                    interval.source_interval_id
+                                ),
+                                "starts_at": (
+                                    interval.starts_at.isoformat()
+                                ),
+                                "ends_at": interval.ends_at.isoformat(),
+                                "selected_energy_wh": (
+                                    interval.selected_energy_wh
+                                ),
+                                "confidence": interval.confidence,
+                                "forecast_evidence_ids": list(
+                                    interval.forecast_evidence_ids
+                                ),
+                                "forecast_range_status": (
+                                    interval.forecast_range_status
+                                ),
+                                "forecast_range_method_version": (
+                                    interval
+                                    .forecast_range_method_version
+                                ),
+                                "conversion_method_version": (
+                                    interval.conversion_method_version
+                                ),
+                            }
+                            for interval in assumption.intervals
+                        ],
+                    }
+                    for assumption in (
+                        c.pv_forecast_assumption_set.assumptions
+                        if c.pv_forecast_assumption_set is not None
+                        else ()
+                    )
+                ],
                 "planning_gaps": [
                     {
                         "kind": gap.kind,

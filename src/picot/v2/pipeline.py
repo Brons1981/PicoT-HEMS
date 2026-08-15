@@ -27,6 +27,9 @@ from picot.v2.contracts import (
     VendorBoundaryResult,
 )
 from picot.v2.opportunity_engine import OpportunityEngine, PriceOpportunityConfig
+from picot.v2.pv_forecast_assumptions import (
+    derive_pv_forecast_basis_assumptions,
+)
 
 
 def _id(prefix: str, seed: str) -> str:
@@ -184,6 +187,9 @@ class CanonicalPipeline:
                 candidate_derivation.planning_gaps
                 if candidate_derivation is not None
                 else ()
+            ),
+            pv_forecast_assumption_set=(
+                derive_pv_forecast_basis_assumptions(snapshot)
             ),
             derivation_status=derivation_status,
             derivation_reason=derivation_reason,

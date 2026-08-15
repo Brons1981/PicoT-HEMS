@@ -10,16 +10,16 @@ from picot.v2 import (
     __version__,
 )
 from picot.v2.contracts import (
+    PlanningInputSnapshot,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
-    PlanningInputSnapshot,
 )
-from picot.v2.live_runtime import _with_planning_input_diagnostics
 from picot.v2.live_pv_actual import (
     LivePVActualCache,
     LivePVActualDiagnostics,
     apply_latest_closed_actual_pv,
 )
+from picot.v2.live_runtime import _with_planning_input_diagnostics
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.planning_input import PlanningInputBundle
 from picot.v2.projection import project

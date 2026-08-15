@@ -11,6 +11,7 @@ from hashlib import sha256
 from time import perf_counter
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
+from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
 from picot.v2.contracts import (
     Candidate,
     CandidateOutcomeSet,
@@ -69,8 +70,14 @@ class PipelineStageTimings:
 class CanonicalPipeline:
     """Execute the accepted route exactly once for one immutable run."""
 
-    def __init__(self, *, opportunity_engine: OpportunityEngine | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        opportunity_engine: OpportunityEngine | None = None,
+        candidate_engine: CandidateEngine | None = None,
+    ) -> None:
         self._opportunity_engine = opportunity_engine or OpportunityEngine()
+        self._candidate_engine = candidate_engine or CandidateEngine()
 
     def run(
         self,
@@ -120,6 +127,26 @@ class CanonicalPipeline:
         opportunity_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
+        candidate_derivation = None
+        derivation_status = "not_available"
+        derivation_reason: str | None = "required_inputs_missing"
+        if (
+            snapshot.current_storage_states
+            and snapshot.pv_energy_timeline is not None
+            and snapshot.household_load_forecast is not None
+        ):
+            try:
+                candidate_derivation = (
+                    self._candidate_engine.derive_storage_requirements(
+                        snapshot
+                    )
+                )
+            except CandidateInputError as exc:
+                derivation_status = "blocked"
+                derivation_reason = str(exc)
+            else:
+                derivation_status = "ready"
+                derivation_reason = None
         path = EnergyPath(
             run_id=run_id,
             snapshot_id=snapshot_id,
@@ -139,6 +166,18 @@ class CanonicalPipeline:
             candidate_set_id=_id("candidate-set", opportunities.opportunity_set_id),
             candidates=(candidate,),
             energy_paths=(path,),
+            projected_balances=(
+                candidate_derivation.balances
+                if candidate_derivation is not None
+                else ()
+            ),
+            storage_requirements=(
+                candidate_derivation.requirements
+                if candidate_derivation is not None
+                else ()
+            ),
+            derivation_status=derivation_status,
+            derivation_reason=derivation_reason,
         )
         outcomes = CandidateOutcomeSet(
             run_id=run_id,

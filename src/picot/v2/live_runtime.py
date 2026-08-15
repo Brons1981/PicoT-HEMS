@@ -255,6 +255,31 @@ def _with_planning_input_diagnostics(
             "pv_actual_processing_ms": (
                 pv_actual_diagnostics.processing_ms
             ),
+            "pv_actual_gap_reason": (
+                pv_actual_diagnostics.gap_reason
+            ),
+            "pv_actual_observation_count": (
+                pv_actual_diagnostics.observation_count
+            ),
+            "pv_actual_first_observed_at": (
+                pv_actual_diagnostics.first_observed_at.isoformat()
+                if pv_actual_diagnostics.first_observed_at
+                is not None
+                else None
+            ),
+            "pv_actual_last_observed_at": (
+                pv_actual_diagnostics.last_observed_at.isoformat()
+                if pv_actual_diagnostics.last_observed_at
+                is not None
+                else None
+            ),
+            "pv_actual_maximum_observed_gap_seconds": (
+                pv_actual_diagnostics
+                .maximum_observed_gap_seconds
+            ),
+            "pv_actual_allowed_gap_seconds": (
+                pv_actual_diagnostics.allowed_gap_seconds
+            ),
         }
     first = projection.cards[0]
     enriched = Card(

@@ -20,6 +20,11 @@ from typing import Any
 
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
+from picot.v2.live_pv_actual import (
+    LivePVActualCache,
+    LivePVActualDiagnostics,
+    apply_latest_closed_actual_pv,
+)
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.planning_input import (
@@ -29,6 +34,7 @@ from picot.v2.planning_input import (
     load_options,
 )
 from picot.v2.projection import Card, Projection, project
+from picot.v2.pv_actual_history import HomeAssistantPVHistoryReader
 from picot.v2.web_ui import (
     WebViewStore,
     build_web_view,
@@ -126,6 +132,13 @@ def _poll_live_cycle(
     previous_signature: str | None,
     load_bundle: Any,
     execute: Any,
+    prepare_bundle: (
+        Callable[
+            [PlanningInputBundle],
+            tuple[PlanningInputBundle, Any],
+        ]
+        | None
+    ) = None,
     persist_observation: (
         Callable[[HouseholdLoadObservation], None] | None
     ) = None,
@@ -147,6 +160,27 @@ def _poll_live_cycle(
                 ),
                 flush=True,
             )
+
+    preparation_diagnostics: Any = None
+    if prepare_bundle is not None:
+        bundle, preparation_diagnostics = prepare_bundle(bundle)
+
+    if prepare_bundle is not None:
+
+        def execute_prepared(
+            prepared_bundle: PlanningInputBundle,
+        ) -> None:
+            execute(
+                prepared_bundle,
+                preparation_diagnostics,
+            )
+
+        return _run_live_cycle(
+            previous_signature=previous_signature,
+            bundle=bundle,
+            execute=execute_prepared,
+        )
+
     return _run_live_cycle(
         previous_signature=previous_signature,
         bundle=bundle,
@@ -157,6 +191,8 @@ def _poll_live_cycle(
 def _with_planning_input_diagnostics(
     projection: Projection,
     bundle: PlanningInputBundle,
+    *,
+    pv_actual_diagnostics: LivePVActualDiagnostics | None = None,
 ) -> Projection:
     """Passively enrich card 1 from already assembled Planning Input data."""
     sources = [
@@ -179,6 +215,47 @@ def _with_planning_input_diagnostics(
         }
         for evidence, fact in zip(bundle.evidence, bundle.facts, strict=True)
     ]
+    pv_actual_attributes: dict[str, Any] = {}
+    if pv_actual_diagnostics is not None:
+        pv_actual_attributes = {
+            "pv_actual_history_status": (
+                pv_actual_diagnostics.history_status
+            ),
+            "pv_actual_interval_status": (
+                pv_actual_diagnostics.interval_status
+            ),
+            "pv_actual_cache_hit": (
+                pv_actual_diagnostics.cache_hit
+            ),
+            "pv_actual_entity_id": (
+                pv_actual_diagnostics.entity_id
+            ),
+            "pv_actual_starts_at": (
+                pv_actual_diagnostics.starts_at.isoformat()
+                if pv_actual_diagnostics.starts_at is not None
+                else None
+            ),
+            "pv_actual_ends_at": (
+                pv_actual_diagnostics.ends_at.isoformat()
+                if pv_actual_diagnostics.ends_at is not None
+                else None
+            ),
+            "pv_actual_lookup_starts_at": (
+                pv_actual_diagnostics.lookup_starts_at.isoformat()
+                if pv_actual_diagnostics.lookup_starts_at is not None
+                else None
+            ),
+            "pv_actual_error": pv_actual_diagnostics.error,
+            "pv_actual_conversion_method_version": (
+                pv_actual_diagnostics.conversion_method_version
+            ),
+            "pv_actual_evidence_ids": list(
+                pv_actual_diagnostics.actual_evidence_ids
+            ),
+            "pv_actual_processing_ms": (
+                pv_actual_diagnostics.processing_ms
+            ),
+        }
     first = projection.cards[0]
     enriched = Card(
         first.entity_id,
@@ -194,7 +271,8 @@ def _with_planning_input_diagnostics(
             ),
             "price_point_count": len(bundle.snapshot.price_points),
             "sources": sources,
-        },
+        }
+        | pv_actual_attributes,
     )
     return Projection(
         cards=(enriched, *projection.cards[1:]),
@@ -298,6 +376,9 @@ def _execute_planning_bundle(
     price_config: PriceOpportunityConfig,
     bundle: PlanningInputBundle,
     web_view_store: WebViewStore,
+    pv_actual_diagnostics: (
+        LivePVActualDiagnostics | None
+    ) = None,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -312,7 +393,11 @@ def _execute_planning_bundle(
     planner_cycle_ms = stage_timings.canonical_total_ms
     pipeline_total_ms = round(planning_input_ms + stage_timings.canonical_total_ms, 3)
 
-    projection = _with_planning_input_diagnostics(project(run), bundle)
+    projection = _with_planning_input_diagnostics(
+        project(run),
+        bundle,
+        pv_actual_diagnostics=pv_actual_diagnostics,
+    )
     projection = _with_stage_timing_diagnostics(
         projection,
         planning_input_ms=planning_input_ms,
@@ -409,6 +494,34 @@ def main() -> None:
     household_load_history = HouseholdLoadHistoryStore(
         HOUSEHOLD_LOAD_HISTORY_PATH
     )
+    pv_history_reader = HomeAssistantPVHistoryReader(token)
+    pv_actual_cache = LivePVActualCache()
+    pv_power_entity = str(
+        options.get("pv_power_entity", "")
+    ).strip()
+    if not pv_power_entity:
+        raise ValueError("pv_power_entity must be explicit")
+
+    raw_pv_telemetry_interval = options.get(
+        "pv_power_telemetry_interval_seconds",
+        options.get("telemetry_interval_seconds", 5),
+    )
+    try:
+        pv_telemetry_interval_seconds = int(
+            raw_pv_telemetry_interval
+        )
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pv telemetry interval must be a positive integer"
+        ) from None
+    if (
+        isinstance(raw_pv_telemetry_interval, bool)
+        or pv_telemetry_interval_seconds <= 0
+    ):
+        raise ValueError(
+            "pv telemetry interval must be a positive integer"
+        )
+
     _start_web_server(web_view_store)
     raw_poll_interval = options.get("live_poll_interval_seconds", 60.0)
     try:
@@ -424,12 +537,32 @@ def main() -> None:
             household_load_history=household_load_history,
         )
 
-    def execute(bundle: PlanningInputBundle) -> None:
+    def prepare_bundle(
+        bundle: PlanningInputBundle,
+    ) -> tuple[
+        PlanningInputBundle,
+        LivePVActualDiagnostics,
+    ]:
+        return apply_latest_closed_actual_pv(
+            bundle,
+            entity_id=pv_power_entity,
+            history_reader=pv_history_reader.read,
+            cache=pv_actual_cache,
+            telemetry_interval_seconds=(
+                pv_telemetry_interval_seconds
+            ),
+        )
+
+    def execute(
+        bundle: PlanningInputBundle,
+        pv_actual_diagnostics: LivePVActualDiagnostics,
+    ) -> None:
         _execute_planning_bundle(
             token=token,
             price_config=price_config,
             bundle=bundle,
             web_view_store=web_view_store,
+            pv_actual_diagnostics=pv_actual_diagnostics,
         )
 
     previous_signature: str | None = None
@@ -437,6 +570,7 @@ def main() -> None:
         previous_signature = _poll_live_cycle(
             previous_signature=previous_signature,
             load_bundle=load_bundle,
+            prepare_bundle=prepare_bundle,
             execute=execute,
             persist_observation=household_load_history.append,
         )

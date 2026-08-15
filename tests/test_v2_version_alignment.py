@@ -16,7 +16,7 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_pv_attenuation_range_release_uses_dev_40() -> None:
+def test_v2_pv_attenuation_side_by_side_range_release_uses_dev_40() -> None:
     assert __version__ == "2.0.0-dev.40"
 
 

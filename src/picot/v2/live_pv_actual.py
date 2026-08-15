@@ -76,6 +76,9 @@ class LivePVActualCache:
         key: tuple[str, datetime, datetime],
         result: _CachedResult,
     ) -> None:
+        for existing in tuple(self._results):
+            if existing[0] == key[0] and existing != key:
+                del self._results[existing]
         self._results[key] = result
 
 
@@ -147,24 +150,22 @@ def apply_latest_closed_actual_pv(
             starts_at=lookup_starts_at,
             ends_at=last.ends_at,
         )
-        diagnoses: tuple[PVActualIntervalDiagnosis, ...] = ()
-        if history.status == "available":
-            diagnoses = tuple(
-                diagnose_actual_pv_interval(
-                    interval_id=(
-                        "pv-actual-"
-                        f"{forecast.starts_at.isoformat()}"
-                    ),
-                    starts_at=forecast.starts_at,
-                    ends_at=forecast.ends_at,
-                    captured_at=bundle.snapshot.captured_at,
-                    observations=history.observations,
-                    telemetry_interval_seconds=(
-                        telemetry_interval_seconds
-                    ),
-                )
-                for forecast in closed_forecasts
+        diagnoses = tuple(
+            diagnose_actual_pv_interval(
+                interval_id=(
+                    "pv-actual-"
+                    f"{forecast.starts_at.isoformat()}"
+                ),
+                starts_at=forecast.starts_at,
+                ends_at=forecast.ends_at,
+                captured_at=bundle.snapshot.captured_at,
+                observations=history.observations,
+                telemetry_interval_seconds=(
+                    telemetry_interval_seconds
+                ),
             )
+            for forecast in closed_forecasts
+        )
         cached = _CachedResult(
             history_status=history.status,
             error=history.error,
@@ -226,11 +227,14 @@ def apply_latest_closed_actual_pv(
     latest_diagnosis = (
         cached.diagnoses[-1] if cached.diagnoses else None
     )
-    evidence_ids = tuple(dict.fromkeys(
-        evidence_id
-        for actual in actual_intervals
-        for evidence_id in actual.actual_evidence_ids
-    ))
+    latest_actual = (
+        actual_intervals[-1] if actual_intervals else None
+    )
+    evidence_ids = (
+        latest_actual.actual_evidence_ids
+        if latest_actual is not None
+        else ()
+    )
     deviations = tuple(deviation_results)
 
     diagnostics = _diagnostics(
@@ -246,8 +250,8 @@ def apply_latest_closed_actual_pv(
         lookup_starts_at=lookup_starts_at,
         error=cached.error,
         conversion_method_version=(
-            actual_intervals[0].conversion_method_version
-            if actual_intervals
+            latest_actual.conversion_method_version
+            if latest_actual is not None
             else None
         ),
         actual_evidence_ids=evidence_ids,

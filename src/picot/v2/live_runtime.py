@@ -35,6 +35,10 @@ from picot.v2.planning_input import (
 )
 from picot.v2.projection import Card, Projection, project
 from picot.v2.pv_actual_history import HomeAssistantPVHistoryReader
+from picot.v2.pv_attenuation_range import PVAttenuatedForecastRange
+from picot.v2.pv_attenuation_runtime import (
+    attach_pv_attenuation_runtime_diagnostics,
+)
 from picot.v2.pv_cumulative_evidence import PVCumulativeEvidence
 from picot.v2.pv_deviation import PVDeviationResult
 from picot.v2.web_ui import (
@@ -707,6 +711,10 @@ def _execute_planning_bundle(
     pv_actual_diagnostics: (
         LivePVActualDiagnostics | None
     ) = None,
+    pv_attenuated_ranges: tuple[
+        PVAttenuatedForecastRange,
+        ...,
+    ] = (),
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -725,6 +733,10 @@ def _execute_planning_bundle(
         project(run),
         bundle,
         pv_actual_diagnostics=pv_actual_diagnostics,
+    )
+    projection = attach_pv_attenuation_runtime_diagnostics(
+        projection,
+        pv_attenuated_ranges,
     )
     projection = _with_stage_timing_diagnostics(
         projection,

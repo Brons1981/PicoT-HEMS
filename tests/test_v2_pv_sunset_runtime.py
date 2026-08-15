@@ -1,10 +1,11 @@
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from picot.v2.projection import Card, Projection
 from picot.v2.pv_sunset_runtime import (
     attach_pv_sunset_runtime_diagnostics,
 )
+
+from picot.v2.projection import Card, Projection
 from picot.v2.pv_sunset_source import SunsetReadResult
 
 AMSTERDAM = ZoneInfo("Europe/Amsterdam")

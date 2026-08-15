@@ -149,6 +149,17 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 ),
                 "derivation_status": c.derivation_status,
                 "derivation_reason": c.derivation_reason,
+                "planning_gaps": [
+                    {
+                        "kind": gap.kind,
+                        "starts_at": gap.starts_at.isoformat(),
+                        "ends_at": gap.ends_at.isoformat(),
+                        "duration_seconds": gap.duration_seconds,
+                        "assumption": gap.assumption,
+                        "confidence": gap.confidence,
+                    }
+                    for gap in c.planning_gaps
+                ],
                 "storage_requirements": [
                     {
                         "required_energy_wh": requirement.required_energy_wh,

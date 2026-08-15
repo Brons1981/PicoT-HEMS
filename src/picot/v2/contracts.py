@@ -282,6 +282,16 @@ class StorageEnergyRequirement:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanningGap:
+    kind: str
+    starts_at: datetime
+    ends_at: datetime
+    duration_seconds: float
+    assumption: str
+    confidence: float
+
+
+@dataclass(frozen=True, slots=True)
 class EnergyPath:
     run_id: str
     snapshot_id: str
@@ -311,6 +321,7 @@ class CandidateSet:
         ...,
     ] = ()
     storage_requirements: tuple[StorageEnergyRequirement, ...] = ()
+    planning_gaps: tuple[PlanningGap, ...] = ()
     derivation_status: str = "not_available"
     derivation_reason: str | None = "required_inputs_missing"
 

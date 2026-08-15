@@ -330,3 +330,107 @@ def test_candidate_engine_normalizes_shifted_live_interval_boundaries() -> None:
         "load:shifted-quarter-2",
     }
     assert requirement.reserve_contribution_wh == pytest.approx(3770.0)
+
+
+def test_pipeline_continues_conservatively_after_pv_forecast_ends() -> None:
+    horizon_end = BASE + timedelta(hours=1)
+    storage = CurrentStorageState(
+        storage_state_id="storage-home",
+        execution_scope_id="home-battery",
+        capability_id="storage-capability-home",
+        current_soc=0.50,
+        usable_capacity_wh=8000.0,
+        measured_at=BASE,
+        confidence=0.90,
+        evidence_ids=("storage-evidence",),
+    )
+    pv_timeline = PVEnergyTimeline(
+        timeline_id="pv-timeline",
+        run_id="run-gap",
+        snapshot_id="snapshot-gap",
+        intervals=(
+            PVEnergyTimelineInterval(
+                interval_id="pv-first-half-hour",
+                starts_at=BASE,
+                ends_at=BASE + timedelta(minutes=30),
+                pv_energy_wh=500.0,
+                evidence_type="FORECAST",
+                confidence=0.80,
+                actual_evidence_ids=(),
+                forecast_evidence_ids=("pv-evidence",),
+                conversion_method_version="forecast-energy:v1",
+            ),
+        ),
+    )
+    load_forecast = HouseholdLoadForecast(
+        forecast_id="load-forecast",
+        run_id="run-gap",
+        snapshot_id="snapshot-gap",
+        intervals=(
+            HouseholdLoadForecastInterval(
+                interval_id="load-first-half-hour",
+                starts_at=BASE,
+                ends_at=BASE + timedelta(minutes=30),
+                expected_energy_wh=300.0,
+                confidence=0.70,
+                source_reference="load:first-half-hour",
+                method_version="deterministic-test:v1",
+            ),
+            HouseholdLoadForecastInterval(
+                interval_id="load-pv-gap",
+                starts_at=BASE + timedelta(minutes=30),
+                ends_at=horizon_end,
+                expected_energy_wh=300.0,
+                confidence=0.75,
+                source_reference="load:pv-gap",
+                method_version="deterministic-test:v1",
+            ),
+        ),
+        fallback_active=False,
+        fallback_reason=None,
+    )
+    snapshot = PlanningInputSnapshot(
+        run_id="run-gap",
+        snapshot_id="snapshot-gap",
+        captured_at=BASE,
+        picot_version=__version__,
+        architecture_baseline_commit=ARCHITECTURE_BASELINE_COMMIT,
+        pipeline_contract_version=PIPELINE_CONTRACT_VERSION,
+        strategy_id="strategy:test",
+        horizon_end=horizon_end,
+        current_storage_states=(storage,),
+        pv_energy_timeline=pv_timeline,
+        household_load_forecast=load_forecast,
+    )
+
+    pipeline_run = CanonicalPipeline().run(planning_input=snapshot)
+    candidate_set = pipeline_run.candidate_set
+    card = project(pipeline_run).cards[2]
+
+    assert candidate_set.derivation_status == "ready_with_gaps"
+    assert candidate_set.derivation_reason == "pv_forecast_gap"
+    assert len(candidate_set.projected_balances) == 1
+    assert len(candidate_set.storage_requirements) == 1
+
+    intervals = candidate_set.projected_balances[0].intervals
+    assert len(intervals) == 2
+    assert intervals[0].projected_storage_energy_wh == pytest.approx(4200.0)
+    assert intervals[1].expected_usable_pv_energy_wh == pytest.approx(0.0)
+    assert intervals[1].projected_storage_energy_wh == pytest.approx(3900.0)
+    assert intervals[1].confidence == pytest.approx(0.0)
+
+    requirement = candidate_set.storage_requirements[0]
+    assert requirement.reserve_contribution_wh == pytest.approx(4100.0)
+
+    assert card.attributes["planning_gaps"] == [
+        {
+            "kind": "pv_forecast_gap",
+            "starts_at": (
+                BASE + timedelta(minutes=30)
+            ).isoformat(),
+            "ends_at": horizon_end.isoformat(),
+            "duration_seconds": 1800.0,
+            "assumption": "zero_usable_pv",
+            "confidence": 0.0,
+        }
+    ]

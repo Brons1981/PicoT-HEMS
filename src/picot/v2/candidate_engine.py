@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 from picot.v2.contracts import (
+    PlanningGap,
     PlanningInputSnapshot,
     ProjectedHouseholdEnergyBalance,
     ProjectedHouseholdEnergyBalanceInterval,
@@ -32,6 +33,7 @@ class StorageRequirementDerivation:
 
     balances: tuple[ProjectedHouseholdEnergyBalance, ...]
     requirements: tuple[StorageEnergyRequirement, ...]
+    planning_gaps: tuple[PlanningGap, ...] = ()
 
 
 class CandidateEngine:
@@ -54,6 +56,7 @@ class CandidateEngine:
 
         balances: list[ProjectedHouseholdEnergyBalance] = []
         requirements: list[StorageEnergyRequirement] = []
+        planning_gaps: tuple[PlanningGap, ...] = ()
 
         for storage in snapshot.current_storage_states:
             projected_energy_wh = storage.current_stored_energy_wh
@@ -188,6 +191,91 @@ class CandidateEngine:
                 )
                 projection_cursor = projection_end
 
+            if projection_cursor < snapshot.horizon_end:
+                gap_start = projection_cursor
+                gap_end = snapshot.horizon_end
+                gap_load_intervals = tuple(
+                    interval
+                    for interval in load_intervals
+                    if interval.starts_at < gap_end
+                    and interval.ends_at > gap_start
+                )
+                gap_cursor = gap_start
+                for load_interval in gap_load_intervals:
+                    overlap_start = max(
+                        load_interval.starts_at,
+                        gap_start,
+                    )
+                    overlap_end = min(
+                        load_interval.ends_at,
+                        gap_end,
+                    )
+                    if overlap_start != gap_cursor:
+                        raise CandidateInputError(
+                            "PV and household-load intervals must align"
+                        )
+                    overlap_seconds = (
+                        overlap_end - overlap_start
+                    ).total_seconds()
+                    interval_seconds = (
+                        load_interval.ends_at
+                        - load_interval.starts_at
+                    ).total_seconds()
+                    load_energy_wh = (
+                        load_interval.expected_energy_wh
+                        * overlap_seconds
+                        / interval_seconds
+                    )
+                    interval_start_energy_wh = projected_energy_wh
+                    projected_energy_wh -= load_energy_wh
+                    interval_evidence = _ordered_unique(
+                        storage.evidence_ids
+                        + (load_interval.source_reference,)
+                    )
+                    evidence_ids.extend(interval_evidence)
+                    confidence_values.append(0.0)
+                    projected_intervals.append(
+                        ProjectedHouseholdEnergyBalanceInterval(
+                            starts_at=overlap_start,
+                            ends_at=overlap_end,
+                            current_usable_storage_energy_wh=(
+                                interval_start_energy_wh
+                            ),
+                            expected_usable_pv_energy_wh=0.0,
+                            planned_grid_energy_wh=0.0,
+                            household_load_forecast_energy_wh=(
+                                load_energy_wh
+                            ),
+                            known_future_demand_energy_wh=0.0,
+                            conversion_losses_wh=0.0,
+                            other_planned_household_energy_flows_wh=0.0,
+                            projected_storage_energy_wh=(
+                                projected_energy_wh
+                            ),
+                            confidence=0.0,
+                            evidence_ids=interval_evidence,
+                        )
+                    )
+                    gap_cursor = overlap_end
+
+                if not gap_load_intervals or gap_cursor != gap_end:
+                    raise CandidateInputError(
+                        "PV and household-load intervals must align"
+                    )
+                planning_gaps = (
+                    PlanningGap(
+                        kind="pv_forecast_gap",
+                        starts_at=gap_start,
+                        ends_at=gap_end,
+                        duration_seconds=(
+                            gap_end - gap_start
+                        ).total_seconds(),
+                        assumption="zero_usable_pv",
+                        confidence=0.0,
+                    ),
+                )
+                projection_cursor = gap_end
+
             if projection_cursor != snapshot.horizon_end:
                 raise CandidateInputError(
                     "PV and household-load intervals must align"
@@ -231,4 +319,5 @@ class CandidateEngine:
         return StorageRequirementDerivation(
             balances=tuple(balances),
             requirements=tuple(requirements),
+            planning_gaps=planning_gaps,
         )

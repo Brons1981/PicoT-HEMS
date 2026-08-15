@@ -226,9 +226,6 @@ def apply_latest_closed_actual_pv(
     latest_diagnosis = (
         cached.diagnoses[-1] if cached.diagnoses else None
     )
-    latest_actual = (
-        actual_by_forecast_id.get(last.interval_id)
-    )
     evidence_ids = tuple(dict.fromkeys(
         evidence_id
         for actual in actual_intervals
@@ -307,7 +304,6 @@ def apply_latest_closed_actual_pv(
         actual_interval_count=actual_count,
         gap_interval_count=gap_count,
     )
-    del latest_actual
     return enriched, diagnostics
 
 def _diagnostics(

@@ -306,6 +306,13 @@ class CandidateSet:
     candidate_set_id: str
     candidates: tuple[Candidate, ...]
     energy_paths: tuple[EnergyPath, ...]
+    projected_balances: tuple[
+        ProjectedHouseholdEnergyBalance,
+        ...,
+    ] = ()
+    storage_requirements: tuple[StorageEnergyRequirement, ...] = ()
+    derivation_status: str = "not_available"
+    derivation_reason: str | None = "required_inputs_missing"
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,6 +16,8 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
+from picot.v2.pipeline import CanonicalPipeline
+from picot.v2.projection import project
 
 BASE = datetime(2026, 8, 15, 8, 0, tzinfo=UTC)
 HORIZON_END = BASE + timedelta(hours=1)
@@ -109,6 +111,34 @@ def test_candidate_engine_derives_conservative_storage_requirement() -> None:
         "pv-evidence",
         "load:forecast",
     }
+
+    pipeline_run = CanonicalPipeline().run(
+        planning_input=snapshot,
+    )
+
+    assert (
+        pipeline_run.candidate_set.projected_balances
+        == result.balances
+    )
+    assert (
+        pipeline_run.candidate_set.storage_requirements
+        == result.requirements
+    )
+
+    candidate_card = project(pipeline_run).cards[2]
+
+    assert candidate_card.attributes["projected_balance_count"] == 1
+    assert candidate_card.attributes["storage_requirement_count"] == 1
+    assert candidate_card.attributes["storage_requirements"] == [
+        {
+            "required_energy_wh": 8000.0,
+            "required_soc": 1.0,
+            "required_by": HORIZON_END.isoformat(),
+            "reason": "conservative_effective_maximum",
+            "confidence": 0.70,
+            "reserve_contribution_wh": 4500.0,
+        }
+    ]
 
 
 def test_candidate_engine_aggregates_quarter_hour_load_for_half_hour_pv() -> None:

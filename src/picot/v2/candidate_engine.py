@@ -22,6 +22,10 @@ def _ordered_unique(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
+class CandidateInputError(ValueError):
+    """Expected Candidate Engine input insufficiency."""
+
+
 @dataclass(frozen=True, slots=True)
 class StorageRequirementDerivation:
     """Canonical projected balances and matching storage requirements."""
@@ -39,11 +43,11 @@ class CandidateEngine:
     ) -> StorageRequirementDerivation:
         """Derive conservative ADR-037 requirements from one snapshot."""
         if snapshot.horizon_end is None:
-            raise ValueError("planning horizon is required")
+            raise CandidateInputError("planning horizon is required")
         if snapshot.household_load_forecast is None:
-            raise ValueError("household load forecast is required")
+            raise CandidateInputError("household load forecast is required")
         if snapshot.pv_energy_timeline is None:
-            raise ValueError("PV energy timeline is required")
+            raise CandidateInputError("PV energy timeline is required")
 
         load_intervals = snapshot.household_load_forecast.intervals
         pv_intervals = snapshot.pv_energy_timeline.intervals
@@ -72,7 +76,7 @@ class CandidateEngine:
                 if projection_start >= projection_end:
                     continue
                 if projection_start != projection_cursor:
-                    raise ValueError(
+                    raise CandidateInputError(
                         "PV and household-load intervals must align"
                     )
 
@@ -94,7 +98,7 @@ class CandidateEngine:
                         projection_end,
                     )
                     if overlap_start != load_cursor:
-                        raise ValueError(
+                        raise CandidateInputError(
                             "PV and household-load intervals must align"
                         )
                     overlap_seconds = (
@@ -115,7 +119,7 @@ class CandidateEngine:
                     not matching_load_intervals
                     or load_cursor != projection_end
                 ):
-                    raise ValueError(
+                    raise CandidateInputError(
                         "PV and household-load intervals must align"
                     )
 
@@ -185,7 +189,7 @@ class CandidateEngine:
                 projection_cursor = projection_end
 
             if projection_cursor != snapshot.horizon_end:
-                raise ValueError(
+                raise CandidateInputError(
                     "PV and household-load intervals must align"
                 )
 

@@ -1,15 +1,14 @@
 from datetime import UTC, datetime, timedelta
 
-from picot.v2.pv_attenuation_runtime_derivation import (
-    RUNTIME_DERIVATION_METHOD_VERSION,
-    derive_live_pv_attenuation_ranges,
-)
-
 from picot.v2.contracts import (
     PVAttenuationBucket,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
     PVForecastAttenuationProfile,
+)
+from picot.v2.pv_attenuation_runtime_derivation import (
+    RUNTIME_DERIVATION_METHOD_VERSION,
+    derive_live_pv_attenuation_ranges,
 )
 
 PROJECTED_AT = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)

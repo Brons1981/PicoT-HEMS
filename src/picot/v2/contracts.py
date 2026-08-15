@@ -176,8 +176,6 @@ class PVAttenuationObservation:
     eligibility_method_version: str
 
     def __post_init__(self) -> None:
-        if self.starts_at >= self.ends_at:
-            raise ValueError("starts_at must be before ends_at")
         datetimes = (
             self.starts_at,
             self.ends_at,
@@ -190,6 +188,8 @@ class PVAttenuationObservation:
             raise ValueError(
                 "observation datetimes must be timezone-aware"
             )
+        if self.starts_at >= self.ends_at:
+            raise ValueError("starts_at must be before ends_at")
         forecast_values = (
             self.forecast_lower_energy_wh,
             self.forecast_central_energy_wh,

@@ -27,6 +27,7 @@ class PVAttenuatedForecastRange:
     starts_at: datetime
     ends_at: datetime
     projected_at: datetime
+    minutes_from_sunset: float | None
     status: str
     unavailable_reason: str | None
     observer_only: bool
@@ -82,6 +83,7 @@ def _identity(
     bucket_id: str | None,
     attenuation_factor: float,
     projected_at: datetime,
+    minutes_from_sunset: float | None,
     status: str,
     unavailable_reason: str | None,
 ) -> str:
@@ -94,6 +96,11 @@ def _identity(
         bucket_id or "",
         format(attenuation_factor, ".17g"),
         projected_at.isoformat(),
+        (
+            format(minutes_from_sunset, ".17g")
+            if minutes_from_sunset is not None
+            else ""
+        ),
         status,
         unavailable_reason or "",
         ATTENUATED_RANGE_METHOD_VERSION,
@@ -123,14 +130,17 @@ def derive_pv_attenuated_forecast_range(
     installation_scope_id: str,
     forecast: PVEnergyTimelineInterval,
     profile: PVForecastAttenuationProfile | None,
-    minutes_from_sunset: float,
+    minutes_from_sunset: float | None,
     projected_at: datetime,
 ) -> PVAttenuatedForecastRange:
     """Derive a visible correction without changing the source forecast."""
 
     if projected_at.tzinfo is None or projected_at.utcoffset() is None:
         raise ValueError("projected_at must be timezone-aware")
-    if not isfinite(minutes_from_sunset):
+    if (
+        minutes_from_sunset is not None
+        and not isfinite(minutes_from_sunset)
+    ):
         raise ValueError("minutes_from_sunset must be finite")
 
     range_available = (
@@ -165,6 +175,8 @@ def derive_pv_attenuated_forecast_range(
         reason = "profile_unavailable"
     elif not profile.valid_from <= projected_at < profile.valid_until:
         reason = "profile_outside_validity"
+    elif minutes_from_sunset is None:
+        reason = "sunset_offset_missing"
     else:
         bucket = _matching_bucket(profile, minutes_from_sunset)
         if bucket is None:
@@ -201,6 +213,7 @@ def derive_pv_attenuated_forecast_range(
         bucket_id=bucket_id,
         attenuation_factor=factor,
         projected_at=projected_at,
+        minutes_from_sunset=minutes_from_sunset,
         status=status,
         unavailable_reason=reason,
     )
@@ -212,6 +225,7 @@ def derive_pv_attenuated_forecast_range(
         starts_at=forecast.starts_at,
         ends_at=forecast.ends_at,
         projected_at=projected_at,
+        minutes_from_sunset=minutes_from_sunset,
         status=status,
         unavailable_reason=reason,
         observer_only=True,
@@ -248,6 +262,9 @@ def project_pv_attenuated_forecast_range(
         "pv_attenuation_starts_at": result.starts_at.isoformat(),
         "pv_attenuation_ends_at": result.ends_at.isoformat(),
         "pv_attenuation_projected_at": result.projected_at.isoformat(),
+        "pv_attenuation_minutes_from_sunset": (
+            result.minutes_from_sunset
+        ),
         "pv_attenuation_status": result.status,
         "pv_attenuation_unavailable_reason": result.unavailable_reason,
         "pv_attenuation_observer_only": result.observer_only,

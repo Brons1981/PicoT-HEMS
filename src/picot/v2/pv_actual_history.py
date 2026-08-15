@@ -63,9 +63,7 @@ class HomeAssistantPVHistoryReader:
         query = urlencode({
             "filter_entity_id": entity_id,
             "end_time": ends_at.isoformat(),
-            "minimal_response": "0",
             "no_attributes": "1",
-            "significant_changes_only": "0",
         })
         request = Request(
             (

@@ -105,9 +105,7 @@ def test_home_assistant_goodwe_history_becomes_actual_pv_interval(
     assert parse_qs(parsed_url.query) == {
         "filter_entity_id": [ENTITY_ID],
         "end_time": [END.isoformat()],
-        "minimal_response": ["0"],
         "no_attributes": ["1"],
-        "significant_changes_only": ["0"],
     }
 
     interval = build_actual_pv_interval(

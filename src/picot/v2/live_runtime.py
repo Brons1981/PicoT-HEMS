@@ -217,6 +217,7 @@ def _with_planning_input_diagnostics(
     ]
     pv_actual_attributes: dict[str, Any] = {}
     if pv_actual_diagnostics is not None:
+        deviation = pv_actual_diagnostics.deviation_result
         pv_actual_attributes = {
             "pv_actual_history_status": (
                 pv_actual_diagnostics.history_status
@@ -290,6 +291,110 @@ def _with_planning_input_diagnostics(
                 pv_actual_diagnostics.interrupted_at.isoformat()
                 if pv_actual_diagnostics.interrupted_at
                 is not None
+                else None
+            ),
+            "pv_deviation_status": (
+                "evaluated" if deviation is not None
+                else "not_available"
+            ),
+            "pv_deviation_id": (
+                deviation.deviation_id
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_starts_at": (
+                deviation.starts_at.isoformat()
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_ends_at": (
+                deviation.ends_at.isoformat()
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_evaluated_at": (
+                deviation.evaluated_at.isoformat()
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_forecast_interval_id": (
+                deviation.forecast_interval_id
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_actual_interval_id": (
+                deviation.actual_interval_id
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_forecast_energy_wh": (
+                deviation.forecast_energy_wh
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_actual_energy_wh": (
+                deviation.actual_energy_wh
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_energy_wh": (
+                deviation.deviation_energy_wh
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_absolute_energy_wh": (
+                deviation.absolute_deviation_energy_wh
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_percent": (
+                deviation.deviation_percent
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_percentage_status": (
+                deviation.percentage_status
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_direction": (
+                deviation.direction
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_forecast_confidence": (
+                deviation.forecast_confidence
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_actual_confidence": (
+                deviation.actual_confidence
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_forecast_evidence_ids": (
+                list(deviation.forecast_evidence_ids)
+                if deviation is not None
+                else []
+            ),
+            "pv_deviation_actual_evidence_ids": (
+                list(deviation.actual_evidence_ids)
+                if deviation is not None
+                else []
+            ),
+            "pv_deviation_forecast_conversion_method_version": (
+                deviation.forecast_conversion_method_version
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_actual_conversion_method_version": (
+                deviation.actual_conversion_method_version
+                if deviation is not None
+                else None
+            ),
+            "pv_deviation_evaluation_method_version": (
+                deviation.evaluation_method_version
+                if deviation is not None
                 else None
             ),
         }

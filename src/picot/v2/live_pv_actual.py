@@ -14,6 +14,10 @@ from picot.v2.pv_actual_intervals import (
     PVActualIntervalDiagnosis,
     diagnose_actual_pv_interval,
 )
+from picot.v2.pv_deviation import (
+    PVDeviationResult,
+    evaluate_pv_energy_deviation,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +42,7 @@ class LivePVActualDiagnostics:
     history_semantics: str | None = None
     interruption_state: str | None = None
     interrupted_at: datetime | None = None
+    deviation_result: PVDeviationResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +174,19 @@ def apply_latest_closed_actual_pv(
         cache.store(key, cached)
 
     actual = cached.interval
+    deviation_result = None
+    if actual is not None:
+        actual = replace(
+            actual,
+            forecast_evidence_ids=(
+                selected.forecast_evidence_ids
+            ),
+        )
+        deviation_result = evaluate_pv_energy_deviation(
+            forecast=selected,
+            actual=actual,
+            evaluated_at=bundle.snapshot.captured_at,
+        )
     diagnosis = cached.diagnosis
     interval_status = "actual" if actual is not None else "gap"
     enriched = bundle
@@ -256,6 +274,7 @@ def apply_latest_closed_actual_pv(
             if diagnosis is not None
             else None
         ),
+        deviation_result=deviation_result,
     )
     return enriched, diagnostics
 
@@ -282,6 +301,7 @@ def _diagnostics(
     history_semantics: str | None = None,
     interruption_state: str | None = None,
     interrupted_at: datetime | None = None,
+    deviation_result: PVDeviationResult | None = None,
 ) -> LivePVActualDiagnostics:
     return LivePVActualDiagnostics(
         history_status=history_status,
@@ -309,4 +329,5 @@ def _diagnostics(
         history_semantics=history_semantics,
         interruption_state=interruption_state,
         interrupted_at=interrupted_at,
+        deviation_result=deviation_result,
     )

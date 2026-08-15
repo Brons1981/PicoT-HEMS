@@ -25,6 +25,7 @@ from picot.v2.planning_input import PlanningInputBundle
 from picot.v2.projection import project
 from picot.v2.pv_actual_history import PVHistoryReadResult
 from picot.v2.pv_actual_intervals import PVPowerObservation
+from picot.v2.pv_deviation import evaluate_pv_energy_deviation
 
 CAPTURED_AT = datetime(2026, 8, 15, 9, 5, tzinfo=UTC)
 CLOSED_START = datetime(2026, 8, 15, 8, 30, tzinfo=UTC)
@@ -178,6 +179,9 @@ def test_latest_closed_pv_interval_is_fetched_once_and_replaces_forecast(
     assert actual.pv_energy_wh == pytest.approx(300.0)
     assert actual.evidence_type == "ACTUAL"
     assert len(actual.actual_evidence_ids) == 61
+    assert actual.forecast_evidence_ids == (
+        "evidence-solcast-0830",
+    )
     assert actual.actual_evidence_ids[0] == "goodwe-0000"
     assert actual.actual_evidence_ids[-1] == "goodwe-1800"
     assert (
@@ -191,6 +195,19 @@ def test_latest_closed_pv_interval_is_fetched_once_and_replaces_forecast(
     assert first_diagnostics.history_status == "available"
     assert first_diagnostics.cache_hit is False
     assert first_diagnostics.interval_status == "actual"
+    assert first_diagnostics.deviation_result is not None
+    assert (
+        first_diagnostics.deviation_result.forecast_energy_wh
+        == 500.0
+    )
+    assert first_diagnostics.deviation_result.actual_energy_wh == 300.0
+    assert (
+        first_diagnostics.deviation_result.deviation_energy_wh
+        == -200.0
+    )
+    assert first_diagnostics.deviation_result.deviation_percent == (
+        pytest.approx(-40.0)
+    )
     assert first_diagnostics.processing_ms >= 0.0
     assert second_diagnostics.history_status == "cached"
     assert second_diagnostics.cache_hit is True
@@ -200,6 +217,30 @@ def test_latest_closed_pv_interval_is_fetched_once_and_replaces_forecast(
 def test_planning_input_card_exposes_actual_pv_runtime_diagnostics(
 ) -> None:
     bundle = _bundle(captured_at=CAPTURED_AT)
+    forecast = bundle.snapshot.pv_energy_timeline
+    assert forecast is not None
+    actual = PVEnergyTimelineInterval(
+        interval_id="pv-actual-0830",
+        starts_at=CLOSED_START,
+        ends_at=CLOSED_END,
+        pv_energy_wh=300.0,
+        evidence_type="ACTUAL",
+        confidence=1.0,
+        actual_evidence_ids=(
+            "goodwe-0000",
+            "goodwe-0030",
+            "goodwe-1800",
+        ),
+        forecast_evidence_ids=("evidence-solcast-0830",),
+        conversion_method_version=(
+            "goodwe-state-transition-step-hold-energy:v1"
+        ),
+    )
+    deviation = evaluate_pv_energy_deviation(
+        forecast=forecast.intervals[0],
+        actual=actual,
+        evaluated_at=CAPTURED_AT,
+    )
     diagnostics = LivePVActualDiagnostics(
         history_status="available",
         interval_status="actual",
@@ -220,6 +261,7 @@ def test_planning_input_card_exposes_actual_pv_runtime_diagnostics(
             "goodwe-1800",
         ),
         processing_ms=2.345,
+        deviation_result=deviation,
     )
     run = CanonicalPipeline().run(
         planning_input=bundle.snapshot,
@@ -261,6 +303,44 @@ def test_planning_input_card_exposes_actual_pv_runtime_diagnostics(
         "goodwe-1800",
     ]
     assert attributes["pv_actual_processing_ms"] == 2.345
+    assert attributes["pv_deviation_status"] == "evaluated"
+    assert attributes["pv_deviation_id"] == deviation.deviation_id
+    assert attributes["pv_deviation_starts_at"] == (
+        CLOSED_START.isoformat()
+    )
+    assert attributes["pv_deviation_ends_at"] == CLOSED_END.isoformat()
+    assert attributes["pv_deviation_evaluated_at"] == (
+        CAPTURED_AT.isoformat()
+    )
+    assert attributes["pv_deviation_forecast_energy_wh"] == 500.0
+    assert attributes["pv_deviation_actual_energy_wh"] == 300.0
+    assert attributes["pv_deviation_energy_wh"] == -200.0
+    assert attributes["pv_deviation_absolute_energy_wh"] == 200.0
+    assert attributes["pv_deviation_percent"] == pytest.approx(-40.0)
+    assert attributes["pv_deviation_percentage_status"] == "available"
+    assert attributes["pv_deviation_direction"] == "below_forecast"
+    assert attributes["pv_deviation_forecast_confidence"] == 0.42
+    assert attributes["pv_deviation_actual_confidence"] == 1.0
+    assert attributes["pv_deviation_forecast_evidence_ids"] == [
+        "evidence-solcast-0830"
+    ]
+    assert attributes["pv_deviation_actual_evidence_ids"] == [
+        "goodwe-0000",
+        "goodwe-0030",
+        "goodwe-1800",
+    ]
+    assert (
+        attributes["pv_deviation_forecast_conversion_method_version"]
+        == "solcast-detailed-forecast-average-kw-30m:v1"
+    )
+    assert (
+        attributes["pv_deviation_actual_conversion_method_version"]
+        == "goodwe-state-transition-step-hold-energy:v1"
+    )
+    assert (
+        attributes["pv_deviation_evaluation_method_version"]
+        == "pv-energy-deviation:v1"
+    )
 
 
 def test_main_wires_goodwe_actual_pv_into_executed_planning_input(

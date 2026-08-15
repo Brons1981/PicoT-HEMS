@@ -2,14 +2,14 @@ from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
-from picot.v2.pv_sunset_offsets import (
-    SUNSET_OFFSET_METHOD_VERSION,
-    derive_pv_sunset_offsets,
-)
 
 from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
+)
+from picot.v2.pv_sunset_offsets import (
+    SUNSET_OFFSET_METHOD_VERSION,
+    derive_pv_sunset_offsets,
 )
 
 AMSTERDAM = ZoneInfo("Europe/Amsterdam")
@@ -41,16 +41,30 @@ def _interval(
             else ()
         ),
         conversion_method_version="test-conversion:v1",
-        forecast_lower_energy_wh=80.0,
-        forecast_central_energy_wh=100.0,
-        forecast_upper_energy_wh=130.0,
-        forecast_range_status="available",
-        forecast_range_source_fields=(
-            "pv_estimate10",
-            "pv_estimate",
-            "pv_estimate90",
+        forecast_lower_energy_wh=(
+            80.0 if evidence_type == "FORECAST" else None
         ),
-        forecast_range_method_version="test-range:v1",
+        forecast_central_energy_wh=(
+            100.0 if evidence_type == "FORECAST" else None
+        ),
+        forecast_upper_energy_wh=(
+            130.0 if evidence_type == "FORECAST" else None
+        ),
+        forecast_range_status=(
+            "available" if evidence_type == "FORECAST" else "unavailable"
+        ),
+        forecast_range_source_fields=(
+            (
+                "pv_estimate10",
+                "pv_estimate",
+                "pv_estimate90",
+            )
+            if evidence_type == "FORECAST"
+            else ()
+        ),
+        forecast_range_method_version=(
+            "test-range:v1" if evidence_type == "FORECAST" else None
+        ),
     )
 
 

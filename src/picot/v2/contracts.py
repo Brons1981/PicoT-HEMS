@@ -358,3 +358,40 @@ class ExecutionRecord:
 @dataclass(frozen=True, slots=True)
 class ExecutionPrimitiveBoundary:
     run_id: str
+    snapshot_id: str
+    request_id: str | None
+    execution_record_id: str
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceAdapterBoundary:
+    run_id: str
+    snapshot_id: str
+    translation_id: str | None
+    primitive_request_id: str | None
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class VendorBoundaryResult:
+    run_id: str
+    snapshot_id: str
+    command_id: str | None
+    adapter_translation_id: str | None
+    status: str
+    observed_result_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalPipelineRun:
+    planning_input: PlanningInputSnapshot
+    opportunities: OpportunitySet
+    candidate_set: CandidateSet
+    outcomes: CandidateOutcomeSet
+    evaluation: EvaluationRecord
+    execution_plan_set: ExecutionPlanSet
+    execution_record: ExecutionRecord
+    primitive_boundary: ExecutionPrimitiveBoundary
+    adapter_boundary: DeviceAdapterBoundary
+    vendor_result: VendorBoundaryResult

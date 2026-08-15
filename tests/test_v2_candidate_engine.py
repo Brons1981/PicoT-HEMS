@@ -139,6 +139,32 @@ def test_candidate_engine_derives_conservative_storage_requirement() -> None:
             "reserve_contribution_wh": 4500.0,
         }
     ]
+    assert candidate_card.attributes["projected_balances"] == [
+        {
+            "balance_id": balance.balance_id,
+            "storage_state_id": "storage-home",
+            "intervals": [
+                {
+                    "starts_at": BASE.isoformat(),
+                    "ends_at": HORIZON_END.isoformat(),
+                    "current_usable_storage_energy_wh": 4000.0,
+                    "expected_usable_pv_energy_wh": 1000.0,
+                    "planned_grid_energy_wh": 0.0,
+                    "household_load_forecast_energy_wh": 1500.0,
+                    "known_future_demand_energy_wh": 0.0,
+                    "conversion_losses_wh": 0.0,
+                    "other_planned_household_energy_flows_wh": 0.0,
+                    "projected_storage_energy_wh": 3500.0,
+                    "confidence": 0.70,
+                    "evidence_ids": [
+                        "storage-evidence",
+                        "pv-evidence",
+                        "load:forecast",
+                    ],
+                }
+            ],
+        }
+    ]
 
 
 def test_candidate_engine_aggregates_quarter_hour_load_for_half_hour_pv() -> None:

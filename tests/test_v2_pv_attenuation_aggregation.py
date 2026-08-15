@@ -2,14 +2,14 @@ from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
+from picot.v2.contracts import PVAttenuationObservation
 from picot.v2.pv_attenuation_aggregation import (
     AGGREGATION_METHOD_VERSION,
     PROFILE_METHOD_VERSION,
     PVAttenuationAggregationConfig,
     aggregate_pv_attenuation_profile,
 )
-
-from picot.v2.contracts import PVAttenuationObservation
 
 EVALUATED_AT = datetime(2026, 8, 16, 0, 0, tzinfo=UTC)
 BASE_START = datetime(2026, 8, 13, 17, 0, tzinfo=UTC)

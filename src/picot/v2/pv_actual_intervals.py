@@ -4,23 +4,41 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from math import isfinite
 
 from picot.v2.contracts import PVEnergyTimelineInterval
 
-INTEGRATION_METHOD_VERSION = "goodwe-sample-hold-energy:v1"
+INTEGRATION_METHOD_VERSION = (
+    "goodwe-state-transition-step-hold-energy:v1"
+)
+HISTORY_SEMANTICS = "home_assistant_state_changes"
 
 
 @dataclass(frozen=True, slots=True)
 class PVPowerObservation:
-    power_w: float
+    power_w: float | None
     sampled_at: datetime
     evidence_id: str
+    source_state: str = "numeric"
 
     def __post_init__(self) -> None:
-        if not isfinite(self.power_w) or self.power_w < 0.0:
-            raise ValueError("power_w must be finite and non-negative")
+        if self.source_state == "numeric":
+            if (
+                self.power_w is None
+                or not isfinite(self.power_w)
+                or self.power_w < 0.0
+            ):
+                raise ValueError(
+                    "numeric power_w must be finite and non-negative"
+                )
+        elif self.source_state in {"unknown", "unavailable"}:
+            if self.power_w is not None:
+                raise ValueError(
+                    "unavailable power observations have no power_w"
+                )
+        else:
+            raise ValueError("source_state must be explicit and supported")
         if (
             self.sampled_at.tzinfo is None
             or self.sampled_at.utcoffset() is None
@@ -39,7 +57,10 @@ class PVActualIntervalDiagnosis:
     first_observed_at: datetime | None
     last_observed_at: datetime | None
     maximum_observed_gap_seconds: float | None
-    allowed_gap_seconds: float
+    allowed_gap_seconds: float | None
+    history_semantics: str
+    interruption_state: str | None
+    interrupted_at: datetime | None
 
 
 def build_actual_pv_interval(
@@ -51,7 +72,7 @@ def build_actual_pv_interval(
     observations: Sequence[PVPowerObservation],
     telemetry_interval_seconds: int = 5,
 ) -> PVEnergyTimelineInterval | None:
-    """Integrate one closed PV interval using bounded sample-and-hold."""
+    """Integrate state changes by holding each state until the next."""
     for name, value in (
         ("starts_at", starts_at),
         ("ends_at", ends_at),
@@ -70,13 +91,6 @@ def build_actual_pv_interval(
         raise ValueError(
             "telemetry_interval_seconds must be positive"
         )
-
-    maximum_gap = timedelta(
-        seconds=max(
-            30,
-            telemetry_interval_seconds * 3,
-        )
-    )
 
     ordered = tuple(
         sorted(
@@ -114,7 +128,7 @@ def build_actual_pv_interval(
     if anchor_index is None:
         return None
     anchor = deduplicated[anchor_index]
-    if starts_at - anchor.sampled_at > maximum_gap:
+    if anchor.power_w is None:
         return None
 
     previous_time = starts_at
@@ -126,14 +140,14 @@ def build_actual_pv_interval(
         if observation.sampled_at <= starts_at:
             continue
         gap = observation.sampled_at - previous_time
-        if gap > maximum_gap:
-            return None
         energy_wh += (
             previous_power_w
             * gap.total_seconds()
             / 3600.0
         )
         previous_time = observation.sampled_at
+        if observation.power_w is None:
+            return None
         previous_power_w = observation.power_w
         evidence_ids.append(observation.evidence_id)
         if previous_time == ends_at:
@@ -141,8 +155,6 @@ def build_actual_pv_interval(
 
     if previous_time < ends_at:
         tail_gap = ends_at - previous_time
-        if tail_gap > maximum_gap:
-            return None
         energy_wh += (
             previous_power_w
             * tail_gap.total_seconds()
@@ -180,10 +192,6 @@ def diagnose_actual_pv_interval(
         observations=observations,
         telemetry_interval_seconds=telemetry_interval_seconds,
     )
-    allowed_gap_seconds = float(
-        max(30, telemetry_interval_seconds * 3)
-    )
-
     ordered = tuple(
         sorted(
             (
@@ -239,6 +247,14 @@ def diagnose_actual_pv_interval(
     last_observed_at = (
         relevant[-1].sampled_at if relevant else None
     )
+    interruption = next(
+        (
+            observation
+            for observation in relevant
+            if observation.power_w is None
+        ),
+        None,
+    )
 
     if interval is not None:
         status = "actual"
@@ -252,23 +268,9 @@ def diagnose_actual_pv_interval(
     elif anchor_index is None:
         status = "gap"
         reason = "missing_start_anchor"
-    elif (
-        starts_at - relevant[0].sampled_at
-    ).total_seconds() > allowed_gap_seconds:
+    elif interruption is not None:
         status = "gap"
-        reason = "start_anchor_gap_exceeds_limit"
-    elif (
-        maximum_observed_gap_seconds is not None
-        and maximum_observed_gap_seconds
-        > allowed_gap_seconds
-    ):
-        status = "gap"
-        reason = "observation_gap_exceeds_limit"
-    elif (
-        ends_at - relevant[-1].sampled_at
-    ).total_seconds() > allowed_gap_seconds:
-        status = "gap"
-        reason = "end_gap_exceeds_limit"
+        reason = f"source_state_{interruption.source_state}"
     else:
         status = "gap"
         reason = "incomplete_boundary_coverage"
@@ -283,5 +285,16 @@ def diagnose_actual_pv_interval(
         maximum_observed_gap_seconds=(
             maximum_observed_gap_seconds
         ),
-        allowed_gap_seconds=allowed_gap_seconds,
+        allowed_gap_seconds=None,
+        history_semantics=HISTORY_SEMANTICS,
+        interruption_state=(
+            interruption.source_state
+            if interruption is not None
+            else None
+        ),
+        interrupted_at=(
+            interruption.sampled_at
+            if interruption is not None
+            else None
+        ),
     )

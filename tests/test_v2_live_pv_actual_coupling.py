@@ -182,7 +182,7 @@ def test_latest_closed_pv_interval_is_fetched_once_and_replaces_forecast(
     assert actual.actual_evidence_ids[-1] == "goodwe-1800"
     assert (
         actual.conversion_method_version
-        == "goodwe-sample-hold-energy:v1"
+        == "goodwe-state-transition-step-hold-energy:v1"
     )
     assert future == original.snapshot.pv_energy_timeline.intervals[1]
 
@@ -212,7 +212,7 @@ def test_planning_input_card_exposes_actual_pv_runtime_diagnostics(
         ),
         error=None,
         conversion_method_version=(
-            "goodwe-sample-hold-energy:v1"
+            "goodwe-state-transition-step-hold-energy:v1"
         ),
         actual_evidence_ids=(
             "goodwe-0000",
@@ -253,7 +253,7 @@ def test_planning_input_card_exposes_actual_pv_runtime_diagnostics(
     assert attributes["pv_actual_error"] is None
     assert (
         attributes["pv_actual_conversion_method_version"]
-        == "goodwe-sample-hold-energy:v1"
+        == "goodwe-state-transition-step-hold-energy:v1"
     )
     assert attributes["pv_actual_evidence_ids"] == [
         "goodwe-0000",
@@ -389,7 +389,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     assert diagnostics.cache_hit is False
 
 
-def test_live_actual_pv_gap_exposes_observation_coverage() -> None:
+def test_live_actual_pv_accepts_sparse_state_changes() -> None:
     bundle = _bundle(captured_at=CAPTURED_AT)
 
     def read_sparse_history(
@@ -435,12 +435,9 @@ def test_live_actual_pv_gap_exposes_observation_coverage() -> None:
         telemetry_interval_seconds=5,
     )
 
-    assert enriched is bundle
-    assert diagnostics.interval_status == "gap"
-    assert (
-        diagnostics.gap_reason
-        == "observation_gap_exceeds_limit"
-    )
+    assert enriched is not bundle
+    assert diagnostics.interval_status == "actual"
+    assert diagnostics.gap_reason is None
     assert diagnostics.observation_count == 3
     assert (
         diagnostics.first_observed_at
@@ -448,7 +445,11 @@ def test_live_actual_pv_gap_exposes_observation_coverage() -> None:
     )
     assert diagnostics.last_observed_at == CLOSED_END
     assert diagnostics.maximum_observed_gap_seconds == 1740.0
-    assert diagnostics.allowed_gap_seconds == 30.0
+    assert diagnostics.allowed_gap_seconds is None
+    assert (
+        diagnostics.history_semantics
+        == "home_assistant_state_changes"
+    )
 
 
 def test_planning_input_card_exposes_actual_pv_gap_diagnostics(
@@ -468,14 +469,17 @@ def test_planning_input_card_exposes_actual_pv_gap_diagnostics(
         conversion_method_version=None,
         actual_evidence_ids=(),
         processing_ms=21.68,
-        gap_reason="observation_gap_exceeds_limit",
+        gap_reason="source_state_unavailable",
         observation_count=3,
         first_observed_at=(
             CLOSED_START - timedelta(seconds=5)
         ),
         last_observed_at=CLOSED_END,
         maximum_observed_gap_seconds=1740.0,
-        allowed_gap_seconds=30.0,
+        allowed_gap_seconds=None,
+        history_semantics="home_assistant_state_changes",
+        interruption_state="unavailable",
+        interrupted_at=CLOSED_START + timedelta(minutes=10),
     )
     run = CanonicalPipeline().run(
         planning_input=bundle.snapshot,
@@ -490,7 +494,7 @@ def test_planning_input_card_exposes_actual_pv_gap_diagnostics(
     attributes = projection.cards[0].attributes
     assert (
         attributes["pv_actual_gap_reason"]
-        == "observation_gap_exceeds_limit"
+        == "source_state_unavailable"
     )
     assert attributes["pv_actual_observation_count"] == 3
     assert (
@@ -507,4 +511,14 @@ def test_planning_input_card_exposes_actual_pv_gap_diagnostics(
         attributes["pv_actual_maximum_observed_gap_seconds"]
         == 1740.0
     )
-    assert attributes["pv_actual_allowed_gap_seconds"] == 30.0
+    assert attributes["pv_actual_allowed_gap_seconds"] is None
+    assert (
+        attributes["pv_actual_history_semantics"]
+        == "home_assistant_state_changes"
+    )
+    assert attributes["pv_actual_interruption_state"] == (
+        "unavailable"
+    )
+    assert attributes["pv_actual_interrupted_at"] == (
+        CLOSED_START + timedelta(minutes=10)
+    ).isoformat()

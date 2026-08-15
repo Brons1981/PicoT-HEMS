@@ -429,7 +429,6 @@ def test_three_solcast_sources_form_one_traceable_bounded_timeline(
         for left, right in zip(
             timeline.intervals,
             timeline.intervals[1:],
-            strict=True,
         )
     )
 
@@ -495,3 +494,71 @@ def test_missing_day_3_stays_visible_and_is_not_synthesized(
         "2026-08-17T00:00:00+02:00"
     )
     assert timeline.intervals[-1].ends_at < bundle.snapshot.horizon_end
+
+
+def test_overlapping_solcast_sources_are_rejected_explicitly(
+    monkeypatch: object,
+) -> None:
+    captured_at = datetime.fromisoformat(
+        "2026-08-15T19:45:00+02:00"
+    )
+    starts_at = datetime.fromisoformat(
+        "2026-08-16T00:00:00+02:00"
+    )
+    bindings = (
+        planning_input.SourceBinding(
+            "solcast",
+            "pv_forecast",
+            "sensor.solcast.today",
+        ),
+        planning_input.SourceBinding(
+            "solcast",
+            "pv_forecast_tomorrow",
+            "sensor.solcast.tomorrow",
+        ),
+    )
+
+    def fake_read(
+        self: planning_input.HomeAssistantStateReader,
+        binding: planning_input.SourceBinding,
+    ) -> planning_input.SourceEvidence:
+        del self
+        evidence_id = f"evidence-{binding.semantic_role}"
+        interval = PVEnergyTimelineInterval(
+            interval_id=f"interval-{binding.semantic_role}",
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(minutes=30),
+            pv_energy_wh=100.0,
+            evidence_type="FORECAST",
+            confidence=0.5,
+            actual_evidence_ids=(),
+            forecast_evidence_ids=(evidence_id,),
+            conversion_method_version=(
+                "solcast-detailed-forecast-average-kw-30m:v1"
+            ),
+        )
+        return planning_input.SourceEvidence(
+            evidence_id=evidence_id,
+            category=binding.category,
+            semantic_role=binding.semantic_role,
+            entity_id=binding.entity_id,
+            raw_state="1.0",
+            raw_unit="kWh",
+            observed_at=captured_at,
+            availability="available",
+            mapping_version=f"mapping-{binding.semantic_role}",
+            pv_energy_intervals=(interval,),
+        )
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        planning_input.HomeAssistantStateReader,
+        "read",
+        fake_read,
+    )
+
+    with pytest.raises(ValueError):
+        planning_input.assemble_planning_input(
+            "token",
+            bindings=bindings,
+            captured_at=captured_at,
+        )

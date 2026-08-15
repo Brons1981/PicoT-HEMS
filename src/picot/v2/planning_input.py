@@ -705,7 +705,7 @@ def assemble_planning_input(
         interval
         for item in evidence
         for interval in item.pv_energy_intervals
-        if horizon_end is None or interval.ends_at <= horizon_end
+        if horizon_end is None or interval.starts_at < horizon_end
     )
     pv_energy_timeline = (
         PVEnergyTimeline(

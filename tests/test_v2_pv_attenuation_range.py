@@ -1,4 +1,4 @@
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -279,22 +279,14 @@ def test_missing_source_range_is_not_invented() -> None:
 
 
 def test_profile_for_other_installation_scope_is_never_applied() -> None:
-    foreign_bucket = PVAttenuationBucket(
-        **{
-            field: getattr(_bucket(), field)
-            for field in _bucket().__dataclass_fields__
-        }
-        | {"installation_scope_id": "other-installation"}
+    foreign_bucket = replace(
+        _bucket(),
+        installation_scope_id="other-installation",
     )
-    foreign_profile = PVForecastAttenuationProfile(
-        **{
-            field: getattr(_profile(), field)
-            for field in _profile().__dataclass_fields__
-        }
-        | {
-            "installation_scope_id": "other-installation",
-            "buckets": (foreign_bucket,),
-        }
+    foreign_profile = replace(
+        _profile(),
+        installation_scope_id="other-installation",
+        buckets=(foreign_bucket,),
     )
 
     result = _derive(profile=foreign_profile)

@@ -88,6 +88,7 @@ def test_main_starts_one_web_server_before_pipeline_loop(
             "price_low_margin_eur_per_kwh": 0.02,
             "price_high_margin_eur_per_kwh": 0.02,
             "live_poll_interval_seconds": 60.0,
+            "pv_power_entity": "sensor.test_pv",
         },
     )
     monkeypatch.setattr(live_runtime, "_start_web_server", fake_start)

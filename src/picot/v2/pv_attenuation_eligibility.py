@@ -39,23 +39,19 @@ class PVAttenuationEligibilityConfig:
             ),
             ("minimum_actual_confidence", self.minimum_actual_confidence),
             ("maximum_attenuation_ratio", self.maximum_attenuation_ratio),
-            (
-                "minimum_preceding_tracking_ratio",
-                self.minimum_preceding_tracking_ratio,
-            ),
-            (
-                "maximum_preceding_tracking_ratio",
-                self.maximum_preceding_tracking_ratio,
-            ),
         ):
             if not isfinite(value) or not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be between 0 and 1")
         if (
-            self.minimum_preceding_tracking_ratio
+            not isfinite(self.minimum_preceding_tracking_ratio)
+            or not isfinite(self.maximum_preceding_tracking_ratio)
+            or self.minimum_preceding_tracking_ratio < 0.0
+            or self.minimum_preceding_tracking_ratio
             > self.maximum_preceding_tracking_ratio
         ):
             raise ValueError(
-                "preceding tracking ratio bounds must be ordered"
+                "preceding tracking ratio bounds must be finite, "
+                "non-negative, and ordered"
             )
         if self.minimum_distinct_days < 2:
             raise ValueError("minimum_distinct_days must be at least 2")

@@ -1,6 +1,6 @@
 import json
-from itertools import pairwise
 from datetime import datetime, timedelta
+from itertools import pairwise
 
 import pytest
 

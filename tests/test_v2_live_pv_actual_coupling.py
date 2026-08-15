@@ -791,6 +791,7 @@ def test_unavailable_day_history_remains_explicit_closed_interval_gaps() -> None
     assert diagnostics.deviation_results == ()
     assert diagnostics.deviation_result is None
 
+
 def test_live_actualisation_builds_cumulative_closed_interval_evidence() -> None:
     bundle = _bundle(captured_at=CAPTURED_AT)
 
@@ -946,7 +947,7 @@ def test_planning_card_projects_cumulative_and_all_interval_evidence() -> None:
         "deviation_id": diagnostics.deviation_results[0].deviation_id,
         "starts_at": CLOSED_START.isoformat(),
         "ends_at": CLOSED_END.isoformat(),
-        "forecast_interval_id": "pv-energy-interval-0830",
+        "forecast_interval_id": "solcast-0830",
         "actual_interval_id": (
             f"pv-actual-{CLOSED_START.isoformat()}"
         ),

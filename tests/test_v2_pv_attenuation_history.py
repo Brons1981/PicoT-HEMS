@@ -1,9 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from picot.v2.pv_attenuation_history import (
-    build_pv_attenuation_profile_from_history,
-)
 
 from picot.v2.contracts import PVAttenuationObservation
 from picot.v2.pv_attenuation_aggregation import (
@@ -13,6 +10,9 @@ from picot.v2.pv_attenuation_eligibility import (
     PVAttenuationEligibilityConfig,
 )
 from picot.v2.pv_attenuation_evidence import PVAttenuationEvidenceStore
+from picot.v2.pv_attenuation_history import (
+    build_pv_attenuation_profile_from_history,
+)
 
 EVALUATED_AT = datetime(2026, 8, 16, 0, 0, tzinfo=UTC)
 BASE_START = datetime(2026, 8, 13, 17, 0, tzinfo=UTC)

@@ -30,6 +30,10 @@ from picot.v2.household_load_forecast import (
     build_historical_household_load_forecast,
     derive_household_load_power_w,
 )
+from picot.v2.zendure_mode_capabilities import (
+    HomeAssistantZendureModeCapabilityReader,
+    StorageModeCapabilityConfig,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,16 +157,10 @@ def derive_validated_storage_power_w(
     signed_power_w: float | None,
     power_to_house_w: float | None,
     power_from_house_w: float | None,
-    consistency_tolerance_w: float = (
-        DEFAULT_STORAGE_POWER_CONSISTENCY_TOLERANCE_W
-    ),
+    consistency_tolerance_w: float = (DEFAULT_STORAGE_POWER_CONSISTENCY_TOLERANCE_W),
 ) -> float | None:
     """Accept signed storage power only with consistent directional evidence."""
-    if (
-        signed_power_w is None
-        or power_to_house_w is None
-        or power_from_house_w is None
-    ):
+    if signed_power_w is None or power_to_house_w is None or power_from_house_w is None:
         return None
     values = (
         signed_power_w,
@@ -185,10 +183,8 @@ def derive_validated_storage_power_w(
     charge_power_w = max(0.0, signed_power_w)
     discharge_power_w = max(0.0, -signed_power_w)
     if (
-        abs(discharge_power_w - power_to_house_w)
-        > consistency_tolerance_w
-        or abs(charge_power_w - power_from_house_w)
-        > consistency_tolerance_w
+        abs(discharge_power_w - power_to_house_w) > consistency_tolerance_w
+        or abs(charge_power_w - power_from_house_w) > consistency_tolerance_w
     ):
         return None
     return signed_power_w
@@ -245,10 +241,7 @@ def _household_load_observation_from_evidence(
     return HouseholdLoadObservation(
         power_w=household_load_power_w,
         sampled_at=sampled_at,
-        evidence_ids=tuple(
-            available[role][1]
-            for role in required_roles
-        ),
+        evidence_ids=tuple(available[role][1] for role in required_roles),
         method_version=HOUSEHOLD_LOAD_OBSERVATION_METHOD_VERSION,
     )
 
@@ -348,12 +341,8 @@ def _pv_forecast_intervals_from_attributes(
             ):
                 confidence_by_start[period_start] = float(confidence)
 
-    method_version = (
-        "solcast-detailed-forecast-average-kw-30m:v1"
-    )
-    range_method_version = (
-        "solcast-pv-estimate-range-average-kw-30m:v1"
-    )
+    method_version = "solcast-detailed-forecast-average-kw-30m:v1"
+    range_method_version = "solcast-pv-estimate-range-average-kw-30m:v1"
     range_source_fields = (
         "pv_estimate10",
         "pv_estimate",
@@ -368,11 +357,7 @@ def _pv_forecast_intervals_from_attributes(
         raw_power_kw = item.get("pv_estimate")
         raw_lower_power_kw = item.get("pv_estimate10")
         raw_upper_power_kw = item.get("pv_estimate90")
-        confidence = (
-            confidence_by_start.get(raw_start)
-            if isinstance(raw_start, str)
-            else None
-        )
+        confidence = confidence_by_start.get(raw_start) if isinstance(raw_start, str) else None
         if (
             starts_at is None
             or isinstance(raw_power_kw, bool)
@@ -403,10 +388,7 @@ def _pv_forecast_intervals_from_attributes(
                 isfinite(lower_power_kw)
                 and isfinite(average_power_kw)
                 and isfinite(upper_power_kw)
-                and 0.0
-                <= lower_power_kw
-                <= average_power_kw
-                <= upper_power_kw
+                and 0.0 <= lower_power_kw <= average_power_kw <= upper_power_kw
             ):
                 lower_energy_wh = lower_power_kw * 0.5 * 1000.0
                 central_energy_wh = average_power_kw * 0.5 * 1000.0
@@ -533,6 +515,28 @@ def load_bindings(options_path: str = "/data/options.json") -> tuple[SourceBindi
     return tuple(result)
 
 
+def load_storage_mode_capability_config(
+    options_path: str = "/data/options.json",
+) -> StorageModeCapabilityConfig | None:
+    options = load_options(options_path)
+    values = (
+        options.get("zendure_mode_entity"),
+        options.get("storage_capability_id"),
+        options.get("storage_execution_scope_id"),
+    )
+    if not all(isinstance(value, str) and value.strip() for value in values):
+        return None
+    source_entity_id, capability_id, execution_scope_id = values
+    assert isinstance(source_entity_id, str)
+    assert isinstance(capability_id, str)
+    assert isinstance(execution_scope_id, str)
+    return StorageModeCapabilityConfig(
+        source_entity_id=source_entity_id.strip(),
+        capability_id=capability_id.strip(),
+        execution_scope_id=execution_scope_id.strip(),
+    )
+
+
 class HomeAssistantStateReader:
     """Reads each configured HA source exactly once during snapshot assembly."""
 
@@ -545,9 +549,7 @@ class HomeAssistantStateReader:
         mapping_version = _stable_id(
             "mapping", f"{binding.category}|{binding.semantic_role}|{binding.entity_id or 'none'}"
         )
-        evidence_id = _stable_id(
-            "evidence", f"{mapping_version}|{datetime.now(UTC).isoformat()}"
-        )
+        evidence_id = _stable_id("evidence", f"{mapping_version}|{datetime.now(UTC).isoformat()}")
         if binding.entity_id is None:
             return SourceEvidence(
                 evidence_id=evidence_id,
@@ -625,6 +627,7 @@ def assemble_planning_input(
     *,
     bindings: tuple[SourceBinding, ...] | None = None,
     storage_state_config: StorageStateConfig | None = None,
+    storage_mode_capability_config: StorageModeCapabilityConfig | None = None,
     options_path: str = "/data/options.json",
     captured_at: datetime | None = None,
     household_load_fallback_power_w: float | None = None,
@@ -637,25 +640,42 @@ def assemble_planning_input(
     reader = HomeAssistantStateReader(token)
     selected = bindings if bindings is not None else load_bindings(options_path)
     selected_storage_config = storage_state_config
+    selected_mode_config = storage_mode_capability_config
     if bindings is None and selected_storage_config is None:
         selected_storage_config = load_storage_state_config(options_path)
+    if bindings is None and selected_mode_config is None:
+        selected_mode_config = load_storage_mode_capability_config(options_path)
 
     evidence = tuple(reader.read(binding) for binding in selected)
     finished = datetime.now(UTC)
     capture = captured_at or finished
     if capture.tzinfo is None or capture.utcoffset() is None:
         raise ValueError("captured_at must be timezone-aware")
-
-    household_load_observation = (
-        _household_load_observation_from_evidence(
-            evidence,
-            sampled_at=capture,
+    storage_mode_capability_evidence = (
+        HomeAssistantZendureModeCapabilityReader(token).read(
+            selected_mode_config,
+            captured_at=capture,
         )
+        if selected_mode_config is not None
+        else None
+    )
+
+    household_load_observation = _household_load_observation_from_evidence(
+        evidence,
+        sampled_at=capture,
     )
 
     evidence_seed = "|".join(
         f"{item.mapping_version}:{item.raw_state}:{item.observed_at}" for item in evidence
     )
+    if storage_mode_capability_evidence is not None:
+        evidence_seed += (
+            "|storage-mode:"
+            f"{storage_mode_capability_evidence.current_vendor_mode}:"
+            f"{storage_mode_capability_evidence.status}:"
+            f"{storage_mode_capability_evidence.usable_vendor_modes}:"
+            f"{storage_mode_capability_evidence.excluded_dynamic_vendor_modes}"
+        )
     run_id = _stable_id(
         "run", f"{__version__}|{capture.isoformat()}|{ARCHITECTURE_BASELINE_COMMIT}|{evidence_seed}"
     )
@@ -678,24 +698,18 @@ def assemble_planning_input(
         for item in evidence
     )
     price_points = tuple(
-        point
-        for item in evidence
-        for point in item.price_points
-        if point.ends_at > capture
+        point for item in evidence for point in item.price_points if point.ends_at > capture
     )
     price_horizon_end = max(
         (point.ends_at for point in price_points),
         default=None,
     )
     household_load_horizon_end = capture + timedelta(hours=36)
-    household_load_forecast_requested = (
-        household_load_fallback_power_w is not None
-        or bool(household_load_observations)
+    household_load_forecast_requested = household_load_fallback_power_w is not None or bool(
+        household_load_observations
     )
     horizon_end = (
-        household_load_horizon_end
-        if household_load_forecast_requested
-        else price_horizon_end
+        household_load_horizon_end if household_load_forecast_requested else price_horizon_end
     )
     current_storage_states = _current_storage_states_from_evidence(
         evidence,
@@ -741,18 +755,13 @@ def assemble_planning_input(
         if eligible_household_load_observations
         else None
     )
-    if (
-        household_load_forecast is None
-        and household_load_fallback_power_w is not None
-    ):
-        household_load_forecast = (
-            build_fallback_household_load_forecast(
-                run_id=run_id,
-                snapshot_id=snapshot_id,
-                starts_at=capture,
-                horizon_end=household_load_horizon_end,
-                fallback_power_w=household_load_fallback_power_w,
-            )
+    if household_load_forecast is None and household_load_fallback_power_w is not None:
+        household_load_forecast = build_fallback_household_load_forecast(
+            run_id=run_id,
+            snapshot_id=snapshot_id,
+            starts_at=capture,
+            horizon_end=household_load_horizon_end,
+            fallback_power_w=household_load_fallback_power_w,
         )
 
     snapshot = PlanningInputSnapshot(
@@ -768,6 +777,7 @@ def assemble_planning_input(
         current_storage_states=current_storage_states,
         pv_energy_timeline=pv_energy_timeline,
         household_load_forecast=household_load_forecast,
+        storage_mode_capability_evidence=storage_mode_capability_evidence,
     )
     return PlanningInputBundle(
         snapshot,

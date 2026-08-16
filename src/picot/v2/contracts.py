@@ -177,6 +177,12 @@ class PVAttenuationObservation:
     alignment_status: str = "aligned"
     coverage_status: str = "complete"
     observation_method_version: str = "pv-attenuation-observation:v1"
+    solar_evidence_id: str = "solar-evidence-unavailable"
+    solar_observed_at: datetime | None = None
+    sunset_at: datetime | None = None
+    solar_alignment_method_version: str = (
+        "solar-alignment-unavailable"
+    )
 
     def __post_init__(self) -> None:
         datetimes = (
@@ -240,6 +246,27 @@ class PVAttenuationObservation:
             )
         if not isfinite(self.minutes_from_sunset):
             raise ValueError("minutes_from_sunset must be finite")
+        solar_datetimes = (self.solar_observed_at, self.sunset_at)
+        if (
+            self.solar_observed_at is not None
+            and self.sunset_at is None
+        ):
+            raise ValueError(
+                "solar observation requires sunset_at"
+            )
+        if any(
+            value is not None
+            and (
+                value.tzinfo is None
+                or value.utcoffset() is None
+            )
+            for value in solar_datetimes
+        ):
+            raise ValueError(
+                "solar lineage datetimes must be timezone-aware"
+            )
+        if not self.solar_evidence_id.strip():
+            raise ValueError("solar evidence must be explicit")
         if not self.forecast_evidence_ids:
             raise ValueError("forecast evidence must be explicit")
         if not self.actual_evidence_ids:
@@ -278,6 +305,7 @@ class PVAttenuationObservation:
             self.forecast_mapping_version,
             self.forecast_conversion_method_version,
             self.actual_conversion_method_version,
+            self.solar_alignment_method_version,
             self.eligibility_method_version,
             self.observation_method_version,
         )

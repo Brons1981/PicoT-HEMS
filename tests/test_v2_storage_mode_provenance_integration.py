@@ -1,6 +1,7 @@
 from dataclasses import replace
 from importlib import import_module
 
+import pytest
 from test_v2_delegated_storage_pipeline_integration import (
     BASE,
     CAPABILITY_ID,
@@ -150,6 +151,16 @@ def test_manual_override_only_clears_through_explicit_reset() -> None:
 
     assert still_overridden.status == "manual_override"
     assert still_overridden.manual_override_active is True
+    with pytest.raises(
+        ValueError,
+        match="manual override must be cleared through explicit reset",
+    ):
+        module.record_planner_mode_application(
+            still_overridden,
+            vendor_mode="Alleen slim opladen",
+            applied_at=BASE,
+            application_id="application-must-not-clear-override",
+        )
     assert released.status == "released"
     assert released.manual_override_active is False
     assert released.transition_reason == "explicit_user_reset"

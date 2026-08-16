@@ -247,22 +247,24 @@ class PVAttenuationObservation:
         if not isfinite(self.minutes_from_sunset):
             raise ValueError("minutes_from_sunset must be finite")
         solar_datetimes = (self.solar_observed_at, self.sunset_at)
-        if any(value is not None for value in solar_datetimes):
-            if any(value is None for value in solar_datetimes):
-                raise ValueError(
-                    "solar_observed_at and sunset_at must be supplied together"
-                )
-            if any(
-                value is not None
-                and (
-                    value.tzinfo is None
-                    or value.utcoffset() is None
-                )
-                for value in solar_datetimes
-            ):
-                raise ValueError(
-                    "solar lineage datetimes must be timezone-aware"
-                )
+        if (
+            self.solar_observed_at is not None
+            and self.sunset_at is None
+        ):
+            raise ValueError(
+                "solar observation requires sunset_at"
+            )
+        if any(
+            value is not None
+            and (
+                value.tzinfo is None
+                or value.utcoffset() is None
+            )
+            for value in solar_datetimes
+        ):
+            raise ValueError(
+                "solar lineage datetimes must be timezone-aware"
+            )
         if not self.solar_evidence_id.strip():
             raise ValueError("solar evidence must be explicit")
         if not self.forecast_evidence_ids:

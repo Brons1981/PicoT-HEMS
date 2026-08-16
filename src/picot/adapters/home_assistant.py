@@ -21,6 +21,7 @@ SUPPORTED_SET_VALUE_DOMAINS = frozenset({"number", "input_number"})
 SUPPORTED_MODE_PRIMITIVES = frozenset(
     {
         ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+        ExecutionPrimitive.BALANCE_CHARGE_ONLY,
         ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
     }
 )

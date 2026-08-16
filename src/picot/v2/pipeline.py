@@ -97,11 +97,13 @@ class CanonicalPipeline:
         planning_input: PlanningInputSnapshot | None = None,
         captured_at: datetime | None = None,
         price_opportunity_config: PriceOpportunityConfig | None = None,
+        control_change_allowed: bool = False,
     ) -> CanonicalPipelineRun:
         run, _ = self._execute(
             planning_input=planning_input,
             captured_at=captured_at,
             price_opportunity_config=price_opportunity_config,
+            control_change_allowed=control_change_allowed,
         )
         return run
 
@@ -111,12 +113,14 @@ class CanonicalPipeline:
         planning_input: PlanningInputSnapshot | None = None,
         captured_at: datetime | None = None,
         price_opportunity_config: PriceOpportunityConfig | None = None,
+        control_change_allowed: bool = False,
     ) -> tuple[CanonicalPipelineRun, PipelineStageTimings]:
         """Execute the canonical route and return passive stage timings."""
         return self._execute(
             planning_input=planning_input,
             captured_at=captured_at,
             price_opportunity_config=price_opportunity_config,
+            control_change_allowed=control_change_allowed,
         )
 
     def _execute(
@@ -125,6 +129,7 @@ class CanonicalPipeline:
         planning_input: PlanningInputSnapshot | None,
         captured_at: datetime | None,
         price_opportunity_config: PriceOpportunityConfig | None,
+        control_change_allowed: bool,
     ) -> tuple[CanonicalPipelineRun, PipelineStageTimings]:
         total_started = perf_counter()
         snapshot = planning_input or _bootstrap_snapshot(captured_at)
@@ -368,14 +373,19 @@ class CanonicalPipeline:
                 if len(matching_vendor_modes) == 1
                 else None
             )
-            lifecycle_status = (
-                "scheduled_observer_only"
+            lifecycle_base = (
+                "scheduled"
                 if snapshot.captured_at < valid_from
                 else (
-                    "expired_observer_only"
+                    "expired"
                     if snapshot.captured_at >= valid_until
-                    else "due_observer_only"
+                    else "due"
                 )
+            )
+            lifecycle_status = (
+                lifecycle_base
+                if control_change_allowed
+                else f"{lifecycle_base}_observer_only"
             )
             plan_id = _id(
                 "execution-plan",
@@ -393,7 +403,7 @@ class CanonicalPipeline:
                     planned_primitive=planned_primitive,
                     planned_vendor_mode=plan_vendor_mode,
                     lifecycle_status=lifecycle_status,
-                    observer_only=True,
+                    observer_only=not control_change_allowed,
                     segments=tuple(
                         ObserverExecutionPlanSegment(
                             segment_id=_id(
@@ -433,12 +443,20 @@ class CanonicalPipeline:
             execution_record_id=_id("execution", execution_plan_set.plan_set_id),
             plan_set_id=execution_plan_set.plan_set_id,
             status=(
-                "observer_only_plan_ready"
+                (
+                    "live_plan_ready"
+                    if control_change_allowed
+                    else "observer_only_plan_ready"
+                )
                 if observer_plans
                 else "no_due_segment"
             ),
             reason=(
-                "winning path preserved as observer-only execution plan"
+                (
+                    "winning path approved for live execution"
+                    if control_change_allowed
+                    else "winning path preserved as observer-only execution plan"
+                )
                 if observer_plans
                 else "bootstrap baseline contains no controllable segments"
             ),
@@ -477,15 +495,19 @@ class CanonicalPipeline:
                 in mode_evidence.excluded_dynamic_vendor_modes
             ):
                 blockers.insert(0, "current_vendor_mode_excluded")
-            if mode_provenance is None or mode_provenance.status == "unverified":
+            if mode_provenance is None or (
+                mode_provenance.status == "unverified"
+                and not control_change_allowed
+            ):
                 blockers.append("manual_override_provenance_unverified")
             elif mode_provenance.manual_override_active:
                 blockers.append("manual_override_active")
-            blockers.append("observer_only_authority")
+            if not control_change_allowed:
+                blockers.append("observer_only_authority")
         request_ready = (
             due_segment is not None
             and mapping_status == "validated"
-            and blockers == ["observer_only_authority"]
+            and blockers in (["observer_only_authority"], [])
         )
         primitive_request_id = (
             _id(
@@ -504,7 +526,11 @@ class CanonicalPipeline:
             request_id=primitive_request_id,
             execution_record_id=execution_record.execution_record_id,
             status=(
-                "observer_request_ready"
+                (
+                    "request_ready"
+                    if control_change_allowed
+                    else "observer_request_ready"
+                )
                 if request_ready
                 else (
                     "dry_run_blocked"
@@ -538,7 +564,10 @@ class CanonicalPipeline:
 
         stage_started = perf_counter()
         translation_ready = (
-            primitive_boundary.status == "observer_request_ready"
+            primitive_boundary.status in {
+                "observer_request_ready",
+                "request_ready",
+            }
             and primitive_boundary.request_id is not None
             and primitive_boundary.planned_vendor_mode is not None
         )
@@ -564,7 +593,11 @@ class CanonicalPipeline:
                 else None
             ),
             status=(
-                "observer_translation_ready"
+                (
+                    "translation_ready"
+                    if control_change_allowed
+                    else "observer_translation_ready"
+                )
                 if translation_ready
                 else "not_invoked"
             ),
@@ -573,7 +606,10 @@ class CanonicalPipeline:
 
         stage_started = perf_counter()
         dispatch_ready = (
-            adapter_boundary.status == "observer_translation_ready"
+            adapter_boundary.status in {
+                "observer_translation_ready",
+                "translation_ready",
+            }
             and adapter_boundary.translation_id is not None
             and primitive_boundary.source_entity_id is not None
             and primitive_boundary.planned_vendor_mode is not None
@@ -600,7 +636,11 @@ class CanonicalPipeline:
                 else None
             ),
             status=(
-                "observer_dispatch_ready"
+                (
+                    "dispatch_ready"
+                    if control_change_allowed
+                    else "observer_dispatch_ready"
+                )
                 if dispatch_ready
                 else "not_dispatched"
             ),

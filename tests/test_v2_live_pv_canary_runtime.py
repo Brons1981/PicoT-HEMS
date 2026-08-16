@@ -88,3 +88,5 @@ def test_addon_defaults_live_canary_to_observer() -> None:
 
     assert '  live_pv_canary_mode: "observer"' in config
     assert "  live_pv_canary_mode: list(observer|live)" in config
+    assert '  canonical_execution_mode: "observer"' in config
+    assert "  canonical_execution_mode: list(observer|live)" in config

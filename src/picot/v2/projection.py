@@ -38,6 +38,8 @@ def project(run: CanonicalPipelineRun) -> Projection:
         input_ref: str,
         output_ref: str,
         lineage_status: str,
+        *,
+        observer_only: bool = True,
     ) -> dict[str, object]:
         return {
             "picot_version": p.picot_version,
@@ -47,7 +49,7 @@ def project(run: CanonicalPipelineRun) -> Projection:
             "input_reference": input_ref,
             "output_reference": output_ref,
             "lineage_status": lineage_status,
-            "observer_only": True,
+            "observer_only": observer_only,
         }
 
     o = run.opportunities
@@ -171,6 +173,9 @@ def project(run: CanonicalPipelineRun) -> Projection:
         }
         for plan in ps.plans
     ]
+    execution_observer_only = not ps.plans or all(
+        plan.observer_only for plan in ps.plans
+    )
 
     cards = (
         Card(
@@ -509,9 +514,18 @@ def project(run: CanonicalPipelineRun) -> Projection:
             (
                 "blocked"
                 if e.winning_candidate_id is None
-                else ("observer_only" if ps.plans else "ready")
+                else (
+                    "observer_only"
+                    if execution_observer_only
+                    else "live"
+                )
             ),
-            base(e.evaluation_id, ps.plan_set_id, "derived")
+            base(
+                e.evaluation_id,
+                ps.plan_set_id,
+                "derived",
+                observer_only=execution_observer_only,
+            )
             | {
                 "plan_count": len(ps.plan_ids),
                 "plans": projected_plans,
@@ -520,13 +534,23 @@ def project(run: CanonicalPipelineRun) -> Projection:
         Card(
             "sensor.picot_v2_pipeline_06_execution_engine",
             er.status,
-            base(ps.plan_set_id, er.execution_record_id, "derived")
+            base(
+                ps.plan_set_id,
+                er.execution_record_id,
+                "derived",
+                observer_only=execution_observer_only,
+            )
             | {"reason": er.reason},
         ),
         Card(
             "sensor.picot_v2_pipeline_07_execution_primitive",
             pb.status,
-            base(er.execution_record_id, pb.request_id or "none", "not_consumed")
+            base(
+                er.execution_record_id,
+                pb.request_id or "none",
+                "not_consumed",
+                observer_only=execution_observer_only,
+            )
             | {
                 "request_id": pb.request_id,
                 "planned_primitive": (
@@ -545,6 +569,10 @@ def project(run: CanonicalPipelineRun) -> Projection:
                     "nog mee en stuurt niets naar Zendure."
                     if pb.status == "observer_request_ready"
                     else (
+                        "De uitvoerbare laadopdracht is vrijgegeven voor "
+                        "aansturing van Zendure."
+                        if pb.status == "request_ready"
+                        else (
                         "Er is nu geen uitvoerbare opdracht; PicoT stuurt "
                         "niets naar Zendure."
                         if pb.status == "not_emitted"
@@ -553,6 +581,7 @@ def project(run: CanonicalPipelineRun) -> Projection:
                             "stuurt niets naar Zendure."
                             if pb.status == "dry_run_blocked"
                             else None
+                        )
                         )
                     )
                 ),
@@ -580,6 +609,7 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 pb.request_id or "none",
                 ab.translation_id or "none",
                 "not_consumed",
+                observer_only=execution_observer_only,
             )
             | {
                 "translation_id": ab.translation_id,
@@ -590,8 +620,13 @@ def project(run: CanonicalPipelineRun) -> Projection:
                     "nog mee en verstuurt niets."
                     if ab.status == "observer_translation_ready"
                     else (
+                        "De laadopdracht is vertaald en doorgegeven aan de "
+                        "Zendure-koppeling."
+                        if ab.status in {"translation_ready", "translated"}
+                        else (
                         "Er is geen opdracht vertaald; de apparaatkoppeling "
                         "is niet aangeroepen."
+                        )
                     )
                 ),
             },
@@ -603,6 +638,7 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 ab.translation_id or "none",
                 vr.command_id or "none",
                 "not_consumed",
+                observer_only=execution_observer_only,
             )
             | {
                 "dispatch_intent_id": vr.dispatch_intent_id,
@@ -615,7 +651,20 @@ def project(run: CanonicalPipelineRun) -> Projection:
                     "De Zendure-opdracht is volledig voorbereid; PicoT "
                     "kijkt nog mee en heeft niets verstuurd."
                     if vr.status == "observer_dispatch_ready"
-                    else "Er is geen opdracht naar Zendure verstuurd."
+                    else (
+                        "De opdracht is naar Zendure verstuurd."
+                        if vr.status == "dispatched"
+                        else (
+                            "Zendure stond al in de geplande modus."
+                            if vr.status == "already_active"
+                            else (
+                                "PicoT wacht op bevestiging van de vorige "
+                                "Zendure-opdracht."
+                                if vr.status == "awaiting_mode_feedback"
+                                else "Er is geen opdracht naar Zendure verstuurd."
+                            )
+                        )
+                    )
                 ),
             },
         ),

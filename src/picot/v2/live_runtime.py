@@ -20,6 +20,10 @@ from time import perf_counter
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from picot.v2.canonical_execution_runtime import (
+    CanonicalExecutionRuntime,
+    HomeAssistantCanonicalModeAdapter,
+)
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
 from picot.v2.live_pv_actual import (
@@ -815,6 +819,8 @@ def _execute_planning_bundle(
     storage_mode_provenance_runtime: (
         LiveStorageModeProvenanceRuntime | None
     ) = None,
+    canonical_execution_runtime: CanonicalExecutionRuntime | None = None,
+    canonical_execution_enabled: bool = False,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -825,7 +831,24 @@ def _execute_planning_bundle(
     run, stage_timings = CanonicalPipeline().run_timed(
         planning_input=bundle.snapshot,
         price_opportunity_config=price_config,
+        control_change_allowed=canonical_execution_enabled,
     )
+    if canonical_execution_runtime is not None:
+        run = canonical_execution_runtime.apply(run)
+        if (
+            run.vendor_result.status in {"dispatched", "already_active"}
+            and run.vendor_result.planned_vendor_mode is not None
+            and storage_mode_provenance_runtime is not None
+        ):
+            storage_mode_provenance_runtime.record_planner_application(
+                run.vendor_result.planned_vendor_mode,
+                applied_at=bundle.snapshot.captured_at,
+                application_id=(
+                    "canonical-execution:"
+                    f"{run.planning_input.run_id}:"
+                    f"{run.vendor_result.command_id or 'already-active'}"
+                ),
+            )
     planner_cycle_ms = stage_timings.canonical_total_ms
     pipeline_total_ms = round(planning_input_ms + stage_timings.canonical_total_ms, 3)
 
@@ -1025,6 +1048,19 @@ def main() -> None:
             "live_pv_canary_mode must be observer or live"
         )
     live_pv_canary_enabled = live_pv_canary_mode == "live"
+    canonical_execution_mode = str(
+        options.get("canonical_execution_mode", "observer")
+    )
+    if canonical_execution_mode not in {"observer", "live"}:
+        raise ValueError(
+            "canonical_execution_mode must be observer or live"
+        )
+    canonical_execution_enabled = canonical_execution_mode == "live"
+    if canonical_execution_enabled and live_pv_canary_enabled:
+        raise ValueError(
+            "live_pv_canary_mode and canonical_execution_mode "
+            "cannot both be live"
+        )
     live_pv_canary_target_entity = str(
         options.get("zendure_mode_entity", "")
     ).strip()
@@ -1036,6 +1072,12 @@ def main() -> None:
         )
     live_pv_canary_runtime = LivePVCanaryRuntime(
         dispatch=HomeAssistantLivePVModeAdapter(
+            token=token,
+            requested_at=lambda: datetime.now(UTC),
+        )
+    )
+    canonical_execution_runtime = CanonicalExecutionRuntime(
+        dispatch=HomeAssistantCanonicalModeAdapter(
             token=token,
             requested_at=lambda: datetime.now(UTC),
         )
@@ -1257,6 +1299,8 @@ def main() -> None:
             storage_mode_provenance_runtime=(
                 storage_mode_provenance_runtime
             ),
+            canonical_execution_runtime=canonical_execution_runtime,
+            canonical_execution_enabled=canonical_execution_enabled,
         )
 
     previous_signature: str | None = None

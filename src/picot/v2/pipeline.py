@@ -333,6 +333,40 @@ class CanonicalPipeline:
                 for segment in winning_path.segments
                 if segment.execution_scope_id == execution_scope_id
             )
+            valid_from = min(segment.starts_at for segment in path_segments)
+            valid_until = max(segment.ends_at for segment in path_segments)
+            planned_primitives = {
+                segment.primitive for segment in path_segments
+            }
+            planned_primitive = next(iter(planned_primitives))
+            if len(planned_primitives) != 1:
+                raise ValueError(
+                    "observer execution plan must contain one primitive"
+                )
+            mode_evidence = snapshot.storage_mode_capability_evidence
+            matching_vendor_modes = (
+                tuple(
+                    mapping.vendor_mode
+                    for mapping in mode_evidence.mappings
+                    if planned_primitive in mapping.primitives
+                )
+                if mode_evidence is not None
+                else ()
+            )
+            plan_vendor_mode = (
+                matching_vendor_modes[0]
+                if len(matching_vendor_modes) == 1
+                else None
+            )
+            lifecycle_status = (
+                "scheduled_observer_only"
+                if snapshot.captured_at < valid_from
+                else (
+                    "expired_observer_only"
+                    if snapshot.captured_at >= valid_until
+                    else "due_observer_only"
+                )
+            )
             plan_id = _id(
                 "execution-plan",
                 f"{evaluation.evaluation_id}|{winning_path.path_id}|{execution_scope_id}",
@@ -344,6 +378,11 @@ class CanonicalPipeline:
                     winning_candidate_id=winning_candidate.candidate_id,
                     winning_energy_path_id=winning_path.path_id,
                     execution_scope_id=execution_scope_id,
+                    valid_from=valid_from,
+                    valid_until=valid_until,
+                    planned_primitive=planned_primitive,
+                    planned_vendor_mode=plan_vendor_mode,
+                    lifecycle_status=lifecycle_status,
                     observer_only=True,
                     segments=tuple(
                         ObserverExecutionPlanSegment(

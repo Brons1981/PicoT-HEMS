@@ -91,9 +91,9 @@ def test_adr037_explains_pv_contribution_and_remaining_grid_need() -> None:
         storage_name="Zendure",
     )
     assert explanation == (
-        "Zendure mist 6120 Wh om het geplande doel van 8160 Wh te bereiken. "
-        "Van de verwachte 2500 Wh PV blijft na 1000 Wh huishoudverbruik "
-        "1500 Wh beschikbaar voor opslag. Daardoor resteert 4620 Wh "
+        "Zendure mist 6,12 kWh om het geplande doel van 8,16 kWh te bereiken. "
+        "Van de verwachte 2,50 kWh PV blijft na 1,00 kWh huishoudverbruik "
+        "1,50 kWh beschikbaar voor opslag. Daardoor resteert 4,62 kWh "
         "mogelijke netlaadbehoefte vóór 12:00."
     )
 
@@ -188,5 +188,5 @@ def test_v2adr050_explanation_marks_zero_confidence_as_low() -> None:
         need,
         storage_name="Zendure",
     )
-    assert "1387 Wh beschikbaar voor opslag" in explanation
+    assert "1,39 kWh beschikbaar voor opslag" in explanation
     assert "Confidence is laag (0%)" in explanation

@@ -544,7 +544,17 @@ def project(run: CanonicalPipelineRun) -> Projection:
                     "De uitvoerbare laadopdracht is voorbereid; PicoT kijkt "
                     "nog mee en stuurt niets naar Zendure."
                     if pb.status == "observer_request_ready"
-                    else None
+                    else (
+                        "Er is nu geen uitvoerbare opdracht; PicoT stuurt "
+                        "niets naar Zendure."
+                        if pb.status == "not_emitted"
+                        else (
+                            "De uitvoerbare opdracht is geblokkeerd; PicoT "
+                            "stuurt niets naar Zendure."
+                            if pb.status == "dry_run_blocked"
+                            else None
+                        )
+                    )
                 ),
                 "mode_provenance_status": (
                     p.storage_mode_control_provenance.status
@@ -566,7 +576,25 @@ def project(run: CanonicalPipelineRun) -> Projection:
         Card(
             "sensor.picot_v2_pipeline_08_device_adapter",
             ab.status,
-            base(pb.request_id or "none", ab.translation_id or "none", "not_consumed"),
+            base(
+                pb.request_id or "none",
+                ab.translation_id or "none",
+                "not_consumed",
+            )
+            | {
+                "translation_id": ab.translation_id,
+                "primitive_request_id": ab.primitive_request_id,
+                "planned_vendor_mode": pb.planned_vendor_mode,
+                "normal_result": (
+                    "De laadopdracht is vertaald voor Zendure; PicoT kijkt "
+                    "nog mee en verstuurt niets."
+                    if ab.status == "observer_translation_ready"
+                    else (
+                        "Er is geen opdracht vertaald; de apparaatkoppeling "
+                        "is niet aangeroepen."
+                    )
+                ),
+            },
         ),
         Card(
             "sensor.picot_v2_pipeline_09_vendor_result",

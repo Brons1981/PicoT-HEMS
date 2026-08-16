@@ -565,11 +565,11 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "mapping_method_version": pb.mapping_method_version,
                 "blockers": list(pb.blockers),
                 "normal_result": (
-                    "De uitvoerbare laadopdracht is voorbereid; PicoT kijkt "
+                    "De uitvoerbare opdracht is voorbereid; PicoT kijkt "
                     "nog mee en stuurt niets naar Zendure."
                     if pb.status == "observer_request_ready"
                     else (
-                        "De uitvoerbare laadopdracht is vrijgegeven voor "
+                        "De uitvoerbare opdracht is vrijgegeven voor "
                         "aansturing van Zendure."
                         if pb.status == "request_ready"
                         else (
@@ -600,6 +600,22 @@ def project(run: CanonicalPipelineRun) -> Projection:
                     if p.storage_mode_control_provenance is not None
                     else "no_provenance_evidence"
                 ),
+                "mode_observed_at": (
+                    p.storage_mode_control_provenance.observed_at.isoformat()
+                    if p.storage_mode_control_provenance is not None
+                    else None
+                ),
+                "last_planner_vendor_mode": (
+                    p.storage_mode_control_provenance.last_planner_vendor_mode
+                    if p.storage_mode_control_provenance is not None
+                    else None
+                ),
+                "last_planner_applied_at": (
+                    p.storage_mode_control_provenance.last_planner_applied_at.isoformat()
+                    if p.storage_mode_control_provenance is not None
+                    and p.storage_mode_control_provenance.last_planner_applied_at is not None
+                    else None
+                ),
             },
         ),
         Card(
@@ -616,11 +632,11 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "primitive_request_id": ab.primitive_request_id,
                 "planned_vendor_mode": pb.planned_vendor_mode,
                 "normal_result": (
-                    "De laadopdracht is vertaald voor Zendure; PicoT kijkt "
+                    "De opdracht is vertaald voor Zendure; PicoT kijkt "
                     "nog mee en verstuurt niets."
                     if ab.status == "observer_translation_ready"
                     else (
-                        "De laadopdracht is vertaald en doorgegeven aan de "
+                        "De opdracht is vertaald en doorgegeven aan de "
                         "Zendure-koppeling."
                         if ab.status in {"translation_ready", "translated"}
                         else (

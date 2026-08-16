@@ -12,7 +12,7 @@ from picot.v2.contracts import PVAttenuationObservation
 from picot.v2.pv_deviation import PVDeviationResult
 
 ATTENUATION_EVIDENCE_METHOD_VERSION = "pv-attenuation-evidence-capture:v1"
-ATTENUATION_EVIDENCE_SCHEMA_VERSION = 1
+ATTENUATION_EVIDENCE_SCHEMA_VERSION = 2
 
 
 def build_pv_attenuation_observation(
@@ -26,6 +26,11 @@ def build_pv_attenuation_observation(
     forecast_mapping_version: str,
     alignment_status: str,
     coverage_status: str,
+    solar_evidence_id: str = "solar-evidence-unavailable",
+    solar_observed_at: datetime | None = None,
+    solar_alignment_method_version: str = (
+        "solar-alignment-unavailable"
+    ),
 ) -> PVAttenuationObservation:
     """Preserve one aligned closed interval without classifying attenuation."""
     if (
@@ -72,6 +77,14 @@ def build_pv_attenuation_observation(
             str(solar_azimuth_degrees),
             str(solar_elevation_degrees),
             str(minutes_from_sunset),
+            solar_evidence_id,
+            (
+                solar_observed_at.isoformat()
+                if solar_observed_at is not None
+                else "unavailable"
+            ),
+            sunset_at.isoformat(),
+            solar_alignment_method_version,
             alignment_status,
             coverage_status,
             forecast_mapping_version,
@@ -116,6 +129,12 @@ def build_pv_attenuation_observation(
         alignment_status=alignment_status,
         coverage_status=coverage_status,
         observation_method_version=ATTENUATION_EVIDENCE_METHOD_VERSION,
+        solar_evidence_id=solar_evidence_id,
+        solar_observed_at=solar_observed_at,
+        sunset_at=sunset_at,
+        solar_alignment_method_version=(
+            solar_alignment_method_version
+        ),
     )
 
 
@@ -204,6 +223,22 @@ def project_pv_attenuation_observation(
         "pv_attenuation_minutes_from_sunset": (
             observation.minutes_from_sunset
         ),
+        "pv_attenuation_solar_evidence_id": (
+            observation.solar_evidence_id
+        ),
+        "pv_attenuation_solar_observed_at": (
+            observation.solar_observed_at.isoformat()
+            if observation.solar_observed_at is not None
+            else None
+        ),
+        "pv_attenuation_sunset_at": (
+            observation.sunset_at.isoformat()
+            if observation.sunset_at is not None
+            else None
+        ),
+        "pv_attenuation_solar_alignment_method_version": (
+            observation.solar_alignment_method_version
+        ),
         "pv_attenuation_alignment_status": observation.alignment_status,
         "pv_attenuation_coverage_status": observation.coverage_status,
         "pv_attenuation_eligibility_reason": (
@@ -252,6 +287,20 @@ def _observation_payload(
         "solar_azimuth_degrees": observation.solar_azimuth_degrees,
         "solar_elevation_degrees": observation.solar_elevation_degrees,
         "minutes_from_sunset": observation.minutes_from_sunset,
+        "solar_evidence_id": observation.solar_evidence_id,
+        "solar_observed_at": (
+            observation.solar_observed_at.isoformat()
+            if observation.solar_observed_at is not None
+            else None
+        ),
+        "sunset_at": (
+            observation.sunset_at.isoformat()
+            if observation.sunset_at is not None
+            else None
+        ),
+        "solar_alignment_method_version": (
+            observation.solar_alignment_method_version
+        ),
         "forecast_evidence_ids": list(observation.forecast_evidence_ids),
         "actual_evidence_ids": list(observation.actual_evidence_ids),
         "forecast_mapping_version": observation.forecast_mapping_version,
@@ -281,7 +330,8 @@ def _decode_observation(line: str) -> PVAttenuationObservation | None:
         return None
     if not isinstance(raw, dict):
         return None
-    if raw.get("schema_version") != ATTENUATION_EVIDENCE_SCHEMA_VERSION:
+    schema_version = raw.get("schema_version")
+    if schema_version not in (1, ATTENUATION_EVIDENCE_SCHEMA_VERSION):
         return None
     payload: dict[str, Any] = raw
     try:
@@ -345,6 +395,26 @@ def _decode_observation(line: str) -> PVAttenuationObservation | None:
             observation_method_version=_string(
                 payload["observation_method_version"]
             ),
+            solar_evidence_id=(
+                _string(payload["solar_evidence_id"])
+                if schema_version == ATTENUATION_EVIDENCE_SCHEMA_VERSION
+                else "solar-evidence-unavailable"
+            ),
+            solar_observed_at=(
+                _optional_datetime(payload["solar_observed_at"])
+                if schema_version == ATTENUATION_EVIDENCE_SCHEMA_VERSION
+                else None
+            ),
+            sunset_at=(
+                _optional_datetime(payload["sunset_at"])
+                if schema_version == ATTENUATION_EVIDENCE_SCHEMA_VERSION
+                else None
+            ),
+            solar_alignment_method_version=(
+                _string(payload["solar_alignment_method_version"])
+                if schema_version == ATTENUATION_EVIDENCE_SCHEMA_VERSION
+                else "solar-alignment-unavailable"
+            ),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -370,6 +440,12 @@ def _number(value: object) -> float:
 
 def _datetime(value: object) -> datetime:
     return datetime.fromisoformat(_string(value).replace("Z", "+00:00"))
+
+
+def _optional_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    return _datetime(value)
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:

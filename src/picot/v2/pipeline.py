@@ -11,11 +11,7 @@ from hashlib import sha256
 from time import perf_counter
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
-from picot.v2.candidate_engine import (
-    CandidateEngine,
-    CandidateInputError,
-    StorageRequirementDerivation,
-)
+from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
 from picot.v2.contracts import (
     Candidate,
     CandidateOutcomeSet,
@@ -23,14 +19,10 @@ from picot.v2.contracts import (
     CanonicalPipelineRun,
     DeviceAdapterBoundary,
     EnergyPath,
-    EnergyPathSegment,
     EvaluationRecord,
-    ExecutionPlan,
-    ExecutionPlanSegment,
     ExecutionPlanSet,
     ExecutionPrimitiveBoundary,
     ExecutionRecord,
-    OpportunitySet,
     PlanningInputSnapshot,
     VendorBoundaryResult,
 )
@@ -76,74 +68,6 @@ class PipelineStageTimings:
     device_adapter_ms: float
     vendor_result_ms: float
     canonical_total_ms: float
-
-
-def _first_storage_segment(
-    *,
-    snapshot: PlanningInputSnapshot,
-    opportunities: OpportunitySet,
-    candidate_derivation: StorageRequirementDerivation,
-) -> EnergyPathSegment | None:
-    requirements = candidate_derivation.requirements
-    if not requirements or candidate_derivation.planning_gaps:
-        return None
-    storage = snapshot.current_storage_states[0]
-    maximum_power_w = storage.maximum_charge_power_w
-    if maximum_power_w is None:
-        return None
-    low_windows = tuple(
-        item
-        for item in opportunities.opportunities
-        if item.kind == "LOWEST_PRICE_WINDOW"
-        and item.ends_at > snapshot.captured_at
-    )
-    if not low_windows:
-        return None
-    window = min(
-        low_windows,
-        key=lambda item: (item.starts_at, item.ends_at, item.opportunity_id),
-    )
-    starts_at = max(snapshot.captured_at, window.starts_at)
-    ends_at = window.ends_at
-    if starts_at >= ends_at:
-        return None
-    required_energy_wh = requirements[0].reserve_contribution_wh
-    if required_energy_wh <= 0.0:
-        return None
-    duration_hours = (ends_at - starts_at).total_seconds() / 3600.0
-    requested_power_w = min(
-        maximum_power_w,
-        required_energy_wh / duration_hours,
-    )
-    segment_id = _id(
-        "path-segment",
-        (
-            f"{snapshot.snapshot_id}|{storage.execution_scope_id}|"
-            f"{starts_at.isoformat()}|{ends_at.isoformat()}|"
-            f"{requested_power_w}"
-        ),
-    )
-    return EnergyPathSegment(
-        segment_id=segment_id,
-        execution_scope_id=storage.execution_scope_id,
-        capability_id=storage.capability_id,
-        starts_at=starts_at,
-        ends_at=ends_at,
-        primitive="CHARGE_AT_POWER",
-        requested_power_w=requested_power_w,
-        opportunity_ids=(window.opportunity_id,),
-        evidence_ids=tuple(
-            dict.fromkeys(
-                (
-                    *requirements[0].evidence_ids,
-                    *(
-                        reference.evidence_id
-                        for reference in window.evidence
-                    ),
-                )
-            )
-        ),
-    )
 
 
 class CanonicalPipeline:
@@ -230,26 +154,11 @@ class CanonicalPipeline:
                 else:
                     derivation_status = "ready"
                     derivation_reason = None
-        storage_segment = (
-            _first_storage_segment(
-                snapshot=snapshot,
-                opportunities=opportunities,
-                candidate_derivation=candidate_derivation,
-            )
-            if candidate_derivation is not None
-            else None
-        )
-        segments = (storage_segment,) if storage_segment is not None else ()
         path = EnergyPath(
             run_id=run_id,
             snapshot_id=snapshot_id,
-            path_id=_id(
-                "energy-path",
-                f"{snapshot_id}|{'storage-charge' if segments else 'baseline'}",
-            ),
-            family="cost_first" if segments else "reserve_first",
-            segment_ids=tuple(segment.segment_id for segment in segments),
-            segments=segments,
+            path_id=_id("energy-path", f"{snapshot_id}|baseline"),
+            family="reserve_first",
         )
         candidate = Candidate(
             run_id=run_id,
@@ -307,86 +216,23 @@ class CanonicalPipeline:
         evaluation_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
-        plans: tuple[ExecutionPlan, ...] = ()
-        if path.segments:
-            plan_id = _id(
-                "execution-plan",
-                f"{evaluation.evaluation_id}|{path.path_id}",
-            )
-            plan_segments = tuple(
-                ExecutionPlanSegment(
-                    segment_id=_id(
-                        "execution-segment",
-                        f"{plan_id}|{segment.segment_id}",
-                    ),
-                    source_path_segment_id=segment.segment_id,
-                    execution_scope_id=segment.execution_scope_id,
-                    capability_id=segment.capability_id,
-                    starts_at=segment.starts_at,
-                    ends_at=segment.ends_at,
-                    primitive=segment.primitive,
-                    requested_power_w=segment.requested_power_w,
-                    evidence_ids=segment.evidence_ids,
-                )
-                for segment in path.segments
-            )
-            plans = (
-                ExecutionPlan(
-                    plan_id=plan_id,
-                    execution_scope_id=path.segments[0].execution_scope_id,
-                    valid_from=min(
-                        segment.starts_at for segment in path.segments
-                    ),
-                    valid_until=max(
-                        segment.ends_at for segment in path.segments
-                    ),
-                    segments=plan_segments,
-                ),
-            )
         execution_plan_set = ExecutionPlanSet(
             run_id=run_id,
             snapshot_id=snapshot_id,
             plan_set_id=_id("plan-set", evaluation.evaluation_id),
             evaluation_id=evaluation.evaluation_id,
             winning_energy_path_id=evaluation.winning_energy_path_id,
-            plan_ids=tuple(plan.plan_id for plan in plans),
-            plans=plans,
         )
         execution_plan_builder_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
-        due_segment = next(
-            (
-                segment
-                for plan in execution_plan_set.plans
-                for segment in plan.segments
-                if segment.starts_at <= snapshot.captured_at < segment.ends_at
-            ),
-            None,
-        )
-        request_id = (
-            _id(
-                "execution-request",
-                (
-                    f"{execution_plan_set.plan_set_id}|"
-                    f"{due_segment.segment_id}|"
-                    f"{snapshot.captured_at.isoformat()}"
-                ),
-            )
-            if due_segment is not None
-            else None
-        )
         execution_record = ExecutionRecord(
             run_id=run_id,
             snapshot_id=snapshot_id,
             execution_record_id=_id("execution", execution_plan_set.plan_set_id),
             plan_set_id=execution_plan_set.plan_set_id,
-            status="request_emitted" if request_id else "no_due_segment",
-            reason=(
-                "due segment passed observer-only execution validation"
-                if request_id
-                else "winning path contains no due controllable segment"
-            ),
+            status="no_due_segment",
+            reason="bootstrap baseline contains no controllable segments",
         )
         execution_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
@@ -394,9 +240,9 @@ class CanonicalPipeline:
         primitive_boundary = ExecutionPrimitiveBoundary(
             run_id=run_id,
             snapshot_id=snapshot_id,
-            request_id=request_id,
+            request_id=None,
             execution_record_id=execution_record.execution_record_id,
-            status="emitted" if request_id else "not_emitted",
+            status="not_emitted",
         )
         execution_primitive_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 

@@ -27,23 +27,12 @@ class CurrentStorageState:
     measured_at: datetime
     confidence: float
     evidence_ids: tuple[str, ...]
-    maximum_charge_power_w: float | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.current_soc <= 1.0:
             raise ValueError("current_soc must be between 0.0 and 1.0")
         if self.usable_capacity_wh <= 0.0:
             raise ValueError("usable_capacity_wh must be positive")
-        if (
-            self.maximum_charge_power_w is not None
-            and (
-                not isfinite(self.maximum_charge_power_w)
-                or self.maximum_charge_power_w <= 0.0
-            )
-        ):
-            raise ValueError(
-                "maximum_charge_power_w must be positive when available"
-            )
 
     @property
     def current_stored_energy_wh(self) -> float:
@@ -679,42 +668,12 @@ class PlanningGap:
 
 
 @dataclass(frozen=True, slots=True)
-class EnergyPathSegment:
-    segment_id: str
-    execution_scope_id: str
-    capability_id: str
-    starts_at: datetime
-    ends_at: datetime
-    primitive: str
-    requested_power_w: float
-    opportunity_ids: tuple[str, ...]
-    evidence_ids: tuple[str, ...]
-
-    def __post_init__(self) -> None:
-        if self.starts_at >= self.ends_at:
-            raise ValueError("Energy Path segment must have positive duration")
-        if not isfinite(self.requested_power_w) or self.requested_power_w <= 0.0:
-            raise ValueError("requested_power_w must be positive")
-        if self.primitive != "CHARGE_AT_POWER":
-            raise ValueError("first storage control slice only supports charging")
-        if not self.opportunity_ids or not self.evidence_ids:
-            raise ValueError("segment opportunity and evidence lineage is required")
-
-
-@dataclass(frozen=True, slots=True)
 class EnergyPath:
     run_id: str
     snapshot_id: str
     path_id: str
     family: str
     segment_ids: tuple[str, ...] = ()
-    segments: tuple[EnergyPathSegment, ...] = ()
-
-    def __post_init__(self) -> None:
-        if self.segment_ids != tuple(
-            segment.segment_id for segment in self.segments
-        ):
-            raise ValueError("Energy Path segment IDs must match its segments")
 
 
 @dataclass(frozen=True, slots=True)
@@ -799,28 +758,6 @@ class EvaluationRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionPlanSegment:
-    segment_id: str
-    source_path_segment_id: str
-    execution_scope_id: str
-    capability_id: str
-    starts_at: datetime
-    ends_at: datetime
-    primitive: str
-    requested_power_w: float
-    evidence_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionPlan:
-    plan_id: str
-    execution_scope_id: str
-    valid_from: datetime
-    valid_until: datetime
-    segments: tuple[ExecutionPlanSegment, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class ExecutionPlanSet:
     run_id: str
     snapshot_id: str
@@ -828,11 +765,6 @@ class ExecutionPlanSet:
     evaluation_id: str
     winning_energy_path_id: str
     plan_ids: tuple[str, ...] = ()
-    plans: tuple[ExecutionPlan, ...] = ()
-
-    def __post_init__(self) -> None:
-        if self.plan_ids != tuple(plan.plan_id for plan in self.plans):
-            raise ValueError("Execution Plan IDs must match contained plans")
 
 
 @dataclass(frozen=True, slots=True)

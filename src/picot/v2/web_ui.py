@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from datetime import timedelta
+from datetime import date, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+from picot.domain.energy_path import PathSegment
 from picot.v2.contracts import CanonicalPipelineRun, PriceForecastPoint
 from picot.v2.projection import Projection
 
@@ -934,8 +935,12 @@ DASHBOARD_HTML = """<!doctype html>
         summary.textContent = `${plan.selected ? "Gekozen: " : "Alternatief: "}${plan.label_nl}`;
         details.appendChild(summary);
         const description = document.createElement("p");
+        const phases = (plan.phases ?? []).map(
+          (phase) => phase.summary_nl
+        );
         description.textContent = [
           plan.period_nl,
+          ...phases,
           plan.energy_nl,
           plan.grid_energy_nl,
           plan.reason_nl
@@ -1710,8 +1715,46 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
         outcome = outcomes_by_candidate.get(candidate.candidate_id)
         path = paths_by_id[candidate.energy_path_id]
         if candidate.family == "pv_charge_only" and outcome is not None:
+            local_timezone = ZoneInfo("Europe/Amsterdam")
+            segments_by_date: dict[date, list[PathSegment]] = {}
+            for segment in path.segments:
+                segment_date = segment.starts_at.astimezone(
+                    local_timezone
+                ).date()
+                segments_by_date.setdefault(segment_date, []).append(segment)
+            phase_dates = tuple(segments_by_date)
+            phases: list[dict[str, object]] = []
+            for phase_index, phase_date in enumerate(phase_dates):
+                phase_segments = segments_by_date[phase_date]
+                phase_start = min(
+                    segment.starts_at for segment in phase_segments
+                )
+                phase_end = max(segment.ends_at for segment in phase_segments)
+                if phase_date == local_capture_date:
+                    phase_label = (
+                        "Nu laden met PV"
+                        if phase_start <= run.planning_input.captured_at
+                        else "Vandaag laden met PV"
+                    )
+                elif phase_date == local_capture_date + timedelta(days=1):
+                    phase_label = (
+                        "Morgen aanvullen met PV"
+                        if phase_index > 0
+                        else "Morgen laden met PV"
+                    )
+                else:
+                    phase_label = f"{phase_date:%d-%m} laden met PV"
+                phase_period = _period_nl(phase_start, phase_end)
+                phases.append(
+                    {
+                        "label_nl": phase_label,
+                        "period_nl": phase_period,
+                        "summary_nl": f"{phase_label}: {phase_period}",
+                        "segment_count": len(phase_segments),
+                    }
+                )
             window_date = outcome.charge_window_starts_at.astimezone(
-                ZoneInfo("Europe/Amsterdam")
+                local_timezone
             ).date()
             day_prefix = ""
             if pv_candidate_count > 1:
@@ -1726,6 +1769,13 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
                 if day_prefix
                 else "Laden met verwachte zonne-energie"
             )
+            if (
+                local_capture_date in phase_dates
+                and local_capture_date + timedelta(days=1) in phase_dates
+            ):
+                label = (
+                    "Vandaag en morgen laden met verwachte zonne-energie"
+                )
             period = _period_nl(
                 outcome.charge_window_starts_at,
                 outcome.charge_window_ends_at,
@@ -1747,6 +1797,7 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
             if selected:
                 winning_confidence = outcome.confidence
         else:
+            phases = []
             label = "Niets extra doen"
             requirement = (
                 run.candidate_set.storage_requirements[0]
@@ -1783,6 +1834,7 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
                 "energy_nl": energy,
                 "grid_energy_nl": grid_energy,
                 "reason_nl": reason,
+                "phases": phases,
                 "segment_count": len(path.segments),
             }
         )

@@ -562,12 +562,49 @@ class CanonicalPipeline:
         device_adapter_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
+        dispatch_ready = (
+            adapter_boundary.status == "observer_translation_ready"
+            and adapter_boundary.translation_id is not None
+            and primitive_boundary.source_entity_id is not None
+            and primitive_boundary.planned_vendor_mode is not None
+        )
+        dispatch_intent_id = (
+            _id(
+                "dispatch-intent",
+                (
+                    f"{adapter_boundary.translation_id}|"
+                    f"{primitive_boundary.source_entity_id}|"
+                    f"{primitive_boundary.planned_vendor_mode}"
+                ),
+            )
+            if dispatch_ready
+            else None
+        )
         vendor_result = VendorBoundaryResult(
             run_id=run_id,
             snapshot_id=snapshot_id,
             command_id=None,
-            adapter_translation_id=None,
-            status="not_dispatched",
+            adapter_translation_id=(
+                adapter_boundary.translation_id
+                if dispatch_ready
+                else None
+            ),
+            status=(
+                "observer_dispatch_ready"
+                if dispatch_ready
+                else "not_dispatched"
+            ),
+            dispatch_intent_id=dispatch_intent_id,
+            target_entity_id=(
+                primitive_boundary.source_entity_id
+                if dispatch_ready
+                else None
+            ),
+            planned_vendor_mode=(
+                primitive_boundary.planned_vendor_mode
+                if dispatch_ready
+                else None
+            ),
         )
         vendor_result_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 

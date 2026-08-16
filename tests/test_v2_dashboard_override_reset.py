@@ -31,6 +31,13 @@ def test_every_pipeline_card_exposes_plain_dutch_result() -> None:
         and "_" not in item["result_nl"]
         for item in pipeline
     )
+    assert view["pipeline_health"] == {
+        "healthy": True,
+        "healthy_count": 9,
+        "total_count": 9,
+        "summary_nl": "Pipeline werkt correct – 9/9 groen.",
+    }
+    assert all(item["health"] == "healthy" for item in pipeline)
 
 
 @pytest.mark.parametrize(
@@ -68,9 +75,9 @@ def test_every_pipeline_card_exposes_plain_dutch_result() -> None:
         ),
         (
             6,
-            "observer_only",
-            {},
-            "Uitvoering is niet gestart; PicoT kijkt alleen mee.",
+            "live_plan_ready",
+            {"observer_only": False},
+            "Het uitvoeringsplan is vrijgegeven voor live uitvoering.",
         ),
         (
             7,
@@ -80,15 +87,15 @@ def test_every_pipeline_card_exposes_plain_dutch_result() -> None:
         ),
         (
             8,
-            "not_invoked",
-            {},
-            "De apparaatkoppeling is niet aangeroepen.",
+            "translation_ready",
+            {"normal_result": "De opdracht is vertaald voor Zendure."},
+            "De opdracht is vertaald voor Zendure.",
         ),
         (
             9,
-            "not_attempted",
-            {},
-            "Er is geen opdracht naar Zendure verstuurd.",
+            "already_active",
+            {"normal_result": "Zendure stond al in de geplande modus."},
+            "Zendure stond al in de geplande modus.",
         ),
     ),
 )
@@ -115,6 +122,12 @@ def test_pipeline_cards_are_compact_collapsible_and_preserve_open_state() -> Non
     assert 'details.className = "stage-card"' in html
     assert 'summary.className = "stage-summary"' in html
     assert 'result.className = "stage-result"' in html
+    assert 'health.className = "stage-health"' in html
+    assert 'health.dataset.health = item.health' in html
+    assert 'id="pipeline-health"' in html
+    assert 'id="zendure-now"' in html
+    assert 'id="execution-mode"' in html
+    assert '"Live uitvoering"' in html
     assert "result.textContent = item.result_nl" in html
     assert 'document.querySelectorAll("details.stage-card")' in html
     assert "details.open = state.openStageCards[index] ?? false" in html
@@ -124,6 +137,40 @@ def test_pipeline_cards_are_compact_collapsible_and_preserve_open_state() -> Non
             html.index("function renderStorageEnergySourceNeeds")
         ]
     )
+
+
+def test_pipeline_health_only_marks_real_faults_red() -> None:
+    module = _web_ui_module()
+
+    assert module.pipeline_stage_health(
+        stage=7,
+        state="dry_run_blocked",
+        attributes={"blockers": ["manual_override_active"]},
+    ) == "healthy"
+    assert module.pipeline_stage_health(
+        stage=9,
+        state="already_active",
+        attributes={},
+    ) == "healthy"
+    assert module.pipeline_stage_health(
+        stage=9,
+        state="dispatch_failed",
+        attributes={"error": "Home Assistant service call failed"},
+    ) == "fault"
+
+
+def test_zendure_now_reports_mode_origin_and_application_time() -> None:
+    run = CanonicalPipeline().run(planning_input=_snapshot())
+    projection = project(run)
+
+    view = build_web_view(run, projection)
+
+    zendure = view["zendure_now"]
+    assert "active_mode" in zendure
+    assert zendure["origin"] in {"picot", "manual", "unknown"}
+    assert "observed_at" in zendure
+    assert "set_at" in zendure
+    assert "last_result_nl" in zendure
 
 
 def test_reset_button_is_only_shown_for_active_manual_override() -> None:

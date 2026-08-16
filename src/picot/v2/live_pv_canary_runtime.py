@@ -41,7 +41,11 @@ def active_pv_charge_window(
         raise ValueError("at must be timezone-aware")
     return any(
         segment.starts_at <= at < segment.ends_at
-        and segment.primitive is ExecutionPrimitive.BALANCE_CHARGE_ONLY
+        and segment.primitive
+        in {
+            ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+            ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+        }
         and segment.charge_source_policy == "pv_only"
         for plan in run.execution_plan_set.plans
         for segment in plan.segments

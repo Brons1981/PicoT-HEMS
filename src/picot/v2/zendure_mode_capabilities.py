@@ -107,7 +107,8 @@ class HomeAssistantZendureModeCapabilityReader:
             config.execution_scope_id,
         )
         request = Request(
-            f"http://supervisor/core/api/states/{quote(config.source_entity_id, safe='.')}",
+            "http://supervisor/core/api/states/"
+            f"{quote(config.source_entity_id, safe='.')}",
             headers={"Authorization": f"Bearer {self._token}"},
             method="GET",
         )

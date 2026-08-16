@@ -9,10 +9,10 @@ from picot.v2.contracts import (
     CurrentStorageState,
     HouseholdLoadForecast,
     HouseholdLoadForecastInterval,
-    PVEnergyTimeline,
-    PVEnergyTimelineInterval,
     PlanningInputSnapshot,
     PriceForecastPoint,
+    PVEnergyTimeline,
+    PVEnergyTimelineInterval,
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline

@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_delegated_storage_outcomes_use_dev_60() -> None:
-    assert __version__ == "2.0.0-dev.60"
+def test_v2_canonical_delegated_storage_pipeline_uses_dev_61() -> None:
+    assert __version__ == "2.0.0-dev.61"
 
 
 def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:

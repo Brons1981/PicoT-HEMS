@@ -777,12 +777,77 @@ class CandidateSet:
 
 
 @dataclass(frozen=True, slots=True)
+class DelegatedStorageCandidateOutcome:
+    outcome_id: str
+    run_id: str
+    snapshot_id: str
+    candidate_id: str
+    energy_path_id: str
+    storage_requirement_id: str
+    capability_ids: tuple[str, ...]
+    charge_window_starts_at: datetime
+    charge_window_ends_at: datetime
+    storage_energy_at_window_end_wh: float
+    storage_energy_at_requirement_wh: float
+    required_energy_wh: float
+    pv_storage_contribution_wh: float
+    grid_storage_contribution_wh: float
+    conversion_losses_wh: float
+    requirement_satisfied: bool
+    recoverability: float
+    confidence: float
+    evidence_ids: tuple[str, ...]
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if self.charge_window_starts_at >= self.charge_window_ends_at:
+            raise ValueError("charge window start must be before end")
+        for value in (
+            self.storage_energy_at_window_end_wh,
+            self.storage_energy_at_requirement_wh,
+            self.required_energy_wh,
+            self.pv_storage_contribution_wh,
+            self.grid_storage_contribution_wh,
+            self.conversion_losses_wh,
+        ):
+            if value < 0.0 or not isfinite(value):
+                raise ValueError("Candidate Outcome energy must be finite and non-negative")
+        for value, label in (
+            (self.recoverability, "recoverability"),
+            (self.confidence, "confidence"),
+        ):
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"Candidate Outcome {label} must be between 0 and 1")
+        if self.requirement_satisfied != (
+            self.storage_energy_at_requirement_wh >= self.required_energy_wh
+        ):
+            raise ValueError("requirement satisfaction must match projected storage energy")
+        for values, label in (
+            (self.capability_ids, "capability"),
+            (self.evidence_ids, "evidence"),
+        ):
+            if not values or any(not value.strip() for value in values):
+                raise ValueError(f"Candidate Outcome {label} IDs must be explicit")
+            if len(values) != len(set(values)):
+                raise ValueError(f"Candidate Outcome {label} IDs must be unique")
+        if not self.method_version.strip():
+            raise ValueError("Candidate Outcome method version must be explicit")
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateOutcomeSet:
     run_id: str
     snapshot_id: str
     candidate_set_id: str
     outcome_set_id: str
     candidate_ids: tuple[str, ...]
+    outcomes: tuple[DelegatedStorageCandidateOutcome, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.outcomes and self.candidate_ids != tuple(
+            outcome.candidate_id for outcome in self.outcomes
+        ):
+            raise ValueError("Candidate Outcome IDs must match detailed outcomes")
 
 
 @dataclass(frozen=True, slots=True)

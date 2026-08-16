@@ -6,7 +6,6 @@ from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 
-
 NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
 
 

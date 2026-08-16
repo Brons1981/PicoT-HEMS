@@ -17,6 +17,7 @@ from picot.v2.contracts import (
     CandidateOutcomeSet,
     CandidateSet,
     CanonicalPipelineRun,
+    DelegatedStorageCandidateOutcome,
     DeviceAdapterBoundary,
     EnergyPath,
     EvaluationRecord,
@@ -25,6 +26,12 @@ from picot.v2.contracts import (
     ExecutionRecord,
     PlanningInputSnapshot,
     VendorBoundaryResult,
+)
+from picot.v2.delegated_storage_candidates import (
+    construct_pv_charge_only_candidate,
+)
+from picot.v2.delegated_storage_outcomes import (
+    simulate_pv_charge_only_outcomes,
 )
 from picot.v2.opportunity_engine import OpportunityEngine, PriceOpportunityConfig
 from picot.v2.pv_forecast_assumptions import (
@@ -167,12 +174,57 @@ class CanonicalPipeline:
             energy_path_id=path.path_id,
             family=path.family,
         )
+        delegated_candidates: list[Candidate] = []
+        delegated_paths: list[EnergyPath] = []
+        delegated_outcomes: list[DelegatedStorageCandidateOutcome] = []
+        if candidate_derivation is not None:
+            balances_by_id = {
+                balance.balance_id: balance
+                for balance in candidate_derivation.balances
+            }
+            for requirement in candidate_derivation.requirements:
+                balance = balances_by_id.get(requirement.projected_balance_id)
+                if balance is None:
+                    continue
+                delegated_set = construct_pv_charge_only_candidate(
+                    snapshot=snapshot,
+                    balance=balance,
+                    requirement=requirement,
+                )
+                if not delegated_set.candidates:
+                    continue
+                simulated = simulate_pv_charge_only_outcomes(delegated_set)
+                satisfied_ids = {
+                    outcome.candidate_id
+                    for outcome in simulated.outcomes
+                    if outcome.requirement_satisfied
+                }
+                delegated_candidates.extend(
+                    item
+                    for item in delegated_set.candidates
+                    if item.candidate_id in satisfied_ids
+                )
+                accepted_path_ids = {
+                    item.energy_path_id
+                    for item in delegated_candidates
+                }
+                delegated_paths.extend(
+                    item
+                    for item in delegated_set.energy_paths
+                    if item.path_id in accepted_path_ids
+                )
+                delegated_outcomes.extend(
+                    item
+                    for item in simulated.outcomes
+                    if item.candidate_id in satisfied_ids
+                )
+
         candidate_set = CandidateSet(
             run_id=run_id,
             snapshot_id=snapshot_id,
             candidate_set_id=_id("candidate-set", opportunities.opportunity_set_id),
-            candidates=(candidate,),
-            energy_paths=(path,),
+            candidates=(candidate, *delegated_candidates),
+            energy_paths=(path, *delegated_paths),
             projected_balances=(
                 candidate_derivation.balances
                 if candidate_derivation is not None
@@ -194,12 +246,18 @@ class CanonicalPipeline:
             derivation_status=derivation_status,
             derivation_reason=derivation_reason,
         )
+        has_uncompared_alternatives = bool(delegated_outcomes)
         outcomes = CandidateOutcomeSet(
             run_id=run_id,
             snapshot_id=snapshot_id,
             candidate_set_id=candidate_set.candidate_set_id,
             outcome_set_id=_id("outcome-set", candidate_set.candidate_set_id),
-            candidate_ids=(candidate.candidate_id,),
+            candidate_ids=(
+                tuple(item.candidate_id for item in delegated_outcomes)
+                if has_uncompared_alternatives
+                else (candidate.candidate_id,)
+            ),
+            outcomes=tuple(delegated_outcomes),
         )
         candidate_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
@@ -209,9 +267,22 @@ class CanonicalPipeline:
             snapshot_id=snapshot_id,
             evaluation_id=_id("evaluation", outcomes.outcome_set_id),
             candidate_set_id=candidate_set.candidate_set_id,
-            winning_candidate_id=candidate.candidate_id,
-            winning_energy_path_id=path.path_id,
-            reason="only technically valid bootstrap baseline candidate",
+            winning_candidate_id=(
+                None if has_uncompared_alternatives else candidate.candidate_id
+            ),
+            winning_energy_path_id=(
+                None if has_uncompared_alternatives else path.path_id
+            ),
+            reason=(
+                "candidate_outcomes_not_yet_comparable"
+                if has_uncompared_alternatives
+                else "only technically valid bootstrap baseline candidate"
+            ),
+            status=(
+                "not_compared"
+                if has_uncompared_alternatives
+                else "winner_selected"
+            ),
         )
         evaluation_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
@@ -231,8 +302,16 @@ class CanonicalPipeline:
             snapshot_id=snapshot_id,
             execution_record_id=_id("execution", execution_plan_set.plan_set_id),
             plan_set_id=execution_plan_set.plan_set_id,
-            status="no_due_segment",
-            reason="bootstrap baseline contains no controllable segments",
+            status=(
+                "no_evaluated_winner"
+                if has_uncompared_alternatives
+                else "no_due_segment"
+            ),
+            reason=(
+                "candidate outcomes require explicit Evaluation comparison"
+                if has_uncompared_alternatives
+                else "bootstrap baseline contains no controllable segments"
+            ),
         )
         execution_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 

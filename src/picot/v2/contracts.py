@@ -924,6 +924,13 @@ class ExecutionPrimitiveBoundary:
     request_id: str | None
     execution_record_id: str
     status: str
+    planned_primitive: ExecutionPrimitive | None = None
+    mapping_status: str = "not_assessed"
+    source_entity_id: str | None = None
+    current_vendor_mode: str | None = None
+    planned_vendor_mode: str | None = None
+    mapping_method_version: str | None = None
+    blockers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -130,6 +130,42 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "confidence": outcome.confidence,
             }
         )
+    winning_candidate = next(
+        (
+            candidate
+            for candidate in c.candidates
+            if candidate.candidate_id == e.winning_candidate_id
+        ),
+        None,
+    )
+    projected_plans = [
+        {
+            "plan_id": plan.plan_id,
+            "execution_scope_id": plan.execution_scope_id,
+            "observer_only": plan.observer_only,
+            "winning_candidate_id": plan.winning_candidate_id,
+            "winning_energy_path_id": plan.winning_energy_path_id,
+            "segment_count": len(plan.segments),
+            "segments": [
+                {
+                    "segment_id": segment.segment_id,
+                    "source_path_segment_id": segment.source_path_segment_id,
+                    "starts_at": segment.starts_at.isoformat(),
+                    "ends_at": segment.ends_at.isoformat(),
+                    "primitive": segment.primitive.value,
+                    "capability_id": segment.capability_id,
+                    "requested_power_w": segment.requested_power_w,
+                    "charge_source_policy": (
+                        segment.charge_source_policy.value
+                        if segment.charge_source_policy is not None
+                        else None
+                    ),
+                }
+                for segment in plan.segments
+            ],
+        }
+        for plan in ps.plans
+    ]
 
     cards = (
         Card(
@@ -453,14 +489,28 @@ def project(run: CanonicalPipelineRun) -> Projection:
             | {
                 "winning_candidate_id": e.winning_candidate_id,
                 "winning_energy_path_id": e.winning_energy_path_id,
+                "winning_family": (
+                    winning_candidate.family
+                    if winning_candidate is not None
+                    else None
+                ),
+                "evaluated_candidate_ids": list(e.evaluated_candidate_ids),
+                "decisive_step": e.decisive_step,
                 "reason": e.reason,
             },
         ),
         Card(
             "sensor.picot_v2_pipeline_05_execution_plan_builder",
-            "blocked" if e.winning_candidate_id is None else "ready",
+            (
+                "blocked"
+                if e.winning_candidate_id is None
+                else ("observer_only" if ps.plans else "ready")
+            ),
             base(e.evaluation_id, ps.plan_set_id, "derived")
-            | {"plan_count": len(ps.plan_ids)},
+            | {
+                "plan_count": len(ps.plan_ids),
+                "plans": projected_plans,
+            },
         ),
         Card(
             "sensor.picot_v2_pipeline_06_execution_engine",

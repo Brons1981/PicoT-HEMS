@@ -56,15 +56,11 @@ def test_v2adr050_maps_normal_modes_without_delegating_price_decisions() -> None
     mappings = {item.vendor_mode: item for item in evidence.mappings}
 
     assert mappings["Standby"].primitives == (ExecutionPrimitive.STANDBY,)
-    assert mappings["Nul op de meter"].primitives == (
-        ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
-    )
+    assert mappings["Nul op de meter"].primitives == (ExecutionPrimitive.BALANCE_BIDIRECTIONAL,)
     assert mappings["Alleen slim ontladen"].primitives == (
         ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
     )
-    assert mappings["Alleen slim opladen"].primitives == (
-        ExecutionPrimitive.BALANCE_CHARGE_ONLY,
-    )
+    assert mappings["Alleen slim opladen"].primitives == (ExecutionPrimitive.BALANCE_CHARGE_ONLY,)
     assert mappings["Handmatig"].primitives == (
         ExecutionPrimitive.CHARGE_AT_POWER,
         ExecutionPrimitive.DISCHARGE_AT_POWER,
@@ -72,10 +68,7 @@ def test_v2adr050_maps_normal_modes_without_delegating_price_decisions() -> None
     assert mappings["Handmatig"].power_semantics == "explicit_signed_power"
     assert mappings["Snel opladen"].power_semantics == "integration_configured_maximum"
     assert mappings["Snel ontladen"].power_semantics == "integration_configured_maximum"
-    assert not any(
-        mode in mappings
-        for mode in DYNAMIC_MODES
-    )
+    assert not any(mode in mappings for mode in DYNAMIC_MODES)
 
 
 def test_v2adr050_missing_mode_options_fail_closed() -> None:

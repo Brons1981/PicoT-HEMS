@@ -36,6 +36,18 @@ from picot.v2.planning_input import (
 )
 from picot.v2.projection import Card, Projection, project
 from picot.v2.pv_actual_history import HomeAssistantPVHistoryReader
+from picot.v2.pv_attenuation_aggregation import (
+    PVAttenuationAggregationConfig,
+)
+from picot.v2.pv_attenuation_eligibility import (
+    PVAttenuationEligibilityConfig,
+)
+from picot.v2.pv_attenuation_evidence import PVAttenuationEvidenceStore
+from picot.v2.pv_attenuation_learning import (
+    ObserverOnlyPVAttenuationLearningRuntime,
+    PVAttenuationLearningResult,
+    project_pv_attenuation_learning_result,
+)
 from picot.v2.pv_attenuation_range import PVAttenuatedForecastRange
 from picot.v2.pv_attenuation_runtime import (
     attach_pv_attenuation_runtime_diagnostics,
@@ -45,6 +57,7 @@ from picot.v2.pv_attenuation_runtime_derivation import (
 )
 from picot.v2.pv_cumulative_evidence import PVCumulativeEvidence
 from picot.v2.pv_deviation import PVDeviationResult
+from picot.v2.pv_solar_history import HomeAssistantSolarHistoryReader
 from picot.v2.pv_sunset_offsets import derive_pv_sunset_offsets
 from picot.v2.pv_sunset_runtime import (
     attach_pv_sunset_runtime_diagnostics,
@@ -61,6 +74,12 @@ from picot.v2.web_ui import (
 
 HOUSEHOLD_LOAD_HISTORY_PATH = Path(
     "/data/picot_v2_household_load_history.jsonl"
+)
+PV_ATTENUATION_FORECAST_BASIS_PATH = Path(
+    "/data/picot_v2_pv_forecast_basis.jsonl"
+)
+PV_ATTENUATION_EVIDENCE_PATH = Path(
+    "/data/picot_v2_pv_attenuation_evidence.jsonl"
 )
 
 
@@ -730,6 +749,9 @@ def _execute_planning_bundle(
     pv_sunset_source: SunsetReadResult | None = None,
     pv_sunset_local_timezone: str | None = None,
     pv_sunset_offsets: dict[str, float] | None = None,
+    pv_attenuation_learning_result: (
+        PVAttenuationLearningResult | None
+    ) = None,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -753,6 +775,22 @@ def _execute_planning_bundle(
         projection,
         pv_attenuated_ranges,
     )
+    if pv_attenuation_learning_result is not None:
+        first = projection.cards[0]
+        projection = Projection(
+            cards=(
+                Card(
+                    first.entity_id,
+                    first.state,
+                    first.attributes
+                    | project_pv_attenuation_learning_result(
+                        pv_attenuation_learning_result
+                    ),
+                ),
+                *projection.cards[1:],
+            ),
+            projection_ms=projection.projection_ms,
+        )
     if pv_sunset_source is not None:
         if pv_sunset_local_timezone is None:
             raise ValueError(
@@ -874,6 +912,7 @@ def main() -> None:
             "pv_local_timezone must be a valid IANA timezone"
         ) from None
     pv_sunset_reader = HomeAssistantSunsetReader(token)
+    pv_solar_history_reader = HomeAssistantSolarHistoryReader(token)
     pv_power_entity = str(
         options.get("pv_power_entity", "")
     ).strip()
@@ -885,6 +924,50 @@ def main() -> None:
     ).strip()
     if not pv_installation_scope_id:
         raise ValueError("pv_installation_scope_id must be explicit")
+
+    pv_attenuation_learning = (
+        ObserverOnlyPVAttenuationLearningRuntime(
+            forecast_basis_path=(
+                PV_ATTENUATION_FORECAST_BASIS_PATH
+            ),
+            evidence_store=PVAttenuationEvidenceStore(
+                PV_ATTENUATION_EVIDENCE_PATH
+            ),
+            solar_history_reader=pv_solar_history_reader.read,
+            installation_scope_id=pv_installation_scope_id,
+            local_timezone=pv_sunset_timezone,
+            maximum_solar_age_seconds=900.0,
+            forecast_mapping_version=(
+                "solcast-combined-installation:v1"
+            ),
+            eligibility_config=PVAttenuationEligibilityConfig(
+                minimum_forecast_energy_wh=100.0,
+                minimum_forecast_confidence=0.3,
+                minimum_actual_confidence=0.9,
+                maximum_attenuation_ratio=0.7,
+                minimum_preceding_tracking_ratio=0.8,
+                maximum_preceding_tracking_ratio=1.2,
+                minimum_distinct_days=3,
+                sunset_bucket_tolerance_minutes=20.0,
+                maximum_evidence_age_days=45,
+                configuration_version=(
+                    "pv-attenuation-eligibility-config:v1"
+                ),
+            ),
+            aggregation_config=PVAttenuationAggregationConfig(
+                sunset_bucket_width_minutes=30.0,
+                minimum_sample_count=3,
+                minimum_distinct_days=3,
+                maximum_dispersion=0.2,
+                minimum_profile_confidence=0.4,
+                maximum_evidence_age_days=45,
+                profile_validity_days=7,
+                configuration_version=(
+                    "pv-attenuation-aggregation-config:v1"
+                ),
+            ),
+        )
+    )
 
     raw_pv_telemetry_interval = options.get(
         "pv_power_telemetry_interval_seconds",
@@ -927,6 +1010,11 @@ def main() -> None:
         PlanningInputBundle,
         LivePVActualDiagnostics,
     ]:
+        if bundle.snapshot.pv_energy_timeline is not None:
+            pv_attenuation_learning.capture_forecast_basis(
+                timeline=bundle.snapshot.pv_energy_timeline,
+                captured_at=bundle.snapshot.captured_at,
+            )
         return apply_latest_closed_actual_pv(
             bundle,
             entity_id=pv_power_entity,
@@ -959,11 +1047,27 @@ def main() -> None:
             )
             else {}
         )
+        pv_attenuation_learning_result = (
+            pv_attenuation_learning.evaluate_closed_actuals(
+                actual_intervals=tuple(
+                    interval
+                    for interval in timeline.intervals
+                    if interval.evidence_type == "ACTUAL"
+                ),
+                evaluated_at=bundle.snapshot.captured_at,
+            )
+            if timeline is not None
+            else None
+        )
         pv_attenuated_ranges = (
             derive_live_pv_attenuation_ranges(
                 installation_scope_id=pv_installation_scope_id,
                 timeline=timeline,
-                profile=None,
+                profile=(
+                    pv_attenuation_learning_result.profile
+                    if pv_attenuation_learning_result is not None
+                    else None
+                ),
                 minutes_from_sunset_by_interval_id=pv_sunset_offsets,
                 projected_at=bundle.snapshot.captured_at,
             )
@@ -980,6 +1084,9 @@ def main() -> None:
             pv_sunset_source=pv_sunset_source,
             pv_sunset_local_timezone=pv_sunset_local_timezone,
             pv_sunset_offsets=pv_sunset_offsets,
+            pv_attenuation_learning_result=(
+                pv_attenuation_learning_result
+            ),
         )
 
     previous_signature: str | None = None

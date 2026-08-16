@@ -302,7 +302,7 @@ DASHBOARD_HTML = """<!doctype html>
       Nog geen prijsgegevens beschikbaar.
     </section>
 
-    <h2>Pipeline ①→⑨</h2>
+    <h2>Pipeline ①→⑨ + Live-canary</h2>
     <section id="pipeline" class="pipeline" aria-live="polite"></section>
 
     <h2>Wat PicoT overweegt</h2>

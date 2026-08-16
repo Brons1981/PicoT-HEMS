@@ -15,7 +15,14 @@ from test_v2_delegated_storage_pipeline_integration import (
 )
 
 from picot.v2.contracts import ProjectedHouseholdEnergyBalanceInterval
+from picot.v2.live_pv_canary_runtime import active_pv_charge_window
 from picot.v2.pipeline import CanonicalPipeline
+from picot.v2.storage_capability_snapshot import (
+    build_storage_capability_snapshot_set,
+)
+from picot.v2.zendure_mode_capabilities import (
+    derive_zendure_mode_capability_evidence,
+)
 
 
 def _interval(
@@ -207,3 +214,39 @@ def test_plain_language_combined_plan_shows_today_and_tomorrow_phases() -> None:
         "Nu laden met PV",
         "Morgen aanvullen met PV",
     ]
+
+
+def test_standby_with_nom_capability_builds_active_pv_charge_plan() -> None:
+    source = pipeline_snapshot()
+    mode_evidence = derive_zendure_mode_capability_evidence(
+        {
+            "state": "Standby",
+            "attributes": {"options": ["Standby", "Nul op de meter"]},
+        },
+        captured_at=source.captured_at,
+        source_entity_id="input_select.zendure_mode",
+        capability_id="storage-capability-home-battery",
+        execution_scope_id="home-battery",
+    )
+    snapshot = replace(
+        source,
+        storage_mode_capability_evidence=mode_evidence,
+        capability_snapshot_set=build_storage_capability_snapshot_set(
+            mode_evidence,
+            snapshot_id=source.snapshot_id,
+        ),
+    )
+
+    run = CanonicalPipeline().run(planning_input=snapshot)
+
+    assert run.evaluation.status == "winner_selected"
+    assert next(
+        candidate.family
+        for candidate in run.candidate_set.candidates
+        if candidate.candidate_id == run.evaluation.winning_candidate_id
+    ) == "pv_charge_only"
+    assert run.execution_plan_set.plans[0].planned_primitive.value == (
+        "balance_bidirectional"
+    )
+    assert run.execution_plan_set.plans[0].planned_vendor_mode == "Nul op de meter"
+    assert active_pv_charge_window(run, at=snapshot.captured_at) is True

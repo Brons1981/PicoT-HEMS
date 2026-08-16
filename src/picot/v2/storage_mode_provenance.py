@@ -21,6 +21,7 @@ class StorageModeControlProvenance:
     observed_at: datetime
     last_planner_vendor_mode: str | None
     last_planner_application_id: str | None
+    last_planner_applied_at: datetime | None
     manual_override_active: bool
     transition_reason: str
     reset_id: str | None = None
@@ -32,6 +33,11 @@ class StorageModeControlProvenance:
             raise ValueError("observed_at must be timezone-aware")
         if not self.transition_reason.strip():
             raise ValueError("transition_reason must be explicit")
+        if self.last_planner_applied_at is not None and (
+            self.last_planner_applied_at.tzinfo is None
+            or self.last_planner_applied_at.utcoffset() is None
+        ):
+            raise ValueError("last_planner_applied_at must be timezone-aware")
         if self.status == "manual_override" and not self.manual_override_active:
             raise ValueError("manual_override status must activate the override")
         if self.status != "manual_override" and self.manual_override_active:
@@ -49,6 +55,7 @@ def initial_storage_mode_provenance(
         observed_at=observed_at,
         last_planner_vendor_mode=None,
         last_planner_application_id=None,
+        last_planner_applied_at=None,
         manual_override_active=False,
         transition_reason="no_planner_application_recorded",
     )
@@ -77,6 +84,7 @@ def record_planner_mode_application(
         observed_at=previous.observed_at,
         last_planner_vendor_mode=vendor_mode,
         last_planner_application_id=application_id,
+        last_planner_applied_at=applied_at,
         manual_override_active=False,
         transition_reason="planner_application_recorded",
     )
@@ -113,6 +121,7 @@ def observe_storage_mode(
         observed_at=observed_at,
         last_planner_vendor_mode=previous.last_planner_vendor_mode,
         last_planner_application_id=previous.last_planner_application_id,
+        last_planner_applied_at=previous.last_planner_applied_at,
         manual_override_active=manual_override_active,
         transition_reason=reason,
         reset_id=previous.reset_id,
@@ -136,6 +145,7 @@ def reset_storage_mode_override(
         observed_at=reset_at,
         last_planner_vendor_mode=previous.last_planner_vendor_mode,
         last_planner_application_id=previous.last_planner_application_id,
+        last_planner_applied_at=previous.last_planner_applied_at,
         manual_override_active=False,
         transition_reason="explicit_user_reset",
         reset_id=reset_id,

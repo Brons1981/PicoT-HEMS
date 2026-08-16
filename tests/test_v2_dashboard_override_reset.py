@@ -135,7 +135,12 @@ def test_reset_button_is_only_shown_for_active_manual_override() -> None:
     assert "resetButton.hidden = !manualOverrideActive" in html
     assert 'fetch("api/storage-mode-override/reset"' in html
     assert 'method: "POST"' in html
-    assert "crypto.randomUUID()" in html
+    assert 'typeof globalThis.crypto.randomUUID === "function"' in html
+    assert "return globalThis.crypto.randomUUID()" in html
+    assert 'typeof globalThis.crypto.getRandomValues === "function"' in html
+    assert "Math.random()" in html
+    assert "reset_id: storageModeResetId()" in html
+    assert "reset_id: crypto.randomUUID()" not in html
 
 
 def test_reset_endpoint_accepts_only_explicit_reset_request() -> None:

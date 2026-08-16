@@ -302,7 +302,7 @@ DASHBOARD_HTML = """<!doctype html>
       Nog geen prijsgegevens beschikbaar.
     </section>
 
-    <h2>Pipeline ①→⑨</h2>
+    <h2>Pipeline ①→⑨ + Live-canary</h2>
     <section id="pipeline" class="pipeline" aria-live="polite"></section>
 
     <h2>Wat PicoT overweegt</h2>
@@ -1617,6 +1617,10 @@ def pipeline_result_nl(
         return "De apparaatkoppeling is niet aangeroepen."
     if stage == 9:
         return "Er is geen opdracht naar Zendure verstuurd."
+    if stage == 10:
+        normal_result = attributes.get("normal_result")
+        if isinstance(normal_result, str) and normal_result.strip():
+            return normal_result
     return f"Deze stap heeft de status {state.replace('_', ' ')}."
 
 

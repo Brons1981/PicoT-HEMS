@@ -440,6 +440,10 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         pv_sunset_local_timezone: str,
         pv_sunset_offsets: dict[str, float],
         pv_attenuation_learning_result: object,
+        live_pv_canary_runtime: object,
+        live_pv_canary_enabled: bool,
+        live_pv_canary_target_entity: str,
+        storage_mode_provenance_runtime: object,
     ) -> None:
         del (
             price_config,
@@ -449,6 +453,10 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             pv_sunset_local_timezone,
             pv_sunset_offsets,
             pv_attenuation_learning_result,
+            live_pv_canary_runtime,
+            live_pv_canary_enabled,
+            live_pv_canary_target_entity,
+            storage_mode_provenance_runtime,
         )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -21,6 +22,7 @@ from picot.v2.contracts import (
 )
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.projection import project
+from picot.v2.web_ui import _build_plan_explanation
 
 BASE = datetime(2026, 8, 16, 8, 0, tzinfo=UTC)
 WINDOW_END = BASE + timedelta(hours=1)
@@ -255,3 +257,42 @@ def test_projection_explains_winner_and_observer_only_plan() -> None:
     assert planned["segments"][0]["primitive"] == "balance_charge_only"
     assert planned["segments"][0]["charge_source_policy"] == "pv_only"
     assert planned["segments"][0]["requested_power_w"] is None
+
+
+def test_partial_pv_progress_wins_when_full_target_is_unreachable() -> None:
+    source = _snapshot()
+    first_pv = source.pv_energy_timeline.intervals[0]
+    snapshot = replace(
+        source,
+        pv_energy_timeline=replace(
+            source.pv_energy_timeline,
+            intervals=(
+                replace(first_pv, pv_energy_wh=300.0),
+                source.pv_energy_timeline.intervals[1],
+            ),
+        ),
+    )
+
+    run = CanonicalPipeline().run(planning_input=snapshot)
+
+    outcome = run.outcomes.outcomes[0]
+    assert outcome.requirement_satisfied is False
+    assert outcome.pv_storage_contribution_wh == pytest.approx(100.0)
+    assert run.evaluation.winning_candidate_id == outcome.candidate_id
+    assert run.evaluation.decisive_step == (
+        "objective:maximize_storage_progress_without_grid"
+    )
+    assert run.evaluation.reason == (
+        "pv_charge_only maximizes storage progress using PV-only energy"
+    )
+    assert len(run.execution_plan_set.plans) == 1
+    explanation = _build_plan_explanation(run)
+    selected = next(plan for plan in explanation["plans"] if plan["selected"])
+    assert selected["reason_nl"] == (
+        "Gekozen omdat dit plan zoveel mogelijk verwachte PV opslaat zonder "
+        "netladen; het batterijdoel blijft naar verwachting 0,10 kWh tekort."
+    )
+    assert explanation["decision"]["reason_nl"] == (
+        "Dit plan slaat zoveel mogelijk verwachte PV op zonder netladen; het "
+        "volledige batterijdoel is binnen de deadline niet haalbaar."
+    )

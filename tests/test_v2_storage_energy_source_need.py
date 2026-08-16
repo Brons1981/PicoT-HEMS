@@ -190,3 +190,79 @@ def test_v2adr050_explanation_marks_zero_confidence_as_low() -> None:
     )
     assert "1,39 kWh beschikbaar voor opslag" in explanation
     assert "Confidence is laag (0%)" in explanation
+
+
+def test_source_need_ignores_pv_after_storage_deadline() -> None:
+    storage = CurrentStorageState(
+        storage_state_id="storage-state-home",
+        execution_scope_id="home-battery",
+        capability_id="storage-capability-home-battery",
+        current_soc=0.75,
+        usable_capacity_wh=8000.0,
+        measured_at=BASE,
+        confidence=0.8,
+        evidence_ids=("storage",),
+    )
+    balance = ProjectedHouseholdEnergyBalance(
+        balance_id="balance-home",
+        run_id="run-1",
+        snapshot_id="snapshot-1",
+        storage_state_id=storage.storage_state_id,
+        intervals=(
+            ProjectedHouseholdEnergyBalanceInterval(
+                starts_at=BASE,
+                ends_at=BASE + timedelta(hours=1),
+                current_usable_storage_energy_wh=6000.0,
+                expected_usable_pv_energy_wh=750.0,
+                planned_grid_energy_wh=0.0,
+                household_load_forecast_energy_wh=250.0,
+                known_future_demand_energy_wh=0.0,
+                conversion_losses_wh=0.0,
+                other_planned_household_energy_flows_wh=0.0,
+                projected_storage_energy_wh=6500.0,
+                confidence=0.7,
+                evidence_ids=("pv-before", "load-before"),
+            ),
+            ProjectedHouseholdEnergyBalanceInterval(
+                starts_at=BASE + timedelta(hours=1),
+                ends_at=BASE + timedelta(hours=2),
+                current_usable_storage_energy_wh=6500.0,
+                expected_usable_pv_energy_wh=5000.0,
+                planned_grid_energy_wh=0.0,
+                household_load_forecast_energy_wh=0.0,
+                known_future_demand_energy_wh=0.0,
+                conversion_losses_wh=0.0,
+                other_planned_household_energy_flows_wh=0.0,
+                projected_storage_energy_wh=11500.0,
+                confidence=0.9,
+                evidence_ids=("pv-after",),
+            ),
+        ),
+    )
+    requirement = StorageEnergyRequirement(
+        requirement_id="requirement-home",
+        run_id="run-1",
+        snapshot_id="snapshot-1",
+        storage_state_id=storage.storage_state_id,
+        projected_balance_id=balance.balance_id,
+        required_energy_wh=8000.0,
+        required_soc=1.0,
+        required_by=BASE + timedelta(hours=1),
+        reason="full_before_support",
+        confidence=0.7,
+        evidence_ids=("storage", "pv-before", "load-before"),
+        reserve_contribution_wh=1500.0,
+    )
+
+    need = derive_storage_energy_source_need(
+        storage_state=storage,
+        balance=balance,
+        requirement=requirement,
+    )
+
+    assert need.expected_usable_pv_energy_wh == 750.0
+    assert need.household_load_forecast_energy_wh == 250.0
+    assert need.pv_storage_contribution_wh == 500.0
+    assert need.grid_energy_required_wh == 1500.0
+    assert need.status == "grid_support_required"
+    assert "pv-after" not in need.evidence_ids

@@ -196,15 +196,14 @@ class CanonicalPipeline:
                 if not delegated_set.candidates:
                     continue
                 simulated = simulate_pv_charge_only_outcomes(delegated_set)
-                satisfied_ids = {
-                    outcome.candidate_id
-                    for outcome in simulated.outcomes
-                    if outcome.requirement_satisfied
-                }
                 delegated_candidates.extend(
                     item
                     for item in delegated_set.candidates
-                    if item.candidate_id in satisfied_ids
+                    if item.candidate_id
+                    in {
+                        outcome.candidate_id
+                        for outcome in simulated.outcomes
+                    }
                 )
                 accepted_path_ids = {
                     item.energy_path_id
@@ -216,9 +215,7 @@ class CanonicalPipeline:
                     if item.path_id in accepted_path_ids
                 )
                 delegated_outcomes.extend(
-                    item
-                    for item in simulated.outcomes
-                    if item.candidate_id in satisfied_ids
+                    simulated.outcomes
                 )
 
         candidate_set = CandidateSet(
@@ -295,6 +292,11 @@ class CanonicalPipeline:
             for item in candidate_set.energy_paths
             if item.path_id == winning_candidate.energy_path_id
         )
+        requirement_satisfied = (
+            winning_outcome.requirement_satisfied
+            if winning_outcome is not None
+            else False
+        )
         evaluation = EvaluationRecord(
             run_id=run_id,
             snapshot_id=snapshot_id,
@@ -307,7 +309,11 @@ class CanonicalPipeline:
                 winning_path.path_id
             ),
             reason=(
-                "pv_charge_only satisfies the storage requirement using PV-only energy"
+                (
+                    "pv_charge_only satisfies the storage requirement using PV-only energy"
+                    if requirement_satisfied
+                    else "pv_charge_only maximizes storage progress using PV-only energy"
+                )
                 if has_evaluated_alternatives
                 else "only technically valid bootstrap baseline candidate"
             ),
@@ -316,7 +322,11 @@ class CanonicalPipeline:
                 item.candidate_id for item in candidate_set.candidates
             ),
             decisive_step=(
-                "hard_constraint:storage_requirement_satisfied"
+                (
+                    "hard_constraint:storage_requirement_satisfied"
+                    if requirement_satisfied
+                    else "objective:maximize_storage_progress_without_grid"
+                )
                 if has_evaluated_alternatives
                 else "technical_validity:bootstrap_baseline"
             ),

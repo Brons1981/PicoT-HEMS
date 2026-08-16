@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from test_v2_delegated_storage_pipeline_integration import BASE, _snapshot
 
@@ -6,6 +7,7 @@ from picot.v2.live_pv_canary_runtime import (
     LivePVCanaryResult,
     LivePVRuntimeEvidence,
     build_live_pv_mode_input,
+    live_pv_runtime_evidence,
     project_live_pv_canary_result,
 )
 from picot.v2.pipeline import CanonicalPipeline
@@ -53,6 +55,31 @@ def test_stale_runtime_evidence_is_preserved_for_fail_closed_strategy() -> None:
     )
 
     assert value.evidence_age_seconds == 61.0
+
+
+def test_successful_live_read_uses_sample_time_not_unchanged_state_time() -> None:
+    source_observed_at = BASE - timedelta(hours=2)
+    provenance = SimpleNamespace(
+        observed_vendor_mode="Nul op de meter",
+        observed_at=BASE,
+        manual_override_active=False,
+    )
+    power_fact = SimpleNamespace(
+        semantic_role="storage_power_signed",
+        availability="available",
+        value=0.0,
+        observed_at=source_observed_at,
+    )
+    bundle = SimpleNamespace(
+        snapshot=SimpleNamespace(storage_mode_control_provenance=provenance),
+        facts=(power_fact,),
+    )
+
+    evidence = live_pv_runtime_evidence(bundle, sampled_at=BASE)
+
+    assert evidence is not None
+    assert evidence.observed_at == BASE
+    assert power_fact.observed_at == source_observed_at
 
 
 def test_canary_result_projects_normal_dutch_dashboard_card() -> None:

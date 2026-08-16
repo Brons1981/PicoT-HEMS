@@ -292,11 +292,25 @@ class CandidateEngine:
                 storage_state_id=storage.storage_state_id,
                 intervals=tuple(projected_intervals),
             )
+            first_battery_support_interval = next(
+                (
+                    interval
+                    for interval in projected_intervals
+                    if interval.projected_storage_energy_wh
+                    < interval.current_usable_storage_energy_wh
+                ),
+                None,
+            )
+            balances.append(balance)
+            if first_battery_support_interval is None:
+                continue
+
             required_energy_wh = storage.usable_capacity_wh
+            required_by = first_battery_support_interval.starts_at
             requirement = StorageEnergyRequirement(
                 requirement_id=_stable_id(
                     "storage-requirement",
-                    f"{balance_id}|{snapshot.horizon_end.isoformat()}",
+                    f"{balance_id}|{required_by.isoformat()}",
                 ),
                 run_id=snapshot.run_id,
                 snapshot_id=snapshot.snapshot_id,
@@ -304,16 +318,16 @@ class CandidateEngine:
                 projected_balance_id=balance_id,
                 required_energy_wh=required_energy_wh,
                 required_soc=1.0,
-                required_by=snapshot.horizon_end,
-                reason="conservative_effective_maximum",
+                required_by=required_by,
+                reason="full_before_first_projected_battery_support",
                 confidence=min(confidence_values),
                 evidence_ids=_ordered_unique(tuple(evidence_ids)),
                 reserve_contribution_wh=max(
                     0.0,
-                    required_energy_wh - projected_energy_wh,
+                    required_energy_wh
+                    - first_battery_support_interval.current_usable_storage_energy_wh,
                 ),
             )
-            balances.append(balance)
             requirements.append(requirement)
 
         return StorageRequirementDerivation(

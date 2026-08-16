@@ -1,6 +1,6 @@
 """PicoT v2 canonical rebuild package."""
 
-__version__ = "2.0.0-dev.60"
+__version__ = "2.0.0-dev.61"
 
 ARCHITECTURE_BASELINE_COMMIT = "8197abbefd969f10da5a8f27244862be07998299"
 PIPELINE_CONTRACT_VERSION = 1

@@ -890,6 +890,11 @@ class ObserverExecutionPlan:
     winning_candidate_id: str
     winning_energy_path_id: str
     execution_scope_id: str
+    valid_from: datetime
+    valid_until: datetime
+    planned_primitive: ExecutionPrimitive
+    planned_vendor_mode: str | None
+    lifecycle_status: str
     observer_only: bool
     segments: tuple[ObserverExecutionPlanSegment, ...]
 

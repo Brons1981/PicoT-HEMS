@@ -142,6 +142,11 @@ def project(run: CanonicalPipelineRun) -> Projection:
         {
             "plan_id": plan.plan_id,
             "execution_scope_id": plan.execution_scope_id,
+            "valid_from": plan.valid_from.isoformat(),
+            "valid_until": plan.valid_until.isoformat(),
+            "planned_primitive": plan.planned_primitive.value,
+            "planned_vendor_mode": plan.planned_vendor_mode,
+            "lifecycle_status": plan.lifecycle_status,
             "observer_only": plan.observer_only,
             "winning_candidate_id": plan.winning_candidate_id,
             "winning_energy_path_id": plan.winning_energy_path_id,

@@ -102,10 +102,10 @@ def test_candidate_engine_derives_conservative_storage_requirement() -> None:
     assert requirement.projected_balance_id == balance.balance_id
     assert requirement.required_energy_wh == pytest.approx(8000.0)
     assert requirement.required_soc == pytest.approx(1.0)
-    assert requirement.required_by == HORIZON_END
-    assert requirement.reason == "conservative_effective_maximum"
+    assert requirement.required_by == BASE
+    assert requirement.reason == "full_before_first_projected_battery_support"
     assert requirement.confidence == pytest.approx(0.70)
-    assert requirement.reserve_contribution_wh == pytest.approx(4500.0)
+    assert requirement.reserve_contribution_wh == pytest.approx(4000.0)
     assert set(requirement.evidence_ids) == {
         "storage-evidence",
         "pv-evidence",
@@ -139,7 +139,7 @@ def test_candidate_engine_derives_conservative_storage_requirement() -> None:
             "grid_energy_required_wh": 4500.0,
             "pv_only_feasible": False,
             "status": "grid_support_required",
-            "required_by": HORIZON_END.isoformat(),
+            "required_by": BASE.isoformat(),
             "confidence": 0.70,
             "method_version": "storage-energy-source-need:v1",
         }
@@ -151,10 +151,10 @@ def test_candidate_engine_derives_conservative_storage_requirement() -> None:
         {
             "required_energy_wh": 8000.0,
             "required_soc": 1.0,
-            "required_by": HORIZON_END.isoformat(),
-            "reason": "conservative_effective_maximum",
+            "required_by": BASE.isoformat(),
+            "reason": "full_before_first_projected_battery_support",
             "confidence": 0.70,
-            "reserve_contribution_wh": 4500.0,
+            "reserve_contribution_wh": 4000.0,
         }
     ]
     assert candidate_card.attributes["projected_balances"] == [
@@ -276,7 +276,7 @@ def test_candidate_engine_aggregates_quarter_hour_load_for_half_hour_pv() -> Non
         "load:quarter-1",
         "load:quarter-2",
     }
-    assert requirement.reserve_contribution_wh == pytest.approx(4500.0)
+    assert requirement.reserve_contribution_wh == pytest.approx(4000.0)
 
 
 def test_candidate_engine_normalizes_shifted_live_interval_boundaries() -> None:
@@ -354,8 +354,6 @@ def test_candidate_engine_normalizes_shifted_live_interval_boundaries() -> None:
     result = CandidateEngine().derive_storage_requirements(snapshot)
 
     interval = result.balances[0].intervals[0]
-    requirement = result.requirements[0]
-
     assert interval.starts_at == captured_at
     assert interval.ends_at == horizon_end
 
@@ -373,7 +371,7 @@ def test_candidate_engine_normalizes_shifted_live_interval_boundaries() -> None:
         "load:shifted-quarter-1",
         "load:shifted-quarter-2",
     }
-    assert requirement.reserve_contribution_wh == pytest.approx(3770.0)
+    assert result.requirements == ()
 
 
 def test_pipeline_continues_conservatively_after_pv_forecast_ends() -> None:
@@ -464,7 +462,8 @@ def test_pipeline_continues_conservatively_after_pv_forecast_ends() -> None:
     assert intervals[1].confidence == pytest.approx(0.0)
 
     requirement = candidate_set.storage_requirements[0]
-    assert requirement.reserve_contribution_wh == pytest.approx(4100.0)
+    assert requirement.required_by == BASE + timedelta(minutes=30)
+    assert requirement.reserve_contribution_wh == pytest.approx(3800.0)
 
     assert card.attributes["planning_gaps"] == [
         {

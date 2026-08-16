@@ -26,6 +26,11 @@ from picot.v2.live_pv_actual import (
     LivePVActualDiagnostics,
     apply_latest_closed_actual_pv,
 )
+from picot.v2.live_storage_mode_provenance import (
+    LiveStorageModeProvenanceRuntime,
+    StorageModeProvenanceStore,
+    attach_storage_mode_provenance,
+)
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.planning_input import (
@@ -80,6 +85,9 @@ PV_ATTENUATION_FORECAST_BASIS_PATH = Path(
 )
 PV_ATTENUATION_EVIDENCE_PATH = Path(
     "/data/picot_v2_pv_attenuation_evidence.jsonl"
+)
+STORAGE_MODE_PROVENANCE_PATH = Path(
+    "/data/picot_v2_storage_mode_provenance.json"
 )
 
 
@@ -146,6 +154,31 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
                 "method_version": mode_evidence.method_version,
             }
             if (mode_evidence := bundle.snapshot.storage_mode_capability_evidence)
+            is not None
+            else None
+        ),
+        "storage_mode_control_provenance": (
+            {
+                "status": mode_provenance.status,
+                "observed_vendor_mode": mode_provenance.observed_vendor_mode,
+                "observed_at": mode_provenance.observed_at.isoformat(),
+                "last_planner_vendor_mode": (
+                    mode_provenance.last_planner_vendor_mode
+                ),
+                "last_planner_application_id": (
+                    mode_provenance.last_planner_application_id
+                ),
+                "manual_override_active": (
+                    mode_provenance.manual_override_active
+                ),
+                "transition_reason": mode_provenance.transition_reason,
+                "reset_id": mode_provenance.reset_id,
+            }
+            if (
+                mode_provenance := (
+                    bundle.snapshot.storage_mode_control_provenance
+                )
+            )
             is not None
             else None
         ),
@@ -915,6 +948,9 @@ def main() -> None:
     )
     pv_history_reader = HomeAssistantPVHistoryReader(token)
     pv_actual_cache = LivePVActualCache()
+    storage_mode_provenance_runtime = LiveStorageModeProvenanceRuntime(
+        StorageModeProvenanceStore(STORAGE_MODE_PROVENANCE_PATH)
+    )
     pv_sunset_local_timezone = str(
         options.get("pv_local_timezone", "Europe/Amsterdam")
     ).strip()
@@ -1025,6 +1061,10 @@ def main() -> None:
         PlanningInputBundle,
         LivePVActualDiagnostics,
     ]:
+        bundle = attach_storage_mode_provenance(
+            bundle,
+            storage_mode_provenance_runtime,
+        )
         if bundle.snapshot.pv_energy_timeline is not None:
             pv_attenuation_learning.capture_forecast_basis(
                 timeline=bundle.snapshot.pv_energy_timeline,

@@ -88,6 +88,7 @@ def _live_storage_snapshot() -> PlanningInputSnapshot:
                 measured_at=BASE,
                 confidence=1.0,
                 evidence_ids=("zendure-soc",),
+                maximum_charge_power_w=2400.0,
             ),
         ),
         pv_energy_timeline=PVEnergyTimeline(

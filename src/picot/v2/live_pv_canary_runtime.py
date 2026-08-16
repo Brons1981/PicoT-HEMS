@@ -92,8 +92,12 @@ def build_live_pv_mode_input(
 
 def live_pv_runtime_evidence(
     bundle: PlanningInputBundle,
+    *,
+    sampled_at: datetime,
 ) -> LivePVRuntimeEvidence | None:
     """Extract fail-closed Zendure mode and signed-power evidence."""
+    if sampled_at.tzinfo is None or sampled_at.utcoffset() is None:
+        raise ValueError("sampled_at must be timezone-aware")
     provenance = bundle.snapshot.storage_mode_control_provenance
     power_fact = next(
         (
@@ -116,7 +120,7 @@ def live_pv_runtime_evidence(
     return LivePVRuntimeEvidence(
         current_vendor_mode=provenance.observed_vendor_mode,
         battery_power_w=float(power_value),
-        observed_at=min(provenance.observed_at, power_fact.observed_at),
+        observed_at=min(provenance.observed_at, sampled_at),
         manual_override_active=provenance.manual_override_active,
     )
 

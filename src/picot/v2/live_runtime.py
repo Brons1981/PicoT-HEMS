@@ -871,7 +871,10 @@ def _execute_planning_bundle(
         timings=stage_timings,
     )
     if live_pv_canary_runtime is not None:
-        canary_evidence = live_pv_runtime_evidence(bundle)
+        canary_evidence = live_pv_runtime_evidence(
+            bundle,
+            sampled_at=bundle.snapshot.captured_at,
+        )
         if canary_evidence is None:
             canary_result = LivePVCanaryResult(
                 status="blocked",

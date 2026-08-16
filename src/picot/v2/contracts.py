@@ -7,6 +7,8 @@ from datetime import datetime
 from math import isfinite
 from typing import TYPE_CHECKING
 
+from picot.domain.capability_snapshot import CapabilitySnapshotSet
+
 if TYPE_CHECKING:
     from picot.v2.zendure_mode_capabilities import ZendureModeCapabilityEvidence
 
@@ -550,6 +552,7 @@ class PlanningInputSnapshot:
     pv_energy_timeline: PVEnergyTimeline | None = None
     household_load_forecast: HouseholdLoadForecast | None = None
     storage_mode_capability_evidence: ZendureModeCapabilityEvidence | None = None
+    capability_snapshot_set: CapabilitySnapshotSet | None = None
 
     def __post_init__(self) -> None:
         for state in self.current_storage_states:
@@ -583,6 +586,13 @@ class PlanningInputSnapshot:
         ):
             raise ValueError(
                 "storage mode capability evidence must share snapshot capture time"
+            )
+        if self.capability_snapshot_set is not None and (
+            self.capability_snapshot_set.snapshot_id != self.snapshot_id
+            or self.capability_snapshot_set.captured_at != self.captured_at
+        ):
+            raise ValueError(
+                "capability snapshot set lineage must match planning input"
             )
 
 

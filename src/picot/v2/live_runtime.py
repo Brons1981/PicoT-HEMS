@@ -27,6 +27,14 @@ from picot.v2.live_pv_actual import (
     LivePVActualDiagnostics,
     apply_latest_closed_actual_pv,
 )
+from picot.v2.live_pv_canary_runtime import (
+    HomeAssistantLivePVModeAdapter,
+    LivePVCanaryResult,
+    LivePVCanaryRuntime,
+    build_live_pv_mode_input,
+    live_pv_runtime_evidence,
+    project_live_pv_canary_result,
+)
 from picot.v2.live_storage_mode_provenance import (
     LiveStorageModeProvenanceRuntime,
     StorageModeProvenanceStore,
@@ -801,6 +809,12 @@ def _execute_planning_bundle(
     pv_attenuation_learning_result: (
         PVAttenuationLearningResult | None
     ) = None,
+    live_pv_canary_runtime: LivePVCanaryRuntime | None = None,
+    live_pv_canary_enabled: bool = False,
+    live_pv_canary_target_entity: str = "",
+    storage_mode_provenance_runtime: (
+        LiveStorageModeProvenanceRuntime | None
+    ) = None,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -856,6 +870,54 @@ def _execute_planning_bundle(
         planning_input_ms=planning_input_ms,
         timings=stage_timings,
     )
+    if live_pv_canary_runtime is not None:
+        canary_evidence = live_pv_runtime_evidence(bundle)
+        if canary_evidence is None:
+            canary_result = LivePVCanaryResult(
+                status="blocked",
+                requested_vendor_mode=None,
+                reason="live_evidence_unavailable",
+                normal_result=(
+                    "PicoT stuurt niet omdat actuele Zendure-modus- "
+                    "of batterijvermogensgegevens ontbreken."
+                ),
+            )
+        else:
+            canary_input = build_live_pv_mode_input(
+                run,
+                evidence=canary_evidence,
+                at=bundle.snapshot.captured_at,
+                live_enabled=live_pv_canary_enabled,
+            )
+            canary_result = live_pv_canary_runtime.apply(
+                canary_input,
+                target_entity=live_pv_canary_target_entity,
+            )
+            if (
+                canary_result.status == "dispatched"
+                and canary_result.requested_vendor_mode is not None
+                and storage_mode_provenance_runtime is not None
+            ):
+                storage_mode_provenance_runtime.record_planner_application(
+                    canary_result.requested_vendor_mode,
+                    applied_at=bundle.snapshot.captured_at,
+                    application_id=(
+                        "live-pv-canary:"
+                        f"{run.planning_input.run_id}:"
+                        f"{bundle.snapshot.captured_at.isoformat()}"
+                    ),
+                )
+        projection = Projection(
+            cards=(
+                *projection.cards,
+                project_live_pv_canary_result(
+                    canary_result,
+                    captured_at=bundle.snapshot.captured_at,
+                    live_enabled=live_pv_canary_enabled,
+                ),
+            ),
+            projection_ms=projection.projection_ms,
+        )
     serialization_started = perf_counter()
     json.dumps([asdict(card) for card in projection.cards], separators=(",", ":"))
     serialization_ms = round((perf_counter() - serialization_started) * 1000.0, 3)
@@ -951,6 +1013,29 @@ def main() -> None:
     pv_actual_cache = LivePVActualCache()
     storage_mode_provenance_runtime = LiveStorageModeProvenanceRuntime(
         StorageModeProvenanceStore(STORAGE_MODE_PROVENANCE_PATH)
+    )
+    live_pv_canary_mode = str(
+        options.get("live_pv_canary_mode", "observer")
+    )
+    if live_pv_canary_mode not in {"observer", "live"}:
+        raise ValueError(
+            "live_pv_canary_mode must be observer or live"
+        )
+    live_pv_canary_enabled = live_pv_canary_mode == "live"
+    live_pv_canary_target_entity = str(
+        options.get("zendure_mode_entity", "")
+    ).strip()
+    if live_pv_canary_enabled and not live_pv_canary_target_entity:
+        raise ValueError("zendure_mode_entity must be explicit")
+    if not live_pv_canary_target_entity:
+        live_pv_canary_target_entity = (
+            "input_select.unconfigured_observer_only"
+        )
+    live_pv_canary_runtime = LivePVCanaryRuntime(
+        dispatch=HomeAssistantLivePVModeAdapter(
+            token=token,
+            requested_at=lambda: datetime.now(UTC),
+        )
     )
     def reset_storage_mode_override(
         reset_id: str,
@@ -1160,6 +1245,14 @@ def main() -> None:
             pv_sunset_offsets=pv_sunset_offsets,
             pv_attenuation_learning_result=(
                 pv_attenuation_learning_result
+            ),
+            live_pv_canary_runtime=live_pv_canary_runtime,
+            live_pv_canary_enabled=live_pv_canary_enabled,
+            live_pv_canary_target_entity=(
+                live_pv_canary_target_entity
+            ),
+            storage_mode_provenance_runtime=(
+                storage_mode_provenance_runtime
             ),
         )
 

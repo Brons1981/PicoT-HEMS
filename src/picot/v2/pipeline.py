@@ -472,15 +472,35 @@ class CanonicalPipeline:
             elif mode_provenance.manual_override_active:
                 blockers.append("manual_override_active")
             blockers.append("observer_only_authority")
+        request_ready = (
+            due_segment is not None
+            and mapping_status == "validated"
+            and blockers == ["observer_only_authority"]
+        )
+        primitive_request_id = (
+            _id(
+                "primitive-request",
+                (
+                    f"{execution_record.execution_record_id}|"
+                    f"{due_segment.segment_id}"
+                ),
+            )
+            if request_ready and due_segment is not None
+            else None
+        )
         primitive_boundary = ExecutionPrimitiveBoundary(
             run_id=run_id,
             snapshot_id=snapshot_id,
-            request_id=None,
+            request_id=primitive_request_id,
             execution_record_id=execution_record.execution_record_id,
             status=(
-                "dry_run_blocked"
-                if due_segment is not None and mode_evidence is not None
-                else "not_emitted"
+                "observer_request_ready"
+                if request_ready
+                else (
+                    "dry_run_blocked"
+                    if due_segment is not None and mode_evidence is not None
+                    else "not_emitted"
+                )
             ),
             planned_primitive=(
                 due_segment.primitive if due_segment is not None else None

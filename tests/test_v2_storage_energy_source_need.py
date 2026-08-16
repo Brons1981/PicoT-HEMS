@@ -11,6 +11,7 @@ from picot.v2.contracts import (
     ProjectedHouseholdEnergyBalanceInterval,
     StorageEnergyRequirement,
 )
+
 BASE = datetime(2026, 8, 16, 8, 0, tzinfo=UTC)
 
 

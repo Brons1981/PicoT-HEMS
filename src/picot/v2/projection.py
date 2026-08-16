@@ -521,7 +521,20 @@ def project(run: CanonicalPipelineRun) -> Projection:
         Card(
             "sensor.picot_v2_pipeline_07_execution_primitive",
             pb.status,
-            base(er.execution_record_id, pb.request_id or "none", "not_consumed"),
+            base(er.execution_record_id, pb.request_id or "none", "not_consumed")
+            | {
+                "planned_primitive": (
+                    pb.planned_primitive.value
+                    if pb.planned_primitive is not None
+                    else None
+                ),
+                "mapping_status": pb.mapping_status,
+                "source_entity_id": pb.source_entity_id,
+                "current_vendor_mode": pb.current_vendor_mode,
+                "planned_vendor_mode": pb.planned_vendor_mode,
+                "mapping_method_version": pb.mapping_method_version,
+                "blockers": list(pb.blockers),
+            },
         ),
         Card(
             "sensor.picot_v2_pipeline_08_device_adapter",

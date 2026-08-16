@@ -9,7 +9,6 @@ from picot.v2.pv_solar_context_alignment import (
     SOLAR_CONTEXT_ALIGNMENT_METHOD_VERSION,
     align_solar_context_to_deviation,
 )
-
 from picot.v2.pv_deviation import PVDeviationResult
 from picot.v2.pv_solar_history import SolarContextObservation
 

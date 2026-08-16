@@ -8,6 +8,7 @@ from math import isfinite
 from typing import TYPE_CHECKING
 
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
+from picot.domain.energy_path import PathSegment, ProjectedEnergyState
 
 if TYPE_CHECKING:
     from picot.v2.zendure_mode_capabilities import ZendureModeCapabilityEvidence
@@ -697,6 +698,21 @@ class EnergyPath:
     path_id: str
     family: str
     segment_ids: tuple[str, ...] = ()
+    segments: tuple[PathSegment, ...] = ()
+    projected_states: tuple[ProjectedEnergyState, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.segment_ids != tuple(segment.segment_id for segment in self.segments):
+            raise ValueError("energy path segment IDs must match timed segments")
+        if any(
+            left.at >= right.at
+            for left, right in zip(
+                self.projected_states,
+                self.projected_states[1:],
+                strict=False,
+            )
+        ):
+            raise ValueError("projected states must be chronologically ordered")
 
 
 @dataclass(frozen=True, slots=True)

@@ -528,6 +528,7 @@ def project(run: CanonicalPipelineRun) -> Projection:
             pb.status,
             base(er.execution_record_id, pb.request_id or "none", "not_consumed")
             | {
+                "request_id": pb.request_id,
                 "planned_primitive": (
                     pb.planned_primitive.value
                     if pb.planned_primitive is not None
@@ -539,6 +540,12 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "planned_vendor_mode": pb.planned_vendor_mode,
                 "mapping_method_version": pb.mapping_method_version,
                 "blockers": list(pb.blockers),
+                "normal_result": (
+                    "De uitvoerbare laadopdracht is voorbereid; PicoT kijkt "
+                    "nog mee en stuurt niets naar Zendure."
+                    if pb.status == "observer_request_ready"
+                    else None
+                ),
                 "mode_provenance_status": (
                     p.storage_mode_control_provenance.status
                     if p.storage_mode_control_provenance is not None

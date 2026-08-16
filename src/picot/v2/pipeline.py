@@ -527,12 +527,37 @@ class CanonicalPipeline:
         execution_primitive_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
+        translation_ready = (
+            primitive_boundary.status == "observer_request_ready"
+            and primitive_boundary.request_id is not None
+            and primitive_boundary.planned_vendor_mode is not None
+        )
+        adapter_translation_id = (
+            _id(
+                "adapter-translation",
+                (
+                    f"{primitive_boundary.request_id}|"
+                    f"{primitive_boundary.planned_vendor_mode}|"
+                    f"{primitive_boundary.mapping_method_version}"
+                ),
+            )
+            if translation_ready
+            else None
+        )
         adapter_boundary = DeviceAdapterBoundary(
             run_id=run_id,
             snapshot_id=snapshot_id,
-            translation_id=None,
-            primitive_request_id=None,
-            status="not_invoked",
+            translation_id=adapter_translation_id,
+            primitive_request_id=(
+                primitive_boundary.request_id
+                if translation_ready
+                else None
+            ),
+            status=(
+                "observer_translation_ready"
+                if translation_ready
+                else "not_invoked"
+            ),
         )
         device_adapter_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 

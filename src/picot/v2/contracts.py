@@ -957,6 +957,9 @@ class VendorBoundaryResult:
     adapter_translation_id: str | None
     status: str
     observed_result_id: str | None = None
+    dispatch_intent_id: str | None = None
+    target_entity_id: str | None = None
+    planned_vendor_mode: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

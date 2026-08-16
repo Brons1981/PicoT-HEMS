@@ -1,16 +1,16 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from picot.v2.live_pv_canary_runtime import (
-    LivePVCanaryRuntime,
-    active_pv_charge_window,
-)
 from test_v2_delegated_storage_pipeline_integration import (
     BASE,
     WINDOW_END,
     _snapshot,
 )
 
+from picot.v2.live_pv_canary_runtime import (
+    LivePVCanaryRuntime,
+    active_pv_charge_window,
+)
 from picot.v2.live_pv_mode_strategy import LivePVModeInput
 from picot.v2.pipeline import CanonicalPipeline
 

@@ -427,6 +427,8 @@ def test_dashboard_exposes_plain_language_storage_source_need() -> None:
     assert "renderStorageEnergySourceNeeds" in DASHBOARD_HTML
     assert "storage_source_needs" in DASHBOARD_HTML
     assert "Zendure batterij mist" in DASHBOARD_HTML
+    assert "formatEnergyKwh" in DASHBOARD_HTML
+    assert " kWh" in DASHBOARD_HTML
 
 
 def test_dashboard_preserves_interaction_state_during_refresh() -> None:

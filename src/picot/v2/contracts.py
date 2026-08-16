@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from math import isfinite
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from picot.v2.zendure_mode_capabilities import ZendureModeCapabilityEvidence
 
 
 @dataclass(frozen=True, slots=True)
@@ -545,6 +549,7 @@ class PlanningInputSnapshot:
     current_storage_states: tuple[CurrentStorageState, ...] = ()
     pv_energy_timeline: PVEnergyTimeline | None = None
     household_load_forecast: HouseholdLoadForecast | None = None
+    storage_mode_capability_evidence: ZendureModeCapabilityEvidence | None = None
 
     def __post_init__(self) -> None:
         for state in self.current_storage_states:
@@ -570,6 +575,14 @@ class PlanningInputSnapshot:
         ):
             raise ValueError(
                 "Household load forecast lineage must match planning input"
+            )
+        if (
+            self.storage_mode_capability_evidence is not None
+            and self.storage_mode_capability_evidence.captured_at
+            != self.captured_at
+        ):
+            raise ValueError(
+                "storage mode capability evidence must share snapshot capture time"
             )
 
 

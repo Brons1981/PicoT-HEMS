@@ -30,6 +30,10 @@ from picot.v2.household_load_forecast import (
     build_historical_household_load_forecast,
     derive_household_load_power_w,
 )
+from picot.v2.zendure_mode_capabilities import (
+    HomeAssistantZendureModeCapabilityReader,
+    StorageModeCapabilityConfig,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,6 +537,31 @@ def load_bindings(options_path: str = "/data/options.json") -> tuple[SourceBindi
     return tuple(result)
 
 
+def load_storage_mode_capability_config(
+    options_path: str = "/data/options.json",
+) -> StorageModeCapabilityConfig | None:
+    options = load_options(options_path)
+    values = (
+        options.get("zendure_mode_entity"),
+        options.get("storage_capability_id"),
+        options.get("storage_execution_scope_id"),
+    )
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in values
+    ):
+        return None
+    source_entity_id, capability_id, execution_scope_id = values
+    assert isinstance(source_entity_id, str)
+    assert isinstance(capability_id, str)
+    assert isinstance(execution_scope_id, str)
+    return StorageModeCapabilityConfig(
+        source_entity_id=source_entity_id.strip(),
+        capability_id=capability_id.strip(),
+        execution_scope_id=execution_scope_id.strip(),
+    )
+
+
 class HomeAssistantStateReader:
     """Reads each configured HA source exactly once during snapshot assembly."""
 
@@ -625,6 +654,7 @@ def assemble_planning_input(
     *,
     bindings: tuple[SourceBinding, ...] | None = None,
     storage_state_config: StorageStateConfig | None = None,
+    storage_mode_capability_config: StorageModeCapabilityConfig | None = None,
     options_path: str = "/data/options.json",
     captured_at: datetime | None = None,
     household_load_fallback_power_w: float | None = None,
@@ -637,14 +667,25 @@ def assemble_planning_input(
     reader = HomeAssistantStateReader(token)
     selected = bindings if bindings is not None else load_bindings(options_path)
     selected_storage_config = storage_state_config
+    selected_mode_config = storage_mode_capability_config
     if bindings is None and selected_storage_config is None:
         selected_storage_config = load_storage_state_config(options_path)
+    if bindings is None and selected_mode_config is None:
+        selected_mode_config = load_storage_mode_capability_config(options_path)
 
     evidence = tuple(reader.read(binding) for binding in selected)
     finished = datetime.now(UTC)
     capture = captured_at or finished
     if capture.tzinfo is None or capture.utcoffset() is None:
         raise ValueError("captured_at must be timezone-aware")
+    storage_mode_capability_evidence = (
+        HomeAssistantZendureModeCapabilityReader(token).read(
+            selected_mode_config,
+            captured_at=capture,
+        )
+        if selected_mode_config is not None
+        else None
+    )
 
     household_load_observation = (
         _household_load_observation_from_evidence(
@@ -656,6 +697,14 @@ def assemble_planning_input(
     evidence_seed = "|".join(
         f"{item.mapping_version}:{item.raw_state}:{item.observed_at}" for item in evidence
     )
+    if storage_mode_capability_evidence is not None:
+        evidence_seed += (
+            "|storage-mode:"
+            f"{storage_mode_capability_evidence.current_vendor_mode}:"
+            f"{storage_mode_capability_evidence.status}:"
+            f"{storage_mode_capability_evidence.usable_vendor_modes}:"
+            f"{storage_mode_capability_evidence.excluded_dynamic_vendor_modes}"
+        )
     run_id = _stable_id(
         "run", f"{__version__}|{capture.isoformat()}|{ARCHITECTURE_BASELINE_COMMIT}|{evidence_seed}"
     )
@@ -768,6 +817,7 @@ def assemble_planning_input(
         current_storage_states=current_storage_states,
         pv_energy_timeline=pv_energy_timeline,
         household_load_forecast=household_load_forecast,
+        storage_mode_capability_evidence=storage_mode_capability_evidence,
     )
     return PlanningInputBundle(
         snapshot,

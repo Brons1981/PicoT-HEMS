@@ -1,9 +1,13 @@
 """Observer-only capability evidence for the Zendure HA mode selector."""
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final, Literal
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 from picot.domain.execution_primitive import ExecutionPrimitive
 
@@ -48,6 +52,24 @@ class ZendureModeMapping:
 
 
 @dataclass(frozen=True, slots=True)
+class StorageModeCapabilityConfig:
+    """Explicit HA binding and generic identity for storage-mode evidence."""
+
+    source_entity_id: str
+    capability_id: str
+    execution_scope_id: str
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("source_entity_id", self.source_entity_id),
+            ("capability_id", self.capability_id),
+            ("execution_scope_id", self.execution_scope_id),
+        ):
+            if not value.strip():
+                raise ValueError(f"{name} must not be blank")
+
+
+@dataclass(frozen=True, slots=True)
 class ZendureModeCapabilityEvidence:
     """Read-only evidence derived from one Home Assistant entity payload."""
 
@@ -62,6 +84,62 @@ class ZendureModeCapabilityEvidence:
     excluded_dynamic_vendor_modes: tuple[str, ...]
     mappings: tuple[ZendureModeMapping, ...]
     method_version: str = METHOD_VERSION
+
+
+class HomeAssistantZendureModeCapabilityReader:
+    """Read the configured HA selector once and derive observer evidence."""
+
+    def __init__(self, token: str) -> None:
+        if not token:
+            raise ValueError("Supervisor token is required")
+        self._token = token
+
+    def read(
+        self,
+        config: StorageModeCapabilityConfig,
+        *,
+        captured_at: datetime,
+    ) -> ZendureModeCapabilityEvidence:
+        _validate_identity(
+            captured_at,
+            config.source_entity_id,
+            config.capability_id,
+            config.execution_scope_id,
+        )
+        request = Request(
+            "http://supervisor/core/api/states/"
+            f"{quote(config.source_entity_id, safe='.')}",
+            headers={"Authorization": f"Bearer {self._token}"},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            return _unavailable(
+                captured_at=captured_at,
+                source_entity_id=config.source_entity_id,
+                capability_id=config.capability_id,
+                execution_scope_id=config.execution_scope_id,
+                current_mode=None,
+                reason=type(exc).__name__,
+            )
+        if not isinstance(payload, Mapping):
+            return _unavailable(
+                captured_at=captured_at,
+                source_entity_id=config.source_entity_id,
+                capability_id=config.capability_id,
+                execution_scope_id=config.execution_scope_id,
+                current_mode=None,
+                reason="mode_payload_invalid",
+            )
+        return derive_zendure_mode_capability_evidence(
+            payload,
+            captured_at=captured_at,
+            source_entity_id=config.source_entity_id,
+            capability_id=config.capability_id,
+            execution_scope_id=config.execution_scope_id,
+        )
 
 
 def derive_zendure_mode_capability_evidence(

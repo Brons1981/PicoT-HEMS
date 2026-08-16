@@ -134,6 +134,21 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
         "facts": facts,
         "price_points": price_points,
         "pv_energy_intervals": pv_energy_intervals,
+        "storage_mode_capability_evidence": (
+            {
+                "current_vendor_mode": mode_evidence.current_vendor_mode,
+                "status": mode_evidence.status,
+                "unavailable_reason": mode_evidence.unavailable_reason,
+                "usable_vendor_modes": mode_evidence.usable_vendor_modes,
+                "excluded_dynamic_vendor_modes": (
+                    mode_evidence.excluded_dynamic_vendor_modes
+                ),
+                "method_version": mode_evidence.method_version,
+            }
+            if (mode_evidence := bundle.snapshot.storage_mode_capability_evidence)
+            is not None
+            else None
+        ),
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return sha256(canonical.encode("utf-8")).hexdigest()

@@ -6,7 +6,6 @@ from picot.v2.contracts import (
     ProjectedHouseholdEnergyBalanceInterval,
     StorageEnergyRequirement,
 )
-
 from picot.v2.storage_energy_source_need import (
     derive_storage_energy_source_need,
     explain_storage_energy_source_need_nl,

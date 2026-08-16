@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Mapping
 from datetime import timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -105,6 +106,9 @@ DASHBOARD_HTML = """<!doctype html>
       gap: 12px;
     }
     .stage-card { padding: 14px; min-width: 0; }
+    .stage-card > summary { cursor: pointer; list-style-position: inside; }
+    .stage-summary h3 { display: inline; margin-right: 10px; }
+    .stage-result { margin: 12px 0; color: #d9e4ef; }
     .stage-state {
       display: inline-block;
       margin-bottom: 12px;
@@ -253,6 +257,19 @@ DASHBOARD_HTML = """<!doctype html>
     </section>
 
     <p id="status" class="status">Wachten op de eerste pipeline-run…</p>
+
+    <section
+      id="storage-mode-override"
+      class="status"
+      aria-live="polite"
+    >
+      <span id="storage-mode-override-result">
+        Nog geen informatie over handmatige batterijbediening.
+      </span>
+      <button id="reset-storage-mode-override" type="button" hidden>
+        Handmatige instelling vrijgeven
+      </button>
+    </section>
 
     <h2>Brongegevens</h2>
     <section
@@ -793,17 +810,25 @@ DASHBOARD_HTML = """<!doctype html>
       const fragment = document.createDocumentFragment();
 
       for (const item of items) {
-        const card = document.createElement("article");
-        card.className = "stage-card";
+        const details = document.createElement("details");
+        details.className = "stage-card";
+
+        const summary = document.createElement("summary");
+        summary.className = "stage-summary";
 
         const heading = document.createElement("h3");
         heading.textContent = `${item.stage}. ${stageNames[item.stage - 1] ?? "Pipeline stage"}`;
-        card.appendChild(heading);
 
         const state = document.createElement("span");
         state.className = "stage-state";
         state.textContent = displayValue(item.state);
-        card.appendChild(state);
+        summary.append(heading, state);
+        details.appendChild(summary);
+
+        const result = document.createElement("p");
+        result.className = "stage-result";
+        result.textContent = item.result_nl;
+        details.appendChild(result);
 
         const attributes = document.createElement("dl");
         const entries = Object.entries(item.attributes ?? {})
@@ -824,17 +849,52 @@ DASHBOARD_HTML = """<!doctype html>
           );
         }
 
-        card.appendChild(attributes);
+        details.appendChild(attributes);
         if (technicalEntries.length > 0) {
           appendTechnicalDetails(
-            card,
+            details,
             Object.fromEntries(technicalEntries)
           );
         }
-        fragment.appendChild(card);
+        fragment.appendChild(details);
       }
 
       container.replaceChildren(fragment);
+    }
+
+    function renderStorageModeOverride(item) {
+      const result = element("storage-mode-override-result");
+      const resetButton = element("reset-storage-mode-override");
+      const manualOverrideActive =
+        item?.attributes?.manual_override_active === true;
+      resetButton.hidden = !manualOverrideActive;
+      result.textContent = manualOverrideActive
+        ? "Een handmatige batterij-instelling blokkeert PicoT."
+        : "Geen actieve handmatige blokkade.";
+    }
+
+    async function resetStorageModeOverride() {
+      const resetButton = element("reset-storage-mode-override");
+      resetButton.disabled = true;
+      try {
+        const response = await fetch("api/storage-mode-override/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reset_id: crypto.randomUUID() })
+        });
+        if (!response.ok) {
+          throw new Error(`Reset geweigerd (${response.status})`);
+        }
+        element("storage-mode-override-result").textContent =
+          "De handmatige blokkade is vrijgegeven.";
+        resetButton.hidden = true;
+        await loadView();
+      } catch (error) {
+        element("storage-mode-override-result").textContent =
+          error instanceof Error ? error.message : "Reset mislukt.";
+      } finally {
+        resetButton.disabled = false;
+      }
     }
 
     function renderStorageEnergySourceNeeds(needs) {
@@ -1042,6 +1102,9 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function captureDashboardState() {
+      const openStageCards = Array.from(
+        document.querySelectorAll("details.stage-card")
+      ).map((details) => details.open);
       const openTechnicalDetails = Array.from(
         document.querySelectorAll("details.technical-details")
       ).map((details) => details.open);
@@ -1054,6 +1117,7 @@ DASHBOARD_HTML = """<!doctype html>
         top: node.scrollTop
       }));
       return {
+        openStageCards,
         openTechnicalDetails,
         scrollPositions,
         windowScrollX: window.scrollX,
@@ -1064,6 +1128,11 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function restoreDashboardState(state) {
+      Array.from(
+        document.querySelectorAll("details.stage-card")
+      ).forEach((details, index) => {
+        details.open = state.openStageCards[index] ?? false;
+      });
       Array.from(
         document.querySelectorAll("details.technical-details")
       ).forEach((details, index) => {
@@ -1102,6 +1171,7 @@ DASHBOARD_HTML = """<!doctype html>
       const pipeline = Array.isArray(view.pipeline) ? view.pipeline : [];
       const planningInput = pipeline.find((item) => item.stage === 1);
       const candidateEngine = pipeline.find((item) => item.stage === 3);
+      const primitiveBoundary = pipeline.find((item) => item.stage === 7);
       const sources = planningInput?.attributes?.sources;
       renderSources(Array.isArray(sources) ? sources : []);
       renderPriceTimeline(
@@ -1118,6 +1188,7 @@ DASHBOARD_HTML = """<!doctype html>
         view.captured_at
       );
       renderPipeline(pipeline);
+      renderStorageModeOverride(primitiveBoundary);
       renderStorageEnergySourceNeeds(
         candidateEngine?.attributes?.storage_source_needs ?? []
       );
@@ -1179,6 +1250,10 @@ DASHBOARD_HTML = """<!doctype html>
       }
     });
 
+    element("reset-storage-mode-override").addEventListener(
+      "click",
+      resetStorageModeOverride
+    );
     loadView();
     setInterval(loadView, 5000);
   </script>
@@ -1193,6 +1268,9 @@ class WebViewStore:
     def __init__(self) -> None:
         self._lock = Lock()
         self._latest_json: str | None = None
+        self._reset_storage_mode_override: (
+            Callable[[str], dict[str, object]] | None
+        ) = None
 
     def publish(self, view: dict[str, object]) -> None:
         """Serialize completely before atomically replacing the snapshot."""
@@ -1205,12 +1283,29 @@ class WebViewStore:
         with self._lock:
             return self._latest_json
 
+    def set_storage_mode_override_reset(
+        self,
+        reset: Callable[[str], dict[str, object]],
+    ) -> None:
+        """Register the one permitted observer-dashboard mutation."""
+        with self._lock:
+            self._reset_storage_mode_override = reset
+
+    def storage_mode_override_reset(
+        self,
+    ) -> Callable[[str], dict[str, object]] | None:
+        with self._lock:
+            return self._reset_storage_mode_override
+
 
 def create_web_server(
     store: WebViewStore,
     *,
     host: str,
     port: int,
+    reset_storage_mode_override: (
+        Callable[[str], dict[str, object]] | None
+    ) = None,
 ) -> ThreadingHTTPServer:
     """Create, but do not start, the read-only observer HTTP server."""
 
@@ -1283,7 +1378,51 @@ def create_web_server(
             )
 
         def do_POST(self) -> None:
-            self._reject_write()
+            path = urlsplit(self.path).path
+            if path != "/api/storage-mode-override/reset":
+                self._reject_write()
+                return
+            reset = (
+                reset_storage_mode_override
+                or store.storage_mode_override_reset()
+            )
+            if reset is None:
+                self._send_json(
+                    HTTPStatus.CONFLICT,
+                    '{"status":"reset_rejected"}',
+                )
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > 4096:
+                    raise ValueError("invalid body length")
+                payload = json.loads(self.rfile.read(length))
+                if not isinstance(payload, dict):
+                    raise ValueError("reset payload must be an object")
+                reset_id = payload.get("reset_id")
+                if (
+                    not isinstance(reset_id, str)
+                    or not reset_id.strip()
+                ):
+                    raise ValueError("reset_id is required")
+            except (json.JSONDecodeError, TypeError, ValueError):
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    '{"status":"invalid_reset_request"}',
+                )
+                return
+            try:
+                result = reset(reset_id)
+            except ValueError:
+                self._send_json(
+                    HTTPStatus.CONFLICT,
+                    '{"status":"reset_rejected"}',
+                )
+                return
+            self._send_json(
+                HTTPStatus.OK,
+                json.dumps(result, separators=(",", ":")),
+            )
 
         def do_PUT(self) -> None:
             self._reject_write()
@@ -1304,6 +1443,59 @@ def create_web_server(
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     return server
+
+
+def pipeline_result_nl(
+    *,
+    stage: int,
+    state: str,
+    attributes: Mapping[str, object],
+) -> str:
+    """Translate one technical stage outcome into deterministic Dutch."""
+    if stage == 1:
+        return "De planningsgegevens zijn compleet en klaar voor beoordeling."
+    if stage == 2:
+        count = _result_count(attributes, "opportunity_count")
+        return f"Er zijn {count} mogelijke energiekansen gevonden."
+    if stage == 3:
+        count = _result_count(attributes, "candidate_count")
+        return f"Er zijn {count} mogelijke plannen opgebouwd."
+    if stage == 4:
+        winner = attributes.get("winning_candidate_id")
+        if isinstance(winner, str) and winner.strip():
+            return f"Het beste plan is {winner}."
+        return "Er is nog geen beste plan gekozen."
+    if stage == 5:
+        count = _result_count(attributes, "execution_plan_count")
+        if count == 1:
+            return "Er is 1 uitvoeringsplan voorbereid."
+        return f"Er zijn {count} uitvoeringsplannen voorbereid."
+    if stage == 6:
+        return "Uitvoering is niet gestart; PicoT kijkt alleen mee."
+    if stage == 7:
+        blockers = attributes.get("blockers")
+        if (
+            isinstance(blockers, (list, tuple))
+            and "manual_override_active" in blockers
+        ):
+            return (
+                "Uitvoering is geblokkeerd omdat een handmatige "
+                "instelling actief is."
+            )
+        return "Uitvoering blijft geblokkeerd zolang PicoT alleen meekijkt."
+    if stage == 8:
+        return "De apparaatkoppeling is niet aangeroepen."
+    if stage == 9:
+        return "Er is geen opdracht naar Zendure verstuurd."
+    return f"Deze stap heeft de status {state.replace('_', ' ')}."
+
+
+def _result_count(
+    attributes: Mapping[str, object],
+    key: str,
+) -> int:
+    value = attributes.get(key, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def build_web_view(
@@ -1354,6 +1546,11 @@ def build_web_view(
             "entity_id": card.entity_id,
             "state": card.state,
             "attributes": dict(card.attributes),
+            "result_nl": pipeline_result_nl(
+                stage=stage,
+                state=card.state,
+                attributes=card.attributes,
+            ),
         }
         for stage, card in enumerate(projection.cards, start=1)
     ]

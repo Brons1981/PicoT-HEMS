@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from zoneinfo import ZoneInfo
 
 import pytest
+
 from picot.v2.pv_solar_history import (
     SOLAR_HISTORY_METHOD_VERSION,
     HomeAssistantSolarHistoryReader,

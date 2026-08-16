@@ -1,9 +1,12 @@
-from dataclasses import replace
-from datetime import UTC, datetime, timedelta
-from importlib import import_module
 import json
+from dataclasses import replace
+from datetime import datetime, timedelta
+from importlib import import_module
 from pathlib import Path
 
+from test_v2_delegated_storage_pipeline_integration import (
+    BASE as PIPELINE_BASE,
+)
 from test_v2_delegated_storage_pipeline_integration import (
     CAPABILITY_ID,
     _snapshot,
@@ -14,7 +17,7 @@ from picot.v2.zendure_mode_capabilities import (
     derive_zendure_mode_capability_evidence,
 )
 
-BASE = datetime(2026, 8, 16, 13, 0, tzinfo=UTC)
+BASE = PIPELINE_BASE
 MODE_ENTITY = "input_select.zendure_2400_ac_modus_selecteren"
 NORMAL_MODES = (
     "Standby",
@@ -167,17 +170,20 @@ def test_live_bundle_receives_restored_provenance_before_pipeline(
     module = _module()
     path = tmp_path / "storage-mode-provenance.json"
     runtime = _runtime(path)
-    runtime.observe_vendor_mode("Standby", observed_at=BASE)
+    runtime.observe_vendor_mode(
+        "Standby",
+        observed_at=BASE - timedelta(seconds=2),
+    )
     runtime.record_planner_application(
         "Alleen slim opladen",
-        applied_at=BASE + timedelta(seconds=1),
+        applied_at=BASE - timedelta(seconds=1),
         application_id="application-live-3",
     )
 
     enriched = module.attach_storage_mode_provenance(
         _bundle(
             mode="Standby",
-            captured_at=BASE + timedelta(seconds=2),
+            captured_at=BASE,
         ),
         runtime,
     )

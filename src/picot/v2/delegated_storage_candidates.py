@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 
 from picot.domain.capability_snapshot import (
@@ -115,6 +116,55 @@ def _surplus_windows(
     return tuple(windows)
 
 
+def _window_selections(
+    windows: tuple[tuple[int, ...], ...],
+) -> tuple[tuple[int, ...], ...]:
+    selections: list[tuple[int, ...]] = []
+    for width in range(1, len(windows) + 1):
+        for start in range(0, len(windows) - width + 1):
+            selections.append(
+                tuple(
+                    index
+                    for window in windows[start : start + width]
+                    for index in window
+                )
+            )
+    return tuple(selections)
+
+
+def _clip_interval_to_snapshot(
+    interval: ProjectedHouseholdEnergyBalanceInterval,
+    snapshot: PlanningInputSnapshot,
+) -> ProjectedHouseholdEnergyBalanceInterval | None:
+    if interval.ends_at <= snapshot.captured_at:
+        return None
+    if interval.starts_at >= snapshot.captured_at:
+        return interval
+    full_seconds = (interval.ends_at - interval.starts_at).total_seconds()
+    remaining_seconds = (
+        interval.ends_at - snapshot.captured_at
+    ).total_seconds()
+    fraction = remaining_seconds / full_seconds
+    return replace(
+        interval,
+        starts_at=snapshot.captured_at,
+        expected_usable_pv_energy_wh=(
+            interval.expected_usable_pv_energy_wh * fraction
+        ),
+        planned_grid_energy_wh=interval.planned_grid_energy_wh * fraction,
+        household_load_forecast_energy_wh=(
+            interval.household_load_forecast_energy_wh * fraction
+        ),
+        known_future_demand_energy_wh=(
+            interval.known_future_demand_energy_wh * fraction
+        ),
+        conversion_losses_wh=interval.conversion_losses_wh * fraction,
+        other_planned_household_energy_flows_wh=(
+            interval.other_planned_household_energy_flows_wh * fraction
+        ),
+    )
+
+
 def construct_pv_charge_only_candidate(
     *,
     snapshot: PlanningInputSnapshot,
@@ -170,20 +220,24 @@ def construct_pv_charge_only_candidate(
         )
 
     intervals = tuple(
-        interval
+        clipped
         for interval in balance.intervals
-        if interval.starts_at >= snapshot.captured_at
-        and interval.ends_at <= requirement.required_by
+        if interval.ends_at <= requirement.required_by
+        for clipped in (_clip_interval_to_snapshot(interval, snapshot),)
+        if clipped is not None
     )
+    candidate_balance = replace(balance, intervals=intervals)
     candidates: list[Candidate] = []
     paths: list[EnergyPath] = []
+    seen_segment_windows: set[tuple[tuple[object, object], ...]] = set()
     confidence = min(
         storage.confidence,
         capability.confidence,
         requirement.confidence,
         *(interval.confidence for interval in intervals),
     )
-    for window_indexes in _surplus_windows(intervals):
+    surplus_windows = _surplus_windows(intervals)
+    for window_indexes in _window_selections(surplus_windows):
         selected_indexes = frozenset(window_indexes)
         required_at_end = _required_energy_at_interval_end(
             intervals,
@@ -205,6 +259,8 @@ def construct_pv_charge_only_candidate(
                 segment_id = _stable_id(
                     "path-segment",
                     f"{snapshot.snapshot_id}|{requirement.requirement_id}|"
+                    f"{intervals[window_indexes[0]].starts_at.isoformat()}|"
+                    f"{intervals[window_indexes[-1]].ends_at.isoformat()}|"
                     f"{interval.starts_at.isoformat()}|"
                     f"{interval.ends_at.isoformat()}",
                 )
@@ -258,6 +314,12 @@ def construct_pv_charge_only_candidate(
 
         if not segments:
             continue
+        segment_window = tuple(
+            (segment.starts_at, segment.ends_at) for segment in segments
+        )
+        if segment_window in seen_segment_windows:
+            continue
+        seen_segment_windows.add(segment_window)
         if projected_states[-1].at != requirement.required_by:
             projected_states.append(
                 ProjectedEnergyState(
@@ -310,7 +372,7 @@ def construct_pv_charge_only_candidate(
         ),
         candidates=tuple(candidates),
         energy_paths=tuple(paths),
-        projected_balances=(balance,),
+        projected_balances=(candidate_balance,),
         storage_requirements=(requirement,),
         derivation_status="constructed",
         derivation_reason=None,

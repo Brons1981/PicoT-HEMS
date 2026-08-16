@@ -84,9 +84,40 @@ def test_store_round_trips_versioned_provenance_atomically(
 
     assert store.load() == provenance
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["schema_version"] == 1
+    assert persisted["schema_version"] == 2
     assert persisted["provenance"]["status"] == "unverified"
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_store_reads_existing_schema_v1_without_losing_authority(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "storage-mode-provenance.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "provenance": {
+                    "status": "planner_owned",
+                    "observed_vendor_mode": "Alleen slim ontladen",
+                    "observed_at": BASE.isoformat(),
+                    "last_planner_vendor_mode": "Alleen slim ontladen",
+                    "last_planner_application_id": "application-v1",
+                    "manual_override_active": False,
+                    "transition_reason": "observed_mode_matches_planner_mode",
+                    "reset_id": None,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    restored = _module().StorageModeProvenanceStore(path).load()
+
+    assert restored is not None
+    assert restored.status == "planner_owned"
+    assert restored.last_planner_application_id == "application-v1"
+    assert restored.last_planner_applied_at is None
 
 
 def test_manual_override_survives_runtime_restart(tmp_path: Path) -> None:

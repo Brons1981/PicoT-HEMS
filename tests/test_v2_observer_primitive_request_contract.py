@@ -79,6 +79,6 @@ def test_projection_explains_observer_request_in_normal_dutch() -> None:
         run.primitive_boundary.request_id
     )
     assert primitive_card.attributes["normal_result"] == (
-        "De uitvoerbare laadopdracht is voorbereid; PicoT kijkt nog mee "
+        "De uitvoerbare opdracht is voorbereid; PicoT kijkt nog mee "
         "en stuurt niets naar Zendure."
     )

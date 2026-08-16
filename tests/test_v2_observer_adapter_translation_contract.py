@@ -67,7 +67,7 @@ def test_projection_explains_adapter_translation_in_normal_dutch() -> None:
         "Alleen slim opladen"
     )
     assert adapter_card.attributes["normal_result"] == (
-        "De laadopdracht is vertaald voor Zendure; PicoT kijkt nog mee "
+        "De opdracht is vertaald voor Zendure; PicoT kijkt nog mee "
         "en verstuurt niets."
     )
 

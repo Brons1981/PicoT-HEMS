@@ -56,7 +56,8 @@ DASHBOARD_HTML = """<!doctype html>
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
     }
-    .metric, .source-card, .stage-card, .timeline-panel, .price-panel {
+    .metric, .source-card, .stage-card, .timeline-panel, .price-panel,
+    .zendure-now {
       border: 1px solid #27313d;
       border-radius: 12px;
       background: #151b23;
@@ -121,6 +122,33 @@ DASHBOARD_HTML = """<!doctype html>
       margin-left: 8px;
       color: #b7c6d6;
       font-size: 0.88rem;
+    }
+    .stage-health {
+      width: 13px;
+      height: 13px;
+      margin-left: auto;
+      flex: 0 0 13px;
+      border-radius: 50%;
+      background: #35a862;
+      box-shadow: 0 0 0 3px rgba(53, 168, 98, 0.16);
+    }
+    .stage-health[data-health="fault"] {
+      background: #df4f5f;
+      box-shadow: 0 0 0 3px rgba(223, 79, 95, 0.18);
+    }
+    .pipeline-health[data-health="healthy"] {
+      background: #193226;
+      color: #8de5ae;
+    }
+    .pipeline-health[data-health="fault"] {
+      background: #351b20;
+      color: #ffadb8;
+    }
+    .zendure-now { padding: 14px; }
+    .zendure-now-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
     }
     .stage-card > .stage-state,
     .stage-card > dl,
@@ -255,9 +283,9 @@ DASHBOARD_HTML = """<!doctype html>
     <header>
       <div>
         <h1>PicoT v2 — Canonical Pipeline</h1>
-        <p class="muted">Live read-only observatie van de volledige pipeline.</p>
+        <p class="muted">Live status van de volledige PicoT-pipeline.</p>
       </div>
-      <div class="observer">Observer only</div>
+      <div id="execution-mode" class="observer">Status wordt geladen</div>
     </header>
 
     <section class="metadata" aria-label="Runinformatie">
@@ -287,6 +315,11 @@ DASHBOARD_HTML = """<!doctype html>
       </button>
     </section>
 
+    <h2>Zendure nu</h2>
+    <section id="zendure-now" class="zendure-now" aria-live="polite">
+      Nog geen actuele Zendure-status beschikbaar.
+    </section>
+
     <h2>Brongegevens</h2>
     <section
       id="sources"
@@ -303,6 +336,9 @@ DASHBOARD_HTML = """<!doctype html>
     </section>
 
     <h2>Pipeline ①→⑨ + Live-canary</h2>
+    <p id="pipeline-health" class="status pipeline-health" aria-live="polite">
+      Wachten op de eerste pipeline-run…
+    </p>
     <section id="pipeline" class="pipeline" aria-live="polite"></section>
 
     <h2>Wat PicoT overweegt</h2>
@@ -847,7 +883,14 @@ DASHBOARD_HTML = """<!doctype html>
         const result = document.createElement("span");
         result.className = "stage-result";
         result.textContent = item.result_nl;
-        summary.append(heading, result);
+        const health = document.createElement("span");
+        health.className = "stage-health";
+        health.dataset.health = item.health;
+        health.title = item.health === "healthy"
+          ? "Deze pipelinestap werkt correct"
+          : "Deze pipelinestap heeft een fout";
+        health.setAttribute("aria-label", health.title);
+        summary.append(heading, result, health);
         details.appendChild(summary);
 
         const state = document.createElement("span");
@@ -885,6 +928,36 @@ DASHBOARD_HTML = """<!doctype html>
       }
 
       container.replaceChildren(fragment);
+    }
+
+    function renderPipelineHealth(health) {
+      const container = element("pipeline-health");
+      const healthy = health?.healthy === true;
+      container.dataset.health = healthy ? "healthy" : "fault";
+      container.textContent = health?.summary_nl ??
+        "De gezondheid van de pipeline is nog niet bekend.";
+    }
+
+    function renderZendureNow(status) {
+      const container = element("zendure-now");
+      const grid = document.createElement("dl");
+      grid.className = "zendure-now-grid";
+      const originLabels = {
+        picot: "PicoT",
+        manual: "Handmatig vastgesteld",
+        unknown: "Nog onbekend"
+      };
+      appendAttribute(grid, "Actieve modus", status?.active_mode);
+      appendAttribute(
+        grid,
+        "Ingesteld door",
+        originLabels[status?.origin] ?? displayValue(status?.origin)
+      );
+      appendAttribute(grid, "Ingesteld / vastgesteld", formatTimestamp(status?.set_at));
+      appendAttribute(grid, "Laatst waargenomen", formatTimestamp(status?.observed_at));
+      appendAttribute(grid, "Geplande modus", status?.planned_mode);
+      appendAttribute(grid, "Laatste resultaat", status?.last_result_nl);
+      container.replaceChildren(grid);
     }
 
     function renderPlanExplanation(explanation) {
@@ -1318,6 +1391,12 @@ DASHBOARD_HTML = """<!doctype html>
       const planningInput = pipeline.find((item) => item.stage === 1);
       const candidateEngine = pipeline.find((item) => item.stage === 3);
       const primitiveBoundary = pipeline.find((item) => item.stage === 7);
+      const execution = pipeline.find((item) => item.stage === 6);
+      const observerOnly = execution?.attributes?.observer_only !== false;
+      document.body.dataset.observerOnly = String(observerOnly);
+      element("execution-mode").textContent = observerOnly
+        ? "Alleen meekijken"
+        : "Live uitvoering";
       const sources = planningInput?.attributes?.sources;
       renderSources(Array.isArray(sources) ? sources : []);
       renderPriceTimeline(
@@ -1334,6 +1413,8 @@ DASHBOARD_HTML = """<!doctype html>
         view.captured_at
       );
       renderPipeline(pipeline);
+      renderPipelineHealth(view.pipeline_health);
+      renderZendureNow(view.zendure_now);
       renderPlanExplanation(view.plan_explanation);
       renderStorageModeOverride(primitiveBoundary);
       renderStorageEnergySourceNeeds(
@@ -1612,7 +1693,7 @@ def pipeline_result_nl(
         if family == "pv_charge_only":
             return "Het beste plan is laden met verwachte zonne-energie."
         if family == "reserve_first":
-            return "Het beste plan is niets extra doen."
+            return "PicoT houdt de huidige Zendure-modus vast."
         winner = attributes.get("winning_candidate_id")
         if isinstance(winner, str) and winner.strip():
             return f"Het beste plan is {winner}."
@@ -1626,6 +1707,8 @@ def pipeline_result_nl(
             return "Er is 1 uitvoeringsplan voorbereid."
         return f"Er zijn {count} uitvoeringsplannen voorbereid."
     if stage == 6:
+        if state == "live_plan_ready" or attributes.get("observer_only") is False:
+            return "Het uitvoeringsplan is vrijgegeven voor live uitvoering."
         return "Uitvoering is niet gestart; PicoT kijkt alleen mee."
     if stage == 7:
         blockers = attributes.get("blockers")
@@ -1637,16 +1720,91 @@ def pipeline_result_nl(
                 "Uitvoering is geblokkeerd omdat een handmatige "
                 "instelling actief is."
             )
-        return "Uitvoering blijft geblokkeerd zolang PicoT alleen meekijkt."
+        normal_result = attributes.get("normal_result")
+        if isinstance(normal_result, str) and normal_result.strip():
+            return normal_result
+        if state == "request_ready":
+            return "De uitvoerbare opdracht is vrijgegeven voor Zendure."
+        return "Er is nu geen uitvoerbare opdracht voor Zendure."
     if stage == 8:
+        normal_result = attributes.get("normal_result")
+        if isinstance(normal_result, str) and normal_result.strip():
+            return normal_result
         return "De apparaatkoppeling is niet aangeroepen."
     if stage == 9:
+        normal_result = attributes.get("normal_result")
+        if isinstance(normal_result, str) and normal_result.strip():
+            return normal_result
         return "Er is geen opdracht naar Zendure verstuurd."
     if stage == 10:
         normal_result = attributes.get("normal_result")
         if isinstance(normal_result, str) and normal_result.strip():
             return normal_result
     return f"Deze stap heeft de status {state.replace('_', ' ')}."
+
+
+def pipeline_stage_health(
+    *,
+    stage: int,
+    state: str,
+    attributes: Mapping[str, object],
+) -> str:
+    """Classify technical health independently from a valid no-op outcome."""
+    del stage
+    unhealthy_markers = ("error", "failed", "invalid", "unavailable", "rejected")
+    normalized_state = state.casefold()
+    if any(marker in normalized_state for marker in unhealthy_markers):
+        return "fault"
+    error = attributes.get("error")
+    if error is not None and error != "" and error != "—":
+        return "fault"
+    blockers = attributes.get("blockers")
+    fault_blockers = {
+        "primitive_vendor_mapping_unavailable",
+        "manual_override_provenance_unverified",
+    }
+    if isinstance(blockers, (list, tuple)) and fault_blockers.intersection(blockers):
+        return "fault"
+    sources = attributes.get("sources")
+    if isinstance(sources, (list, tuple)):
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            if source.get("availability") == "unavailable" or source.get("error"):
+                return "fault"
+    return "healthy"
+
+
+def _zendure_now(pipeline: list[dict[str, object]]) -> dict[str, object]:
+    primitive = next(item for item in pipeline if item["stage"] == 7)
+    vendor = next(item for item in pipeline if item["stage"] == 9)
+    primitive_attributes = primitive["attributes"]
+    vendor_attributes = vendor["attributes"]
+    assert isinstance(primitive_attributes, dict)
+    assert isinstance(vendor_attributes, dict)
+    provenance = primitive_attributes.get("mode_provenance_status")
+    manual_override = primitive_attributes.get("manual_override_active") is True
+    origin = (
+        "manual"
+        if manual_override or provenance == "manual_override"
+        else "picot"
+        if provenance == "planner_owned"
+        else "unknown"
+    )
+    set_at = (
+        primitive_attributes.get("mode_observed_at")
+        if origin == "manual"
+        else primitive_attributes.get("last_planner_applied_at")
+    )
+    return {
+        "active_mode": primitive_attributes.get("current_vendor_mode"),
+        "planned_mode": primitive_attributes.get("planned_vendor_mode"),
+        "origin": origin,
+        "observed_at": primitive_attributes.get("mode_observed_at"),
+        "set_at": set_at,
+        "last_result_nl": vendor.get("result_nl"),
+        "last_result_status": vendor.get("state"),
+    }
 
 
 def _result_count(
@@ -1993,9 +2151,31 @@ def build_web_view(
                 state=card.state,
                 attributes=card.attributes,
             ),
+            "health": pipeline_stage_health(
+                stage=stage,
+                state=card.state,
+                attributes=card.attributes,
+            ),
         }
         for stage, card in enumerate(projection.cards, start=1)
     ]
+    healthy_count = sum(item["health"] == "healthy" for item in pipeline)
+    pipeline_health = {
+        "healthy": healthy_count == len(pipeline),
+        "healthy_count": healthy_count,
+        "total_count": len(pipeline),
+        "summary_nl": (
+            f"Pipeline werkt correct – {healthy_count}/{len(pipeline)} groen."
+            if healthy_count == len(pipeline)
+            else (
+                "Pipeline heeft een probleem – "
+                f"{len(pipeline) - healthy_count} stap(pen) rood."
+            )
+        ),
+    }
+    execution_attributes = pipeline[5]["attributes"]
+    assert isinstance(execution_attributes, dict)
+    observer_only = execution_attributes.get("observer_only", True)
     pv_energy_timeline: dict[str, object] = {
         "available": timeline is not None,
         "timeline_id": (
@@ -2153,12 +2333,14 @@ def build_web_view(
 
     return {
         "schema_version": 1,
-        "observer_only": True,
+        "observer_only": observer_only,
         "picot_version": planning_input.picot_version,
         "run_id": planning_input.run_id,
         "snapshot_id": planning_input.snapshot_id,
         "captured_at": planning_input.captured_at.isoformat(),
         "pipeline": pipeline,
+        "pipeline_health": pipeline_health,
+        "zendure_now": _zendure_now(pipeline),
         "plan_explanation": _build_plan_explanation(run),
         "price_timeline": price_timeline,
         "pv_energy_timeline": pv_energy_timeline,

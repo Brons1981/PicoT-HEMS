@@ -18,7 +18,8 @@ from picot.v2.storage_mode_provenance import (
     reset_storage_mode_override,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+_SUPPORTED_SCHEMA_VERSIONS = {1, SCHEMA_VERSION}
 _VALID_STATUSES = {
     "unverified",
     "planner_owned",
@@ -46,7 +47,8 @@ class StorageModeProvenanceStore:
                 raise InvalidStorageModeProvenanceError(
                     "persisted provenance root must be an object"
                 )
-            if payload.get("schema_version") != SCHEMA_VERSION:
+            schema_version = payload.get("schema_version")
+            if schema_version not in _SUPPORTED_SCHEMA_VERSIONS:
                 raise InvalidStorageModeProvenanceError(
                     "persisted provenance schema is unsupported"
                 )
@@ -55,7 +57,10 @@ class StorageModeProvenanceStore:
                 raise InvalidStorageModeProvenanceError(
                     "persisted provenance payload must be an object"
                 )
-            return _deserialize_provenance(raw)
+            return _deserialize_provenance(
+                raw,
+                schema_version=schema_version,
+            )
         except (
             json.JSONDecodeError,
             OSError,
@@ -224,11 +229,18 @@ def _serialize_provenance(
 ) -> dict[str, Any]:
     payload = asdict(provenance)
     payload["observed_at"] = provenance.observed_at.isoformat()
+    payload["last_planner_applied_at"] = (
+        provenance.last_planner_applied_at.isoformat()
+        if provenance.last_planner_applied_at is not None
+        else None
+    )
     return payload
 
 
 def _deserialize_provenance(
     payload: dict[str, Any],
+    *,
+    schema_version: int = SCHEMA_VERSION,
 ) -> StorageModeControlProvenance:
     required = {
         "status",
@@ -236,10 +248,13 @@ def _deserialize_provenance(
         "observed_at",
         "last_planner_vendor_mode",
         "last_planner_application_id",
+        "last_planner_applied_at",
         "manual_override_active",
         "transition_reason",
         "reset_id",
     }
+    if schema_version == 1:
+        required.remove("last_planner_applied_at")
     if set(payload) != required:
         raise InvalidStorageModeProvenanceError(
             "persisted provenance fields are invalid"
@@ -251,6 +266,12 @@ def _deserialize_provenance(
         )
     try:
         observed_at = datetime.fromisoformat(payload["observed_at"])
+        raw_applied_at = payload.get("last_planner_applied_at")
+        applied_at = (
+            datetime.fromisoformat(raw_applied_at)
+            if raw_applied_at is not None
+            else None
+        )
         return StorageModeControlProvenance(
             status=status,
             observed_vendor_mode=payload["observed_vendor_mode"],
@@ -259,6 +280,7 @@ def _deserialize_provenance(
             last_planner_application_id=(
                 payload["last_planner_application_id"]
             ),
+            last_planner_applied_at=applied_at,
             manual_override_active=payload["manual_override_active"],
             transition_reason=payload["transition_reason"],
             reset_id=payload["reset_id"],

@@ -6,10 +6,11 @@ Canonical v2 pipeline implementation; diagnostic timing is layered around this p
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from time import perf_counter
 
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
 from picot.v2.contracts import (
@@ -425,6 +426,118 @@ class CanonicalPipeline:
                     ),
                 )
             )
+        has_due_storage_segment = any(
+            segment.starts_at <= snapshot.captured_at < segment.ends_at
+            for plan in observer_plans
+            for segment in plan.segments
+        )
+        if not has_due_storage_segment:
+            storage_state = next(iter(snapshot.current_storage_states), None)
+            capability_set = snapshot.capability_snapshot_set
+            discharge_capability = (
+                next(
+                    (
+                        capability
+                        for capability in capability_set.capabilities
+                        if storage_state is not None
+                        and capability.capability_id == storage_state.capability_id
+                        and capability.execution_scope_id
+                        == storage_state.execution_scope_id
+                        and ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+                        in capability.supported_primitives
+                    ),
+                    None,
+                )
+                if capability_set is not None
+                else None
+            )
+            future_start = min(
+                (
+                    segment.starts_at
+                    for plan in observer_plans
+                    for segment in plan.segments
+                    if segment.starts_at > snapshot.captured_at
+                ),
+                default=None,
+            )
+            baseline_until = future_start or snapshot.horizon_end or (
+                snapshot.captured_at + timedelta(minutes=15)
+            )
+            if (
+                storage_state is not None
+                and discharge_capability is not None
+                and baseline_until > snapshot.captured_at
+                and winning_candidate.candidate_id is not None
+            ):
+                mode_evidence = snapshot.storage_mode_capability_evidence
+                matching_modes = (
+                    tuple(
+                        mapping.vendor_mode
+                        for mapping in mode_evidence.mappings
+                        if ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+                        in mapping.primitives
+                    )
+                    if mode_evidence is not None
+                    else ()
+                )
+                plan_vendor_mode = (
+                    matching_modes[0] if len(matching_modes) == 1 else None
+                )
+                plan_id = _id(
+                    "execution-plan",
+                    f"{evaluation.evaluation_id}|{winning_path.path_id}|"
+                    f"{storage_state.execution_scope_id}|baseline-discharge",
+                )
+                segment_id = _id(
+                    "execution-plan-segment",
+                    f"{plan_id}|{snapshot.captured_at.isoformat()}|"
+                    f"{baseline_until.isoformat()}",
+                )
+                observer_plans.append(
+                    ObserverExecutionPlan(
+                        plan_id=plan_id,
+                        evaluation_id=evaluation.evaluation_id,
+                        winning_candidate_id=winning_candidate.candidate_id,
+                        winning_energy_path_id=winning_path.path_id,
+                        execution_scope_id=storage_state.execution_scope_id,
+                        valid_from=snapshot.captured_at,
+                        valid_until=baseline_until,
+                        planned_primitive=(
+                            ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+                        ),
+                        planned_vendor_mode=plan_vendor_mode,
+                        lifecycle_status=(
+                            "due"
+                            if control_change_allowed
+                            else "due_observer_only"
+                        ),
+                        observer_only=not control_change_allowed,
+                        segments=(
+                            ObserverExecutionPlanSegment(
+                                segment_id=segment_id,
+                                source_path_segment_id=(
+                                    "canonical-baseline-discharge"
+                                ),
+                                order=1,
+                                starts_at=snapshot.captured_at,
+                                ends_at=baseline_until,
+                                primitive=(
+                                    ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+                                ),
+                                capability_id=discharge_capability.capability_id,
+                                purpose=(
+                                    "Preserve normal discharge-only control "
+                                    "outside a selected PV charge window"
+                                ),
+                                evidence_ids=(
+                                    discharge_capability.capability_id,
+                                ),
+                                requested_power_w=None,
+                                charge_source_policy=None,
+                            ),
+                        ),
+                    )
+                )
         execution_plan_set = ExecutionPlanSet(
             run_id=run_id,
             snapshot_id=snapshot_id,
@@ -495,6 +608,9 @@ class CanonicalPipeline:
                 in mode_evidence.excluded_dynamic_vendor_modes
             ):
                 blockers.insert(0, "current_vendor_mode_excluded")
+            calibration = snapshot.bms_calibration_evidence
+            if calibration is not None and calibration.active:
+                blockers.insert(0, "bms_soc_calibration_active")
             if mode_provenance is None or (
                 mode_provenance.status == "unverified"
                 and not control_change_allowed

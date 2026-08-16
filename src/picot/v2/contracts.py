@@ -13,6 +13,7 @@ from picot.domain.energy_path import PathSegment, ProjectedEnergyState
 from picot.domain.execution_primitive import ExecutionPrimitive
 
 if TYPE_CHECKING:
+    from picot.v2.storage_mode_provenance import StorageModeControlProvenance
     from picot.v2.zendure_mode_capabilities import ZendureModeCapabilityEvidence
 
 
@@ -555,6 +556,7 @@ class PlanningInputSnapshot:
     pv_energy_timeline: PVEnergyTimeline | None = None
     household_load_forecast: HouseholdLoadForecast | None = None
     storage_mode_capability_evidence: ZendureModeCapabilityEvidence | None = None
+    storage_mode_control_provenance: StorageModeControlProvenance | None = None
     capability_snapshot_set: CapabilitySnapshotSet | None = None
 
     def __post_init__(self) -> None:

@@ -534,6 +534,21 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "planned_vendor_mode": pb.planned_vendor_mode,
                 "mapping_method_version": pb.mapping_method_version,
                 "blockers": list(pb.blockers),
+                "mode_provenance_status": (
+                    p.storage_mode_control_provenance.status
+                    if p.storage_mode_control_provenance is not None
+                    else "unverified"
+                ),
+                "manual_override_active": (
+                    p.storage_mode_control_provenance.manual_override_active
+                    if p.storage_mode_control_provenance is not None
+                    else False
+                ),
+                "mode_provenance_reason": (
+                    p.storage_mode_control_provenance.transition_reason
+                    if p.storage_mode_control_provenance is not None
+                    else "no_provenance_evidence"
+                ),
             },
         ),
         Card(

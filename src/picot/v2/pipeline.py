@@ -407,6 +407,7 @@ class CanonicalPipeline:
             None,
         )
         mode_evidence = snapshot.storage_mode_capability_evidence
+        mode_provenance = snapshot.storage_mode_control_provenance
         planned_vendor_mode: str | None = None
         mapping_status = "not_assessed"
         blockers: list[str] = []
@@ -427,12 +428,11 @@ class CanonicalPipeline:
                 in mode_evidence.excluded_dynamic_vendor_modes
             ):
                 blockers.insert(0, "current_vendor_mode_excluded")
-            blockers.extend(
-                (
-                    "manual_override_provenance_unverified",
-                    "observer_only_authority",
-                )
-            )
+            if mode_provenance is None or mode_provenance.status == "unverified":
+                blockers.append("manual_override_provenance_unverified")
+            elif mode_provenance.manual_override_active:
+                blockers.append("manual_override_active")
+            blockers.append("observer_only_authority")
         primitive_boundary = ExecutionPrimitiveBoundary(
             run_id=run_id,
             snapshot_id=snapshot_id,

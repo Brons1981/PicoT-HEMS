@@ -48,9 +48,9 @@ def test_dutch_result_is_visible_in_collapsed_card_summary() -> None:
 
     assert 'result.className = "stage-result"' in render_pipeline
     assert "result.textContent = item.result_nl" in render_pipeline
-    assert "summary.append(heading, result)" in render_pipeline
+    assert "summary.append(heading, result, health)" in render_pipeline
     assert "details.appendChild(state)" in render_pipeline
-    assert render_pipeline.index("summary.append(heading, result)") < (
+    assert render_pipeline.index("summary.append(heading, result, health)") < (
         render_pipeline.index("details.appendChild(state)")
     )
     assert "summary.append(heading, state)" not in render_pipeline
@@ -65,4 +65,3 @@ def test_collapsed_pipeline_cards_use_compact_summary_spacing() -> None:
     assert ".stage-result {" in html
     assert "font-size: 0.88rem;" in html
     assert "margin-left: 8px;" in html
-

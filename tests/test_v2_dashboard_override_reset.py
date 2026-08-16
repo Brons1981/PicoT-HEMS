@@ -1,11 +1,13 @@
 import json
+from datetime import timedelta
 from importlib import import_module
+from pathlib import Path
 from threading import Thread
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
-from test_v2_delegated_storage_pipeline_integration import _snapshot
+from test_v2_delegated_storage_pipeline_integration import BASE, _snapshot
 
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.projection import project
@@ -241,3 +243,32 @@ def test_reset_endpoint_fails_closed_when_reset_is_rejected() -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_persisted_runtime_rejects_duplicate_or_stale_reset(
+    tmp_path: Path,
+) -> None:
+    module = import_module("picot.v2.live_storage_mode_provenance")
+    runtime = module.LiveStorageModeProvenanceRuntime(
+        module.StorageModeProvenanceStore(tmp_path / "provenance.json")
+    )
+    runtime.observe_vendor_mode("Standby", observed_at=BASE)
+    runtime.record_planner_application(
+        "Alleen slim opladen",
+        applied_at=BASE + timedelta(seconds=1),
+        application_id="application-dashboard-reset",
+    )
+    runtime.observe_vendor_mode(
+        "Standby",
+        observed_at=BASE + timedelta(seconds=2),
+    )
+    runtime.reset_current_manual_override(
+        reset_at=BASE + timedelta(seconds=3),
+        reset_id="reset-dashboard-once",
+    )
+
+    with pytest.raises(ValueError, match="no manual override is active"):
+        runtime.reset_current_manual_override(
+            reset_at=BASE + timedelta(seconds=4),
+            reset_id="reset-dashboard-stale",
+        )

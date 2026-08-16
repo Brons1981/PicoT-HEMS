@@ -52,21 +52,67 @@ def _not_available(
 def _required_energy_at_interval_end(
     intervals: tuple[ProjectedHouseholdEnergyBalanceInterval, ...],
     required_energy_wh: float,
+    *,
+    selected_window_indexes: frozenset[int] | None = None,
 ) -> dict[object, float]:
     required_at_end: dict[object, float] = {}
     required_after = required_energy_wh
-    for interval in reversed(intervals):
+    for index in reversed(range(len(intervals))):
+        interval = intervals[index]
         required_at_end[interval.ends_at] = required_after
-        required_after = max(
-            0.0,
-            required_after
-            + interval.household_load_forecast_energy_wh
+        demand_wh = (
+            interval.household_load_forecast_energy_wh
             + interval.known_future_demand_energy_wh
             + interval.conversion_losses_wh
             + interval.other_planned_household_energy_flows_wh
-            - interval.expected_usable_pv_energy_wh,
+        )
+        usable_pv_wh = interval.expected_usable_pv_energy_wh
+        if (
+            selected_window_indexes is not None
+            and index not in selected_window_indexes
+        ):
+            usable_pv_wh = min(usable_pv_wh, demand_wh)
+        required_after = max(
+            0.0,
+            required_after
+            + demand_wh
+            - usable_pv_wh,
         )
     return required_at_end
+
+
+def _surplus_wh(interval: ProjectedHouseholdEnergyBalanceInterval) -> float:
+    return max(
+        0.0,
+        interval.expected_usable_pv_energy_wh
+        - interval.household_load_forecast_energy_wh
+        - interval.known_future_demand_energy_wh
+        - interval.conversion_losses_wh
+        - interval.other_planned_household_energy_flows_wh,
+    )
+
+
+def _surplus_windows(
+    intervals: tuple[ProjectedHouseholdEnergyBalanceInterval, ...],
+) -> tuple[tuple[int, ...], ...]:
+    windows: list[tuple[int, ...]] = []
+    current: list[int] = []
+    for index, interval in enumerate(intervals):
+        if _surplus_wh(interval) <= 0.0:
+            if current:
+                windows.append(tuple(current))
+                current = []
+            continue
+        if (
+            current
+            and intervals[current[-1]].ends_at != interval.starts_at
+        ):
+            windows.append(tuple(current))
+            current = []
+        current.append(index)
+    if current:
+        windows.append(tuple(current))
+    return tuple(windows)
 
 
 def construct_pv_charge_only_candidate(
@@ -129,81 +175,125 @@ def construct_pv_charge_only_candidate(
         if interval.starts_at >= snapshot.captured_at
         and interval.ends_at <= requirement.required_by
     )
-    required_at_end = _required_energy_at_interval_end(
-        intervals,
-        requirement.required_energy_wh,
+    candidates: list[Candidate] = []
+    paths: list[EnergyPath] = []
+    confidence = min(
+        storage.confidence,
+        capability.confidence,
+        requirement.confidence,
+        *(interval.confidence for interval in intervals),
     )
-    storage_energy_wh = storage.current_stored_energy_wh
-    segments: list[PathSegment] = []
-    projected_states: list[ProjectedEnergyState] = []
-
-    for interval in intervals:
-        surplus_wh = max(
-            0.0,
-            interval.expected_usable_pv_energy_wh
-            - interval.household_load_forecast_energy_wh
-            - interval.known_future_demand_energy_wh
-            - interval.conversion_losses_wh
-            - interval.other_planned_household_energy_flows_wh,
+    for window_indexes in _surplus_windows(intervals):
+        selected_indexes = frozenset(window_indexes)
+        required_at_end = _required_energy_at_interval_end(
+            intervals,
+            requirement.required_energy_wh,
+            selected_window_indexes=selected_indexes,
         )
-        energy_needed_wh = max(
-            0.0,
-            required_at_end[interval.ends_at] - storage_energy_wh,
-        )
-        acquired_wh = min(surplus_wh, energy_needed_wh)
-        if acquired_wh > 0.0:
-            segment_id = _stable_id(
-                "path-segment",
-                f"{snapshot.snapshot_id}|{requirement.requirement_id}|"
-                f"{interval.starts_at.isoformat()}|{interval.ends_at.isoformat()}",
-            )
-            segments.append(
-                PathSegment(
-                    segment_id=segment_id,
-                    order=len(segments) + 1,
-                    execution_scope_id=storage.execution_scope_id,
-                    starts_at=interval.starts_at,
-                    ends_at=interval.ends_at,
-                    primitive=ExecutionPrimitive.BALANCE_CHARGE_ONLY,
-                    capability_id=capability.capability_id,
-                    purpose="Acquire required storage energy from forecast PV surplus",
-                    evidence_ids=tuple(
-                        dict.fromkeys(
-                            (requirement.requirement_id,)
-                            + interval.evidence_ids
-                            + (capability.capability_id,)
-                        )
-                    ),
-                    requested_power_w=None,
-                    charge_source_policy=ChargeSourcePolicy.PV_ONLY,
+        storage_energy_wh = storage.current_stored_energy_wh
+        segments: list[PathSegment] = []
+        projected_states: list[ProjectedEnergyState] = []
+        for index, interval in enumerate(intervals):
+            acquired_wh = 0.0
+            if index in selected_indexes:
+                energy_needed_wh = max(
+                    0.0,
+                    required_at_end[interval.ends_at] - storage_energy_wh,
                 )
+                acquired_wh = min(_surplus_wh(interval), energy_needed_wh)
+            if acquired_wh > 0.0:
+                segment_id = _stable_id(
+                    "path-segment",
+                    f"{snapshot.snapshot_id}|{requirement.requirement_id}|"
+                    f"{interval.starts_at.isoformat()}|"
+                    f"{interval.ends_at.isoformat()}",
+                )
+                segments.append(
+                    PathSegment(
+                        segment_id=segment_id,
+                        order=len(segments) + 1,
+                        execution_scope_id=storage.execution_scope_id,
+                        starts_at=interval.starts_at,
+                        ends_at=interval.ends_at,
+                        primitive=ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+                        capability_id=capability.capability_id,
+                        purpose=(
+                            "Acquire required storage energy from forecast "
+                            "PV surplus"
+                        ),
+                        evidence_ids=tuple(
+                            dict.fromkeys(
+                                (requirement.requirement_id,)
+                                + interval.evidence_ids
+                                + (capability.capability_id,)
+                            )
+                        ),
+                        requested_power_w=None,
+                        charge_source_policy=ChargeSourcePolicy.PV_ONLY,
+                    )
+                )
+                storage_energy_wh += acquired_wh
+                projected_states.append(
+                    ProjectedEnergyState(
+                        at=interval.ends_at,
+                        confidence=min(
+                            storage.confidence,
+                            capability.confidence,
+                            requirement.confidence,
+                            interval.confidence,
+                        ),
+                        storage_energy_wh=storage_energy_wh,
+                    )
+                )
+                continue
+            deficit_wh = max(
+                0.0,
+                interval.household_load_forecast_energy_wh
+                + interval.known_future_demand_energy_wh
+                + interval.conversion_losses_wh
+                + interval.other_planned_household_energy_flows_wh
+                - interval.expected_usable_pv_energy_wh,
             )
-            storage_energy_wh += acquired_wh
+            storage_energy_wh = max(0.0, storage_energy_wh - deficit_wh)
+
+        if not segments:
+            continue
+        if projected_states[-1].at != requirement.required_by:
             projected_states.append(
                 ProjectedEnergyState(
-                    at=interval.ends_at,
-                    confidence=min(
-                        storage.confidence,
-                        capability.confidence,
-                        requirement.confidence,
-                        interval.confidence,
-                    ),
+                    at=requirement.required_by,
+                    confidence=confidence,
                     storage_energy_wh=storage_energy_wh,
                 )
             )
-            continue
-
-        deficit_wh = max(
-            0.0,
-            interval.household_load_forecast_energy_wh
-            + interval.known_future_demand_energy_wh
-            + interval.conversion_losses_wh
-            + interval.other_planned_household_energy_flows_wh
-            - interval.expected_usable_pv_energy_wh,
+        window_start = intervals[window_indexes[0]].starts_at
+        window_end = intervals[window_indexes[-1]].ends_at
+        path_id = _stable_id(
+            "energy-path",
+            f"{snapshot.snapshot_id}|{requirement.requirement_id}|"
+            f"pv-charge-only|{window_start.isoformat()}|{window_end.isoformat()}",
         )
-        storage_energy_wh = max(0.0, storage_energy_wh - deficit_wh)
+        path = EnergyPath(
+            run_id=snapshot.run_id,
+            snapshot_id=snapshot.snapshot_id,
+            path_id=path_id,
+            family="pv_charge_only",
+            segment_ids=tuple(segment.segment_id for segment in segments),
+            segments=tuple(segments),
+            projected_states=tuple(projected_states),
+        )
+        paths.append(path)
+        candidates.append(
+            Candidate(
+                run_id=snapshot.run_id,
+                snapshot_id=snapshot.snapshot_id,
+                candidate_id=_stable_id("candidate", path_id),
+                energy_path_id=path_id,
+                family=path.family,
+            )
+        )
 
-    if not segments:
+    if not candidates:
         return _not_available(
             snapshot,
             balance,
@@ -211,40 +301,6 @@ def construct_pv_charge_only_candidate(
             "pv_surplus_window_unavailable",
         )
 
-    confidence = min(
-        storage.confidence,
-        capability.confidence,
-        requirement.confidence,
-        *(interval.confidence for interval in intervals),
-    )
-    if not projected_states or projected_states[-1].at != requirement.required_by:
-        projected_states.append(
-            ProjectedEnergyState(
-                at=requirement.required_by,
-                confidence=confidence,
-                storage_energy_wh=storage_energy_wh,
-            )
-        )
-    path_id = _stable_id(
-        "energy-path",
-        f"{snapshot.snapshot_id}|{requirement.requirement_id}|pv-charge-only",
-    )
-    path = EnergyPath(
-        run_id=snapshot.run_id,
-        snapshot_id=snapshot.snapshot_id,
-        path_id=path_id,
-        family="pv_charge_only",
-        segment_ids=tuple(segment.segment_id for segment in segments),
-        segments=tuple(segments),
-        projected_states=tuple(projected_states),
-    )
-    candidate = Candidate(
-        run_id=snapshot.run_id,
-        snapshot_id=snapshot.snapshot_id,
-        candidate_id=_stable_id("candidate", path_id),
-        energy_path_id=path_id,
-        family=path.family,
-    )
     return CandidateSet(
         run_id=snapshot.run_id,
         snapshot_id=snapshot.snapshot_id,
@@ -252,8 +308,8 @@ def construct_pv_charge_only_candidate(
             "candidate-set",
             f"{snapshot.snapshot_id}|{requirement.requirement_id}|pv-charge-only",
         ),
-        candidates=(candidate,),
-        energy_paths=(path,),
+        candidates=tuple(candidates),
+        energy_paths=tuple(paths),
         projected_balances=(balance,),
         storage_requirements=(requirement,),
         derivation_status="constructed",

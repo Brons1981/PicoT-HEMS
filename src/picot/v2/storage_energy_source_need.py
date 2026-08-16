@@ -161,8 +161,8 @@ def derive_storage_energy_source_need(
     )
 
 
-def _whole_wh(value: float) -> str:
-    return str(int(round(value)))
+def _energy_kwh_nl(value_wh: float) -> str:
+    return f"{value_wh / 1000.0:.2f}".replace(".", ",") + " kWh"
 
 
 def explain_storage_energy_source_need_nl(
@@ -177,20 +177,20 @@ def explain_storage_energy_source_need_nl(
         raise ValueError("storage_name must not be empty")
     deadline = need.required_by.strftime("%H:%M")
     prefix = (
-        f"{name} mist {_whole_wh(need.energy_to_target_wh)} Wh om het "
-        f"geplande doel van {_whole_wh(need.target_energy_wh)} Wh te bereiken. "
+        f"{name} mist {_energy_kwh_nl(need.energy_to_target_wh)} om het "
+        f"geplande doel van {_energy_kwh_nl(need.target_energy_wh)} te bereiken. "
     )
     pv = (
-        f"Van de verwachte {_whole_wh(need.expected_usable_pv_energy_wh)} Wh "
-        f"PV blijft na {_whole_wh(need.household_load_forecast_energy_wh)} Wh "
-        f"huishoudverbruik {_whole_wh(need.pv_storage_contribution_wh)} Wh "
+        f"Van de verwachte {_energy_kwh_nl(need.expected_usable_pv_energy_wh)} "
+        f"PV blijft na {_energy_kwh_nl(need.household_load_forecast_energy_wh)} "
+        f"huishoudverbruik {_energy_kwh_nl(need.pv_storage_contribution_wh)} "
         "beschikbaar voor opslag. "
     )
     if need.status == "grid_support_required":
         return (
             prefix
             + pv
-            + f"Daardoor resteert {_whole_wh(need.grid_energy_required_wh)} Wh "
+            + f"Daardoor resteert {_energy_kwh_nl(need.grid_energy_required_wh)} "
             f"mogelijke netlaadbehoefte vóór {deadline}."
         )
     if need.status == "pv_only_feasible":
@@ -205,6 +205,6 @@ def explain_storage_energy_source_need_nl(
         return explanation
     return (
         f"{name} heeft het geplande doel van "
-        f"{_whole_wh(need.target_energy_wh)} Wh al bereikt; "
+        f"{_energy_kwh_nl(need.target_energy_wh)} al bereikt; "
         "er is geen aanvullende laadenergie nodig."
     )

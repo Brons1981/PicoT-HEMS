@@ -24,6 +24,8 @@ from picot.v2.live_pv_mode_strategy import (
     LivePVModeInput,
     LivePVModeStrategy,
 )
+from picot.v2.planning_input import PlanningInputBundle
+from picot.v2.projection import Card
 
 DispatchVendorMode = Callable[[str, str], str]
 SUPERVISOR_BASE_URL = "http://supervisor/core"
@@ -54,6 +56,90 @@ class LivePVCanaryResult:
     requested_vendor_mode: str | None
     reason: str
     normal_result: str
+
+
+@dataclass(frozen=True, slots=True)
+class LivePVRuntimeEvidence:
+    """Atomic live evidence needed by the canary strategy."""
+
+    current_vendor_mode: str
+    battery_power_w: float
+    observed_at: datetime
+    manual_override_active: bool
+
+
+def build_live_pv_mode_input(
+    run: CanonicalPipelineRun,
+    *,
+    evidence: LivePVRuntimeEvidence,
+    at: datetime,
+    live_enabled: bool,
+) -> LivePVModeInput:
+    """Combine the winning plan with one fresh live evidence sample."""
+    if at.tzinfo is None or at.utcoffset() is None:
+        raise ValueError("at must be timezone-aware")
+    age_seconds = max(0.0, (at - evidence.observed_at).total_seconds())
+    return LivePVModeInput(
+        now=at,
+        current_vendor_mode=evidence.current_vendor_mode,
+        charge_window_active=active_pv_charge_window(run, at=at),
+        battery_power_w=evidence.battery_power_w,
+        evidence_age_seconds=age_seconds,
+        manual_override_active=evidence.manual_override_active,
+        live_enabled=live_enabled,
+    )
+
+
+def live_pv_runtime_evidence(
+    bundle: PlanningInputBundle,
+) -> LivePVRuntimeEvidence | None:
+    """Extract fail-closed Zendure mode and signed-power evidence."""
+    provenance = bundle.snapshot.storage_mode_control_provenance
+    power_fact = next(
+        (
+            fact
+            for fact in bundle.facts
+            if fact.semantic_role == "storage_power_signed"
+            and fact.availability == "available"
+            and isinstance(fact.value, (int, float))
+            and not isinstance(fact.value, bool)
+            and fact.observed_at is not None
+        ),
+        None,
+    )
+    if provenance is None or power_fact is None:
+        return None
+    assert power_fact.observed_at is not None
+    power_value = power_fact.value
+    assert isinstance(power_value, (int, float))
+    assert not isinstance(power_value, bool)
+    return LivePVRuntimeEvidence(
+        current_vendor_mode=provenance.observed_vendor_mode,
+        battery_power_w=float(power_value),
+        observed_at=min(provenance.observed_at, power_fact.observed_at),
+        manual_override_active=provenance.manual_override_active,
+    )
+
+
+def project_live_pv_canary_result(
+    result: LivePVCanaryResult,
+    *,
+    captured_at: datetime,
+    live_enabled: bool,
+) -> Card:
+    """Project the exact canary outcome as one Dutch dashboard card."""
+    return Card(
+        "sensor.picot_v2_live_pv_canary",
+        result.status,
+        {
+            "captured_at": captured_at.isoformat(),
+            "requested_vendor_mode": result.requested_vendor_mode,
+            "reason": result.reason,
+            "normal_result": result.normal_result,
+            "control_change_allowed": live_enabled,
+            "observer_only": not live_enabled,
+        },
+    )
 
 
 @dataclass(slots=True)

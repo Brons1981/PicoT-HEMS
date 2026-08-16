@@ -397,12 +397,73 @@ class CanonicalPipeline:
         execution_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
+        due_segment = next(
+            (
+                segment
+                for plan in execution_plan_set.plans
+                for segment in plan.segments
+                if segment.starts_at <= snapshot.captured_at < segment.ends_at
+            ),
+            None,
+        )
+        mode_evidence = snapshot.storage_mode_capability_evidence
+        planned_vendor_mode: str | None = None
+        mapping_status = "not_assessed"
+        blockers: list[str] = []
+        if due_segment is not None and mode_evidence is not None:
+            matching_modes = tuple(
+                mapping.vendor_mode
+                for mapping in mode_evidence.mappings
+                if due_segment.primitive in mapping.primitives
+            )
+            if len(matching_modes) == 1:
+                planned_vendor_mode = matching_modes[0]
+                mapping_status = "validated"
+            else:
+                mapping_status = "unavailable"
+                blockers.append("primitive_vendor_mapping_unavailable")
+            if (
+                mode_evidence.current_vendor_mode
+                in mode_evidence.excluded_dynamic_vendor_modes
+            ):
+                blockers.insert(0, "current_vendor_mode_excluded")
+            blockers.extend(
+                (
+                    "manual_override_provenance_unverified",
+                    "observer_only_authority",
+                )
+            )
         primitive_boundary = ExecutionPrimitiveBoundary(
             run_id=run_id,
             snapshot_id=snapshot_id,
             request_id=None,
             execution_record_id=execution_record.execution_record_id,
-            status="not_emitted",
+            status=(
+                "dry_run_blocked"
+                if due_segment is not None and mode_evidence is not None
+                else "not_emitted"
+            ),
+            planned_primitive=(
+                due_segment.primitive if due_segment is not None else None
+            ),
+            mapping_status=mapping_status,
+            source_entity_id=(
+                mode_evidence.source_entity_id
+                if mode_evidence is not None
+                else None
+            ),
+            current_vendor_mode=(
+                mode_evidence.current_vendor_mode
+                if mode_evidence is not None
+                else None
+            ),
+            planned_vendor_mode=planned_vendor_mode,
+            mapping_method_version=(
+                mode_evidence.method_version
+                if mode_evidence is not None
+                else None
+            ),
+            blockers=tuple(blockers),
         )
         execution_primitive_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 

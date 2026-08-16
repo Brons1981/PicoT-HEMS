@@ -110,9 +110,12 @@ def derive_storage_energy_source_need(
         )
 
     projected_energy_wh = balance.intervals[-1].projected_storage_energy_wh
-    pv_storage_contribution_wh = max(
-        0.0,
-        projected_energy_wh - current_energy_wh,
+    pv_storage_contribution_wh = min(
+        energy_to_target_wh,
+        max(
+            0.0,
+            projected_energy_wh - current_energy_wh,
+        ),
     )
     grid_energy_required_wh = max(
         0.0,
@@ -191,12 +194,15 @@ def explain_storage_energy_source_need_nl(
             f"mogelijke netlaadbehoefte vóór {deadline}."
         )
     if need.status == "pv_only_feasible":
-        return (
+        explanation = (
             prefix
             + pv
             + f"De verwachte PV kan het geplande doel vóór {deadline} "
             "zonder netladen bereiken."
         )
+        if need.confidence == 0.0:
+            explanation += " Confidence is laag (0%)."
+        return explanation
     return (
         f"{name} heeft het geplande doel van "
         f"{_whole_wh(need.target_energy_wh)} Wh al bereikt; "

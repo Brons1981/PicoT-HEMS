@@ -152,6 +152,8 @@ class LiveStorageModeProvenanceRuntime:
         reset_id: str,
     ) -> StorageModeControlProvenance:
         current = self._require_current()
+        if not current.manual_override_active:
+            raise ValueError("no manual override is active")
         updated = reset_storage_mode_override(
             current,
             observed_vendor_mode=observed_vendor_mode,
@@ -160,6 +162,19 @@ class LiveStorageModeProvenanceRuntime:
         )
         self._commit(updated)
         return updated
+
+    def reset_current_manual_override(
+        self,
+        *,
+        reset_at: datetime,
+        reset_id: str,
+    ) -> StorageModeControlProvenance:
+        current = self._require_current()
+        return self.reset_manual_override(
+            observed_vendor_mode=current.observed_vendor_mode,
+            reset_at=reset_at,
+            reset_id=reset_id,
+        )
 
     def _load_current(self) -> StorageModeControlProvenance | None:
         if self._load_attempted:

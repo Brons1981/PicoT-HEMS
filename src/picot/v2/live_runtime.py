@@ -10,6 +10,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import asdict
+from datetime import UTC, datetime
 from hashlib import sha256
 from http.server import ThreadingHTTPServer
 from math import isfinite
@@ -950,6 +951,24 @@ def main() -> None:
     pv_actual_cache = LivePVActualCache()
     storage_mode_provenance_runtime = LiveStorageModeProvenanceRuntime(
         StorageModeProvenanceStore(STORAGE_MODE_PROVENANCE_PATH)
+    )
+    def reset_storage_mode_override(
+        reset_id: str,
+    ) -> dict[str, object]:
+        provenance = (
+            storage_mode_provenance_runtime.reset_current_manual_override(
+                reset_at=datetime.now(UTC),
+                reset_id=reset_id,
+            )
+        )
+        return {
+            "status": provenance.status,
+            "reset_id": provenance.reset_id,
+            "manual_override_active": provenance.manual_override_active,
+        }
+
+    web_view_store.set_storage_mode_override_reset(
+        reset_storage_mode_override
     )
     pv_sunset_local_timezone = str(
         options.get("pv_local_timezone", "Europe/Amsterdam")

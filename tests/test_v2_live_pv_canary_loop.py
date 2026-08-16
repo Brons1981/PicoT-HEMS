@@ -9,6 +9,7 @@ from picot.v2.live_pv_canary_runtime import (
     project_live_pv_canary_result,
 )
 from picot.v2.pipeline import CanonicalPipeline
+from picot.v2.web_ui import pipeline_result_nl
 
 
 def test_runtime_input_combines_winning_plan_and_fresh_live_evidence() -> None:
@@ -95,3 +96,13 @@ def test_observer_projection_never_claims_control_authority() -> None:
 
     assert card.attributes["control_change_allowed"] is False
     assert card.attributes["observer_only"] is True
+
+
+def test_live_canary_pipeline_card_uses_normal_dutch_result() -> None:
+    result = pipeline_result_nl(
+        stage=10,
+        state="dispatched",
+        attributes={"normal_result": "Zendure is naar NOM geschakeld."},
+    )
+
+    assert result == "Zendure is naar NOM geschakeld."

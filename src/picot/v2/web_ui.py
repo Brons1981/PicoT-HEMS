@@ -695,6 +695,16 @@ DASHBOARD_HTML = """<!doctype html>
         : "—";
     }
 
+    function formatEnergyKwh(valueWh) {
+      const numeric = Number(valueWh);
+      return Number.isFinite(numeric)
+        ? new Intl.NumberFormat(
+            "nl-NL",
+            { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+          ).format(numeric / 1000) + " kWh"
+        : "—";
+    }
+
     function appendAttribute(list, label, value, fullValue = value) {
       const row = document.createElement("div");
       row.className = "attribute";
@@ -845,32 +855,32 @@ DASHBOARD_HTML = """<!doctype html>
         if (need.status === "target_already_met") {
           summary.textContent =
             "Zendure batterij heeft het geplande doel van " +
-            displayValue(need.target_energy_wh) +
-            " Wh al bereikt; aanvullende laadenergie is niet nodig.";
+            formatEnergyKwh(need.target_energy_wh) +
+            " al bereikt; aanvullende laadenergie is niet nodig.";
         } else if (need.status === "pv_only_feasible") {
           summary.textContent =
             "Zendure batterij mist " +
-            displayValue(need.energy_to_target_wh) +
-            " Wh om het geplande doel van " +
-            displayValue(need.target_energy_wh) +
-            " Wh te bereiken. De verwachte PV kan dit vóór " +
+            formatEnergyKwh(need.energy_to_target_wh) +
+            " om het geplande doel van " +
+            formatEnergyKwh(need.target_energy_wh) +
+            " te bereiken. De verwachte PV kan dit vóór " +
             deadline +
             " zonder netladen bereiken.";
         } else {
           summary.textContent =
             "Zendure batterij mist " +
-            displayValue(need.energy_to_target_wh) +
-            " Wh om het geplande doel van " +
-            displayValue(need.target_energy_wh) +
-            " Wh te bereiken. Van de verwachte " +
-            displayValue(need.expected_usable_pv_energy_wh) +
-            " Wh PV blijft na " +
-            displayValue(need.household_load_forecast_energy_wh) +
-            " Wh huishoudverbruik " +
-            displayValue(need.pv_storage_contribution_wh) +
-            " Wh beschikbaar voor opslag. Daardoor resteert " +
-            displayValue(need.grid_energy_required_wh) +
-            " Wh mogelijke netlaadbehoefte vóór " +
+            formatEnergyKwh(need.energy_to_target_wh) +
+            " om het geplande doel van " +
+            formatEnergyKwh(need.target_energy_wh) +
+            " te bereiken. Van de verwachte " +
+            formatEnergyKwh(need.expected_usable_pv_energy_wh) +
+            " PV blijft na " +
+            formatEnergyKwh(need.household_load_forecast_energy_wh) +
+            " huishoudverbruik " +
+            formatEnergyKwh(need.pv_storage_contribution_wh) +
+            " beschikbaar voor opslag. Daardoor resteert " +
+            formatEnergyKwh(need.grid_energy_required_wh) +
+            " mogelijke netlaadbehoefte vóór " +
             deadline +
             ".";
         }

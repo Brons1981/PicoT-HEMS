@@ -151,26 +151,9 @@ def test_canonical_pipeline_exposes_baseline_timed_candidate_and_outcome() -> No
     assert outcome.requirement_satisfied is True
 
 
-def test_uncompared_alternatives_produce_no_winner_plan_or_dispatch() -> None:
-    run = CanonicalPipeline().run(planning_input=_snapshot())
-
-    assert run.evaluation.status == "not_compared"
-    assert run.evaluation.winning_candidate_id is None
-    assert run.evaluation.winning_energy_path_id is None
-    assert run.evaluation.reason == "candidate_outcomes_not_yet_comparable"
-    assert run.execution_plan_set.winning_energy_path_id is None
-    assert run.execution_plan_set.plan_ids == ()
-    assert run.execution_record.status == "no_evaluated_winner"
-    assert run.primitive_boundary.request_id is None
-    assert run.adapter_boundary.translation_id is None
-    assert run.vendor_result.command_id is None
-
-
-def test_projection_exposes_timed_window_and_explicit_evaluation_block() -> None:
+def test_projection_exposes_timed_candidate_window() -> None:
     projection = project(CanonicalPipeline().run(planning_input=_snapshot()))
     candidate_card = projection.cards[2]
-    evaluation_card = projection.cards[3]
-    plan_card = projection.cards[4]
 
     assert candidate_card.attributes["timed_storage_candidate_count"] == 1
     timed = candidate_card.attributes["timed_storage_candidates"][0]
@@ -183,10 +166,92 @@ def test_projection_exposes_timed_window_and_explicit_evaluation_block() -> None
     assert timed["grid_storage_contribution_kwh"] == pytest.approx(0.0)
     assert timed["storage_energy_at_requirement_kwh"] == pytest.approx(1.2)
     assert timed["confidence"] == pytest.approx(0.7)
-    assert evaluation_card.state == "not_compared"
-    assert evaluation_card.attributes["winning_candidate_id"] is None
-    assert evaluation_card.attributes["reason"] == (
-        "candidate_outcomes_not_yet_comparable"
+
+
+def test_evaluation_selects_requirement_satisfying_path_deterministically() -> None:
+    first = CanonicalPipeline().run(planning_input=_snapshot())
+    second = CanonicalPipeline().run(planning_input=_snapshot())
+
+    delegated = next(
+        candidate
+        for candidate in first.candidate_set.candidates
+        if candidate.family == "pv_charge_only"
     )
-    assert plan_card.state == "blocked"
-    assert plan_card.attributes["plan_count"] == 0
+    assert first.evaluation.status == "winner_selected"
+    assert first.evaluation.evaluated_candidate_ids == tuple(
+        candidate.candidate_id for candidate in first.candidate_set.candidates
+    )
+    assert first.evaluation.winning_candidate_id == delegated.candidate_id
+    assert first.evaluation.winning_energy_path_id == delegated.energy_path_id
+    assert first.evaluation.decisive_step == (
+        "hard_constraint:storage_requirement_satisfied"
+    )
+    assert first.evaluation.reason == (
+        "pv_charge_only satisfies the storage requirement using PV-only energy"
+    )
+    assert first.evaluation == second.evaluation
+
+
+def test_winning_delegated_path_becomes_unchanged_observer_plan() -> None:
+    run = CanonicalPipeline().run(planning_input=_snapshot())
+    winning_path = next(
+        path
+        for path in run.candidate_set.energy_paths
+        if path.path_id == run.evaluation.winning_energy_path_id
+    )
+
+    assert run.execution_plan_set.winning_energy_path_id == winning_path.path_id
+    assert len(run.execution_plan_set.plans) == 1
+    plan = run.execution_plan_set.plans[0]
+    assert plan.execution_scope_id == "home-battery"
+    assert plan.observer_only is True
+    assert plan.winning_candidate_id == run.evaluation.winning_candidate_id
+    assert plan.winning_energy_path_id == winning_path.path_id
+    assert len(plan.segments) == len(winning_path.segments)
+    for plan_segment, path_segment in zip(
+        plan.segments,
+        winning_path.segments,
+        strict=True,
+    ):
+        assert plan_segment.source_path_segment_id == path_segment.segment_id
+        assert plan_segment.starts_at == path_segment.starts_at
+        assert plan_segment.ends_at == path_segment.ends_at
+        assert plan_segment.primitive == path_segment.primitive
+        assert plan_segment.capability_id == path_segment.capability_id
+        assert plan_segment.requested_power_w is None
+        assert (
+            plan_segment.charge_source_policy
+            == path_segment.charge_source_policy
+        )
+
+    assert run.execution_record.status == "observer_only_plan_ready"
+    assert run.primitive_boundary.request_id is None
+    assert run.primitive_boundary.status == "not_emitted"
+    assert run.adapter_boundary.translation_id is None
+    assert run.adapter_boundary.status == "not_invoked"
+    assert run.vendor_result.command_id is None
+    assert run.vendor_result.status == "not_dispatched"
+
+
+def test_projection_explains_winner_and_observer_only_plan() -> None:
+    projection = project(CanonicalPipeline().run(planning_input=_snapshot()))
+    evaluation_card = projection.cards[3]
+    plan_card = projection.cards[4]
+
+    assert evaluation_card.state == "winner_selected"
+    assert evaluation_card.attributes["decisive_step"] == (
+        "hard_constraint:storage_requirement_satisfied"
+    )
+    assert evaluation_card.attributes["winning_family"] == "pv_charge_only"
+    assert evaluation_card.attributes["reason"] == (
+        "pv_charge_only satisfies the storage requirement using PV-only energy"
+    )
+    assert plan_card.state == "observer_only"
+    assert plan_card.attributes["plan_count"] == 1
+    planned = plan_card.attributes["plans"][0]
+    assert planned["execution_scope_id"] == "home-battery"
+    assert planned["observer_only"] is True
+    assert planned["segment_count"] == 1
+    assert planned["segments"][0]["primitive"] == "balance_charge_only"
+    assert planned["segments"][0]["charge_source_policy"] == "pv_only"
+    assert planned["segments"][0]["requested_power_w"] is None

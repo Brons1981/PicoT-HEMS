@@ -24,6 +24,8 @@ from picot.v2.contracts import (
     ExecutionPlanSet,
     ExecutionPrimitiveBoundary,
     ExecutionRecord,
+    ObserverExecutionPlan,
+    ObserverExecutionPlanSegment,
     PlanningInputSnapshot,
     VendorBoundaryResult,
 )
@@ -246,7 +248,7 @@ class CanonicalPipeline:
             derivation_status=derivation_status,
             derivation_reason=derivation_reason,
         )
-        has_uncompared_alternatives = bool(delegated_outcomes)
+        has_evaluated_alternatives = bool(delegated_outcomes)
         outcomes = CandidateOutcomeSet(
             run_id=run_id,
             snapshot_id=snapshot_id,
@@ -254,7 +256,7 @@ class CanonicalPipeline:
             outcome_set_id=_id("outcome-set", candidate_set.candidate_set_id),
             candidate_ids=(
                 tuple(item.candidate_id for item in delegated_outcomes)
-                if has_uncompared_alternatives
+                if has_evaluated_alternatives
                 else (candidate.candidate_id,)
             ),
             outcomes=tuple(delegated_outcomes),
@@ -262,37 +264,116 @@ class CanonicalPipeline:
         candidate_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
+        winning_outcome = (
+            min(
+                delegated_outcomes,
+                key=lambda item: (
+                    item.grid_storage_contribution_wh,
+                    -item.pv_storage_contribution_wh,
+                    item.conversion_losses_wh,
+                    -item.confidence,
+                    -item.recoverability,
+                    item.charge_window_starts_at,
+                    item.candidate_id,
+                ),
+            )
+            if has_evaluated_alternatives
+            else None
+        )
+        winning_candidate = (
+            next(
+                item
+                for item in candidate_set.candidates
+                if winning_outcome is not None
+                and item.candidate_id == winning_outcome.candidate_id
+            )
+            if winning_outcome is not None
+            else candidate
+        )
+        winning_path = next(
+            item
+            for item in candidate_set.energy_paths
+            if item.path_id == winning_candidate.energy_path_id
+        )
         evaluation = EvaluationRecord(
             run_id=run_id,
             snapshot_id=snapshot_id,
             evaluation_id=_id("evaluation", outcomes.outcome_set_id),
             candidate_set_id=candidate_set.candidate_set_id,
             winning_candidate_id=(
-                None if has_uncompared_alternatives else candidate.candidate_id
+                winning_candidate.candidate_id
             ),
             winning_energy_path_id=(
-                None if has_uncompared_alternatives else path.path_id
+                winning_path.path_id
             ),
             reason=(
-                "candidate_outcomes_not_yet_comparable"
-                if has_uncompared_alternatives
+                "pv_charge_only satisfies the storage requirement using PV-only energy"
+                if has_evaluated_alternatives
                 else "only technically valid bootstrap baseline candidate"
             ),
-            status=(
-                "not_compared"
-                if has_uncompared_alternatives
-                else "winner_selected"
+            status="winner_selected",
+            evaluated_candidate_ids=tuple(
+                item.candidate_id for item in candidate_set.candidates
+            ),
+            decisive_step=(
+                "hard_constraint:storage_requirement_satisfied"
+                if has_evaluated_alternatives
+                else "technical_validity:bootstrap_baseline"
             ),
         )
         evaluation_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
+        observer_plans: list[ObserverExecutionPlan] = []
+        for execution_scope_id in sorted(
+            {segment.execution_scope_id for segment in winning_path.segments}
+        ):
+            path_segments = tuple(
+                segment
+                for segment in winning_path.segments
+                if segment.execution_scope_id == execution_scope_id
+            )
+            plan_id = _id(
+                "execution-plan",
+                f"{evaluation.evaluation_id}|{winning_path.path_id}|{execution_scope_id}",
+            )
+            observer_plans.append(
+                ObserverExecutionPlan(
+                    plan_id=plan_id,
+                    evaluation_id=evaluation.evaluation_id,
+                    winning_candidate_id=winning_candidate.candidate_id,
+                    winning_energy_path_id=winning_path.path_id,
+                    execution_scope_id=execution_scope_id,
+                    observer_only=True,
+                    segments=tuple(
+                        ObserverExecutionPlanSegment(
+                            segment_id=_id(
+                                "execution-plan-segment",
+                                f"{plan_id}|{segment.segment_id}",
+                            ),
+                            source_path_segment_id=segment.segment_id,
+                            order=index,
+                            starts_at=segment.starts_at,
+                            ends_at=segment.ends_at,
+                            primitive=segment.primitive,
+                            capability_id=segment.capability_id,
+                            purpose=segment.purpose,
+                            evidence_ids=segment.evidence_ids,
+                            requested_power_w=segment.requested_power_w,
+                            charge_source_policy=segment.charge_source_policy,
+                        )
+                        for index, segment in enumerate(path_segments, start=1)
+                    ),
+                )
+            )
         execution_plan_set = ExecutionPlanSet(
             run_id=run_id,
             snapshot_id=snapshot_id,
             plan_set_id=_id("plan-set", evaluation.evaluation_id),
             evaluation_id=evaluation.evaluation_id,
             winning_energy_path_id=evaluation.winning_energy_path_id,
+            plan_ids=tuple(plan.plan_id for plan in observer_plans),
+            plans=tuple(observer_plans),
         )
         execution_plan_builder_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
@@ -303,13 +384,13 @@ class CanonicalPipeline:
             execution_record_id=_id("execution", execution_plan_set.plan_set_id),
             plan_set_id=execution_plan_set.plan_set_id,
             status=(
-                "no_evaluated_winner"
-                if has_uncompared_alternatives
+                "observer_only_plan_ready"
+                if observer_plans
                 else "no_due_segment"
             ),
             reason=(
-                "candidate outcomes require explicit Evaluation comparison"
-                if has_uncompared_alternatives
+                "winning path preserved as observer-only execution plan"
+                if observer_plans
                 else "bootstrap baseline contains no controllable segments"
             ),
         )

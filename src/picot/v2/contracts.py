@@ -8,7 +8,9 @@ from math import isfinite
 from typing import TYPE_CHECKING
 
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
+from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import PathSegment, ProjectedEnergyState
+from picot.domain.execution_primitive import ExecutionPrimitive
 
 if TYPE_CHECKING:
     from picot.v2.zendure_mode_capabilities import ZendureModeCapabilityEvidence
@@ -860,6 +862,34 @@ class EvaluationRecord:
     winning_energy_path_id: str | None
     reason: str
     status: str = "winner_selected"
+    evaluated_candidate_ids: tuple[str, ...] = ()
+    decisive_step: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ObserverExecutionPlanSegment:
+    segment_id: str
+    source_path_segment_id: str
+    order: int
+    starts_at: datetime
+    ends_at: datetime
+    primitive: ExecutionPrimitive
+    capability_id: str
+    purpose: str
+    evidence_ids: tuple[str, ...]
+    requested_power_w: float | None
+    charge_source_policy: ChargeSourcePolicy | None
+
+
+@dataclass(frozen=True, slots=True)
+class ObserverExecutionPlan:
+    plan_id: str
+    evaluation_id: str
+    winning_candidate_id: str
+    winning_energy_path_id: str
+    execution_scope_id: str
+    observer_only: bool
+    segments: tuple[ObserverExecutionPlanSegment, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -870,6 +900,11 @@ class ExecutionPlanSet:
     evaluation_id: str
     winning_energy_path_id: str | None
     plan_ids: tuple[str, ...] = ()
+    plans: tuple[ObserverExecutionPlan, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.plan_ids != tuple(plan.plan_id for plan in self.plans):
+            raise ValueError("Execution Plan IDs must match detailed plans")
 
 
 @dataclass(frozen=True, slots=True)

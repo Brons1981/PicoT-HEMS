@@ -439,6 +439,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         pv_sunset_source: SunsetReadResult,
         pv_sunset_local_timezone: str,
         pv_sunset_offsets: dict[str, float],
+        pv_attenuation_learning_result: object,
     ) -> None:
         del (
             price_config,
@@ -447,6 +448,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             pv_sunset_source,
             pv_sunset_local_timezone,
             pv_sunset_offsets,
+            pv_attenuation_learning_result,
         )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))
@@ -1104,4 +1106,4 @@ def test_main_feeds_visible_sunset_evidence_into_attenuation_ranges(
     assert derived.source_interval_id == "solcast-0900"
     assert derived.minutes_from_sunset == pytest.approx(-580.0)
     assert derived.status == "unavailable"
-    assert derived.unavailable_reason == "profile_missing"
+    assert derived.unavailable_reason == "profile_unavailable"

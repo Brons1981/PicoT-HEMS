@@ -79,6 +79,57 @@ def project(run: CanonicalPipelineRun) -> Projection:
         if requirement.storage_state_id in storage_states_by_id
         and requirement.projected_balance_id in projected_balances_by_id
     )
+    detailed_outcomes_by_candidate_id = {
+        outcome.candidate_id: outcome
+        for outcome in run.outcomes.outcomes
+    }
+    timed_storage_candidates = []
+    for candidate in c.candidates:
+        if candidate.family != "pv_charge_only":
+            continue
+        path = next(
+            (
+                item
+                for item in c.energy_paths
+                if item.path_id == candidate.energy_path_id
+            ),
+            None,
+        )
+        outcome = detailed_outcomes_by_candidate_id.get(candidate.candidate_id)
+        if path is None or not path.segments or outcome is None:
+            continue
+        segment = path.segments[0]
+        timed_storage_candidates.append(
+            {
+                "candidate_id": candidate.candidate_id,
+                "energy_path_id": path.path_id,
+                "family": candidate.family,
+                "primitive": segment.primitive.value,
+                "charge_source_policy": (
+                    segment.charge_source_policy.value
+                    if segment.charge_source_policy is not None
+                    else None
+                ),
+                "starts_at": outcome.charge_window_starts_at.isoformat(),
+                "ends_at": outcome.charge_window_ends_at.isoformat(),
+                "pv_storage_contribution_kwh": (
+                    outcome.pv_storage_contribution_wh / 1000.0
+                ),
+                "grid_storage_contribution_kwh": (
+                    outcome.grid_storage_contribution_wh / 1000.0
+                ),
+                "storage_energy_at_window_end_kwh": (
+                    outcome.storage_energy_at_window_end_wh / 1000.0
+                ),
+                "storage_energy_at_requirement_kwh": (
+                    outcome.storage_energy_at_requirement_wh / 1000.0
+                ),
+                "required_energy_kwh": outcome.required_energy_wh / 1000.0,
+                "requirement_satisfied": outcome.requirement_satisfied,
+                "recoverability": outcome.recoverability,
+                "confidence": outcome.confidence,
+            }
+        )
 
     cards = (
         Card(
@@ -220,6 +271,10 @@ def project(run: CanonicalPipelineRun) -> Projection:
             | {
                 "candidate_count": len(c.candidates),
                 "energy_path_ids": [path.path_id for path in c.energy_paths],
+                "timed_storage_candidate_count": len(
+                    timed_storage_candidates
+                ),
+                "timed_storage_candidates": timed_storage_candidates,
                 "projected_balance_count": len(
                     c.projected_balances
                 ),
@@ -393,16 +448,17 @@ def project(run: CanonicalPipelineRun) -> Projection:
         ),
         Card(
             "sensor.picot_v2_pipeline_04_evaluation_engine",
-            "winner_selected",
+            e.status,
             base(c.candidate_set_id, e.evaluation_id, "derived")
             | {
                 "winning_candidate_id": e.winning_candidate_id,
                 "winning_energy_path_id": e.winning_energy_path_id,
+                "reason": e.reason,
             },
         ),
         Card(
             "sensor.picot_v2_pipeline_05_execution_plan_builder",
-            "ready",
+            "blocked" if e.winning_candidate_id is None else "ready",
             base(e.evaluation_id, ps.plan_set_id, "derived")
             | {"plan_count": len(ps.plan_ids)},
         ),

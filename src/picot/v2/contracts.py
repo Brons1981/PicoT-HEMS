@@ -856,9 +856,10 @@ class EvaluationRecord:
     snapshot_id: str
     evaluation_id: str
     candidate_set_id: str
-    winning_candidate_id: str
-    winning_energy_path_id: str
+    winning_candidate_id: str | None
+    winning_energy_path_id: str | None
     reason: str
+    status: str = "winner_selected"
 
 
 @dataclass(frozen=True, slots=True)
@@ -867,7 +868,7 @@ class ExecutionPlanSet:
     snapshot_id: str
     plan_set_id: str
     evaluation_id: str
-    winning_energy_path_id: str
+    winning_energy_path_id: str | None
     plan_ids: tuple[str, ...] = ()
 
 

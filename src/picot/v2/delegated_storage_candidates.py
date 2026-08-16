@@ -223,11 +223,15 @@ def construct_pv_charge_only_candidate(
             requirement,
             "balance_charge_only_unavailable",
         )
+    # Ordinary PV acquisition needs the bidirectional delegated controller so
+    # short household-load changes are absorbed without a PicoT mode flip.
+    # Charge-only remains a distinct capability for an explicit non-discharge
+    # purpose (for example a later EV-charging override).
     planned_primitive = (
-        ExecutionPrimitive.BALANCE_CHARGE_ONLY
-        if ExecutionPrimitive.BALANCE_CHARGE_ONLY
+        ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+        if ExecutionPrimitive.BALANCE_BIDIRECTIONAL
         in capability.supported_primitives
-        else ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+        else ExecutionPrimitive.BALANCE_CHARGE_ONLY
     )
 
     intervals = tuple(

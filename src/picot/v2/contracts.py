@@ -67,10 +67,14 @@ class PVEnergyTimelineInterval:
         if self.pv_energy_wh < 0.0:
             raise ValueError("pv_energy_wh must not be negative")
         if self.forecast_range_status not in ("available", "unavailable"):
-            raise ValueError("forecast_range_status must be available or unavailable")
+            raise ValueError(
+                "forecast_range_status must be available or unavailable"
+            )
         if self.forecast_range_status == "available":
             if self.evidence_type != "FORECAST":
-                raise ValueError("available forecast range requires FORECAST evidence")
+                raise ValueError(
+                    "available forecast range requires FORECAST evidence"
+                )
             forecast_values = (
                 self.forecast_lower_energy_wh,
                 self.forecast_central_energy_wh,
@@ -78,30 +82,55 @@ class PVEnergyTimelineInterval:
             )
             if any(value is None for value in forecast_values):
                 raise ValueError(
-                    "available forecast range requires lower, central, and upper energy"
+                    "available forecast range requires lower, central, "
+                    "and upper energy"
                 )
             lower, central, upper = forecast_values
             assert lower is not None
             assert central is not None
             assert upper is not None
             if not 0.0 <= lower <= central <= upper:
-                raise ValueError("forecast range must satisfy 0 <= lower <= central <= upper")
+                raise ValueError(
+                    "forecast range must satisfy "
+                    "0 <= lower <= central <= upper"
+                )
             if central != self.pv_energy_wh:
-                raise ValueError("forecast central energy must equal pv_energy_wh")
+                raise ValueError(
+                    "forecast central energy must equal pv_energy_wh"
+                )
             if not self.forecast_range_source_fields:
-                raise ValueError("available forecast range requires source fields")
+                raise ValueError(
+                    "available forecast range requires source fields"
+                )
             if not self.forecast_range_method_version:
-                raise ValueError("available forecast range requires method version")
+                raise ValueError(
+                    "available forecast range requires method version"
+                )
         if self.evidence_type not in ("ACTUAL", "FORECAST", "MIXED"):
-            raise ValueError("evidence_type must be ACTUAL, FORECAST, or MIXED")
-        if self.evidence_type == "ACTUAL" and not self.actual_evidence_ids:
-            raise ValueError("ACTUAL interval requires actual evidence")
-        if self.evidence_type == "FORECAST" and not self.forecast_evidence_ids:
-            raise ValueError("FORECAST interval requires forecast evidence")
-        if self.evidence_type == "MIXED" and (
-            not self.actual_evidence_ids or not self.forecast_evidence_ids
+            raise ValueError(
+                "evidence_type must be ACTUAL, FORECAST, or MIXED"
+            )
+        if (
+            self.evidence_type == "ACTUAL"
+            and not self.actual_evidence_ids
         ):
-            raise ValueError("MIXED interval requires actual and forecast evidence")
+            raise ValueError(
+                "ACTUAL interval requires actual evidence"
+            )
+        if (
+            self.evidence_type == "FORECAST"
+            and not self.forecast_evidence_ids
+        ):
+            raise ValueError(
+                "FORECAST interval requires forecast evidence"
+            )
+        if self.evidence_type == "MIXED" and (
+            not self.actual_evidence_ids
+            or not self.forecast_evidence_ids
+        ):
+            raise ValueError(
+                "MIXED interval requires actual and forecast evidence"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,7 +147,9 @@ class PVEnergyTimeline:
             strict=False,
         ):
             if current.starts_at < previous.starts_at:
-                raise ValueError("intervals must be chronologically ordered")
+                raise ValueError(
+                    "intervals must be chronologically ordered"
+                )
             if current.starts_at < previous.ends_at:
                 raise ValueError("intervals must not overlap")
 
@@ -153,7 +184,9 @@ class PVAttenuationObservation:
     solar_evidence_id: str = "solar-evidence-unavailable"
     solar_observed_at: datetime | None = None
     sunset_at: datetime | None = None
-    solar_alignment_method_version: str = "solar-alignment-unavailable"
+    solar_alignment_method_version: str = (
+        "solar-alignment-unavailable"
+    )
 
     def __post_init__(self) -> None:
         datetimes = (
@@ -161,8 +194,13 @@ class PVAttenuationObservation:
             self.ends_at,
             self.forecast_captured_at,
         )
-        if any(value.tzinfo is None or value.utcoffset() is None for value in datetimes):
-            raise ValueError("observation datetimes must be timezone-aware")
+        if any(
+            value.tzinfo is None or value.utcoffset() is None
+            for value in datetimes
+        ):
+            raise ValueError(
+                "observation datetimes must be timezone-aware"
+            )
         if self.starts_at >= self.ends_at:
             raise ValueError("starts_at must be before ends_at")
         forecast_values = (
@@ -177,33 +215,60 @@ class PVAttenuationObservation:
             <= self.forecast_central_energy_wh
             <= self.forecast_upper_energy_wh
         ):
-            raise ValueError("forecast range must satisfy 0 <= lower <= central <= upper")
-        if not isfinite(self.actual_energy_wh) or self.actual_energy_wh < 0.0:
-            raise ValueError("actual_energy_wh must not be negative")
+            raise ValueError(
+                "forecast range must satisfy "
+                "0 <= lower <= central <= upper"
+            )
+        if (
+            not isfinite(self.actual_energy_wh)
+            or self.actual_energy_wh < 0.0
+        ):
+            raise ValueError(
+                "actual_energy_wh must not be negative"
+            )
         if not 0.0 <= self.forecast_confidence <= 1.0:
-            raise ValueError("forecast_confidence must be between 0 and 1")
+            raise ValueError(
+                "forecast_confidence must be between 0 and 1"
+            )
         if not 0.0 <= self.actual_confidence <= 1.0:
-            raise ValueError("actual_confidence must be between 0 and 1")
+            raise ValueError(
+                "actual_confidence must be between 0 and 1"
+            )
         if (
             not isfinite(self.solar_azimuth_degrees)
             or not 0.0 <= self.solar_azimuth_degrees <= 360.0
         ):
-            raise ValueError("solar_azimuth_degrees must be between 0 and 360")
+            raise ValueError(
+                "solar_azimuth_degrees must be between 0 and 360"
+            )
         if (
             not isfinite(self.solar_elevation_degrees)
             or not -90.0 <= self.solar_elevation_degrees <= 90.0
         ):
-            raise ValueError("solar_elevation_degrees must be between -90 and 90")
+            raise ValueError(
+                "solar_elevation_degrees must be between -90 and 90"
+            )
         if not isfinite(self.minutes_from_sunset):
             raise ValueError("minutes_from_sunset must be finite")
         solar_datetimes = (self.solar_observed_at, self.sunset_at)
-        if self.solar_observed_at is not None and self.sunset_at is None:
-            raise ValueError("solar observation requires sunset_at")
+        if (
+            self.solar_observed_at is not None
+            and self.sunset_at is None
+        ):
+            raise ValueError(
+                "solar observation requires sunset_at"
+            )
         if any(
-            value is not None and (value.tzinfo is None or value.utcoffset() is None)
+            value is not None
+            and (
+                value.tzinfo is None
+                or value.utcoffset() is None
+            )
             for value in solar_datetimes
         ):
-            raise ValueError("solar lineage datetimes must be timezone-aware")
+            raise ValueError(
+                "solar lineage datetimes must be timezone-aware"
+            )
         if not self.solar_evidence_id.strip():
             raise ValueError("solar evidence must be explicit")
         if not self.forecast_evidence_ids:
@@ -211,19 +276,35 @@ class PVAttenuationObservation:
         if not self.actual_evidence_ids:
             raise ValueError("actual evidence must be explicit")
         if self.alignment_status not in ("aligned", "unaligned"):
-            raise ValueError("alignment_status must be aligned or unaligned")
+            raise ValueError(
+                "alignment_status must be aligned or unaligned"
+            )
         if self.coverage_status not in ("complete", "partial"):
-            raise ValueError("coverage_status must be complete or partial")
+            raise ValueError(
+                "coverage_status must be complete or partial"
+            )
         if self.eligibility_status not in (
             "unassessed",
             "eligible",
             "rejected",
         ):
-            raise ValueError("eligibility_status must be unassessed, eligible, or rejected")
-        if self.eligibility_status == "unassessed" and not self.eligibility_reason:
-            raise ValueError("unassessed observation requires eligibility_reason")
-        if self.eligibility_status == "rejected" and not self.eligibility_reason:
-            raise ValueError("rejected observation requires eligibility_reason")
+            raise ValueError(
+                "eligibility_status must be unassessed, eligible, or rejected"
+            )
+        if (
+            self.eligibility_status == "unassessed"
+            and not self.eligibility_reason
+        ):
+            raise ValueError(
+                "unassessed observation requires eligibility_reason"
+            )
+        if (
+            self.eligibility_status == "rejected"
+            and not self.eligibility_reason
+        ):
+            raise ValueError(
+                "rejected observation requires eligibility_reason"
+            )
         versions = (
             self.forecast_mapping_version,
             self.forecast_conversion_method_version,
@@ -261,39 +342,72 @@ class PVAttenuationBucket:
         if (
             not isfinite(self.sunset_offset_starts_minutes)
             or not isfinite(self.sunset_offset_ends_minutes)
-            or self.sunset_offset_starts_minutes >= self.sunset_offset_ends_minutes
+            or self.sunset_offset_starts_minutes
+            >= self.sunset_offset_ends_minutes
         ):
-            raise ValueError("sunset offset start must be before end")
-        if not isfinite(self.attenuation_factor) or not 0.0 <= self.attenuation_factor <= 1.0:
-            raise ValueError("attenuation_factor must be between 0 and 1")
+            raise ValueError(
+                "sunset offset start must be before end"
+            )
+        if (
+            not isfinite(self.attenuation_factor)
+            or not 0.0 <= self.attenuation_factor <= 1.0
+        ):
+            raise ValueError(
+                "attenuation_factor must be between 0 and 1"
+            )
         if self.sample_count < 0:
             raise ValueError("sample_count must not be negative")
-        if self.distinct_day_count < 0 or self.distinct_day_count > self.sample_count:
-            raise ValueError("distinct_day_count must not exceed sample_count")
+        if (
+            self.distinct_day_count < 0
+            or self.distinct_day_count > self.sample_count
+        ):
+            raise ValueError(
+                "distinct_day_count must not exceed sample_count"
+            )
         if not isfinite(self.dispersion) or self.dispersion < 0.0:
             raise ValueError("dispersion must not be negative")
-        if not isfinite(self.profile_confidence) or not 0.0 <= self.profile_confidence <= 1.0:
-            raise ValueError("profile_confidence must be between 0 and 1")
+        if (
+            not isfinite(self.profile_confidence)
+            or not 0.0 <= self.profile_confidence <= 1.0
+        ):
+            raise ValueError(
+                "profile_confidence must be between 0 and 1"
+            )
         datetimes = (
             self.evidence_starts_at,
             self.evidence_ends_at,
             self.updated_at,
         )
-        if any(value.tzinfo is None or value.utcoffset() is None for value in datetimes):
+        if any(
+            value.tzinfo is None or value.utcoffset() is None
+            for value in datetimes
+        ):
             raise ValueError("bucket datetimes must be timezone-aware")
         if self.evidence_starts_at >= self.evidence_ends_at:
-            raise ValueError("evidence_starts_at must be before evidence_ends_at")
+            raise ValueError(
+                "evidence_starts_at must be before evidence_ends_at"
+            )
         if self.status not in ("available", "unavailable"):
-            raise ValueError("bucket status must be available or unavailable")
+            raise ValueError(
+                "bucket status must be available or unavailable"
+            )
         if self.status == "unavailable":
             if not self.unavailable_reason:
-                raise ValueError("unavailable bucket requires unavailable_reason")
+                raise ValueError(
+                    "unavailable bucket requires unavailable_reason"
+                )
             if self.attenuation_factor != 1.0:
-                raise ValueError("unavailable bucket must use attenuation_factor 1")
+                raise ValueError(
+                    "unavailable bucket must use attenuation_factor 1"
+                )
         if not self.aggregation_method_version.strip():
-            raise ValueError("aggregation_method_version must be explicit")
+            raise ValueError(
+                "aggregation_method_version must be explicit"
+            )
         if not self.configuration_version.strip():
-            raise ValueError("configuration_version must be explicit")
+            raise ValueError(
+                "configuration_version must be explicit"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,31 +429,56 @@ class PVForecastAttenuationProfile:
             self.valid_until,
             self.updated_at,
         )
-        if any(value.tzinfo is None or value.utcoffset() is None for value in datetimes):
+        if any(
+            value.tzinfo is None or value.utcoffset() is None
+            for value in datetimes
+        ):
             raise ValueError("profile datetimes must be timezone-aware")
         if self.valid_from >= self.valid_until:
             raise ValueError("valid_from must be before valid_until")
         if not self.observer_only:
-            raise ValueError("attenuation profile must remain observer-only")
+            raise ValueError(
+                "attenuation profile must remain observer-only"
+            )
         if self.status not in ("available", "unavailable"):
-            raise ValueError("profile status must be available or unavailable")
+            raise ValueError(
+                "profile status must be available or unavailable"
+            )
         if self.status == "unavailable" and not self.unavailable_reason:
-            raise ValueError("unavailable profile requires unavailable_reason")
+            raise ValueError(
+                "unavailable profile requires unavailable_reason"
+            )
         if self.status == "available" and not self.buckets:
-            raise ValueError("available profile requires attenuation buckets")
+            raise ValueError(
+                "available profile requires attenuation buckets"
+            )
         for previous, current in zip(
             self.buckets,
             self.buckets[1:],
             strict=False,
         ):
-            if current.sunset_offset_starts_minutes < previous.sunset_offset_starts_minutes:
-                raise ValueError("profile buckets must be chronologically ordered")
-            if current.sunset_offset_starts_minutes < previous.sunset_offset_ends_minutes:
-                raise ValueError("profile buckets must not overlap")
+            if (
+                current.sunset_offset_starts_minutes
+                < previous.sunset_offset_starts_minutes
+            ):
+                raise ValueError(
+                    "profile buckets must be chronologically ordered"
+                )
+            if (
+                current.sunset_offset_starts_minutes
+                < previous.sunset_offset_ends_minutes
+            ):
+                raise ValueError(
+                    "profile buckets must not overlap"
+                )
         if any(
-            bucket.installation_scope_id != self.installation_scope_id for bucket in self.buckets
+            bucket.installation_scope_id
+            != self.installation_scope_id
+            for bucket in self.buckets
         ):
-            raise ValueError("bucket installation scope must match profile")
+            raise ValueError(
+                "bucket installation scope must match profile"
+            )
         if not self.method_version.strip():
             raise ValueError("method_version must be explicit")
 
@@ -377,15 +516,21 @@ class HouseholdLoadForecast:
     fallback_reason: str | None
 
     def __post_init__(self) -> None:
-        if self.fallback_active and not (self.fallback_reason and self.fallback_reason.strip()):
-            raise ValueError("fallback_reason is required when fallback is active")
+        if self.fallback_active and not (
+            self.fallback_reason and self.fallback_reason.strip()
+        ):
+            raise ValueError(
+                "fallback_reason is required when fallback is active"
+            )
         for previous, current in zip(
             self.intervals,
             self.intervals[1:],
             strict=False,
         ):
             if current.starts_at < previous.starts_at:
-                raise ValueError("intervals must be chronologically ordered")
+                raise ValueError(
+                    "intervals must be chronologically ordered"
+                )
             if current.starts_at < previous.ends_at:
                 raise ValueError("intervals must not overlap")
 
@@ -416,22 +561,29 @@ class PlanningInputSnapshot:
         if self.pv_energy_timeline is not None:
             if self.pv_energy_timeline.run_id != self.run_id:
                 raise ValueError(
-                    "PV energy timeline run_id must match planning input snapshot run_id"
+                    "PV energy timeline run_id must match "
+                    "planning input snapshot run_id"
                 )
             if self.pv_energy_timeline.snapshot_id != self.snapshot_id:
                 raise ValueError(
-                    "PV energy timeline snapshot_id must match planning input snapshot snapshot_id"
+                    "PV energy timeline snapshot_id must match "
+                    "planning input snapshot snapshot_id"
                 )
         if self.household_load_forecast is not None and (
             self.household_load_forecast.run_id != self.run_id
             or self.household_load_forecast.snapshot_id != self.snapshot_id
         ):
-            raise ValueError("Household load forecast lineage must match planning input")
+            raise ValueError(
+                "Household load forecast lineage must match planning input"
+            )
         if (
             self.storage_mode_capability_evidence is not None
-            and self.storage_mode_capability_evidence.captured_at != self.captured_at
+            and self.storage_mode_capability_evidence.captured_at
+            != self.captured_at
         ):
-            raise ValueError("storage mode capability evidence must share snapshot capture time")
+            raise ValueError(
+                "storage mode capability evidence must share snapshot capture time"
+            )
 
 
 @dataclass(frozen=True, slots=True)

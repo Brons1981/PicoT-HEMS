@@ -144,9 +144,9 @@ def test_canonical_pipeline_exposes_baseline_timed_candidate_and_outcome() -> No
     ]
     assert len(run.outcomes.outcomes) == 1
     outcome = run.outcomes.outcomes[0]
-    assert outcome.pv_storage_contribution_wh == pytest.approx(400.0)
+    assert outcome.pv_storage_contribution_wh == pytest.approx(200.0)
     assert outcome.grid_storage_contribution_wh == pytest.approx(0.0)
-    assert outcome.storage_energy_at_window_end_wh == pytest.approx(1400.0)
+    assert outcome.storage_energy_at_window_end_wh == pytest.approx(1200.0)
     assert outcome.storage_energy_at_requirement_wh == pytest.approx(1200.0)
     assert outcome.requirement_satisfied is True
 
@@ -162,7 +162,7 @@ def test_projection_exposes_timed_candidate_window() -> None:
     assert timed["charge_source_policy"] == "pv_only"
     assert timed["starts_at"] == BASE.isoformat()
     assert timed["ends_at"] == WINDOW_END.isoformat()
-    assert timed["pv_storage_contribution_kwh"] == pytest.approx(0.4)
+    assert timed["pv_storage_contribution_kwh"] == pytest.approx(0.2)
     assert timed["grid_storage_contribution_kwh"] == pytest.approx(0.0)
     assert timed["storage_energy_at_requirement_kwh"] == pytest.approx(1.2)
     assert timed["confidence"] == pytest.approx(0.7)

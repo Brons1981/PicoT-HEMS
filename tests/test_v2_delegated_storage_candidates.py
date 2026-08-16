@@ -242,7 +242,7 @@ def test_candidate_projects_window_end_and_later_requirement_energy() -> None:
     assert all(state.confidence == pytest.approx(0.7) for state in states)
 
 
-def test_missing_charge_only_capability_excludes_only_this_alternative() -> None:
+def test_bidirectional_balance_capability_supports_pv_charge_alternative() -> None:
     candidate_set = _construct(
         _snapshot(
             _capability_set(
@@ -251,7 +251,9 @@ def test_missing_charge_only_capability_excludes_only_this_alternative() -> None
         )
     )
 
-    assert candidate_set.derivation_status == "not_available"
-    assert candidate_set.derivation_reason == "balance_charge_only_unavailable"
-    assert candidate_set.candidates == ()
-    assert candidate_set.energy_paths == ()
+    assert candidate_set.derivation_status == "constructed"
+    assert candidate_set.derivation_reason is None
+    assert len(candidate_set.candidates) == 1
+    assert candidate_set.energy_paths[0].segments[0].primitive is (
+        ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+    )

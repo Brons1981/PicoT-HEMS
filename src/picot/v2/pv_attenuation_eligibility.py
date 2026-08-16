@@ -139,6 +139,8 @@ def _target_quality_rejection(
         return "interval_unaligned"
     if observation.coverage_status != "complete":
         return "actual_coverage_incomplete"
+    if observation.solar_elevation_degrees <= 0.0:
+        return "sun_below_horizon"
     if (
         observation.forecast_central_energy_wh
         < config.minimum_forecast_energy_wh

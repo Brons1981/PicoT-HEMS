@@ -10,11 +10,19 @@ from picot.v2.planning_input import (
     HouseholdLoadObservation,
     PlanningInputBundle,
 )
+from picot.v2.zendure_mode_capabilities import (
+    derive_zendure_mode_capability_evidence,
+)
 
 BASE = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 
 
-def _bundle(*, captured_at: datetime, price: float) -> PlanningInputBundle:
+def _bundle(
+    *,
+    captured_at: datetime,
+    price: float,
+    storage_mode: str | None = None,
+) -> PlanningInputBundle:
     point = PriceForecastPoint(
         point_id="price-1",
         starts_at=BASE,
@@ -33,6 +41,20 @@ def _bundle(*, captured_at: datetime, price: float) -> PlanningInputBundle:
         strategy_id="strategy:no-objectives:v1",
         horizon_end=BASE + timedelta(hours=1),
         price_points=(point,),
+        storage_mode_capability_evidence=(
+            derive_zendure_mode_capability_evidence(
+                {
+                    "state": storage_mode,
+                    "attributes": {"options": ["Standby", "Nul op de meter"]},
+                },
+                captured_at=captured_at,
+                source_entity_id="input_select.zendure_mode",
+                capability_id="storage-capability-home-battery",
+                execution_scope_id="home-battery",
+            )
+            if storage_mode is not None
+            else None
+        ),
     )
     fact = CanonicalInputFact(
         fact_id=f"fact-{captured_at.isoformat()}",
@@ -99,6 +121,21 @@ def test_poll_cycle_executes_when_fresh_input_changed() -> None:
     assert result == _planning_input_signature(changed)
 
 
+def test_poll_cycle_executes_when_only_storage_mode_changed() -> None:
+    first = _bundle(
+        captured_at=BASE,
+        price=0.20,
+        storage_mode="Standby",
+    )
+    changed = _bundle(
+        captured_at=BASE + timedelta(minutes=1),
+        price=0.20,
+        storage_mode="Nul op de meter",
+    )
+
+    assert _planning_input_signature(first) != _planning_input_signature(changed)
+
+
 def test_live_history_uses_persistent_addon_data_path() -> None:
     assert live_runtime.HOUSEHOLD_LOAD_HISTORY_PATH == Path(
         "/data/picot_v2_household_load_history.jsonl"
@@ -117,9 +154,7 @@ def test_poll_cycle_persists_observation_when_execution_is_skipped() -> None:
     result = _poll_live_cycle(
         previous_signature=_planning_input_signature(first),
         load_bundle=lambda: fresh,
-        execute=lambda bundle: executed.append(
-            bundle.snapshot.run_id
-        ),
+        execute=lambda bundle: executed.append(bundle.snapshot.run_id),
         persist_observation=persisted.append,
     )
 
@@ -141,9 +176,7 @@ def test_history_write_failure_does_not_stop_pipeline_cycle() -> None:
     result = _poll_live_cycle(
         previous_signature=None,
         load_bundle=lambda: fresh,
-        execute=lambda bundle: executed.append(
-            bundle.snapshot.run_id
-        ),
+        execute=lambda bundle: executed.append(bundle.snapshot.run_id),
         persist_observation=fail_persistence,
     )
 
@@ -151,8 +184,7 @@ def test_history_write_failure_does_not_stop_pipeline_cycle() -> None:
     assert result == _planning_input_signature(fresh)
 
 
-def test_poll_cycle_prepares_actual_pv_before_signature_and_execution(
-) -> None:
+def test_poll_cycle_prepares_actual_pv_before_signature_and_execution() -> None:
     loaded = _bundle(captured_at=BASE, price=0.20)
     enriched = _bundle(
         captured_at=BASE + timedelta(minutes=1),

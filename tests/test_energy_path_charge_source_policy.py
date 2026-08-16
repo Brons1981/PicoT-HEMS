@@ -55,3 +55,24 @@ def test_non_charging_segment_rejects_charge_source_policy() -> None:
             primitive=ExecutionPrimitive.DISCHARGE_AT_POWER,
             charge_source_policy=ChargeSourcePolicy.PV_ONLY,
         )
+
+
+def test_v2adr050_delegated_charge_window_preserves_pv_source_policy() -> None:
+    segment = PathSegment(
+        segment_id="segment-delegated-pv",
+        order=1,
+        execution_scope_id="battery-main",
+        starts_at=NOW,
+        ends_at=NOW + timedelta(hours=1),
+        primitive=ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+        capability_id="battery-balance-control",
+        purpose="Acquire required storage energy from forecast PV surplus",
+        evidence_ids=("pv-window-1", "storage-requirement-1"),
+        requested_power_w=None,
+        charge_source_policy=ChargeSourcePolicy.PV_ONLY,
+    )
+
+    assert segment.starts_at == NOW
+    assert segment.ends_at == NOW + timedelta(hours=1)
+    assert segment.requested_power_w is None
+    assert segment.charge_source_policy is ChargeSourcePolicy.PV_ONLY

@@ -444,6 +444,8 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         live_pv_canary_enabled: bool,
         live_pv_canary_target_entity: str,
         storage_mode_provenance_runtime: object,
+        canonical_execution_runtime: object,
+        canonical_execution_enabled: bool,
     ) -> None:
         del (
             price_config,
@@ -457,6 +459,8 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             live_pv_canary_enabled,
             live_pv_canary_target_entity,
             storage_mode_provenance_runtime,
+            canonical_execution_runtime,
+            canonical_execution_enabled,
         )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))

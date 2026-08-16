@@ -45,7 +45,9 @@ def _bundle(
             derive_zendure_mode_capability_evidence(
                 {
                     "state": storage_mode,
-                    "attributes": {"options": ["Standby", "Nul op de meter"]},
+                    "attributes": {
+                        "options": ["Standby", "Nul op de meter"]
+                    },
                 },
                 captured_at=captured_at,
                 source_entity_id="input_select.zendure_mode",
@@ -154,7 +156,9 @@ def test_poll_cycle_persists_observation_when_execution_is_skipped() -> None:
     result = _poll_live_cycle(
         previous_signature=_planning_input_signature(first),
         load_bundle=lambda: fresh,
-        execute=lambda bundle: executed.append(bundle.snapshot.run_id),
+        execute=lambda bundle: executed.append(
+            bundle.snapshot.run_id
+        ),
         persist_observation=persisted.append,
     )
 
@@ -176,7 +180,9 @@ def test_history_write_failure_does_not_stop_pipeline_cycle() -> None:
     result = _poll_live_cycle(
         previous_signature=None,
         load_bundle=lambda: fresh,
-        execute=lambda bundle: executed.append(bundle.snapshot.run_id),
+        execute=lambda bundle: executed.append(
+            bundle.snapshot.run_id
+        ),
         persist_observation=fail_persistence,
     )
 
@@ -184,7 +190,8 @@ def test_history_write_failure_does_not_stop_pipeline_cycle() -> None:
     assert result == _planning_input_signature(fresh)
 
 
-def test_poll_cycle_prepares_actual_pv_before_signature_and_execution() -> None:
+def test_poll_cycle_prepares_actual_pv_before_signature_and_execution(
+) -> None:
     loaded = _bundle(captured_at=BASE, price=0.20)
     enriched = _bundle(
         captured_at=BASE + timedelta(minutes=1),

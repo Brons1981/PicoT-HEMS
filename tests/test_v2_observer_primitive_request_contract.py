@@ -43,7 +43,7 @@ def test_due_planner_owned_plan_creates_stable_observer_request() -> None:
     assert request.planned_primitive is ExecutionPrimitive.BALANCE_CHARGE_ONLY
     assert request.blockers == ("observer_only_authority",)
     assert first.adapter_boundary.status == "observer_translation_ready"
-    assert first.vendor_result.status == "not_dispatched"
+    assert first.vendor_result.status == "observer_dispatch_ready"
 
 
 def test_manual_override_prevents_primitive_request_creation() -> None:

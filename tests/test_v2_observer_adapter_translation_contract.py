@@ -29,7 +29,7 @@ def test_ready_primitive_request_gets_stable_observer_translation() -> None:
     )
     assert translation.status == "observer_translation_ready"
     assert first.vendor_result.command_id is None
-    assert first.vendor_result.status == "not_dispatched"
+    assert first.vendor_result.status == "observer_dispatch_ready"
 
 
 def test_manual_override_keeps_adapter_not_invoked() -> None:

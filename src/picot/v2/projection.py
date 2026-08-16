@@ -599,7 +599,25 @@ def project(run: CanonicalPipelineRun) -> Projection:
         Card(
             "sensor.picot_v2_pipeline_09_vendor_result",
             vr.status,
-            base(ab.translation_id or "none", vr.command_id or "none", "not_consumed"),
+            base(
+                ab.translation_id or "none",
+                vr.command_id or "none",
+                "not_consumed",
+            )
+            | {
+                "dispatch_intent_id": vr.dispatch_intent_id,
+                "adapter_translation_id": vr.adapter_translation_id,
+                "target_entity_id": vr.target_entity_id,
+                "planned_vendor_mode": vr.planned_vendor_mode,
+                "command_id": vr.command_id,
+                "observed_result_id": vr.observed_result_id,
+                "normal_result": (
+                    "De Zendure-opdracht is volledig voorbereid; PicoT "
+                    "kijkt nog mee en heeft niets verstuurd."
+                    if vr.status == "observer_dispatch_ready"
+                    else "Er is geen opdracht naar Zendure verstuurd."
+                ),
+            },
         ),
     )
     elapsed_ms = round((perf_counter() - started) * 1000.0, 3)

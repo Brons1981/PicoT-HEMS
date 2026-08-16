@@ -162,6 +162,28 @@ def test_recurring_continuous_signal_becomes_eligible() -> None:
     )
 
 
+@pytest.mark.parametrize("solar_elevation_degrees", (0.0, -5.0))
+def test_sun_at_or_below_horizon_is_never_attenuation_evidence(
+    solar_elevation_degrees: float,
+) -> None:
+    observations = tuple(
+        (
+            replace(
+                item,
+                solar_elevation_degrees=solar_elevation_degrees,
+            )
+            if item.observation_id == "observation-0-target"
+            else item
+        )
+        for item in _evidence_days()
+    )
+
+    classified = _classify(observations)
+
+    assert classified.eligibility_status == "rejected"
+    assert classified.eligibility_reason == "sun_below_horizon"
+
+
 @pytest.mark.parametrize(
     ("replacement", "reason"),
     (

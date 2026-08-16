@@ -105,10 +105,25 @@ DASHBOARD_HTML = """<!doctype html>
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
     }
-    .stage-card { padding: 14px; min-width: 0; }
+    .stage-card { padding: 0; min-width: 0; }
     .stage-card > summary { cursor: pointer; list-style-position: inside; }
-    .stage-summary h3 { display: inline; margin-right: 10px; }
-    .stage-result { margin: 12px 0; color: #d9e4ef; }
+    .stage-summary {
+      padding: 10px 12px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+    }
+    .stage-summary h3 { display: inline; margin: 0; }
+    .stage-result {
+      margin: 0;
+      margin-left: 8px;
+      color: #b7c6d6;
+      font-size: 0.88rem;
+    }
+    .stage-card > .stage-state,
+    .stage-card > dl,
+    .stage-card > .technical-details { margin-left: 12px; margin-right: 12px; }
     .stage-state {
       display: inline-block;
       margin-bottom: 12px;
@@ -311,15 +326,15 @@ DASHBOARD_HTML = """<!doctype html>
 
   <script>
     const stageNames = [
-      "Planning Input",
-      "Opportunity Engine",
-      "Candidate Engine",
-      "Evaluation Engine",
-      "Execution Plan Builder",
-      "Execution Engine",
-      "Execution Primitive",
-      "Device Adapter",
-      "Vendor / Result"
+      "Planningsinvoer",
+      "Energiekansen",
+      "Mogelijke plannen",
+      "Planbeoordeling",
+      "Uitvoeringsplan",
+      "Uitvoering",
+      "Uitvoerbare opdracht",
+      "Apparaatkoppeling",
+      "Zendure-resultaat"
     ];
 
     const sourceNames = {
@@ -819,16 +834,16 @@ DASHBOARD_HTML = """<!doctype html>
         const heading = document.createElement("h3");
         heading.textContent = `${item.stage}. ${stageNames[item.stage - 1] ?? "Pipeline stage"}`;
 
+        const result = document.createElement("span");
+        result.className = "stage-result";
+        result.textContent = item.result_nl;
+        summary.append(heading, result);
+        details.appendChild(summary);
+
         const state = document.createElement("span");
         state.className = "stage-state";
         state.textContent = displayValue(item.state);
-        summary.append(heading, state);
-        details.appendChild(summary);
-
-        const result = document.createElement("p");
-        result.className = "stage-result";
-        result.textContent = item.result_nl;
-        details.appendChild(result);
+        details.appendChild(state);
 
         const attributes = document.createElement("dl");
         const entries = Object.entries(item.attributes ?? {})

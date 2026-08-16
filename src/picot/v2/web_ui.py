@@ -304,6 +304,15 @@ DASHBOARD_HTML = """<!doctype html>
     <h2>Pipeline ①→⑨</h2>
     <section id="pipeline" class="pipeline" aria-live="polite"></section>
 
+    <h2>Wat PicoT overweegt</h2>
+    <section
+      id="plan-explanation"
+      class="timeline-panel"
+      aria-live="polite"
+    >
+      Nog geen planuitleg beschikbaar.
+    </section>
+
     <h2>Energieplan batterij</h2>
     <section
       id="storage-energy-source-needs"
@@ -877,6 +886,76 @@ DASHBOARD_HTML = """<!doctype html>
       container.replaceChildren(fragment);
     }
 
+    function renderPlanExplanation(explanation) {
+      const container = element("plan-explanation");
+      if (!explanation) {
+        container.textContent = "Nog geen planuitleg beschikbaar.";
+        return;
+      }
+
+      const fragment = document.createDocumentFragment();
+      const opportunityHeading = document.createElement("h3");
+      opportunityHeading.textContent = `Energiekansen (${explanation.opportunity_count ?? 0})`;
+      fragment.appendChild(opportunityHeading);
+
+      const groups = Array.isArray(explanation.opportunity_groups)
+        ? explanation.opportunity_groups
+        : [];
+      if (groups.length === 0) {
+        const empty = document.createElement("p");
+        empty.textContent = "Er zijn nu geen prijsgerelateerde energiekansen.";
+        fragment.appendChild(empty);
+      }
+      for (const group of groups) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = group.summary_nl;
+        details.appendChild(summary);
+        const list = document.createElement("ul");
+        for (const item of group.items ?? []) {
+          const row = document.createElement("li");
+          row.textContent = item.summary_nl;
+          list.appendChild(row);
+        }
+        details.appendChild(list);
+        fragment.appendChild(details);
+      }
+
+      const planHeading = document.createElement("h3");
+      planHeading.textContent = "Mogelijke plannen";
+      fragment.appendChild(planHeading);
+      for (const plan of explanation.plans ?? []) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = `${plan.selected ? "Gekozen: " : "Alternatief: "}${plan.label_nl}`;
+        details.appendChild(summary);
+        const description = document.createElement("p");
+        description.textContent = [
+          plan.period_nl,
+          plan.energy_nl,
+          plan.grid_energy_nl,
+          plan.reason_nl
+        ].join(" · ");
+        details.appendChild(description);
+        fragment.appendChild(details);
+      }
+
+      const decision = document.createElement("p");
+      decision.textContent = [
+        explanation.decision?.summary_nl,
+        explanation.decision?.reason_nl
+      ].filter(Boolean).join(" ");
+      fragment.appendChild(decision);
+
+      if (explanation.readiness?.warning_nl) {
+        const warning = document.createElement("p");
+        warning.className = "warning";
+        warning.textContent = explanation.readiness.warning_nl;
+        fragment.appendChild(warning);
+      }
+      container.replaceChildren(fragment);
+    }
+
     function renderStorageModeOverride(item) {
       const result = element("storage-mode-override-result");
       const resetButton = element("reset-storage-mode-override");
@@ -1203,6 +1282,7 @@ DASHBOARD_HTML = """<!doctype html>
         view.captured_at
       );
       renderPipeline(pipeline);
+      renderPlanExplanation(view.plan_explanation);
       renderStorageModeOverride(primitiveBoundary);
       renderStorageEnergySourceNeeds(
         candidateEngine?.attributes?.storage_source_needs ?? []
@@ -1476,12 +1556,20 @@ def pipeline_result_nl(
         count = _result_count(attributes, "candidate_count")
         return f"Er zijn {count} mogelijke plannen opgebouwd."
     if stage == 4:
+        family = attributes.get("winning_family")
+        if family == "pv_charge_only":
+            return "Het beste plan is laden met verwachte zonne-energie."
+        if family == "reserve_first":
+            return "Het beste plan is niets extra doen."
         winner = attributes.get("winning_candidate_id")
         if isinstance(winner, str) and winner.strip():
             return f"Het beste plan is {winner}."
         return "Er is nog geen beste plan gekozen."
     if stage == 5:
-        count = _result_count(attributes, "execution_plan_count")
+        count = _result_count(
+            attributes,
+            "plan_count" if "plan_count" in attributes else "execution_plan_count",
+        )
         if count == 1:
             return "Er is 1 uitvoeringsplan voorbereid."
         return f"Er zijn {count} uitvoeringsplannen voorbereid."
@@ -1511,6 +1599,192 @@ def _result_count(
 ) -> int:
     value = attributes.get(key, 0)
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _number_nl(value: float, decimals: int = 2) -> str:
+    return f"{value:.{decimals}f}".replace(".", ",")
+
+
+def _period_nl(starts_at: object, ends_at: object) -> str:
+    if not hasattr(starts_at, "astimezone") or not hasattr(ends_at, "astimezone"):
+        return "Tijdvak onbekend"
+    timezone = ZoneInfo("Europe/Amsterdam")
+    start = starts_at.astimezone(timezone)
+    end = ends_at.astimezone(timezone)
+    return (
+        f"{start:%d-%m-%Y %H:%M} tot "
+        f"{end:%d-%m-%Y %H:%M}"
+    )
+
+
+def _opportunity_label(kind: str) -> tuple[str, str]:
+    labels = {
+        "NEGATIVE_PRICE_WINDOW": (
+            "Negatieve prijs",
+            "stroom afnemen kost in dit tijdvak minder dan niets",
+        ),
+        "LOWEST_PRICE_WINDOW": (
+            "Lage prijs",
+            "dit behoort tot de goedkoopste tijdvakken",
+        ),
+        "HIGH_EXPORT_VALUE_WINDOW": (
+            "Hoge terugleverwaarde",
+            "terugleveren levert in dit tijdvak relatief veel op",
+        ),
+    }
+    return labels.get(kind, ("Andere energiekans", "dit tijdvak wijkt gunstig af"))
+
+
+def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
+    grouped: dict[str, list[dict[str, object]]] = {}
+    group_reasons: dict[str, str] = {}
+    for opportunity in run.opportunities.opportunities:
+        label, reason = _opportunity_label(opportunity.kind)
+        group_reasons[label] = reason
+        period = _period_nl(opportunity.starts_at, opportunity.ends_at)
+        price = _number_nl(opportunity.metrics.average_price_eur_per_kwh, 3)
+        confidence = round(opportunity.confidence * 100)
+        grouped.setdefault(label, []).append(
+            {
+                "period_nl": period,
+                "price_nl": f"Gemiddelde prijs € {price}/kWh",
+                "confidence_nl": f"Zekerheid {confidence}%",
+                "reason_nl": reason.capitalize() + ".",
+                "summary_nl": (
+                    f"{period}: € {price}/kWh, zekerheid {confidence}%. "
+                    f"Relevant omdat {reason}."
+                ),
+            }
+        )
+    opportunity_groups = [
+        {
+            "label_nl": label,
+            "count": len(items),
+            "summary_nl": (
+                f"{len(items)}× {label.lower()}: {group_reasons[label]}."
+            ),
+            "items": items,
+        }
+        for label, items in sorted(grouped.items())
+    ]
+
+    outcomes_by_candidate = {
+        outcome.candidate_id: outcome for outcome in run.outcomes.outcomes
+    }
+    paths_by_id = {
+        path.path_id: path for path in run.candidate_set.energy_paths
+    }
+    plans: list[dict[str, object]] = []
+    winning_confidence = 0.0
+    for candidate in run.candidate_set.candidates:
+        selected = candidate.candidate_id == run.evaluation.winning_candidate_id
+        outcome = outcomes_by_candidate.get(candidate.candidate_id)
+        path = paths_by_id[candidate.energy_path_id]
+        if candidate.family == "pv_charge_only" and outcome is not None:
+            label = "Laden met verwachte zonne-energie"
+            period = _period_nl(
+                outcome.charge_window_starts_at,
+                outcome.charge_window_ends_at,
+            )
+            energy = (
+                "Verwachte toevoeging aan batterij: "
+                f"{_number_nl(outcome.pv_storage_contribution_wh / 1000)} kWh"
+            )
+            grid_energy = (
+                "Verwacht netladen: "
+                f"{_number_nl(outcome.grid_storage_contribution_wh / 1000)} kWh"
+            )
+            reason = (
+                "Gekozen omdat het batterijdoel met verwachte PV en zonder "
+                "netladen wordt gehaald."
+                if selected
+                else "Niet gekozen omdat een ander plan beter scoort."
+            )
+            if selected:
+                winning_confidence = outcome.confidence
+        else:
+            label = "Niets extra doen"
+            requirement = (
+                run.candidate_set.storage_requirements[0]
+                if run.candidate_set.storage_requirements
+                else None
+            )
+            period = _period_nl(
+                run.planning_input.captured_at,
+                (
+                    requirement.required_by
+                    if requirement is not None
+                    else run.planning_input.horizon_end
+                ),
+            )
+            energy = "Verwachte toevoeging aan batterij: 0,00 kWh"
+            grid_energy = "Verwacht netladen: 0,00 kWh"
+            reason = (
+                "Gekozen omdat extra laden niet nodig is."
+                if selected
+                else "Niet gekozen omdat dit het geplande batterijdoel niet haalt."
+            )
+            if selected:
+                winning_confidence = min(
+                    (state.confidence for state in run.planning_input.current_storage_states),
+                    default=0.0,
+                )
+        plans.append(
+            {
+                "label_nl": label,
+                "selected": selected,
+                "period_nl": period,
+                "energy_nl": energy,
+                "grid_energy_nl": grid_energy,
+                "reason_nl": reason,
+                "segment_count": len(path.segments),
+            }
+        )
+
+    winning_family = next(
+        (
+            candidate.family
+            for candidate in run.candidate_set.candidates
+            if candidate.candidate_id == run.evaluation.winning_candidate_id
+        ),
+        None,
+    )
+    if winning_family == "pv_charge_only":
+        decision_summary = "PicoT kiest laden met verwachte zonne-energie."
+        decision_reason = (
+            "Dit plan haalt het batterijdoel met verwachte PV en zonder netladen."
+        )
+    elif winning_family == "reserve_first":
+        decision_summary = "PicoT kiest niets extra doen."
+        decision_reason = "Het batterijdoel is zonder aanvullende laadactie haalbaar."
+    else:
+        decision_summary = "PicoT heeft nog geen uitvoerbaar plan gekozen."
+        decision_reason = "De benodigde gegevens of mogelijkheden ontbreken nog."
+
+    blockers = list(run.primitive_boundary.blockers)
+    confidence_percent = round(winning_confidence * 100)
+    if confidence_percent == 0:
+        blockers.append("planning_confidence_below_minimum")
+    return {
+        "title": "Wat PicoT overweegt",
+        "opportunity_count": len(run.opportunities.opportunities),
+        "opportunity_groups": opportunity_groups,
+        "plans": plans,
+        "decision": {
+            "summary_nl": decision_summary,
+            "reason_nl": decision_reason,
+        },
+        "readiness": {
+            "confidence_percent": confidence_percent,
+            "status": "blocked" if confidence_percent == 0 else "observer_only",
+            "warning_nl": (
+                "De planningszekerheid is 0%; PicoT voert dit plan niet uit."
+                if confidence_percent == 0
+                else None
+            ),
+            "blockers": list(dict.fromkeys(blockers)),
+        },
+    }
 
 
 def build_web_view(
@@ -1732,6 +2006,7 @@ def build_web_view(
         "snapshot_id": planning_input.snapshot_id,
         "captured_at": planning_input.captured_at.isoformat(),
         "pipeline": pipeline,
+        "plan_explanation": _build_plan_explanation(run),
         "price_timeline": price_timeline,
         "pv_energy_timeline": pv_energy_timeline,
         "household_load_forecast": household_load_forecast,

@@ -1,3 +1,5 @@
+from dataclasses import replace
+from datetime import timedelta
 from importlib import import_module
 
 from test_v2_storage_mode_provenance_integration import BASE, _run
@@ -6,7 +8,11 @@ from picot.v2.canonical_execution_runtime import (
     CanonicalDispatchOutcome,
     CanonicalExecutionRuntime,
 )
+from picot.v2.contracts import BMSCalibrationEvidence
 from picot.v2.pipeline import CanonicalPipeline
+from picot.v2.storage_capability_snapshot import (
+    build_storage_capability_snapshot_set,
+)
 
 
 def _planner_owned_standby() -> object:
@@ -33,8 +39,17 @@ def _live_run() -> object:
         current_mode="Standby",
         provenance=_planner_owned_standby(),
     )
+    evidence = observer.planning_input.storage_mode_capability_evidence
+    assert evidence is not None
+    planning_input = replace(
+        observer.planning_input,
+        capability_snapshot_set=build_storage_capability_snapshot_set(
+            evidence,
+            snapshot_id=observer.planning_input.snapshot_id,
+        ),
+    )
     return CanonicalPipeline().run(
-        planning_input=observer.planning_input,
+        planning_input=planning_input,
         control_change_allowed=True,
     )
 
@@ -94,6 +109,78 @@ def test_explicit_live_authority_never_bypasses_manual_override() -> None:
     assert run.vendor_result.status == "not_dispatched"
 
 
+def test_explicit_bms_calibration_temporarily_blocks_canonical_dispatch() -> None:
+    live = _live_run()
+    planning_input = replace(
+        live.planning_input,
+        bms_calibration_evidence=BMSCalibrationEvidence(
+            status="active",
+            active=True,
+            observed_at=BASE,
+            source_entity_id="sensor.zendure_2400_ac_kalibreren",
+            evidence_id="evidence-bms-calibration",
+            method_version="zendure-calibration-state:v1",
+        ),
+    )
+
+    run = CanonicalPipeline().run(
+        planning_input=planning_input,
+        control_change_allowed=True,
+    )
+
+    assert run.primitive_boundary.status == "dry_run_blocked"
+    assert run.primitive_boundary.blockers == ("bms_soc_calibration_active",)
+    assert run.vendor_result.status == "not_dispatched"
+
+
+def test_canonical_plan_restores_smart_discharge_before_future_pv_window() -> None:
+    live = _live_run()
+    planning_input = live.planning_input
+    assert planning_input.pv_energy_timeline is not None
+    assert planning_input.household_load_forecast is not None
+    shift = timedelta(hours=1)
+    shifted_pv = replace(
+        planning_input.pv_energy_timeline,
+        intervals=tuple(
+            replace(
+                interval,
+                starts_at=interval.starts_at + shift,
+                ends_at=interval.ends_at + shift,
+            )
+            for interval in planning_input.pv_energy_timeline.intervals
+        ),
+    )
+    shifted_load = replace(
+        planning_input.household_load_forecast,
+        intervals=tuple(
+            replace(
+                interval,
+                starts_at=interval.starts_at + shift,
+                ends_at=interval.ends_at + shift,
+            )
+            for interval in planning_input.household_load_forecast.intervals
+        ),
+    )
+    shifted_input = replace(
+        planning_input,
+        horizon_end=(planning_input.horizon_end + shift),
+        pv_energy_timeline=shifted_pv,
+        household_load_forecast=shifted_load,
+    )
+
+    run = CanonicalPipeline().run(
+        planning_input=shifted_input,
+        control_change_allowed=True,
+    )
+
+    assert run.primitive_boundary.status == "request_ready"
+    assert run.primitive_boundary.planned_primitive is not None
+    assert run.primitive_boundary.planned_primitive.value == (
+        "balance_discharge_only"
+    )
+    assert run.primitive_boundary.planned_vendor_mode == "Alleen slim ontladen"
+
+
 def test_canonical_runtime_dispatches_the_exact_approved_mode() -> None:
     calls: list[tuple[object, object]] = []
     runtime = CanonicalExecutionRuntime(
@@ -110,8 +197,8 @@ def test_canonical_runtime_dispatches_the_exact_approved_mode() -> None:
 
     assert len(calls) == 1
     request, mapping = calls[0]
-    assert request.primitive.value == "balance_charge_only"
-    assert mapping.fixed_value == "Alleen slim opladen"
+    assert request.primitive.value == "balance_bidirectional"
+    assert mapping.fixed_value == "Nul op de meter"
     assert mapping.entity_id == ("input_select.zendure_2400_ac_modus_selecteren")
     assert result.adapter_boundary.status == "translated"
     assert result.vendor_result.status == "dispatched"
@@ -134,5 +221,5 @@ def test_canonical_runtime_does_not_repeat_request_before_feedback() -> None:
     runtime.apply(run)
     duplicate = runtime.apply(run)
 
-    assert calls == ["Alleen slim opladen"]
+    assert calls == ["Nul op de meter"]
     assert duplicate.vendor_result.status == "awaiting_mode_feedback"

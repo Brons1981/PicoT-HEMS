@@ -542,6 +542,33 @@ class HouseholdLoadForecast:
 
 
 @dataclass(frozen=True, slots=True)
+class BMSCalibrationEvidence:
+    """Fresh, explicit evidence of device-owned SOC calibration."""
+
+    status: str
+    active: bool
+    observed_at: datetime | None
+    source_entity_id: str | None
+    evidence_id: str
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if self.status not in {"active", "inactive", "unavailable"}:
+            raise ValueError("calibration status must be active, inactive or unavailable")
+        if self.active != (self.status == "active"):
+            raise ValueError("only active calibration status may set active")
+        if self.observed_at is not None and (
+            self.observed_at.tzinfo is None
+            or self.observed_at.utcoffset() is None
+        ):
+            raise ValueError("calibration observed_at must be timezone-aware")
+        if not self.evidence_id.strip():
+            raise ValueError("calibration evidence_id must be explicit")
+        if not self.method_version.strip():
+            raise ValueError("calibration method_version must be explicit")
+
+
+@dataclass(frozen=True, slots=True)
 class PlanningInputSnapshot:
     run_id: str
     snapshot_id: str
@@ -557,6 +584,7 @@ class PlanningInputSnapshot:
     household_load_forecast: HouseholdLoadForecast | None = None
     storage_mode_capability_evidence: ZendureModeCapabilityEvidence | None = None
     storage_mode_control_provenance: StorageModeControlProvenance | None = None
+    bms_calibration_evidence: BMSCalibrationEvidence | None = None
     capability_snapshot_set: CapabilitySnapshotSet | None = None
 
     def __post_init__(self) -> None:

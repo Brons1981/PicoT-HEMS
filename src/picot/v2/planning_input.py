@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.contracts import (
+    BMSCalibrationEvidence,
     CurrentStorageState,
     PlanningInputSnapshot,
     PriceForecastPoint,
@@ -118,6 +119,7 @@ DEFAULT_BINDINGS = (
     ("p1", "grid_power", "p1_power_entity"),
     ("pv", "pv_power", "pv_power_entity"),
     ("zendure", "storage_soc", "zendure_soc_entity"),
+    ("zendure", "bms_soc_calibration", "zendure_calibration_entity"),
     (
         "zendure",
         "storage_power_signed",
@@ -729,6 +731,58 @@ def assemble_planning_input(
         )
         for item in evidence
     )
+    calibration_source = next(
+        (
+            item
+            for item in evidence
+            if item.semantic_role == "bms_soc_calibration"
+        ),
+        None,
+    )
+    calibration_state = (
+        calibration_source.raw_state.strip().casefold()
+        if calibration_source is not None
+        and calibration_source.raw_state is not None
+        else None
+    )
+    calibration_active_values = {"ja", "yes", "on", "true", "1", "actief", "active"}
+    calibration_inactive_values = {"nee", "no", "off", "false", "0", "inactief", "inactive"}
+    bms_calibration_evidence = BMSCalibrationEvidence(
+        status=(
+            "active"
+            if calibration_source is not None
+            and calibration_source.availability == "available"
+            and calibration_state in calibration_active_values
+            else (
+                "inactive"
+                if calibration_source is not None
+                and calibration_source.availability == "available"
+                and calibration_state in calibration_inactive_values
+                else "unavailable"
+            )
+        ),
+        active=(
+            calibration_source is not None
+            and calibration_source.availability == "available"
+            and calibration_state in calibration_active_values
+        ),
+        observed_at=(
+            calibration_source.observed_at
+            if calibration_source is not None
+            else None
+        ),
+        source_entity_id=(
+            calibration_source.entity_id
+            if calibration_source is not None
+            else None
+        ),
+        evidence_id=(
+            calibration_source.evidence_id
+            if calibration_source is not None
+            else _stable_id("evidence", f"{snapshot_id}|bms-calibration-unconfigured")
+        ),
+        method_version="zendure-calibration-state:v1",
+    )
     price_points = tuple(
         point
         for item in evidence
@@ -821,6 +875,7 @@ def assemble_planning_input(
         pv_energy_timeline=pv_energy_timeline,
         household_load_forecast=household_load_forecast,
         storage_mode_capability_evidence=storage_mode_capability_evidence,
+        bms_calibration_evidence=bms_calibration_evidence,
         capability_snapshot_set=(
             build_storage_capability_snapshot_set(
                 storage_mode_capability_evidence,

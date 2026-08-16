@@ -19,6 +19,7 @@ options:
   pv_installation_scope_id: "pv-installation-home"
   pv_local_timezone: "Europe/Amsterdam"
   zendure_soc_entity: ""
+  zendure_calibration_entity: "sensor.zendure_2400_ac_kalibreren"
   zendure_mode_entity: "input_select.zendure_2400_ac_modus_selecteren"
   zendure_signed_power_entity: "sensor.zendure_2400_ac_vermogen_aansturing"
   zendure_power_to_house_entity: "sensor.zendure_2400_ac_vermogen_naar_huis"
@@ -43,6 +44,7 @@ schema:
   pv_installation_scope_id: str
   pv_local_timezone: str
   zendure_soc_entity: str
+  zendure_calibration_entity: str
   zendure_mode_entity: str
   zendure_signed_power_entity: str
   zendure_power_to_house_entity: str

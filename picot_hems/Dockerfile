@@ -8,6 +8,7 @@ RUN apk add --no-cache git \
     && git clone --depth 1 --branch main \
       https://github.com/Brons1981/PicoT-HEMS.git /tmp/picot-src \
     && mkdir -p /opt/picot/picot \
+    && cp -R /tmp/picot-src/src/picot/domain /opt/picot/picot/domain \
     && cp -R /tmp/picot-src/src/picot/v2 /opt/picot/picot/v2 \
     && touch /opt/picot/picot/__init__.py \
     && rm -rf /tmp/picot-src \

@@ -419,3 +419,23 @@ def test_web_view_store_atomically_replaces_latest_serialized_view() -> None:
         "run_id": "run-2",
         "pipeline": [{"stage": 1, "state": "updated"}],
     }
+
+
+def test_dashboard_exposes_plain_language_storage_source_need() -> None:
+    assert "Energieplan batterij" in DASHBOARD_HTML
+    assert 'id="storage-energy-source-needs"' in DASHBOARD_HTML
+    assert "renderStorageEnergySourceNeeds" in DASHBOARD_HTML
+    assert "storage_source_needs" in DASHBOARD_HTML
+    assert "Zendure batterij mist" in DASHBOARD_HTML
+
+
+def test_dashboard_preserves_interaction_state_during_refresh() -> None:
+    # Polling may continue, but rendering must wait while text is selected.
+    assert "pendingView" in DASHBOARD_HTML
+    assert "shouldDeferRenderForSelection" in DASHBOARD_HTML
+
+    # Re-rendering must restore disclosure and scroll state.
+    assert "captureDashboardState" in DASHBOARD_HTML
+    assert "restoreDashboardState" in DASHBOARD_HTML
+    assert "openTechnicalDetails" in DASHBOARD_HTML
+    assert "scrollPositions" in DASHBOARD_HTML

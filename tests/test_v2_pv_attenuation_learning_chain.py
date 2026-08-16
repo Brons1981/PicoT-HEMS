@@ -29,7 +29,7 @@ from picot.v2.pv_solar_history import (
 
 AMSTERDAM = ZoneInfo("Europe/Amsterdam")
 EVALUATED_AT = datetime(2026, 8, 16, 0, 0, tzinfo=UTC)
-BASE_START = datetime(2026, 8, 13, 17, 0, tzinfo=UTC)
+BASE_START = datetime(2026, 8, 15, 17, 0, tzinfo=UTC)
 INSTALLATION_SCOPE_ID = "pv-installation-home"
 
 

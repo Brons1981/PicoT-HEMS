@@ -11,7 +11,11 @@ from hashlib import sha256
 from time import perf_counter
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
-from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
+from picot.v2.candidate_engine import (
+    CandidateEngine,
+    CandidateInputError,
+    StorageRequirementDerivation,
+)
 from picot.v2.contracts import (
     Candidate,
     CandidateOutcomeSet,
@@ -26,6 +30,7 @@ from picot.v2.contracts import (
     ExecutionPlanSet,
     ExecutionPrimitiveBoundary,
     ExecutionRecord,
+    OpportunitySet,
     PlanningInputSnapshot,
     VendorBoundaryResult,
 )
@@ -76,11 +81,11 @@ class PipelineStageTimings:
 def _first_storage_segment(
     *,
     snapshot: PlanningInputSnapshot,
-    opportunities: object,
-    candidate_derivation: object,
+    opportunities: OpportunitySet,
+    candidate_derivation: StorageRequirementDerivation,
 ) -> EnergyPathSegment | None:
-    requirements = getattr(candidate_derivation, "requirements", ())
-    if not requirements or getattr(candidate_derivation, "planning_gaps", ()):
+    requirements = candidate_derivation.requirements
+    if not requirements or candidate_derivation.planning_gaps:
         return None
     storage = snapshot.current_storage_states[0]
     maximum_power_w = storage.maximum_charge_power_w
@@ -88,7 +93,7 @@ def _first_storage_segment(
         return None
     low_windows = tuple(
         item
-        for item in getattr(opportunities, "opportunities", ())
+        for item in opportunities.opportunities
         if item.kind == "LOWEST_PRICE_WINDOW"
         and item.ends_at > snapshot.captured_at
     )
@@ -302,7 +307,7 @@ class CanonicalPipeline:
         evaluation_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
-        plans = ()
+        plans: tuple[ExecutionPlan, ...] = ()
         if path.segments:
             plan_id = _id(
                 "execution-plan",

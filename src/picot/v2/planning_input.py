@@ -30,6 +30,9 @@ from picot.v2.household_load_forecast import (
     build_historical_household_load_forecast,
     derive_household_load_power_w,
 )
+from picot.v2.storage_capability_snapshot import (
+    build_storage_capability_snapshot_set,
+)
 from picot.v2.zendure_mode_capabilities import (
     HomeAssistantZendureModeCapabilityReader,
     StorageModeCapabilityConfig,
@@ -818,6 +821,14 @@ def assemble_planning_input(
         pv_energy_timeline=pv_energy_timeline,
         household_load_forecast=household_load_forecast,
         storage_mode_capability_evidence=storage_mode_capability_evidence,
+        capability_snapshot_set=(
+            build_storage_capability_snapshot_set(
+                storage_mode_capability_evidence,
+                snapshot_id=snapshot_id,
+            )
+            if storage_mode_capability_evidence is not None
+            else None
+        ),
     )
     return PlanningInputBundle(
         snapshot,

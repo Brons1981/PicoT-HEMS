@@ -976,6 +976,31 @@ DASHBOARD_HTML = """<!doctype html>
         : "Geen actieve handmatige blokkade.";
     }
 
+    function storageModeResetId() {
+      if (
+        globalThis.crypto &&
+        typeof globalThis.crypto.randomUUID === "function"
+      ) {
+        return globalThis.crypto.randomUUID();
+      }
+      const randomValues = new Uint32Array(2);
+      if (
+        globalThis.crypto &&
+        typeof globalThis.crypto.getRandomValues === "function"
+      ) {
+        globalThis.crypto.getRandomValues(randomValues);
+      } else {
+        randomValues[0] = Math.floor(Math.random() * 0x100000000);
+        randomValues[1] = Math.floor(Math.random() * 0x100000000);
+      }
+      return [
+        "reset",
+        Date.now().toString(36),
+        randomValues[0].toString(36),
+        randomValues[1].toString(36)
+      ].join("-");
+    }
+
     async function resetStorageModeOverride() {
       const resetButton = element("reset-storage-mode-override");
       resetButton.disabled = true;
@@ -983,7 +1008,7 @@ DASHBOARD_HTML = """<!doctype html>
         const response = await fetch("api/storage-mode-override/reset", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reset_id: crypto.randomUUID() })
+          body: JSON.stringify({ reset_id: storageModeResetId() })
         });
         if (!response.ok) {
           throw new Error(`Reset geweigerd (${response.status})`);

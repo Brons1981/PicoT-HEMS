@@ -1,16 +1,16 @@
 from datetime import UTC, datetime, timedelta
 
+from picot.v2.storage_energy_source_need import (
+    derive_storage_energy_source_need,
+    explain_storage_energy_source_need_nl,
+)
+
 from picot.v2.contracts import (
     CurrentStorageState,
     ProjectedHouseholdEnergyBalance,
     ProjectedHouseholdEnergyBalanceInterval,
     StorageEnergyRequirement,
 )
-from picot.v2.storage_energy_source_need import (
-    derive_storage_energy_source_need,
-    explain_storage_energy_source_need_nl,
-)
-
 BASE = datetime(2026, 8, 16, 8, 0, tzinfo=UTC)
 
 

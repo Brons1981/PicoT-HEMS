@@ -1792,9 +1792,24 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
                 "Verwacht netladen: "
                 f"{_number_nl(outcome.grid_storage_contribution_wh / 1000)} kWh"
             )
+            remaining_to_target_kwh = max(
+                0.0,
+                outcome.required_energy_wh
+                - outcome.storage_energy_at_requirement_wh,
+            ) / 1000
             reason = (
-                "Gekozen omdat het batterijdoel met verwachte PV en zonder "
-                "netladen wordt gehaald."
+                (
+                    "Gekozen omdat het batterijdoel met verwachte PV en zonder "
+                    "netladen wordt gehaald."
+                    if outcome.requirement_satisfied
+                    else (
+                        "Gekozen omdat dit plan zoveel mogelijk verwachte PV "
+                        "opslaat zonder netladen; het batterijdoel blijft naar "
+                        "verwachting "
+                        f"{_number_nl(remaining_to_target_kwh)} "
+                        "kWh tekort."
+                    )
+                )
                 if selected
                 else "Niet gekozen omdat een ander plan beter scoort."
             )
@@ -1853,8 +1868,19 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
     )
     if winning_family == "pv_charge_only":
         decision_summary = "PicoT kiest laden met verwachte zonne-energie."
+        winning_outcome = (
+            outcomes_by_candidate.get(run.evaluation.winning_candidate_id)
+            if run.evaluation.winning_candidate_id is not None
+            else None
+        )
         decision_reason = (
             "Dit plan haalt het batterijdoel met verwachte PV en zonder netladen."
+            if winning_outcome is not None
+            and winning_outcome.requirement_satisfied
+            else (
+                "Dit plan slaat zoveel mogelijk verwachte PV op zonder netladen; "
+                "het volledige batterijdoel is binnen de deadline niet haalbaar."
+            )
         )
     elif winning_family == "reserve_first":
         decision_summary = "PicoT kiest niets extra doen."

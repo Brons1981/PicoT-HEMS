@@ -92,24 +92,33 @@ def derive_storage_energy_source_need(
     current_energy_wh = storage_state.current_stored_energy_wh
     target_energy_wh = requirement.required_energy_wh
     energy_to_target_wh = max(0.0, target_energy_wh - current_energy_wh)
+    relevant_intervals = tuple(
+        interval
+        for interval in balance.intervals
+        if interval.ends_at <= requirement.required_by
+    )
     expected_pv_wh = sum(
         interval.expected_usable_pv_energy_wh
-        for interval in balance.intervals
+        for interval in relevant_intervals
     )
     household_load_wh = sum(
         interval.household_load_forecast_energy_wh
-        for interval in balance.intervals
+        for interval in relevant_intervals
     )
     planned_grid_wh = sum(
         interval.planned_grid_energy_wh
-        for interval in balance.intervals
+        for interval in relevant_intervals
     )
     if planned_grid_wh != 0.0:
         raise ValueError(
             "source need must be derived before grid energy is planned"
         )
 
-    projected_energy_wh = balance.intervals[-1].projected_storage_energy_wh
+    projected_energy_wh = (
+        relevant_intervals[-1].projected_storage_energy_wh
+        if relevant_intervals
+        else current_energy_wh
+    )
     pv_storage_contribution_wh = min(
         energy_to_target_wh,
         max(
@@ -134,14 +143,14 @@ def derive_storage_energy_source_need(
         + requirement.evidence_ids
         + tuple(
             evidence_id
-            for interval in balance.intervals
+            for interval in relevant_intervals
             for evidence_id in interval.evidence_ids
         )
     )
     confidence = min(
         storage_state.confidence,
         requirement.confidence,
-        *(interval.confidence for interval in balance.intervals),
+        *(interval.confidence for interval in relevant_intervals),
     )
     return StorageEnergySourceNeed(
         storage_state_id=storage_state.storage_state_id,

@@ -223,22 +223,6 @@ def project_pv_attenuation_observation(
         "pv_attenuation_minutes_from_sunset": (
             observation.minutes_from_sunset
         ),
-        "pv_attenuation_solar_evidence_id": (
-            observation.solar_evidence_id
-        ),
-        "pv_attenuation_solar_observed_at": (
-            observation.solar_observed_at.isoformat()
-            if observation.solar_observed_at is not None
-            else None
-        ),
-        "pv_attenuation_sunset_at": (
-            observation.sunset_at.isoformat()
-            if observation.sunset_at is not None
-            else None
-        ),
-        "pv_attenuation_solar_alignment_method_version": (
-            observation.solar_alignment_method_version
-        ),
         "pv_attenuation_alignment_status": observation.alignment_status,
         "pv_attenuation_coverage_status": observation.coverage_status,
         "pv_attenuation_eligibility_reason": (

@@ -72,15 +72,9 @@ from picot.v2.web_ui import (
     create_web_server,
 )
 
-HOUSEHOLD_LOAD_HISTORY_PATH = Path(
-    "/data/picot_v2_household_load_history.jsonl"
-)
-PV_ATTENUATION_FORECAST_BASIS_PATH = Path(
-    "/data/picot_v2_pv_forecast_basis.jsonl"
-)
-PV_ATTENUATION_EVIDENCE_PATH = Path(
-    "/data/picot_v2_pv_attenuation_evidence.jsonl"
-)
+HOUSEHOLD_LOAD_HISTORY_PATH = Path("/data/picot_v2_household_load_history.jsonl")
+PV_ATTENUATION_FORECAST_BASIS_PATH = Path("/data/picot_v2_pv_forecast_basis.jsonl")
+PV_ATTENUATION_EVIDENCE_PATH = Path("/data/picot_v2_pv_attenuation_evidence.jsonl")
 
 
 def _planning_input_signature(bundle: PlanningInputBundle) -> str:
@@ -116,15 +110,9 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
             "pv_energy_wh": interval.pv_energy_wh,
             "evidence_type": interval.evidence_type,
             "confidence": interval.confidence,
-            "conversion_method_version": (
-                interval.conversion_method_version
-            ),
+            "conversion_method_version": (interval.conversion_method_version),
         }
-        for interval in (
-            pv_timeline.intervals
-            if pv_timeline is not None
-            else ()
-        )
+        for interval in (pv_timeline.intervals if pv_timeline is not None else ())
     ]
     payload = {
         "strategy_id": bundle.snapshot.strategy_id,
@@ -134,6 +122,18 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
         "facts": facts,
         "price_points": price_points,
         "pv_energy_intervals": pv_energy_intervals,
+        "storage_mode_capability_evidence": (
+            {
+                "current_vendor_mode": mode_evidence.current_vendor_mode,
+                "status": mode_evidence.status,
+                "unavailable_reason": mode_evidence.unavailable_reason,
+                "usable_vendor_modes": mode_evidence.usable_vendor_modes,
+                "excluded_dynamic_vendor_modes": (mode_evidence.excluded_dynamic_vendor_modes),
+                "method_version": mode_evidence.method_version,
+            }
+            if (mode_evidence := bundle.snapshot.storage_mode_capability_evidence) is not None
+            else None
+        ),
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return sha256(canonical.encode("utf-8")).hexdigest()
@@ -176,9 +176,7 @@ def _poll_live_cycle(
         ]
         | None
     ) = None,
-    persist_observation: (
-        Callable[[HouseholdLoadObservation], None] | None
-    ) = None,
+    persist_observation: (Callable[[HouseholdLoadObservation], None] | None) = None,
 ) -> str:
     """Load fresh Planning Input and execute only when decision input changed."""
     bundle = load_bundle()
@@ -238,31 +236,19 @@ def _project_cumulative_pv_evidence(
         "pv_cumulative_evidence_id": evidence.evidence_id,
         "pv_cumulative_coverage_status": evidence.coverage_status,
         "pv_cumulative_starts_at": (
-            evidence.starts_at.isoformat()
-            if evidence.starts_at is not None
-            else None
+            evidence.starts_at.isoformat() if evidence.starts_at is not None else None
         ),
         "pv_cumulative_ends_at": (
-            evidence.ends_at.isoformat()
-            if evidence.ends_at is not None
-            else None
+            evidence.ends_at.isoformat() if evidence.ends_at is not None else None
         ),
         "pv_cumulative_evaluated_at": evidence.evaluated_at.isoformat(),
-        "pv_cumulative_closed_interval_count": (
-            evidence.closed_interval_count
-        ),
-        "pv_cumulative_assessed_interval_count": (
-            evidence.assessed_interval_count
-        ),
+        "pv_cumulative_closed_interval_count": (evidence.closed_interval_count),
+        "pv_cumulative_assessed_interval_count": (evidence.assessed_interval_count),
         "pv_cumulative_gap_interval_count": evidence.gap_interval_count,
         "pv_cumulative_coverage_ratio": evidence.coverage_ratio,
-        "pv_cumulative_forecast_central_energy_wh": (
-            evidence.forecast_central_energy_wh
-        ),
+        "pv_cumulative_forecast_central_energy_wh": (evidence.forecast_central_energy_wh),
         "pv_cumulative_actual_energy_wh": evidence.actual_energy_wh,
-        "pv_cumulative_net_deviation_energy_wh": (
-            evidence.net_deviation_energy_wh
-        ),
+        "pv_cumulative_net_deviation_energy_wh": (evidence.net_deviation_energy_wh),
         "pv_cumulative_absolute_net_deviation_energy_wh": (
             evidence.absolute_net_deviation_energy_wh
         ),
@@ -271,35 +257,19 @@ def _project_cumulative_pv_evidence(
         ),
         "pv_cumulative_deviation_percent": evidence.deviation_percent,
         "pv_cumulative_percentage_status": evidence.percentage_status,
-        "pv_cumulative_forecast_lower_energy_wh": (
-            evidence.forecast_lower_energy_wh
-        ),
-        "pv_cumulative_forecast_upper_energy_wh": (
-            evidence.forecast_upper_energy_wh
-        ),
-        "pv_cumulative_forecast_range_status": (
-            evidence.forecast_range_status
-        ),
+        "pv_cumulative_forecast_lower_energy_wh": (evidence.forecast_lower_energy_wh),
+        "pv_cumulative_forecast_upper_energy_wh": (evidence.forecast_upper_energy_wh),
+        "pv_cumulative_forecast_range_status": (evidence.forecast_range_status),
         "pv_cumulative_range_assessment": evidence.range_assessment,
         "pv_cumulative_range_distance_wh": evidence.range_distance_wh,
-        "pv_cumulative_range_assessed_interval_count": (
-            evidence.range_assessed_interval_count
-        ),
-        "pv_cumulative_below_range_interval_count": (
-            evidence.below_range_interval_count
-        ),
-        "pv_cumulative_within_range_interval_count": (
-            evidence.within_range_interval_count
-        ),
-        "pv_cumulative_above_range_interval_count": (
-            evidence.above_range_interval_count
-        ),
+        "pv_cumulative_range_assessed_interval_count": (evidence.range_assessed_interval_count),
+        "pv_cumulative_below_range_interval_count": (evidence.below_range_interval_count),
+        "pv_cumulative_within_range_interval_count": (evidence.within_range_interval_count),
+        "pv_cumulative_above_range_interval_count": (evidence.above_range_interval_count),
         "pv_cumulative_unavailable_range_interval_count": (
             evidence.unavailable_range_interval_count
         ),
-        "pv_cumulative_interval_deviation_ids": list(
-            evidence.interval_deviation_ids
-        ),
+        "pv_cumulative_interval_deviation_ids": list(evidence.interval_deviation_ids),
         "pv_cumulative_method_version": evidence.method_version,
     }
 
@@ -313,16 +283,12 @@ def _project_interval_pv_deviation(
         "ends_at": deviation.ends_at.isoformat(),
         "forecast_interval_id": deviation.forecast_interval_id,
         "actual_interval_id": deviation.actual_interval_id,
-        "forecast_central_energy_wh": (
-            deviation.forecast_central_energy_wh
-        ),
+        "forecast_central_energy_wh": (deviation.forecast_central_energy_wh),
         "forecast_lower_energy_wh": deviation.forecast_lower_energy_wh,
         "forecast_upper_energy_wh": deviation.forecast_upper_energy_wh,
         "actual_energy_wh": deviation.actual_energy_wh,
         "deviation_energy_wh": deviation.deviation_energy_wh,
-        "absolute_deviation_energy_wh": (
-            deviation.absolute_deviation_energy_wh
-        ),
+        "absolute_deviation_energy_wh": (deviation.absolute_deviation_energy_wh),
         "deviation_percent": deviation.deviation_percent,
         "percentage_status": deviation.percentage_status,
         "direction": deviation.direction,
@@ -332,15 +298,9 @@ def _project_interval_pv_deviation(
         "actual_confidence": deviation.actual_confidence,
         "forecast_evidence_ids": list(deviation.forecast_evidence_ids),
         "actual_evidence_ids": list(deviation.actual_evidence_ids),
-        "forecast_conversion_method_version": (
-            deviation.forecast_conversion_method_version
-        ),
-        "actual_conversion_method_version": (
-            deviation.actual_conversion_method_version
-        ),
-        "range_assessment_method_version": (
-            deviation.range_assessment_method_version
-        ),
+        "forecast_conversion_method_version": (deviation.forecast_conversion_method_version),
+        "actual_conversion_method_version": (deviation.actual_conversion_method_version),
+        "range_assessment_method_version": (deviation.range_assessment_method_version),
         "evaluation_method_version": deviation.evaluation_method_version,
     }
 
@@ -376,18 +336,10 @@ def _with_planning_input_diagnostics(
     if pv_actual_diagnostics is not None:
         deviation = pv_actual_diagnostics.deviation_result
         pv_actual_attributes = {
-            "pv_actual_history_status": (
-                pv_actual_diagnostics.history_status
-            ),
-            "pv_actual_interval_status": (
-                pv_actual_diagnostics.interval_status
-            ),
-            "pv_actual_cache_hit": (
-                pv_actual_diagnostics.cache_hit
-            ),
-            "pv_actual_entity_id": (
-                pv_actual_diagnostics.entity_id
-            ),
+            "pv_actual_history_status": (pv_actual_diagnostics.history_status),
+            "pv_actual_interval_status": (pv_actual_diagnostics.interval_status),
+            "pv_actual_cache_hit": (pv_actual_diagnostics.cache_hit),
+            "pv_actual_entity_id": (pv_actual_diagnostics.entity_id),
             "pv_actual_starts_at": (
                 pv_actual_diagnostics.starts_at.isoformat()
                 if pv_actual_diagnostics.starts_at is not None
@@ -407,209 +359,118 @@ def _with_planning_input_diagnostics(
             "pv_actual_conversion_method_version": (
                 pv_actual_diagnostics.conversion_method_version
             ),
-            "pv_actual_evidence_ids": list(
-                pv_actual_diagnostics.actual_evidence_ids
-            ),
-            "pv_actual_processing_ms": (
-                pv_actual_diagnostics.processing_ms
-            ),
-            "pv_actual_closed_forecast_count": (
-                pv_actual_diagnostics.closed_forecast_count
-            ),
-            "pv_actual_interval_count": (
-                pv_actual_diagnostics.actual_interval_count
-            ),
-            "pv_actual_gap_interval_count": (
-                pv_actual_diagnostics.gap_interval_count
-            ),
-            "pv_deviation_result_count": len(
-                pv_actual_diagnostics.deviation_results
-            ),
-            "pv_actual_gap_reason": (
-                pv_actual_diagnostics.gap_reason
-            ),
-            "pv_actual_observation_count": (
-                pv_actual_diagnostics.observation_count
-            ),
+            "pv_actual_evidence_ids": list(pv_actual_diagnostics.actual_evidence_ids),
+            "pv_actual_processing_ms": (pv_actual_diagnostics.processing_ms),
+            "pv_actual_closed_forecast_count": (pv_actual_diagnostics.closed_forecast_count),
+            "pv_actual_interval_count": (pv_actual_diagnostics.actual_interval_count),
+            "pv_actual_gap_interval_count": (pv_actual_diagnostics.gap_interval_count),
+            "pv_deviation_result_count": len(pv_actual_diagnostics.deviation_results),
+            "pv_actual_gap_reason": (pv_actual_diagnostics.gap_reason),
+            "pv_actual_observation_count": (pv_actual_diagnostics.observation_count),
             "pv_actual_first_observed_at": (
                 pv_actual_diagnostics.first_observed_at.isoformat()
-                if pv_actual_diagnostics.first_observed_at
-                is not None
+                if pv_actual_diagnostics.first_observed_at is not None
                 else None
             ),
             "pv_actual_last_observed_at": (
                 pv_actual_diagnostics.last_observed_at.isoformat()
-                if pv_actual_diagnostics.last_observed_at
-                is not None
+                if pv_actual_diagnostics.last_observed_at is not None
                 else None
             ),
             "pv_actual_maximum_observed_gap_seconds": (
-                pv_actual_diagnostics
-                .maximum_observed_gap_seconds
+                pv_actual_diagnostics.maximum_observed_gap_seconds
             ),
-            "pv_actual_allowed_gap_seconds": (
-                pv_actual_diagnostics.allowed_gap_seconds
-            ),
-            "pv_actual_history_semantics": (
-                pv_actual_diagnostics.history_semantics
-            ),
-            "pv_actual_interruption_state": (
-                pv_actual_diagnostics.interruption_state
-            ),
+            "pv_actual_allowed_gap_seconds": (pv_actual_diagnostics.allowed_gap_seconds),
+            "pv_actual_history_semantics": (pv_actual_diagnostics.history_semantics),
+            "pv_actual_interruption_state": (pv_actual_diagnostics.interruption_state),
             "pv_actual_interrupted_at": (
                 pv_actual_diagnostics.interrupted_at.isoformat()
-                if pv_actual_diagnostics.interrupted_at
-                is not None
+                if pv_actual_diagnostics.interrupted_at is not None
                 else None
             ),
-            "pv_deviation_status": (
-                "evaluated" if deviation is not None
-                else "not_available"
-            ),
-            "pv_deviation_id": (
-                deviation.deviation_id
-                if deviation is not None
-                else None
-            ),
+            "pv_deviation_status": ("evaluated" if deviation is not None else "not_available"),
+            "pv_deviation_id": (deviation.deviation_id if deviation is not None else None),
             "pv_deviation_starts_at": (
-                deviation.starts_at.isoformat()
-                if deviation is not None
-                else None
+                deviation.starts_at.isoformat() if deviation is not None else None
             ),
             "pv_deviation_ends_at": (
-                deviation.ends_at.isoformat()
-                if deviation is not None
-                else None
+                deviation.ends_at.isoformat() if deviation is not None else None
             ),
             "pv_deviation_evaluated_at": (
-                deviation.evaluated_at.isoformat()
-                if deviation is not None
-                else None
+                deviation.evaluated_at.isoformat() if deviation is not None else None
             ),
             "pv_deviation_forecast_interval_id": (
-                deviation.forecast_interval_id
-                if deviation is not None
-                else None
+                deviation.forecast_interval_id if deviation is not None else None
             ),
             "pv_deviation_actual_interval_id": (
-                deviation.actual_interval_id
-                if deviation is not None
-                else None
+                deviation.actual_interval_id if deviation is not None else None
             ),
             "pv_deviation_forecast_energy_wh": (
-                deviation.forecast_energy_wh
-                if deviation is not None
-                else None
+                deviation.forecast_energy_wh if deviation is not None else None
             ),
             "pv_deviation_forecast_lower_energy_wh": (
-                deviation.forecast_lower_energy_wh
-                if deviation is not None
-                else None
+                deviation.forecast_lower_energy_wh if deviation is not None else None
             ),
             "pv_deviation_forecast_central_energy_wh": (
-                deviation.forecast_central_energy_wh
-                if deviation is not None
-                else None
+                deviation.forecast_central_energy_wh if deviation is not None else None
             ),
             "pv_deviation_forecast_upper_energy_wh": (
-                deviation.forecast_upper_energy_wh
-                if deviation is not None
-                else None
+                deviation.forecast_upper_energy_wh if deviation is not None else None
             ),
             "pv_deviation_forecast_range_status": (
-                deviation.forecast_range_status
-                if deviation is not None
-                else "unavailable"
+                deviation.forecast_range_status if deviation is not None else "unavailable"
             ),
             "pv_deviation_forecast_range_source_fields": (
-                list(deviation.forecast_range_source_fields)
-                if deviation is not None
-                else []
+                list(deviation.forecast_range_source_fields) if deviation is not None else []
             ),
             "pv_deviation_forecast_range_method_version": (
-                deviation.forecast_range_method_version
-                if deviation is not None
-                else None
+                deviation.forecast_range_method_version if deviation is not None else None
             ),
             "pv_deviation_range_assessment": (
-                deviation.range_assessment
-                if deviation is not None
-                else "unavailable"
+                deviation.range_assessment if deviation is not None else "unavailable"
             ),
             "pv_deviation_range_distance_wh": (
-                deviation.range_distance_wh
-                if deviation is not None
-                else None
+                deviation.range_distance_wh if deviation is not None else None
             ),
             "pv_deviation_range_assessment_method_version": (
-                deviation.range_assessment_method_version
-                if deviation is not None
-                else None
+                deviation.range_assessment_method_version if deviation is not None else None
             ),
             "pv_deviation_actual_energy_wh": (
-                deviation.actual_energy_wh
-                if deviation is not None
-                else None
+                deviation.actual_energy_wh if deviation is not None else None
             ),
             "pv_deviation_energy_wh": (
-                deviation.deviation_energy_wh
-                if deviation is not None
-                else None
+                deviation.deviation_energy_wh if deviation is not None else None
             ),
             "pv_deviation_absolute_energy_wh": (
-                deviation.absolute_deviation_energy_wh
-                if deviation is not None
-                else None
+                deviation.absolute_deviation_energy_wh if deviation is not None else None
             ),
             "pv_deviation_percent": (
-                deviation.deviation_percent
-                if deviation is not None
-                else None
+                deviation.deviation_percent if deviation is not None else None
             ),
             "pv_deviation_percentage_status": (
-                deviation.percentage_status
-                if deviation is not None
-                else None
+                deviation.percentage_status if deviation is not None else None
             ),
-            "pv_deviation_direction": (
-                deviation.direction
-                if deviation is not None
-                else None
-            ),
+            "pv_deviation_direction": (deviation.direction if deviation is not None else None),
             "pv_deviation_forecast_confidence": (
-                deviation.forecast_confidence
-                if deviation is not None
-                else None
+                deviation.forecast_confidence if deviation is not None else None
             ),
             "pv_deviation_actual_confidence": (
-                deviation.actual_confidence
-                if deviation is not None
-                else None
+                deviation.actual_confidence if deviation is not None else None
             ),
             "pv_deviation_forecast_evidence_ids": (
-                list(deviation.forecast_evidence_ids)
-                if deviation is not None
-                else []
+                list(deviation.forecast_evidence_ids) if deviation is not None else []
             ),
             "pv_deviation_actual_evidence_ids": (
-                list(deviation.actual_evidence_ids)
-                if deviation is not None
-                else []
+                list(deviation.actual_evidence_ids) if deviation is not None else []
             ),
             "pv_deviation_forecast_conversion_method_version": (
-                deviation.forecast_conversion_method_version
-                if deviation is not None
-                else None
+                deviation.forecast_conversion_method_version if deviation is not None else None
             ),
             "pv_deviation_actual_conversion_method_version": (
-                deviation.actual_conversion_method_version
-                if deviation is not None
-                else None
+                deviation.actual_conversion_method_version if deviation is not None else None
             ),
             "pv_deviation_evaluation_method_version": (
-                deviation.evaluation_method_version
-                if deviation is not None
-                else None
+                deviation.evaluation_method_version if deviation is not None else None
             ),
         }
         pv_actual_attributes |= _project_cumulative_pv_evidence(
@@ -698,9 +559,7 @@ def _load_live_planning_input(
         ) from None
 
     if not isfinite(fallback_power_w) or fallback_power_w <= 0.0:
-        raise ValueError(
-            "household_load_fallback_power_w must be a finite positive number"
-        )
+        raise ValueError("household_load_fallback_power_w must be a finite positive number")
 
     if household_load_history is None:
         return assemble_planning_input(
@@ -739,9 +598,7 @@ def _execute_planning_bundle(
     price_config: PriceOpportunityConfig,
     bundle: PlanningInputBundle,
     web_view_store: WebViewStore,
-    pv_actual_diagnostics: (
-        LivePVActualDiagnostics | None
-    ) = None,
+    pv_actual_diagnostics: (LivePVActualDiagnostics | None) = None,
     pv_attenuated_ranges: tuple[
         PVAttenuatedForecastRange,
         ...,
@@ -749,9 +606,7 @@ def _execute_planning_bundle(
     pv_sunset_source: SunsetReadResult | None = None,
     pv_sunset_local_timezone: str | None = None,
     pv_sunset_offsets: dict[str, float] | None = None,
-    pv_attenuation_learning_result: (
-        PVAttenuationLearningResult | None
-    ) = None,
+    pv_attenuation_learning_result: (PVAttenuationLearningResult | None) = None,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -783,9 +638,7 @@ def _execute_planning_bundle(
                     first.entity_id,
                     first.state,
                     first.attributes
-                    | project_pv_attenuation_learning_result(
-                        pv_attenuation_learning_result
-                    ),
+                    | project_pv_attenuation_learning_result(pv_attenuation_learning_result),
                 ),
                 *projection.cards[1:],
             ),
@@ -793,9 +646,7 @@ def _execute_planning_bundle(
         )
     if pv_sunset_source is not None:
         if pv_sunset_local_timezone is None:
-            raise ValueError(
-                "pv_sunset_local_timezone is required with sunset evidence"
-            )
+            raise ValueError("pv_sunset_local_timezone is required with sunset evidence")
         projection = attach_pv_sunset_runtime_diagnostics(
             projection,
             source=pv_sunset_source,
@@ -852,9 +703,7 @@ def _execute_planning_bundle(
     )
 
     display_price_points = tuple(
-        point
-        for evidence in bundle.evidence
-        for point in evidence.price_points
+        point for evidence in bundle.evidence for point in evidence.price_points
     )
     web_view_store.publish(
         build_web_view(
@@ -872,9 +721,7 @@ def _execute_planning_bundle(
                 "run_id": run.planning_input.run_id,
                 "snapshot_id": run.planning_input.snapshot_id,
                 "source_facts": len(bundle.facts),
-                "source_available": sum(
-                    fact.availability == "available" for fact in bundle.facts
-                ),
+                "source_available": sum(fact.availability == "available" for fact in bundle.facts),
                 "price_points": len(bundle.snapshot.price_points),
                 "opportunities": len(run.opportunities.opportunities),
                 "opportunity_status": run.opportunities.detection_status,
@@ -895,27 +742,19 @@ def main() -> None:
     options = load_options()
     price_config = _price_opportunity_config(options)
     web_view_store = WebViewStore()
-    household_load_history = HouseholdLoadHistoryStore(
-        HOUSEHOLD_LOAD_HISTORY_PATH
-    )
+    household_load_history = HouseholdLoadHistoryStore(HOUSEHOLD_LOAD_HISTORY_PATH)
     pv_history_reader = HomeAssistantPVHistoryReader(token)
     pv_actual_cache = LivePVActualCache()
-    pv_sunset_local_timezone = str(
-        options.get("pv_local_timezone", "Europe/Amsterdam")
-    ).strip()
+    pv_sunset_local_timezone = str(options.get("pv_local_timezone", "Europe/Amsterdam")).strip()
     if not pv_sunset_local_timezone:
         raise ValueError("pv_local_timezone must be explicit")
     try:
         pv_sunset_timezone = ZoneInfo(pv_sunset_local_timezone)
     except ZoneInfoNotFoundError:
-        raise ValueError(
-            "pv_local_timezone must be a valid IANA timezone"
-        ) from None
+        raise ValueError("pv_local_timezone must be a valid IANA timezone") from None
     pv_sunset_reader = HomeAssistantSunsetReader(token)
     pv_solar_history_reader = HomeAssistantSolarHistoryReader(token)
-    pv_power_entity = str(
-        options.get("pv_power_entity", "")
-    ).strip()
+    pv_power_entity = str(options.get("pv_power_entity", "")).strip()
     if not pv_power_entity:
         raise ValueError("pv_power_entity must be explicit")
 
@@ -925,48 +764,36 @@ def main() -> None:
     if not pv_installation_scope_id:
         raise ValueError("pv_installation_scope_id must be explicit")
 
-    pv_attenuation_learning = (
-        ObserverOnlyPVAttenuationLearningRuntime(
-            forecast_basis_path=(
-                PV_ATTENUATION_FORECAST_BASIS_PATH
-            ),
-            evidence_store=PVAttenuationEvidenceStore(
-                PV_ATTENUATION_EVIDENCE_PATH
-            ),
-            solar_history_reader=pv_solar_history_reader.read,
-            installation_scope_id=pv_installation_scope_id,
-            local_timezone=pv_sunset_timezone,
-            maximum_solar_age_seconds=900.0,
-            forecast_mapping_version=(
-                "solcast-combined-installation:v1"
-            ),
-            eligibility_config=PVAttenuationEligibilityConfig(
-                minimum_forecast_energy_wh=100.0,
-                minimum_forecast_confidence=0.3,
-                minimum_actual_confidence=0.9,
-                maximum_attenuation_ratio=0.7,
-                minimum_preceding_tracking_ratio=0.8,
-                maximum_preceding_tracking_ratio=1.2,
-                minimum_distinct_days=3,
-                sunset_bucket_tolerance_minutes=20.0,
-                maximum_evidence_age_days=45,
-                configuration_version=(
-                    "pv-attenuation-eligibility-config:v1"
-                ),
-            ),
-            aggregation_config=PVAttenuationAggregationConfig(
-                sunset_bucket_width_minutes=30.0,
-                minimum_sample_count=3,
-                minimum_distinct_days=3,
-                maximum_dispersion=0.2,
-                minimum_profile_confidence=0.4,
-                maximum_evidence_age_days=45,
-                profile_validity_days=7,
-                configuration_version=(
-                    "pv-attenuation-aggregation-config:v1"
-                ),
-            ),
-        )
+    pv_attenuation_learning = ObserverOnlyPVAttenuationLearningRuntime(
+        forecast_basis_path=(PV_ATTENUATION_FORECAST_BASIS_PATH),
+        evidence_store=PVAttenuationEvidenceStore(PV_ATTENUATION_EVIDENCE_PATH),
+        solar_history_reader=pv_solar_history_reader.read,
+        installation_scope_id=pv_installation_scope_id,
+        local_timezone=pv_sunset_timezone,
+        maximum_solar_age_seconds=900.0,
+        forecast_mapping_version=("solcast-combined-installation:v1"),
+        eligibility_config=PVAttenuationEligibilityConfig(
+            minimum_forecast_energy_wh=100.0,
+            minimum_forecast_confidence=0.3,
+            minimum_actual_confidence=0.9,
+            maximum_attenuation_ratio=0.7,
+            minimum_preceding_tracking_ratio=0.8,
+            maximum_preceding_tracking_ratio=1.2,
+            minimum_distinct_days=3,
+            sunset_bucket_tolerance_minutes=20.0,
+            maximum_evidence_age_days=45,
+            configuration_version=("pv-attenuation-eligibility-config:v1"),
+        ),
+        aggregation_config=PVAttenuationAggregationConfig(
+            sunset_bucket_width_minutes=30.0,
+            minimum_sample_count=3,
+            minimum_distinct_days=3,
+            maximum_dispersion=0.2,
+            minimum_profile_confidence=0.4,
+            maximum_evidence_age_days=45,
+            profile_validity_days=7,
+            configuration_version=("pv-attenuation-aggregation-config:v1"),
+        ),
     )
 
     raw_pv_telemetry_interval = options.get(
@@ -974,20 +801,11 @@ def main() -> None:
         options.get("telemetry_interval_seconds", 5),
     )
     try:
-        pv_telemetry_interval_seconds = int(
-            raw_pv_telemetry_interval
-        )
+        pv_telemetry_interval_seconds = int(raw_pv_telemetry_interval)
     except (TypeError, ValueError):
-        raise ValueError(
-            "pv telemetry interval must be a positive integer"
-        ) from None
-    if (
-        isinstance(raw_pv_telemetry_interval, bool)
-        or pv_telemetry_interval_seconds <= 0
-    ):
-        raise ValueError(
-            "pv telemetry interval must be a positive integer"
-        )
+        raise ValueError("pv telemetry interval must be a positive integer") from None
+    if isinstance(raw_pv_telemetry_interval, bool) or pv_telemetry_interval_seconds <= 0:
+        raise ValueError("pv telemetry interval must be a positive integer")
 
     _start_web_server(web_view_store)
     raw_poll_interval = options.get("live_poll_interval_seconds", 60.0)
@@ -1020,9 +838,7 @@ def main() -> None:
             entity_id=pv_power_entity,
             history_reader=pv_history_reader.read,
             cache=pv_actual_cache,
-            telemetry_interval_seconds=(
-                pv_telemetry_interval_seconds
-            ),
+            telemetry_interval_seconds=(pv_telemetry_interval_seconds),
         )
 
     def execute(
@@ -1030,21 +846,14 @@ def main() -> None:
         pv_actual_diagnostics: LivePVActualDiagnostics,
     ) -> None:
         timeline = bundle.snapshot.pv_energy_timeline
-        pv_sunset_source = pv_sunset_reader.read(
-            local_timezone=pv_sunset_timezone
-        )
+        pv_sunset_source = pv_sunset_reader.read(local_timezone=pv_sunset_timezone)
         pv_sunset_offsets = (
             derive_pv_sunset_offsets(
                 timeline=timeline,
-                sunsets_by_local_date=dict(
-                    pv_sunset_source.sunsets_by_local_date
-                ),
+                sunsets_by_local_date=dict(pv_sunset_source.sunsets_by_local_date),
                 projected_at=bundle.snapshot.captured_at,
             )
-            if (
-                timeline is not None
-                and pv_sunset_source.status == "available"
-            )
+            if (timeline is not None and pv_sunset_source.status == "available")
             else {}
         )
         pv_attenuation_learning_result = (
@@ -1084,9 +893,7 @@ def main() -> None:
             pv_sunset_source=pv_sunset_source,
             pv_sunset_local_timezone=pv_sunset_local_timezone,
             pv_sunset_offsets=pv_sunset_offsets,
-            pv_attenuation_learning_result=(
-                pv_attenuation_learning_result
-            ),
+            pv_attenuation_learning_result=(pv_attenuation_learning_result),
         )
 
     previous_signature: str | None = None

@@ -908,6 +908,8 @@ DASHBOARD_HTML = """<!doctype html>
       }
       for (const group of groups) {
         const details = document.createElement("details");
+        details.className = "plan-explanation-detail";
+        details.dataset.explanationKey = `opportunity:${group.label_nl}`;
         const summary = document.createElement("summary");
         summary.textContent = group.summary_nl;
         details.appendChild(summary);
@@ -926,6 +928,8 @@ DASHBOARD_HTML = """<!doctype html>
       fragment.appendChild(planHeading);
       for (const plan of explanation.plans ?? []) {
         const details = document.createElement("details");
+        details.className = "plan-explanation-detail";
+        details.dataset.explanationKey = `plan:${plan.key}`;
         const summary = document.createElement("summary");
         summary.textContent = `${plan.selected ? "Gekozen: " : "Alternatief: "}${plan.label_nl}`;
         details.appendChild(summary);
@@ -1202,6 +1206,14 @@ DASHBOARD_HTML = """<!doctype html>
       const openTechnicalDetails = Array.from(
         document.querySelectorAll("details.technical-details")
       ).map((details) => details.open);
+      const openPlanExplanationDetails = Object.fromEntries(
+        Array.from(
+          document.querySelectorAll("details.plan-explanation-detail")
+        ).map((details) => [
+          details.dataset.explanationKey,
+          details.open
+        ])
+      );
       const scrollPositions = Array.from(
         document.querySelectorAll(
           ".timeline-panel, .price-chart-scroll, .technical-details pre"
@@ -1213,6 +1225,7 @@ DASHBOARD_HTML = """<!doctype html>
       return {
         openStageCards,
         openTechnicalDetails,
+        openPlanExplanationDetails,
         scrollPositions,
         windowScrollX: window.scrollX,
         windowScrollY: window.scrollY,
@@ -1231,6 +1244,15 @@ DASHBOARD_HTML = """<!doctype html>
         document.querySelectorAll("details.technical-details")
       ).forEach((details, index) => {
         details.open = state.openTechnicalDetails[index] ?? false;
+      });
+      Array.from(
+        document.querySelectorAll("details.plan-explanation-detail")
+      ).forEach((details) => {
+        details.open = Boolean(
+          state.openPlanExplanationDetails?.[
+            details.dataset.explanationKey
+          ]
+        );
       });
       Array.from(
         document.querySelectorAll(
@@ -1674,6 +1696,13 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
     paths_by_id = {
         path.path_id: path for path in run.candidate_set.energy_paths
     }
+    pv_candidate_count = sum(
+        candidate.family == "pv_charge_only"
+        for candidate in run.candidate_set.candidates
+    )
+    local_capture_date = run.planning_input.captured_at.astimezone(
+        ZoneInfo("Europe/Amsterdam")
+    ).date()
     plans: list[dict[str, object]] = []
     winning_confidence = 0.0
     for candidate in run.candidate_set.candidates:
@@ -1681,7 +1710,22 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
         outcome = outcomes_by_candidate.get(candidate.candidate_id)
         path = paths_by_id[candidate.energy_path_id]
         if candidate.family == "pv_charge_only" and outcome is not None:
-            label = "Laden met verwachte zonne-energie"
+            window_date = outcome.charge_window_starts_at.astimezone(
+                ZoneInfo("Europe/Amsterdam")
+            ).date()
+            day_prefix = ""
+            if pv_candidate_count > 1:
+                if window_date == local_capture_date:
+                    day_prefix = "Vandaag "
+                elif window_date == local_capture_date + timedelta(days=1):
+                    day_prefix = "Morgen "
+                else:
+                    day_prefix = f"{window_date:%d-%m} "
+            label = (
+                f"{day_prefix}laden met verwachte zonne-energie"
+                if day_prefix
+                else "Laden met verwachte zonne-energie"
+            )
             period = _period_nl(
                 outcome.charge_window_starts_at,
                 outcome.charge_window_ends_at,
@@ -1731,6 +1775,8 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
                 )
         plans.append(
             {
+                "key": candidate.candidate_id,
+                "family": candidate.family,
                 "label_nl": label,
                 "selected": selected,
                 "period_nl": period,

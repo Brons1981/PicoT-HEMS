@@ -183,3 +183,58 @@ def test_energy_path_rejects_overlapping_segments_for_one_scope() -> None:
             assumptions=(),
             confidence=0.8,
         )
+
+
+def test_v2adr050_projected_states_preserve_post_window_storage_energy() -> None:
+    acquisition_end = BASE + timedelta(hours=1)
+    requirement_time = BASE + timedelta(hours=4)
+    path = EnergyPath(
+        path_id="path-delegated-pv-1",
+        snapshot_id="snapshot-1",
+        family=CandidateFamily.PV_FIRST,
+        horizon_start=BASE,
+        horizon_end=requirement_time,
+        segments=(
+            PathSegment(
+                segment_id="segment-delegated-pv",
+                order=1,
+                execution_scope_id="battery-main",
+                starts_at=BASE,
+                ends_at=acquisition_end,
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER,
+                capability_id="battery-control",
+                purpose="Acquire 0.49 kWh from PV surplus",
+                evidence_ids=("pv-window-1", "storage-requirement-1"),
+                requested_power_w=490.0,
+                charge_source_policy=ChargeSourcePolicy.PV_ONLY,
+            ),
+        ),
+        projected_states=(
+            ProjectedEnergyState(
+                at=acquisition_end,
+                confidence=0.8,
+                battery_soc=1.0,
+                storage_energy_wh=8160.0,
+            ),
+            ProjectedEnergyState(
+                at=requirement_time,
+                confidence=0.6,
+                battery_soc=0.72,
+                storage_energy_wh=5875.2,
+            ),
+        ),
+        opportunity_ids=("pv-window-1",),
+        constraint_ids=("storage-requirement-1",),
+        capability_ids=("battery-control",),
+        strategy_version=1,
+        mapping_version=1,
+        assumptions=("Post-window household discharge remains projected.",),
+        confidence=0.6,
+    )
+
+    assert path.projected_states[0].storage_energy_wh == 8160.0
+    assert path.projected_states[1].storage_energy_wh == 5875.2
+    assert (
+        path.projected_states[1].storage_energy_wh
+        < path.projected_states[0].storage_energy_wh
+    )

@@ -73,10 +73,15 @@ class PathSegment:
             raise ValueError("Power-based execution primitives require requested power.")
         if not requires_power and self.requested_power_w is not None:
             raise ValueError("Requested power is only valid for power-based primitives.")
-        is_charge = self.primitive is ExecutionPrimitive.CHARGE_AT_POWER
-        if is_charge and self.charge_source_policy is None:
+        is_explicit_charge = self.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+        supports_charge_source_policy = self.primitive in {
+            ExecutionPrimitive.CHARGE_AT_POWER,
+            ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+            ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+        }
+        if is_explicit_charge and self.charge_source_policy is None:
             raise ValueError("Charging Path Segments require an explicit charge source policy.")
-        if not is_charge and self.charge_source_policy is not None:
+        if not supports_charge_source_policy and self.charge_source_policy is not None:
             raise ValueError("Charge source policy is only valid for charging Path Segments.")
         if self.energy_profile_id is not None and not self.energy_profile_id.strip():
             raise ValueError("Energy profile ID must not be empty when provided.")
@@ -109,6 +114,7 @@ class ProjectedEnergyState:
     pv_production_w: float | None = None
     household_demand_w: float | None = None
     battery_soc: float | None = None
+    storage_energy_wh: float | None = None
     ev_energy_wh: float | None = None
     controllable_load_w: float | None = None
     conversion_losses_w: float | None = None
@@ -125,6 +131,7 @@ class ProjectedEnergyState:
             (self.pv_production_w, "PV production"),
             (self.household_demand_w, "Household demand"),
             (self.ev_energy_wh, "EV energy"),
+            (self.storage_energy_wh, "Storage energy"),
             (self.controllable_load_w, "Controllable load"),
             (self.conversion_losses_w, "Conversion losses"),
         ):

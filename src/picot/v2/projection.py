@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from time import perf_counter
 
 from picot.v2.contracts import CanonicalPipelineRun
+from picot.v2.storage_energy_source_need import (
+    derive_storage_energy_source_need,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +58,27 @@ def project(run: CanonicalPipelineRun) -> Projection:
     pb = run.primitive_boundary
     ab = run.adapter_boundary
     vr = run.vendor_result
+
+    storage_states_by_id = {
+        state.storage_state_id: state
+        for state in p.current_storage_states
+    }
+    projected_balances_by_id = {
+        balance.balance_id: balance
+        for balance in c.projected_balances
+    }
+    storage_source_needs = tuple(
+        derive_storage_energy_source_need(
+            storage_state=storage_states_by_id[requirement.storage_state_id],
+            balance=projected_balances_by_id[
+                requirement.projected_balance_id
+            ],
+            requirement=requirement,
+        )
+        for requirement in c.storage_requirements
+        if requirement.storage_state_id in storage_states_by_id
+        and requirement.projected_balance_id in projected_balances_by_id
+    )
 
     cards = (
         Card(
@@ -202,6 +226,34 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "storage_requirement_count": len(
                     c.storage_requirements
                 ),
+                "storage_source_need_count": len(
+                    storage_source_needs
+                ),
+                "storage_source_needs": [
+                    {
+                        "storage_state_id": need.storage_state_id,
+                        "target_energy_wh": need.target_energy_wh,
+                        "energy_to_target_wh": need.energy_to_target_wh,
+                        "expected_usable_pv_energy_wh": (
+                            need.expected_usable_pv_energy_wh
+                        ),
+                        "household_load_forecast_energy_wh": (
+                            need.household_load_forecast_energy_wh
+                        ),
+                        "pv_storage_contribution_wh": (
+                            need.pv_storage_contribution_wh
+                        ),
+                        "grid_energy_required_wh": (
+                            need.grid_energy_required_wh
+                        ),
+                        "pv_only_feasible": need.pv_only_feasible,
+                        "status": need.status,
+                        "required_by": need.required_by.isoformat(),
+                        "confidence": need.confidence,
+                        "method_version": need.method_version,
+                    }
+                    for need in storage_source_needs
+                ],
                 "derivation_status": c.derivation_status,
                 "derivation_reason": c.derivation_reason,
                 "pv_forecast_assumption_set_id": (

@@ -127,6 +127,24 @@ def test_candidate_engine_derives_conservative_storage_requirement() -> None:
 
     candidate_card = project(pipeline_run).cards[2]
 
+    assert candidate_card.attributes["storage_source_need_count"] == 1
+    assert candidate_card.attributes["storage_source_needs"] == [
+        {
+            "storage_state_id": "storage-home",
+            "target_energy_wh": 8000.0,
+            "energy_to_target_wh": 4000.0,
+            "expected_usable_pv_energy_wh": 1000.0,
+            "household_load_forecast_energy_wh": 1500.0,
+            "pv_storage_contribution_wh": 0.0,
+            "grid_energy_required_wh": 4500.0,
+            "pv_only_feasible": False,
+            "status": "grid_support_required",
+            "required_by": HORIZON_END.isoformat(),
+            "confidence": 0.70,
+            "method_version": "storage-energy-source-need:v1",
+        }
+    ]
+
     assert candidate_card.attributes["projected_balance_count"] == 1
     assert candidate_card.attributes["storage_requirement_count"] == 1
     assert candidate_card.attributes["storage_requirements"] == [

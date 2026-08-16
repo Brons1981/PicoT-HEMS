@@ -272,6 +272,15 @@ DASHBOARD_HTML = """<!doctype html>
     <h2>Pipeline ①→⑨</h2>
     <section id="pipeline" class="pipeline" aria-live="polite"></section>
 
+    <h2>Energieplan batterij</h2>
+    <section
+      id="storage-energy-source-needs"
+      class="timeline-panel"
+      aria-live="polite"
+    >
+      Nog geen energieplan voor de batterij beschikbaar.
+    </section>
+
     <h2>PV Energy Timeline</h2>
     <section id="pv-energy-timeline" class="timeline-panel" aria-live="polite">
       Nog geen PV-tijdlijn beschikbaar.
@@ -313,6 +322,7 @@ DASHBOARD_HTML = """<!doctype html>
     const element = (id) => document.getElementById(id);
     const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
     const PRICE_DISPLAY_HOURS = 48;
+    let pendingView = null;
 
     function createSvgElement(name, attributes = {}) {
       const node = document.createElementNS(SVG_NAMESPACE, name);
@@ -817,6 +827,71 @@ DASHBOARD_HTML = """<!doctype html>
       container.replaceChildren(fragment);
     }
 
+    function renderStorageEnergySourceNeeds(needs) {
+      const container = element("storage-energy-source-needs");
+      container.replaceChildren();
+
+      if (!Array.isArray(needs) || needs.length === 0) {
+        container.textContent =
+          "Nog geen energieplan voor de batterij beschikbaar.";
+        return;
+      }
+
+      for (const need of needs) {
+        const article = document.createElement("article");
+        const summary = document.createElement("p");
+        const deadline = formatTimestamp(need.required_by);
+
+        if (need.status === "target_already_met") {
+          summary.textContent =
+            "Zendure batterij heeft het geplande doel van " +
+            displayValue(need.target_energy_wh) +
+            " Wh al bereikt; aanvullende laadenergie is niet nodig.";
+        } else if (need.status === "pv_only_feasible") {
+          summary.textContent =
+            "Zendure batterij mist " +
+            displayValue(need.energy_to_target_wh) +
+            " Wh om het geplande doel van " +
+            displayValue(need.target_energy_wh) +
+            " Wh te bereiken. De verwachte PV kan dit vóór " +
+            deadline +
+            " zonder netladen bereiken.";
+        } else {
+          summary.textContent =
+            "Zendure batterij mist " +
+            displayValue(need.energy_to_target_wh) +
+            " Wh om het geplande doel van " +
+            displayValue(need.target_energy_wh) +
+            " Wh te bereiken. Van de verwachte " +
+            displayValue(need.expected_usable_pv_energy_wh) +
+            " Wh PV blijft na " +
+            displayValue(need.household_load_forecast_energy_wh) +
+            " Wh huishoudverbruik " +
+            displayValue(need.pv_storage_contribution_wh) +
+            " Wh beschikbaar voor opslag. Daardoor resteert " +
+            displayValue(need.grid_energy_required_wh) +
+            " Wh mogelijke netlaadbehoefte vóór " +
+            deadline +
+            ".";
+        }
+
+        const attributes = document.createElement("dl");
+        appendAttribute(
+          attributes,
+          "PV-only haalbaar",
+          need.pv_only_feasible ? "Ja" : "Nee"
+        );
+        appendAttribute(
+          attributes,
+          "Confidence",
+          formatConfidence(need.confidence)
+        );
+        article.append(summary, attributes);
+        appendTechnicalDetails(article, need);
+        container.appendChild(article);
+      }
+    }
+
     function renderHouseholdLoadForecast(forecast) {
       const container = element("household-load-forecast");
       const quarterDetailsOpen =
@@ -956,6 +1031,107 @@ DASHBOARD_HTML = """<!doctype html>
       container.appendChild(table);
     }
 
+    function captureDashboardState() {
+      const openTechnicalDetails = Array.from(
+        document.querySelectorAll("details.technical-details")
+      ).map((details) => details.open);
+      const scrollPositions = Array.from(
+        document.querySelectorAll(
+          ".timeline-panel, .price-chart-scroll, .technical-details pre"
+        )
+      ).map((node) => ({
+        left: node.scrollLeft,
+        top: node.scrollTop
+      }));
+      return {
+        openTechnicalDetails,
+        scrollPositions,
+        windowScrollX: window.scrollX,
+        windowScrollY: window.scrollY,
+        selectedPriceDetail:
+          document.querySelector(".price-detail")?.textContent ?? null
+      };
+    }
+
+    function restoreDashboardState(state) {
+      Array.from(
+        document.querySelectorAll("details.technical-details")
+      ).forEach((details, index) => {
+        details.open = state.openTechnicalDetails[index] ?? false;
+      });
+      Array.from(
+        document.querySelectorAll(
+          ".timeline-panel, .price-chart-scroll, .technical-details pre"
+        )
+      ).forEach((node, index) => {
+        const position = state.scrollPositions[index];
+        if (position) {
+          node.scrollLeft = position.left;
+          node.scrollTop = position.top;
+        }
+      });
+      const priceDetail = document.querySelector(".price-detail");
+      if (priceDetail && state.selectedPriceDetail) {
+        priceDetail.textContent = state.selectedPriceDetail;
+      }
+      window.scrollTo(state.windowScrollX, state.windowScrollY);
+    }
+
+    function shouldDeferRenderForSelection() {
+      const selection = window.getSelection();
+      return Boolean(
+        selection && !selection.isCollapsed && selection.toString()
+      );
+    }
+
+    function renderView(view) {
+      const dashboardState = captureDashboardState();
+      element("version").textContent = displayValue(view.picot_version);
+      element("run-id").textContent = displayValue(view.run_id);
+      element("captured-at").textContent = displayValue(view.captured_at);
+      const pipeline = Array.isArray(view.pipeline) ? view.pipeline : [];
+      const planningInput = pipeline.find((item) => item.stage === 1);
+      const candidateEngine = pipeline.find((item) => item.stage === 3);
+      const sources = planningInput?.attributes?.sources;
+      renderSources(Array.isArray(sources) ? sources : []);
+      renderPriceTimeline(
+        view.price_timeline ?? {
+          available: false,
+          display_hours: PRICE_DISPLAY_HOURS,
+          display_starts_at: null,
+          display_ends_at: null,
+          market_timezone: "Europe/Amsterdam",
+          planning_horizon_ends_at: null,
+          points: [],
+          opportunities: []
+        },
+        view.captured_at
+      );
+      renderPipeline(pipeline);
+      renderStorageEnergySourceNeeds(
+        candidateEngine?.attributes?.storage_source_needs ?? []
+      );
+      renderTimeline(view.pv_energy_timeline ?? {
+        available: false,
+        interval_count: 0,
+        total_wh: 0,
+        intervals: []
+      });
+      renderHouseholdLoadForecast(view.household_load_forecast ?? {
+        available: false,
+        forecast_id: null,
+        interval_count: 0,
+        total_wh: 0,
+        average_confidence: 0,
+        starts_at: null,
+        ends_at: null,
+        fallback_active: false,
+        fallback_reason: null,
+        intervals: []
+      });
+      restoreDashboardState(dashboardState);
+    }
+
     async function loadView() {
       const status = element("status");
       try {
@@ -968,45 +1144,15 @@ DASHBOARD_HTML = """<!doctype html>
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const view = await response.json();
-        element("version").textContent = displayValue(view.picot_version);
-        element("run-id").textContent = displayValue(view.run_id);
-        element("captured-at").textContent = displayValue(view.captured_at);
-        const pipeline = Array.isArray(view.pipeline) ? view.pipeline : [];
-        const planningInput = pipeline.find((item) => item.stage === 1);
-        const sources = planningInput?.attributes?.sources;
-        renderSources(Array.isArray(sources) ? sources : []);
-        renderPriceTimeline(
-          view.price_timeline ?? {
-            available: false,
-            display_hours: PRICE_DISPLAY_HOURS,
-            display_starts_at: null,
-            display_ends_at: null,
-            market_timezone: "Europe/Amsterdam",
-            planning_horizon_ends_at: null,
-            points: [],
-            opportunities: []
-          },
-          view.captured_at
-        );
-        renderPipeline(pipeline);
-        renderTimeline(view.pv_energy_timeline ?? {
-          available: false,
-          interval_count: 0,
-          total_wh: 0,
-          intervals: []
-        });
-        renderHouseholdLoadForecast(view.household_load_forecast ?? {
-          available: false,
-          forecast_id: null,
-          interval_count: 0,
-          total_wh: 0,
-          average_confidence: 0,
-          starts_at: null,
-          ends_at: null,
-          fallback_active: false,
-          fallback_reason: null,
-          intervals: []
-        });
+        if (shouldDeferRenderForSelection()) {
+          pendingView = view;
+          status.dataset.state = "ready";
+          status.textContent =
+            "Live · nieuwe data wacht tot de selectie is afgerond";
+          return;
+        }
+        pendingView = null;
+        renderView(view);
         status.dataset.state = "ready";
         status.textContent = "Live · automatisch ververst iedere 5 seconden";
       } catch (error) {
@@ -1014,6 +1160,14 @@ DASHBOARD_HTML = """<!doctype html>
         status.textContent = `Dashboarddata niet beschikbaar: ${error.message}`;
       }
     }
+
+    document.addEventListener("selectionchange", () => {
+      if (!shouldDeferRenderForSelection() && pendingView !== null) {
+        const newestView = pendingView;
+        pendingView = null;
+        renderView(newestView);
+      }
+    });
 
     loadView();
     setInterval(loadView, 5000);

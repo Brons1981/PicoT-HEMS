@@ -206,8 +206,13 @@ def construct_pv_charge_only_candidate(
             and item.execution_scope_id == storage.execution_scope_id
             and item.availability is CapabilityAvailability.AVAILABLE
             and item.health is CapabilityHealth.HEALTHY
-            and ExecutionPrimitive.BALANCE_CHARGE_ONLY
-            in item.supported_primitives
+            and any(
+                primitive in item.supported_primitives
+                for primitive in (
+                    ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+                    ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                )
+            )
         ),
         None,
     )
@@ -218,6 +223,12 @@ def construct_pv_charge_only_candidate(
             requirement,
             "balance_charge_only_unavailable",
         )
+    planned_primitive = (
+        ExecutionPrimitive.BALANCE_CHARGE_ONLY
+        if ExecutionPrimitive.BALANCE_CHARGE_ONLY
+        in capability.supported_primitives
+        else ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+    )
 
     intervals = tuple(
         clipped
@@ -271,7 +282,7 @@ def construct_pv_charge_only_candidate(
                         execution_scope_id=storage.execution_scope_id,
                         starts_at=interval.starts_at,
                         ends_at=interval.ends_at,
-                        primitive=ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+                        primitive=planned_primitive,
                         capability_id=capability.capability_id,
                         purpose=(
                             "Acquire required storage energy from forecast "

@@ -356,3 +356,250 @@ State: IMPLEMENTED, not CI verified, not live verified
 
 ### FIRST NEXT ACTION
 Run the isolated v2 CI against the current rebuild branch. Fix only v2 CI defects. When green, install/update the add-on from the rebuild branch in Home Assistant and verify all nine cards plus diagnostic performance before adding any intelligence.
+## 2026-08-16 — canonical live Zendure control, dev.84 dashboard health and next roadmap
+
+PicoT version: `2.0.0-dev.84`  
+Branch: `main`  
+Last verified main commit: `3f74754a246f4cdfebb85785bfaeed7c5d213859`  
+Architecture baseline: `8197abbefd969f10da5a8f27244862be07998299`  
+Pipeline contract: v1  
+State: **MERGED, LIVE and initial dashboard behaviour verified**
+
+### COMPLETED TODAY
+
+- Closed the first real canonical battery-control path from Planning Input through Vendor Result.
+- Enabled canonical live execution through the validated Zendure mode selector without moving vendor-specific decisions into PicoT Core.
+- Added V2ADR-051 plan continuity and storage-mode lifecycle behaviour:
+  - ordinary PV acquisition prefers `Nul op de meter` so short household-load changes remain delegated to the Zendure controller;
+  - the baseline outside the PV acquisition window requests `Alleen slim ontladen`;
+  - `Alleen slim opladen` remains available for an explicit non-discharge purpose, for example preventing battery discharge while an EV consumes PV;
+  - a user-selected mode remains a manual override until explicit release;
+  - previously selected rolling price quarters receive lower preference than a materially better future block rather than becoming permanently fixed.
+- Added validated Zendure BMS calibration evidence so autonomous vendor-side cell balancing can be distinguished from an unexplained grid charge when PicoT is not commanding it.
+- Added the dashboard authority-release action and fixed local-HTTP compatibility where `crypto.randomUUID()` is unavailable.
+- Confirmed that authority release succeeds; the initial HTTP 409 was caused by the dashboard briefly re-reading an older projected snapshot after the backend had already released the override.
+- Replaced observer-only Dutch summary text that remained visible during live execution.
+- Added a prominent **Zendure nu** view with:
+  - currently observed mode;
+  - planned mode;
+  - control origin;
+  - last observation;
+  - persisted PicoT application time;
+  - latest vendor result.
+- Added independent health indicators to pipeline cards 1 through 9:
+  - green means the stage is technically healthy, including a valid no-op or already-active mode;
+  - red means a real error, invalid/unavailable required state, or an essential mapping/provenance failure;
+  - the dashboard shows an aggregate result such as `Pipeline werkt correct – 9/9 groen`.
+- Made the dashboard header state-aware: `Live uitvoering` or `Alleen meekijken`.
+- Upgraded persisted storage-mode provenance to schema v2 for `last_planner_applied_at`, while retaining read compatibility with existing schema-v1 state.
+- Released and installed `2.0.0-dev.84`.
+
+### GITHUB / VERIFICATION
+
+- PR #341 — canonical storage-mode lifecycle, normal PV mode selection and calibration evidence.
+- PR #343 — local-HTTP authority reset ID fallback.
+- PR #344 — release `2.0.0-dev.83`.
+- PR #345 — pipeline health, Dutch live summaries and Zendure-now status.
+- PR #346 — release `2.0.0-dev.84`.
+- Integrated feature verification before publication:
+  - Pytest: **796 passed**;
+  - targeted Ruff: green;
+  - targeted Mypy: green.
+- Home Assistant live verification:
+  - dev.84 installed and running;
+  - the dashboard appears healthy;
+  - authority release works;
+  - the first autonomous future plan/mode transition remains to be observed over time.
+
+### CURRENT CANONICAL STATUS
+
+| Stage | Status | Current responsibility |
+| --- | --- | --- |
+| ① Planning Input | Live | Configured HA evidence, Nord Pool, Solcast/GoodWe PV, household load, storage, provenance and capability evidence |
+| ② Opportunity Engine | Live first scope | Low-price and high-export-value windows with explicit evidence |
+| ③ Candidate Engine | Live battery scope | Baseline plus timed delegated PV-storage Candidates |
+| ④ Evaluation Engine | Live initial policy | Selects a technically valid battery path through explicit storage progress/requirement rules |
+| ⑤ Execution Plan Builder | Live battery scope | Converts the winning timed storage path into scope-specific segments |
+| ⑥ Execution Engine | Live | Selects the due segment and grants or blocks execution authority |
+| ⑦ Execution Primitive | Live | Emits validated delegated storage-mode requests |
+| ⑧ Device Adapter | Live | Translates generic primitives to the configured Zendure mode selector |
+| ⑨ Vendor Result | Live | Dispatches or records already-active/awaiting-feedback behaviour |
+
+The first end-to-end battery slice is now real and live. This is not yet proof that every accepted function in ADR-001 through ADR-039 is implemented.
+
+### ADR-001 THROUGH ADR-039 GAP FINDINGS
+
+Implemented or substantially integrated:
+
+- vendor-independent Core and deterministic no-AI runtime;
+- one immutable Planning Input per run and complete ①→⑨ lineage;
+- generic Execution Primitives and scope-specific execution plans;
+- real price Opportunities;
+- Current Storage State;
+- canonical actual-plus-forecast PV Energy Timeline;
+- household-load forecast, Projected Household Energy Balance and Storage Energy Requirement;
+- timed delegated PV-storage Candidates and Outcomes;
+- first deterministic Evaluation and live Zendure adapter route;
+- manual mode provenance and explicit authority release.
+
+Largest remaining development areas:
+
+1. real Planner Strategy, User Objectives and full ADR-032 per-objective comparison;
+2. broader complete Candidate outcomes, especially an explicit net-charge Candidate;
+3. generic Runtime Monitor, resource-pressure state and material-change coordination;
+4. generic commitments, switching budget and anti-flipper rules across devices;
+5. Simple/Expert input, User Rules, Energy Profiles and Preferences Wizard;
+6. EV and other flexible-device profiles plus household/per-phase capacity management;
+7. full capability discovery, semantic mapping validation, mapping lifecycle/history and controlled replacement.
+
+ADR-014 and ADR-022 allow progressive implementation. Missing future functions must remain explicit and may not be silently presented as complete.
+
+### ACCEPTED ROADMAP REORDERING
+
+The net-charge Candidate moves forward before the full Planner Strategy. Once it exists, PicoT can represent all currently relevant energy sources in the canonical Candidate pipeline:
+
+- PV;
+- the home battery;
+- grid import;
+- household demand;
+- dynamic market prices;
+- later flexible devices.
+
+Accepted order:
+
+1. preserve and observe dev.84 autonomous behaviour without unnecessary changes;
+2. design and implement a historical energy/decision dashboard on one shared time axis;
+3. implement the net-charge Candidate observer-only under ADR-037;
+4. harden planning for autumn and winter;
+5. run a 2027 no-saldering valuation in shadow mode inside the same canonical pipeline;
+6. implement full Planner Strategy and comparable Candidate Outcomes;
+7. complete generic Runtime Monitor and anti-flipper behaviour;
+8. add User Objectives, Preferences Wizard and User Rules;
+9. add EV/appliance profiles and phase-capacity planning;
+10. complete capability discovery and persistent mapping management.
+
+### HISTORICAL DASHBOARD REQUIREMENT
+
+The next dashboard step must make it easy to identify what happened around a selected time. Relevant records share one time axis:
+
+- PV production;
+- grid import/export;
+- household consumption;
+- battery charge/discharge power;
+- battery SoC;
+- dynamic price;
+- selected and observed Zendure mode as a time band;
+- planned windows;
+- planner decisions and decision reasons;
+- command/feedback transitions;
+- pipeline faults.
+
+This requires durable event/decision history. The latest dashboard snapshot alone is insufficient.
+
+### AUTUMN / WINTER HARDENING
+
+The planner must be verified against:
+
+- little or no usable PV;
+- multiple dark days;
+- short and interrupted PV windows;
+- strongly changing cloud cover;
+- insufficient PV before the required reserve deadline;
+- cheap night-time grid energy;
+- expensive morning/evening demand;
+- an empty battery before the morning peak;
+- optimistic or incomplete forecasts;
+- insufficient remaining charge time;
+- vendor-side tapering near full SoC;
+- missing price or forecast evidence.
+
+The planner may not keep waiting for PV when the canonical evidence proves that PV is insufficient or no longer recoverable.
+
+### NET-CHARGE CANDIDATE — NEXT PLANNER SLICE
+
+The observer-only Candidate must state explicitly:
+
+- required grid energy and target deadline;
+- selected low-price quarter-hours;
+- expected later PV and battery headroom reserved for it;
+- conversion and round-trip losses;
+- charge-power/capability limits;
+- minimum and maximum SoC;
+- vendor tapering near full SoC as observed evidence, not invented Core control;
+- source policy and why grid supplementation is allowed;
+- why waiting for PV is or is not recoverable;
+- switching impact and plan continuity.
+
+Initial comparison set:
+
+- PV-only;
+- PV plus grid supplementation;
+- grid-first for insufficient winter PV;
+- hold current mode / no additional action.
+
+Construction and simulation belong to Candidate processing. Evaluation may only compare already-derived outcomes.
+
+### END OF SALDERING — 2027 SHADOW MODEL
+
+External fact verified on 2026-08-16: the Dutch statutory saldering obligation ends on **2027-01-01**. Export remains eligible for supplier compensation; through 2030 the statutory minimum is 50% of the supplier's bare delivery tariff. Contract terms and permitted return costs remain relevant.
+
+Authoritative public reference:
+
+- https://www.rijksoverheid.nl/themas/klimaat-milieu-en-natuur/energie-thuis/salderingsregeling
+
+PicoT must prepare early because direct self-consumption becomes materially more valuable.
+
+Accepted boundary:
+
+- do not build a second planner;
+- calculate current-contract and 2027 valuation as explicit, versioned Candidate Outcome evidence inside the same canonical pipeline;
+- start observer-only and show which Candidate would win under the 2027 valuation;
+- do not let the shadow result control live execution until deliberately accepted.
+
+Required tariff-policy inputs:
+
+- all-in import price;
+- bare delivery tariff;
+- export compensation;
+- return costs;
+- tax and VAT treatment;
+- contract validity interval;
+- dynamic quarter-hour pricing where applicable;
+- mapping/policy version and evidence source.
+
+The dashboard should show current-policy cost, 2027-policy cost, direct self-consumption value, avoided import, export value and the difference between the two outcomes.
+
+### DO NOT CHANGE / CRITICAL CONTEXT
+
+- ADR-001 through ADR-039 remain the frozen architecture authority.
+- ADR-040 through ADR-047 remain excluded from the v2 baseline.
+- Use a V2ADR only when ADR-001 through ADR-039 leave a real unresolved decision.
+- The 2027 calculation is Candidate Outcome evidence, not a parallel planner.
+- Diagnostics display canonical records and may not become a second calculation path.
+- Net charging requires explicit source permission and may not be implied by a generic charge primitive.
+- PicoT continues to select generic primitives; the adapter alone maps them to Zendure modes.
+- Preserve minimal mode switching and explicit manual authority.
+- Keep the red-test → approved implementation → green CI → manual merge → separate release bump → live-validation workflow.
+
+### EXACT CURRENT POSITION
+
+Phase: canonical live battery pilot and expansion planning  
+Version: `2.0.0-dev.84`  
+State: first canonical battery route live; initial dashboard appears healthy  
+Pending live evidence: first autonomous future mode/plan transition and persisted application timestamp  
+Next implementation target: historical energy/decision dashboard foundation plus observer-only ADR-037 net-charge Candidate
+
+### FIRST NEXT ACTION
+
+Start tomorrow read-only with two narrow contracts:
+
+1. identify the smallest durable event-history boundary for the shared-time-axis dashboard;
+2. specify the net-charge Candidate and Outcome fields using ADR-024/030/031/032/037 and existing V2ADR-050 delegated-mode constraints.
+
+Before implementation:
+
+- prove that no second planner or diagnostic calculation path is introduced;
+- define exact red tests;
+- confirm how the Zendure adapter can execute the winning grid-charge primitive without Core vendor knowledge;
+- keep the 2027 valuation observer-only and versioned.
+

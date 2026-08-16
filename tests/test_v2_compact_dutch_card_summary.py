@@ -65,3 +65,4 @@ def test_collapsed_pipeline_cards_use_compact_summary_spacing() -> None:
     assert ".stage-result {" in html
     assert "font-size: 0.88rem;" in html
     assert "margin-left: 8px;" in html
+

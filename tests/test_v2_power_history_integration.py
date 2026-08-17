@@ -56,6 +56,7 @@ def test_runtime_adds_only_bounded_canonical_household_observations() -> None:
     assert enriched.status == "available"
     assert len(enriched.series) == 1
     assert enriched.series[0].role == "household_load"
+    assert enriched.series[0].history_semantics == "sampled_linear"
     assert [point.power_w for point in enriched.series[0].points] == [650.0]
     assert [point.evidence_id for point in enriched.series[0].points] == [
         "inside"

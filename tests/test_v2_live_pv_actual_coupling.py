@@ -1010,7 +1010,19 @@ def test_main_feeds_visible_sunset_evidence_into_attenuation_ranges(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bundle = _bundle(captured_at=CLOSED_END)
-    diagnostics = object()
+    diagnostics = LivePVActualDiagnostics(
+        history_status="unavailable",
+        interval_status="not_available",
+        cache_hit=False,
+        entity_id=ENTITY_ID,
+        starts_at=None,
+        ends_at=None,
+        lookup_starts_at=None,
+        error=None,
+        conversion_method_version=None,
+        actual_evidence_ids=(),
+        processing_ms=0.0,
+    )
     executed: list[dict[str, object]] = []
     read_timezones: list[object] = []
     sunset_at = datetime(

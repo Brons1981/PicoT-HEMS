@@ -11,6 +11,10 @@ from picot.domain.capability_snapshot import CapabilitySnapshotSet
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import PathSegment, ProjectedEnergyState
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.v2.household_planning_regime import (
+    HouseholdPlanningRegime,
+    UserObjectiveProfile,
+)
 
 if TYPE_CHECKING:
     from picot.v2.storage_mode_provenance import StorageModeControlProvenance
@@ -577,6 +581,8 @@ class PlanningInputSnapshot:
     architecture_baseline_commit: str
     pipeline_contract_version: int
     strategy_id: str
+    user_objective_profile: UserObjectiveProfile | None = None
+    household_planning_regime: HouseholdPlanningRegime | None = None
     horizon_end: datetime | None = None
     price_points: tuple[PriceForecastPoint, ...] = ()
     current_storage_states: tuple[CurrentStorageState, ...] = ()

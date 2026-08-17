@@ -35,49 +35,45 @@ def _power_history_display_points(
     ends_at: datetime,
     interval: timedelta = POWER_HISTORY_DISPLAY_INTERVAL,
 ) -> list[_DisplayPowerPoint]:
-    """Derive factual five-minute display averages without changing raw evidence."""
+    """Derive factual bucket averages in one pass without changing raw evidence."""
     points = tuple(sorted(series.points, key=lambda item: item.sampled_at))
     result: list[_DisplayPowerPoint] = []
+    point_index = 0
+    held_point = None
     bucket_start = starts_at
     while bucket_start < ends_at:
         bucket_end = min(bucket_start + interval, ends_at)
-        bucket_points = tuple(
-            point
-            for point in points
-            if bucket_start <= point.sampled_at < bucket_end
-        )
         evidence_ids: tuple[str, ...]
         covered_seconds: float
         average: float | None
         if series.history_semantics == "state_hold":
-            prior = next(
-                (
-                    point
-                    for point in reversed(points)
-                    if point.sampled_at <= bucket_start
-                ),
-                None,
-            )
-            transitions = tuple(
-                point
-                for point in points
-                if bucket_start < point.sampled_at < bucket_end
-            )
-            current = prior
-            cursor = bucket_start if prior is not None else None
+            while (
+                point_index < len(points)
+                and points[point_index].sampled_at <= bucket_start
+            ):
+                held_point = points[point_index]
+                point_index += 1
+            current = held_point
+            cursor = bucket_start if current is not None else None
             weighted_power_seconds = 0.0
             covered_seconds = 0.0
             used_evidence: list[str] = []
-            if prior is not None:
-                used_evidence.append(prior.evidence_id)
-            for transition in transitions:
+            if current is not None:
+                used_evidence.append(current.evidence_id)
+            while (
+                point_index < len(points)
+                and points[point_index].sampled_at < bucket_end
+            ):
+                transition = points[point_index]
                 if current is not None and cursor is not None:
                     duration = (transition.sampled_at - cursor).total_seconds()
                     weighted_power_seconds += current.power_w * duration
                     covered_seconds += duration
                 current = transition
+                held_point = transition
                 cursor = transition.sampled_at
                 used_evidence.append(transition.evidence_id)
+                point_index += 1
             if current is not None and cursor is not None:
                 duration = (bucket_end - cursor).total_seconds()
                 weighted_power_seconds += current.power_w * duration
@@ -89,6 +85,18 @@ def _power_history_display_points(
             )
             evidence_ids = tuple(dict.fromkeys(used_evidence))
         else:
+            while (
+                point_index < len(points)
+                and points[point_index].sampled_at < bucket_start
+            ):
+                point_index += 1
+            bucket_points = []
+            while (
+                point_index < len(points)
+                and points[point_index].sampled_at < bucket_end
+            ):
+                bucket_points.append(points[point_index])
+                point_index += 1
             covered_seconds = (bucket_end - bucket_start).total_seconds()
             average = (
                 sum(point.power_w for point in bucket_points) / len(bucket_points)
@@ -2840,6 +2848,12 @@ def create_web_server(
     """Create, but do not start, the read-only observer HTTP server."""
 
     class Handler(BaseHTTPRequestHandler):
+        def handle_one_request(self) -> None:
+            try:
+                super().handle_one_request()
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
+
         def _send_html(
             self,
             status: HTTPStatus,

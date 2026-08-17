@@ -19,6 +19,7 @@ from picot.v2.projection import Projection
 
 POWER_HISTORY_DISPLAY_INTERVAL = timedelta(minutes=5)
 SELF_CONSUMPTION_DISPLAY_INTERVAL = timedelta(minutes=10)
+PV_ACTUAL_DISPLAY_INTERVAL = timedelta(minutes=2)
 
 
 class _DisplayPowerPoint(TypedDict):
@@ -449,19 +450,20 @@ DASHBOARD_HTML = """<!doctype html>
     .energy-chart .grid-line { stroke: #27313d; stroke-width: 1; }
     .energy-chart .axis-label { fill: #96a6b8; font-size: 12px; }
     .energy-chart .forecast-range {
-      fill: #f2b84b;
-      opacity: 0.16;
+      fill: #ff9800;
+      opacity: 0.24;
     }
     .energy-chart .forecast-line {
       fill: none;
-      stroke: #f2b84b;
-      stroke-width: 3;
-      opacity: 0.48;
+      stroke: #ff9800;
+      stroke-width: 0.1;
     }
     .energy-chart .actual-line {
       fill: none;
-      stroke: #ffd400;
-      stroke-width: 3;
+      stroke: #ffd600;
+      stroke-width: 1;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
     .power-flow-line {
       fill: none;
@@ -565,8 +567,8 @@ DASHBOARD_HTML = """<!doctype html>
       background: #ffd400;
     }
     .energy-chart-swatch.forecast {
-      background: #f2b84b;
-      opacity: 0.48;
+      background: #ff9800;
+      opacity: 0.24;
     }
     .price-panel { padding: 14px; overflow: hidden; }
     .price-legend {
@@ -1290,6 +1292,8 @@ DASHBOARD_HTML = """<!doctype html>
     const POWER_HISTORY_SELECTION_KEY = "picot-power-history-selection";
     let powerHistoryZoomWindow = null;
     let powerHistoryInteractionMode = "zoom";
+    let pvForecastZoomWindow = null;
+    let pvForecastInteractionMode = "pan";
 
     function renderPowerHistory(history) {
       const container = element("power-history-chart");
@@ -1824,29 +1828,64 @@ DASHBOARD_HTML = """<!doctype html>
       container.appendChild(scroll);
     }
 
-    function renderPvForecastActualChart(intervals) {
+    function renderPvForecastActualChart(deviations, timeline, history) {
       const container = element("pv-forecast-actual-chart");
       container.replaceChildren();
-      const points = (Array.isArray(intervals) ? intervals : [])
-        .filter((item) =>
-          Number.isFinite(Number(item.forecast_central_energy_wh)) &&
-          Number.isFinite(Number(item.actual_energy_wh))
+      const forecastByStart = new Map();
+      for (const item of Array.isArray(deviations) ? deviations : []) {
+        const startsAt = new Date(item.starts_at).getTime();
+        const endsAt = new Date(item.ends_at).getTime();
+        const energyWh = Number(item.forecast_central_energy_wh);
+        const durationHours = (endsAt - startsAt) / 3_600_000;
+        if (
+          Number.isFinite(startsAt) && Number.isFinite(endsAt) &&
+          Number.isFinite(energyWh) && durationHours > 0
+        ) {
+          forecastByStart.set(startsAt, {
+            sampledAt: startsAt + (endsAt - startsAt) / 2,
+            powerW: energyWh / durationHours,
+          });
+        }
+      }
+      for (const item of Array.isArray(timeline?.intervals)
+        ? timeline.intervals : []) {
+        if (item.evidence_type !== "FORECAST") continue;
+        const startsAt = new Date(item.starts_at).getTime();
+        const endsAt = new Date(item.ends_at).getTime();
+        const energyWh = Number(item.pv_energy_wh);
+        const durationHours = (endsAt - startsAt) / 3_600_000;
+        if (
+          Number.isFinite(startsAt) && Number.isFinite(endsAt) &&
+          Number.isFinite(energyWh) && durationHours > 0
+        ) {
+          forecastByStart.set(startsAt, {
+            sampledAt: startsAt + (endsAt - startsAt) / 2,
+            powerW: energyWh / durationHours,
+          });
+        }
+      }
+      const forecastPoints = [...forecastByStart.values()]
+        .sort((left, right) => left.sampledAt - right.sampledAt);
+      const actualPoints = (Array.isArray(history?.pv_actual_display_points)
+        ? history.pv_actual_display_points : [])
+        .map((point) => ({
+          sampledAt: new Date(point.sampled_at).getTime(),
+          powerW: Math.max(0, Number(point.power_w)),
+        }))
+        .filter((point) =>
+          Number.isFinite(point.sampledAt) && Number.isFinite(point.powerW)
         )
-        .sort((left, right) =>
-          new Date(left.starts_at).getTime() -
-          new Date(right.starts_at).getTime()
-        );
-      if (points.length === 0) {
-        container.textContent =
-          "Nog geen gesloten PV-intervallen met forecast en werkelijkheid.";
+        .sort((left, right) => left.sampledAt - right.sampledAt);
+      if (forecastPoints.length === 0 && actualPoints.length === 0) {
+        container.textContent = "Nog geen Solcast- of GoodWe-vermogensdata.";
         return;
       }
 
       const legend = document.createElement("div");
       legend.className = "energy-chart-legend";
       for (const [kind, label] of [
-        ["forecast", "Solcast forecast en bereik"],
-        ["actual", "Werkelijke PV"],
+        ["forecast", "Solcast verwacht"],
+        ["actual", "GoodWe werkelijk"],
       ]) {
         const item = document.createElement("span");
         item.className = "energy-chart-key";
@@ -1857,23 +1896,91 @@ DASHBOARD_HTML = """<!doctype html>
       }
       container.appendChild(legend);
 
-      const width = Math.max(760, points.length * 42 + 100);
-      const height = 340;
-      const plot = { left: 64, right: 24, top: 20, bottom: 48 };
+      const width = 1180;
+      const height = 430;
+      const plot = { left: 72, right: 24, top: 20, bottom: 48 };
       const plotWidth = width - plot.left - plot.right;
       const plotHeight = height - plot.top - plot.bottom;
-      const values = points.flatMap((item) => [
-        Number(item.actual_energy_wh),
-        Number(item.forecast_upper_energy_wh ?? item.forecast_central_energy_wh),
-      ]);
-      const maximum = Math.max(1, ...values);
-      const x = (index) =>
-        plot.left + (points.length === 1
-          ? plotWidth / 2
-          : index * plotWidth / (points.length - 1));
-      const y = (value) =>
-        plot.top + plotHeight -
-        Math.max(0, Number(value)) / maximum * plotHeight;
+      const sourceStartMs = new Date(history?.starts_at).getTime();
+      const firstMs = Math.min(
+        ...forecastPoints.map((point) => point.sampledAt),
+        ...actualPoints.map((point) => point.sampledAt),
+      );
+      const dayStart = Number.isFinite(sourceStartMs)
+        ? new Date(sourceStartMs) : new Date(firstMs);
+      dayStart.setHours(0, 0, 0, 0);
+      const startMs = dayStart.getTime();
+      const fullEndMs = startMs + 24 * 60 * 60 * 1000;
+      const validZoom = pvForecastZoomWindow &&
+        pvForecastZoomWindow.startsAt >= startMs &&
+        pvForecastZoomWindow.endsAt <= fullEndMs &&
+        pvForecastZoomWindow.startsAt < pvForecastZoomWindow.endsAt;
+      if (!validZoom) pvForecastZoomWindow = null;
+      const windowStartMs = pvForecastZoomWindow?.startsAt ?? startMs;
+      const windowEndMs = pvForecastZoomWindow?.endsAt ?? fullEndMs;
+      const inWindow = (point) =>
+        point.sampledAt >= windowStartMs && point.sampledAt <= windowEndMs;
+      const visibleForecast = forecastPoints.filter(inWindow);
+      const visibleActual = actualPoints.filter(inWindow);
+      const values = [...visibleForecast, ...visibleActual]
+        .map((point) => point.powerW);
+      const maximum = Math.max(1, ...values) * 1.05;
+      const x = (value) => plot.left +
+        (value - windowStartMs) / (windowEndMs - windowStartMs) * plotWidth;
+      const y = (value) => plot.top +
+        (maximum - Math.max(0, Number(value))) / maximum * plotHeight;
+
+      const toolbar = document.createElement("div");
+      toolbar.className = "power-chart-toolbar";
+      const rerender = () => renderPvForecastActualChart(
+        deviations, timeline, history
+      );
+      const changeZoom = (factor) => {
+        const currentDuration = windowEndMs - windowStartMs;
+        const duration = Math.min(
+          fullEndMs - startMs,
+          Math.max(15 * 60 * 1000, currentDuration * factor),
+        );
+        const center = (windowStartMs + windowEndMs) / 2;
+        let startsAt = Math.max(startMs, center - duration / 2);
+        let endsAt = Math.min(fullEndMs, startsAt + duration);
+        startsAt = Math.max(startMs, endsAt - duration);
+        pvForecastZoomWindow = { startsAt, endsAt };
+        rerender();
+      };
+      for (const [mode, label, title] of [
+        ["pan", "✋", "Versleep het ingezoomde tijdvak"],
+        ["zoom", "⌕", "Sleep om een tijdvak te vergroten"],
+      ]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.title = title;
+        button.setAttribute(
+          "aria-pressed", String(pvForecastInteractionMode === mode)
+        );
+        button.addEventListener("click", () => {
+          pvForecastInteractionMode = mode;
+          rerender();
+        });
+        toolbar.appendChild(button);
+      }
+      for (const [label, title, action] of [
+        ["+", "Inzoomen", () => changeZoom(0.5)],
+        ["−", "Uitzoomen", () => changeZoom(2)],
+        ["↺", "Volledige dag tonen", () => {
+          pvForecastZoomWindow = null;
+          rerender();
+        }],
+      ]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.title = title;
+        button.addEventListener("click", action);
+        toolbar.appendChild(button);
+      }
+      container.appendChild(toolbar);
 
       const scroll = document.createElement("div");
       scroll.className = "energy-chart-scroll";
@@ -1881,7 +1988,7 @@ DASHBOARD_HTML = """<!doctype html>
         class: "energy-chart",
         viewBox: `0 0 ${width} ${height}`,
         role: "img",
-        "aria-label": "PV forecast versus werkelijke PV per gesloten interval",
+        "aria-label": "Solcast forecast versus GoodWe werkelijk vermogen",
       });
       for (let step = 0; step <= 4; step += 1) {
         const value = maximum * step / 4;
@@ -1895,50 +2002,141 @@ DASHBOARD_HTML = """<!doctype html>
         }));
         appendSvgText(
           svg,
-          `${Math.round(value)} Wh`,
+          `${Math.round(value)} W`,
           { x: plot.left - 8, y: lineY + 4, "text-anchor": "end" },
           "axis-label",
         );
       }
 
-      const upper = points.map((item, index) =>
-        `${x(index)},${y(
-          item.forecast_upper_energy_wh ?? item.forecast_central_energy_wh
-        )}`
-      );
-      const lower = points.map((item, index) =>
-        `${x(index)},${y(
-          item.forecast_lower_energy_wh ?? item.forecast_central_energy_wh
-        )}`
-      ).reverse();
-      svg.appendChild(createSvgElement("polygon", {
-        points: [...upper, ...lower].join(" "),
-        class: "forecast-range",
-      }));
-      svg.appendChild(createSvgElement("polyline", {
-        points: points.map((item, index) =>
-          `${x(index)},${y(item.forecast_central_energy_wh)}`
-        ).join(" "),
-        class: "forecast-line",
-      }));
-      svg.appendChild(createSvgElement("polyline", {
-        points: points.map((item, index) =>
-          `${x(index)},${y(item.actual_energy_wh)}`
-        ).join(" "),
-        class: "actual-line",
-      }));
-      points.forEach((item, index) => {
-        if (index % 2 !== 0 && points.length > 18) return;
+      for (let index = 0; index <= 12; index += 1) {
+        const tick = new Date(
+          windowStartMs + (windowEndMs - windowStartMs) * index / 12
+        );
         appendSvgText(
           svg,
-          new Date(item.starts_at).toLocaleTimeString("nl-NL", {
+          tick.toLocaleTimeString("nl-NL", {
             hour: "2-digit",
             minute: "2-digit",
           }),
-          { x: x(index), y: height - 18, "text-anchor": "middle" },
+          { x: x(tick.getTime()), y: height - 18, "text-anchor": "middle" },
           "axis-label",
         );
+      }
+      const chartPoints = (points) => points.map((point) => ({
+        x: x(point.sampledAt),
+        y: y(point.powerW),
+      }));
+      const smoothPath = (points) => {
+        if (points.length === 0) return "";
+        if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+        let path = `M ${points[0].x} ${points[0].y}`;
+        for (let index = 1; index < points.length - 1; index += 1) {
+          const current = points[index];
+          const next = points[index + 1];
+          path += ` Q ${current.x} ${current.y}` +
+            ` ${(current.x + next.x) / 2} ${(current.y + next.y) / 2}`;
+        }
+        const last = points.at(-1);
+        return `${path} L ${last.x} ${last.y}`;
+      };
+      const forecastChartPoints = chartPoints(visibleForecast);
+      const forecastPath = smoothPath(forecastChartPoints);
+      if (forecastPath) {
+        const area = `${forecastPath} L ${forecastChartPoints.at(-1).x}` +
+          ` ${y(0)} L ${forecastChartPoints[0].x} ${y(0)} Z`;
+        svg.appendChild(createSvgElement("path", {
+          d: area,
+          class: "forecast-range",
+        }));
+        svg.appendChild(createSvgElement("path", {
+          d: forecastPath,
+          class: "forecast-line",
+        }));
+      }
+      const actualPath = smoothPath(chartPoints(visibleActual));
+      if (actualPath) {
+        svg.appendChild(createSvgElement("path", {
+          d: actualPath,
+          class: "actual-line",
+        }));
+      }
+      const hitbox = createSvgElement("rect", {
+        x: plot.left,
+        y: plot.top,
+        width: plotWidth,
+        height: plotHeight,
+        class: `power-zoom-hitbox ${pvForecastInteractionMode}`,
       });
+      let dragStartsAt = null;
+      let selection = null;
+      const svgX = (event) => {
+        const bounds = svg.getBoundingClientRect();
+        return Math.max(plot.left, Math.min(
+          width - plot.right,
+          (event.clientX - bounds.left) * width / bounds.width,
+        ));
+      };
+      hitbox.addEventListener("pointerdown", (event) => {
+        dragStartsAt = svgX(event);
+        hitbox.setPointerCapture(event.pointerId);
+        if (pvForecastInteractionMode === "zoom") {
+          selection = createSvgElement("rect", {
+            x: dragStartsAt, y: plot.top, width: 0, height: plotHeight,
+            class: "power-zoom-selection",
+          });
+          svg.appendChild(selection);
+        }
+      });
+      hitbox.addEventListener("pointermove", (event) => {
+        if (dragStartsAt === null || !selection) return;
+        const current = svgX(event);
+        selection.setAttribute("x", String(Math.min(dragStartsAt, current)));
+        selection.setAttribute("width", String(Math.abs(current - dragStartsAt)));
+      });
+      hitbox.addEventListener("pointerup", (event) => {
+        if (dragStartsAt === null) return;
+        const dragEndsAt = svgX(event);
+        selection?.remove();
+        selection = null;
+        const delta = dragEndsAt - dragStartsAt;
+        if (
+          pvForecastInteractionMode === "pan" && pvForecastZoomWindow &&
+          Math.abs(delta) >= 2
+        ) {
+          const duration = windowEndMs - windowStartMs;
+          const shift = -delta / plotWidth * duration;
+          let startsAt = windowStartMs + shift;
+          let endsAt = windowEndMs + shift;
+          if (startsAt < startMs) {
+            endsAt += startMs - startsAt;
+            startsAt = startMs;
+          }
+          if (endsAt > fullEndMs) {
+            startsAt -= endsAt - fullEndMs;
+            endsAt = fullEndMs;
+          }
+          pvForecastZoomWindow = { startsAt, endsAt };
+          rerender();
+        } else if (
+          pvForecastInteractionMode === "zoom" && Math.abs(delta) >= 8
+        ) {
+          const left = Math.min(dragStartsAt, dragEndsAt);
+          const right = Math.max(dragStartsAt, dragEndsAt);
+          const toTime = (position) => windowStartMs +
+            (position - plot.left) / plotWidth *
+            (windowEndMs - windowStartMs);
+          pvForecastZoomWindow = {
+            startsAt: toTime(left), endsAt: toTime(right),
+          };
+          rerender();
+        }
+        dragStartsAt = null;
+      });
+      hitbox.addEventListener("dblclick", () => {
+        pvForecastZoomWindow = null;
+        rerender();
+      });
+      svg.appendChild(hitbox);
       scroll.appendChild(svg);
       container.appendChild(scroll);
     }
@@ -2592,7 +2790,9 @@ DASHBOARD_HTML = """<!doctype html>
       const sources = planningInput?.attributes?.sources;
       renderSources(Array.isArray(sources) ? sources : []);
       renderPvForecastActualChart(
-        planningInput?.attributes?.pv_interval_deviations ?? []
+        planningInput?.attributes?.pv_interval_deviations ?? [],
+        view.pv_energy_timeline ?? { intervals: [] },
+        view.power_history ?? { pv_actual_display_points: [] },
       );
       renderPowerHistory(view.power_history ?? {
         available: false,
@@ -3702,6 +3902,23 @@ def build_web_view(
             POWER_HISTORY_DISPLAY_INTERVAL.total_seconds()
         ),
         "display_curve": "linear_between_bucket_averages",
+        "pv_actual_display_interval_seconds": int(
+            PV_ACTUAL_DISPLAY_INTERVAL.total_seconds()
+        ),
+        "pv_actual_display_points": next((
+            _power_history_display_points(
+                series,
+                starts_at=power_history_starts_at,
+                ends_at=power_history_ends_at,
+                interval=PV_ACTUAL_DISPLAY_INTERVAL,
+            )
+            for series in power_history.series
+            if series.role == "pv_generation"
+        ), [])
+        if power_history is not None
+        and power_history_starts_at is not None
+        and power_history_ends_at is not None
+        else [],
         "series": [
             {
                 "series_id": series.series_id,

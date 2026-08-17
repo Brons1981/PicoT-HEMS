@@ -383,6 +383,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     executed: list[
         tuple[PlanningInputBundle, LivePVActualDiagnostics]
     ] = []
+    power_history_timings: list[float] = []
 
     class StopLoop(Exception):
         pass
@@ -436,6 +437,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             bundle: PlanningInputBundle,
             web_view_store: object,
             power_history: object,
+            power_history_read_ms: float,
             pv_actual_diagnostics: LivePVActualDiagnostics,
         pv_attenuated_ranges: tuple[object, ...],
         pv_sunset_source: SunsetReadResult,
@@ -467,6 +469,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))
+        power_history_timings.append(power_history_read_ms)
 
     monkeypatch.setenv("SUPERVISOR_TOKEN", "supervisor-token")
     monkeypatch.setattr(
@@ -514,6 +517,8 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         (CLOSED_START - timedelta(seconds=30), CLOSED_END)
     ]
     assert len(executed) == 1
+    assert len(power_history_timings) == 1
+    assert power_history_timings[0] >= 0.0
     executed_bundle, diagnostics = executed[0]
     assert executed_bundle.snapshot.pv_energy_timeline is not None
     actual, future = (

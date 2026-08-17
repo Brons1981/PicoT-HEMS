@@ -2472,6 +2472,67 @@ DASHBOARD_HTML = """<!doctype html>
         ["Snapshot", status.snapshot_id],
       ]);
 
+      const chosenPlan = status.chosen_plan ?? {};
+      const chosenCard = addCard("Gekozen uitvoeringsplan", [
+        ["Kandidaat", chosenPlan.candidate_id],
+        ["Energiepad", chosenPlan.energy_path_id],
+        ["Planfamilie", chosenPlan.family],
+        ["Beslisregel", chosenPlan.decisive_step],
+        ["Beslisreden", chosenPlan.reason],
+        ["Laadvenster vanaf", formatTimestamp(chosenPlan.charge_window_starts_at)],
+        ["Laadvenster tot", formatTimestamp(chosenPlan.charge_window_ends_at)],
+        ["Benodigde doelenergie", formatMeasurement(chosenPlan.required_energy_wh, "Wh")],
+        ["Energie einde laadvenster", formatMeasurement(
+          chosenPlan.storage_energy_at_window_end_wh, "Wh"
+        )],
+        ["Energie bij deadline", formatMeasurement(
+          chosenPlan.storage_energy_at_requirement_wh, "Wh"
+        )],
+        ["Bijdrage PV", formatMeasurement(chosenPlan.pv_contribution_wh, "Wh")],
+        ["Bijdrage net", formatMeasurement(chosenPlan.grid_contribution_wh, "Wh")],
+        ["Conversieverlies", formatMeasurement(chosenPlan.conversion_losses_wh, "Wh")],
+        ["Doel gehaald", chosenPlan.requirement_satisfied],
+        ["Herstelbaarheid", formatConfidence(chosenPlan.recoverability)],
+        ["Planconfidence", formatConfidence(chosenPlan.confidence)],
+        ["Confidence batterijdoel", formatConfidence(
+          chosenPlan.requirement_confidence
+        )],
+      ], true);
+      const segments = Array.isArray(chosenPlan.execution_segments)
+        ? chosenPlan.execution_segments : [];
+      const segmentTable = document.createElement("table");
+      const segmentHead = document.createElement("thead");
+      const segmentHeadRow = document.createElement("tr");
+      for (const label of [
+        "Vanaf", "Tot", "Primitive", "Batterijmodus",
+        "Laadbron", "Doel", "Status"
+      ]) {
+        const cell = document.createElement("th");
+        cell.textContent = label;
+        segmentHeadRow.append(cell);
+      }
+      segmentHead.append(segmentHeadRow);
+      const segmentBody = document.createElement("tbody");
+      for (const segment of segments) {
+        const row = document.createElement("tr");
+        for (const value of [
+          formatTimestamp(segment.starts_at),
+          formatTimestamp(segment.ends_at),
+          segment.primitive,
+          segment.planned_vendor_mode,
+          segment.charge_source_policy,
+          segment.purpose,
+          segment.lifecycle_status,
+        ]) {
+          const cell = document.createElement("td");
+          cell.textContent = displayValue(value);
+          row.append(cell);
+        }
+        segmentBody.append(row);
+      }
+      segmentTable.append(segmentHead, segmentBody);
+      chosenCard.append(segmentTable);
+
       const alternatives = Array.isArray(status.alternatives)
         ? status.alternatives : [];
       const card = addCard("Kandidaten", [], true);
@@ -3852,6 +3913,14 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         if winning_candidate_id is not None
         else None
     )
+    winning_execution_plans = tuple(sorted(
+        (
+            plan
+            for plan in run.execution_plan_set.plans
+            if plan.winning_candidate_id == winning_candidate_id
+        ),
+        key=lambda plan: (plan.valid_from, plan.valid_until, plan.plan_id),
+    ))
     requirement = next(
         iter(run.candidate_set.storage_requirements),
         None,
@@ -3998,6 +4067,105 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             ),
             "primitive_status": run.primitive_boundary.status,
             "blockers": list(run.primitive_boundary.blockers),
+        },
+        "chosen_plan": {
+            "candidate_id": (
+                winning_candidate.candidate_id
+                if winning_candidate is not None and not fallback_active
+                else None
+            ),
+            "energy_path_id": (
+                winning_candidate.energy_path_id
+                if winning_candidate is not None and not fallback_active
+                else None
+            ),
+            "family": (
+                winning_candidate.family
+                if winning_candidate is not None and not fallback_active
+                else None
+            ),
+            "decisive_step": (
+                run.evaluation.decisive_step if not fallback_active else None
+            ),
+            "reason": run.evaluation.reason if not fallback_active else None,
+            "charge_window_starts_at": (
+                winning_outcome.charge_window_starts_at.isoformat()
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "charge_window_ends_at": (
+                winning_outcome.charge_window_ends_at.isoformat()
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "required_energy_wh": (
+                winning_outcome.required_energy_wh
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "storage_energy_at_window_end_wh": (
+                winning_outcome.storage_energy_at_window_end_wh
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "storage_energy_at_requirement_wh": (
+                winning_outcome.storage_energy_at_requirement_wh
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "pv_contribution_wh": (
+                winning_outcome.pv_storage_contribution_wh
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "grid_contribution_wh": (
+                winning_outcome.grid_storage_contribution_wh
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "conversion_losses_wh": (
+                winning_outcome.conversion_losses_wh
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "requirement_satisfied": (
+                winning_outcome.requirement_satisfied
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "recoverability": (
+                winning_outcome.recoverability
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "confidence": (
+                winning_outcome.confidence
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "requirement_confidence": (
+                requirement.confidence
+                if requirement is not None and not fallback_active
+                else None
+            ),
+            "execution_segments": [
+                {
+                    "plan_id": plan.plan_id,
+                    "lifecycle_status": plan.lifecycle_status,
+                    "planned_vendor_mode": plan.planned_vendor_mode,
+                    "starts_at": segment.starts_at.isoformat(),
+                    "ends_at": segment.ends_at.isoformat(),
+                    "primitive": segment.primitive.value,
+                    "purpose": segment.purpose,
+                    "charge_source_policy": (
+                        segment.charge_source_policy.value
+                        if segment.charge_source_policy is not None
+                        else None
+                    ),
+                }
+                for plan in winning_execution_plans
+                for segment in plan.segments
+            ] if not fallback_active else [],
         },
         "alternatives": [
             {

@@ -254,6 +254,9 @@ DASHBOARD_HTML = """<!doctype html>
     .power-flow-line.grid_export { stroke: #aab2bd; }
     .power-flow-line.battery_charge,
     .power-flow-line.battery_discharge { stroke: #35a862; }
+    .power-flow-area { stroke: none; opacity: 0.12; }
+    .power-flow-area.grid_export { fill: #aab2bd; }
+    .power-flow-area.battery_charge { fill: #35a862; }
     .power-zero-line { stroke: #96a6b8; stroke-width: 1.5; }
     .energy-chart-legend {
       display: flex;
@@ -266,6 +269,34 @@ DASHBOARD_HTML = """<!doctype html>
       display: inline-flex;
       align-items: center;
       gap: 6px;
+    }
+    button.energy-chart-key {
+      border: 1px solid #334155;
+      border-radius: 999px;
+      background: #111923;
+      color: #96a6b8;
+      padding: 5px 9px;
+      cursor: pointer;
+    }
+    button.energy-chart-key[aria-pressed="false"] { opacity: 0.42; }
+    .energy-chart-selection-action {
+      border: 0;
+      background: transparent;
+      color: #62b8f5;
+      cursor: pointer;
+      padding: 5px 2px;
+    }
+    .power-current-values {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 8px;
+      margin: 2px 0 10px;
+    }
+    .power-current-value { color: #96a6b8; font-size: 0.76rem; }
+    .power-current-value strong {
+      display: block;
+      margin-top: 2px;
+      font-size: 1rem;
     }
     .energy-chart-swatch {
       width: 18px;
@@ -988,6 +1019,8 @@ DASHBOARD_HTML = """<!doctype html>
       container.appendChild(details);
     }
 
+    const POWER_HISTORY_SELECTION_KEY = "picot-power-history-selection";
+
     function renderPowerHistory(history) {
       const container = element("power-history-chart");
       container.replaceChildren();
@@ -1029,37 +1062,108 @@ DASHBOARD_HTML = """<!doctype html>
         ["pv_generation", "battery_charge", "grid_export"].includes(role)
           ? -Number(value)
           : Number(value);
-      const visible = series.filter((item) => roleLabels[item.role]);
+      const available = series.filter((item) => roleLabels[item.role]);
+      let storedSelection = null;
+      try {
+        const decoded = JSON.parse(
+          localStorage.getItem(POWER_HISTORY_SELECTION_KEY)
+        );
+        if (Array.isArray(decoded)) storedSelection = new Set(decoded);
+      } catch (_error) {
+        storedSelection = null;
+      }
+      const selectedIds = storedSelection ?? new Set(
+        available.map((item) => item.series_id)
+      );
+      const visible = available.filter((item) => selectedIds.has(item.series_id));
       const legend = document.createElement("div");
       legend.className = "energy-chart-legend";
-      for (const item of visible) {
-        const key = document.createElement("span");
+      for (const item of available) {
+        const key = document.createElement("button");
+        key.type = "button";
         key.className = "energy-chart-key";
+        key.setAttribute("aria-pressed", String(selectedIds.has(item.series_id)));
+        key.title = `${roleLabels[item.role]} tonen of verbergen`;
         const swatch = document.createElement("span");
         swatch.className = `power-flow-line ${item.role}`;
         swatch.style.width = "18px";
         swatch.style.borderTop = "2px solid";
         swatch.style.borderColor = roleColors[item.role];
         key.append(swatch, document.createTextNode(roleLabels[item.role]));
+        key.addEventListener("click", () => {
+          if (selectedIds.has(item.series_id)) {
+            selectedIds.delete(item.series_id);
+          } else {
+            selectedIds.add(item.series_id);
+          }
+          localStorage.setItem(
+            POWER_HISTORY_SELECTION_KEY,
+            JSON.stringify([...selectedIds]),
+          );
+          renderPowerHistory(history);
+        });
         legend.appendChild(key);
       }
+      const showAll = document.createElement("button");
+      showAll.type = "button";
+      showAll.className = "energy-chart-selection-action";
+      showAll.textContent = "Alles tonen";
+      showAll.addEventListener("click", () => {
+        localStorage.removeItem(POWER_HISTORY_SELECTION_KEY);
+        renderPowerHistory(history);
+      });
+      legend.appendChild(showAll);
       container.appendChild(legend);
 
+      if (visible.length === 0) {
+        const empty = document.createElement("p");
+        empty.textContent = "Selecteer één of meer energiestromen.";
+        container.appendChild(empty);
+        return;
+      }
+
+      const currentValues = document.createElement("div");
+      currentValues.className = "power-current-values";
+      for (const item of visible) {
+        const latest = item.points.at(-1);
+        if (!latest) continue;
+        const value = document.createElement("div");
+        value.className = "power-current-value";
+        const amount = document.createElement("strong");
+        amount.style.color = roleColors[item.role];
+        amount.textContent = `${new Intl.NumberFormat("nl-NL", {
+          maximumFractionDigits: 1,
+        }).format(signedPower(item.role, latest.power_w))} W`;
+        value.append(document.createTextNode(roleLabels[item.role]), amount);
+        currentValues.appendChild(value);
+      }
+      container.appendChild(currentValues);
+
       const width = 1180;
-      const height = 390;
+      const height = 330;
       const plot = { left: 72, right: 24, top: 20, bottom: 48 };
       const plotWidth = width - plot.left - plot.right;
       const plotHeight = height - plot.top - plot.bottom;
       const startMs = start.getTime();
-      const endMs = end.getTime();
+      const dayEnd = new Date(start);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const endMs = dayEnd.getTime();
       const allValues = visible.flatMap((item) =>
         item.points.map((point) => signedPower(item.role, point.power_w))
       ).filter(Number.isFinite);
-      const maximum = Math.max(1, ...allValues.map(Math.abs));
+      const rawMinimum = Math.min(0, ...allValues);
+      const rawMaximum = Math.max(0, ...allValues);
+      const span = Math.max(1, rawMaximum - rawMinimum);
+      const roughStep = span / 4;
+      const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+      const normalized = roughStep / magnitude;
+      const step = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : 5) * magnitude;
+      const minimum = Math.floor((rawMinimum - span * 0.08) / step) * step;
+      const maximum = Math.ceil((rawMaximum + span * 0.08) / step) * step;
       const x = (value) => plot.left +
         (new Date(value).getTime() - startMs) / (endMs - startMs) * plotWidth;
-      const y = (value) => plot.top + plotHeight / 2 -
-        Number(value) / maximum * plotHeight / 2;
+      const y = (value) => plot.top +
+        (maximum - Number(value)) / (maximum - minimum) * plotHeight;
 
       const scroll = document.createElement("div");
       scroll.className = "energy-chart-scroll";
@@ -1069,15 +1173,23 @@ DASHBOARD_HTML = """<!doctype html>
         role: "img",
         "aria-label": "Canonieke vermogensstromen van vandaag",
       });
-      for (const factor of [-1, -0.5, 0, 0.5, 1]) {
-        const value = maximum * factor;
+      const gridValues = Array.from(new Set([
+        ...Array.from(
+          { length: 5 },
+          (_item, index) => minimum + (maximum - minimum) * index / 4,
+        ),
+        0,
+      ])).sort((left, right) => left - right);
+      for (const value of gridValues) {
         const lineY = y(value);
         svg.appendChild(createSvgElement("line", {
           x1: plot.left,
           x2: width - plot.right,
           y1: lineY,
           y2: lineY,
-          class: factor === 0 ? "power-zero-line" : "grid-line",
+          class: value === 0
+            ? "power-zero-line"
+            : "grid-line",
         }));
         appendSvgText(
           svg,
@@ -1088,7 +1200,6 @@ DASHBOARD_HTML = """<!doctype html>
       }
       for (let hour = 0; hour <= 24; hour += 2) {
         const tick = new Date(startMs + hour * 60 * 60 * 1000);
-        if (tick > end) break;
         appendSvgText(
           svg,
           tick.toLocaleTimeString("nl-NL", {
@@ -1109,7 +1220,15 @@ DASHBOARD_HTML = """<!doctype html>
         if (points.length === 0) continue;
         let path = `M ${points[0].x} ${points[0].y}`;
         for (const point of points.slice(1)) {
-          path += ` H ${point.x} V ${point.y}`;
+          path += ` L ${point.x} ${point.y}`;
+        }
+        if (["grid_export", "battery_charge"].includes(item.role)) {
+          const area = `${path} L ${points.at(-1).x} ${y(0)}` +
+            ` L ${points[0].x} ${y(0)} Z`;
+          svg.appendChild(createSvgElement("path", {
+            d: area,
+            class: `power-flow-area ${item.role}`,
+          }));
         }
         svg.appendChild(createSvgElement("path", {
           d: path,

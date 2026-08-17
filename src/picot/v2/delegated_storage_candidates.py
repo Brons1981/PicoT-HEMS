@@ -298,6 +298,7 @@ def construct_pv_charge_only_candidate(
         requirement.confidence,
         *(interval.confidence for interval in intervals),
     )
+    reserve_selected_intervals = bool(preferred_price_windows)
     for window_indexes in _progressive_window_selections(
         intervals,
         preferred_price_windows,
@@ -312,6 +313,7 @@ def construct_pv_charge_only_candidate(
         segments: list[PathSegment] = []
         projected_states: list[ProjectedEnergyState] = []
         storage_energy_at_interval_start: dict[object, float] = {}
+        total_acquired_wh = 0.0
         for index, interval in enumerate(intervals):
             storage_energy_at_interval_start[interval.starts_at] = (
                 storage_energy_wh
@@ -323,7 +325,12 @@ def construct_pv_charge_only_candidate(
                     required_at_end[interval.ends_at] - storage_energy_wh,
                 )
                 acquired_wh = min(_surplus_wh(interval), energy_needed_wh)
-            if index in selected_indexes:
+            total_acquired_wh += acquired_wh
+            reserve_interval = (
+                index in selected_indexes
+                and (reserve_selected_intervals or acquired_wh > 0.0)
+            )
+            if reserve_interval:
                 segment_id = _stable_id(
                     "path-segment",
                     f"{snapshot.snapshot_id}|{requirement.requirement_id}|"
@@ -370,7 +377,7 @@ def construct_pv_charge_only_candidate(
                 )
                 storage_energy_wh = max(0.0, storage_energy_wh - deficit_wh)
 
-            if index in selected_indexes:
+            if reserve_interval:
                 projected_states.append(
                     ProjectedEnergyState(
                         at=interval.ends_at,
@@ -384,7 +391,7 @@ def construct_pv_charge_only_candidate(
                     )
                 )
 
-        if not segments:
+        if not segments or total_acquired_wh <= 0.0:
             continue
         window_start = segments[0].starts_at
         if window_start > snapshot.captured_at:

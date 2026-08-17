@@ -10,7 +10,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import asdict, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from http.server import ThreadingHTTPServer
 from math import isfinite
@@ -30,6 +30,7 @@ from picot.v2.household_load_history import HouseholdLoadHistoryStore
 from picot.v2.household_objective_input import attach_household_objectives
 from picot.v2.household_planning_regime import (
     AdaptiveHouseholdObjectivePolicy,
+    HouseholdPlanningRegime,
     UserObjectiveProfile,
 )
 from picot.v2.live_pv_actual import (
@@ -156,17 +157,76 @@ def _adaptive_household_policy(
                 1800,
             )
         ),
+        minimum_self_consumption_hold_seconds=int(
+            options.get("household_minimum_self_consumption_hold_seconds", 7200)
+        ),
+        recovery_confidence_threshold=float(
+            options.get("household_recovery_confidence_threshold", 0.60)
+        ),
+        maximum_recovery_deficit_percent=float(
+            options.get("household_maximum_recovery_deficit_percent", 10.0)
+        ),
+        maximum_recovery_deficit_wh=float(
+            options.get("household_maximum_recovery_deficit_wh", 250.0)
+        ),
+        minimum_recovery_duration_seconds=int(
+            options.get("household_minimum_recovery_duration_seconds", 3600)
+        ),
+        minimum_overperformance_percent=float(
+            options.get("household_minimum_pv_overperformance_percent", 20.0)
+        ),
+        minimum_overperformance_wh=float(
+            options.get("household_minimum_pv_overperformance_wh", 500.0)
+        ),
+        minimum_overperformance_duration_seconds=int(
+            options.get(
+                "household_minimum_pv_overperformance_duration_seconds",
+                3600,
+            )
+        ),
     )
 
 
-def _trailing_pv_underperformance_seconds(
+def _rolling_pv_direction_seconds(
     deviations: tuple[PVDeviationResult, ...],
+    *,
+    direction: str,
+    window_seconds: int = 3600,
 ) -> int:
+    """Count matching covered seconds in the latest evidence window."""
+    if not deviations:
+        return 0
+    window_end = max(item.ends_at for item in deviations)
+    window_start = window_end - timedelta(seconds=window_seconds)
     seconds = 0.0
-    for deviation in reversed(deviations):
-        if deviation.direction != "below_forecast":
-            break
-        seconds += (deviation.ends_at - deviation.starts_at).total_seconds()
+    for deviation in deviations:
+        if deviation.direction != direction:
+            continue
+        overlap_start = max(deviation.starts_at, window_start)
+        overlap_end = min(deviation.ends_at, window_end)
+        if overlap_end > overlap_start:
+            seconds += (overlap_end - overlap_start).total_seconds()
+    return int(seconds)
+
+
+def _rolling_pv_recovery_seconds(
+    deviations: tuple[PVDeviationResult, ...],
+    *,
+    window_seconds: int = 3600,
+) -> int:
+    """Count covered seconds that are not below the central forecast."""
+    if not deviations:
+        return 0
+    window_end = max(item.ends_at for item in deviations)
+    window_start = window_end - timedelta(seconds=window_seconds)
+    seconds = 0.0
+    for deviation in deviations:
+        if deviation.direction == "below_forecast":
+            continue
+        overlap_start = max(deviation.starts_at, window_start)
+        overlap_end = min(deviation.ends_at, window_end)
+        if overlap_end > overlap_start:
+            seconds += (overlap_end - overlap_start).total_seconds()
     return int(seconds)
 
 
@@ -176,6 +236,8 @@ def _attach_live_household_objectives(
     *,
     profile: UserObjectiveProfile,
     policy: AdaptiveHouseholdObjectivePolicy,
+    previous_regime: HouseholdPlanningRegime | None = None,
+    previous_regime_duration_seconds: int = 0,
 ) -> PlanningInputBundle:
     cumulative = diagnostics.cumulative_evidence
     deviations = diagnostics.deviation_results
@@ -193,8 +255,9 @@ def _attach_live_household_objectives(
         )
         forecast_energy_wh = cumulative.forecast_central_energy_wh
         actual_energy_wh = cumulative.actual_energy_wh
-        duration_seconds = _trailing_pv_underperformance_seconds(
-            deviations
+        duration_seconds = _rolling_pv_direction_seconds(
+            deviations,
+            direction="below_forecast",
         )
         evidence_ids = (
             cumulative.evidence_id,
@@ -209,6 +272,13 @@ def _attach_live_household_objectives(
         cumulative_actual_energy_wh=actual_energy_wh,
         underperformance_duration_seconds=duration_seconds,
         evidence_ids=tuple(dict.fromkeys(evidence_ids)),
+        previous_regime=previous_regime,
+        previous_regime_duration_seconds=previous_regime_duration_seconds,
+        recovery_duration_seconds=_rolling_pv_recovery_seconds(deviations),
+        overperformance_duration_seconds=_rolling_pv_direction_seconds(
+            deviations,
+            direction="above_forecast",
+        ),
     )
     return replace(bundle, snapshot=snapshot)
 
@@ -1419,12 +1489,16 @@ def main() -> None:
             household_load_history=household_load_history,
         )
 
+    previous_household_regime: HouseholdPlanningRegime | None = None
+    household_regime_started_at: datetime | None = None
+
     def prepare_bundle(
         bundle: PlanningInputBundle,
     ) -> tuple[
         PlanningInputBundle,
         LivePVActualDiagnostics,
     ]:
+        nonlocal previous_household_regime, household_regime_started_at
         bundle = attach_storage_mode_provenance(
             bundle,
             storage_mode_provenance_runtime,
@@ -1443,15 +1517,28 @@ def main() -> None:
                 pv_telemetry_interval_seconds
             ),
         )
-        return (
-            _attach_live_household_objectives(
-                prepared_bundle,
-                diagnostics,
-                profile=household_objective_profile,
-                policy=adaptive_household_policy,
-            ),
-            diagnostics,
+        captured_at = prepared_bundle.snapshot.captured_at
+        previous_duration_seconds = (
+            int((captured_at - household_regime_started_at).total_seconds())
+            if household_regime_started_at is not None
+            else 0
         )
+        prepared_bundle = _attach_live_household_objectives(
+            prepared_bundle,
+            diagnostics,
+            profile=household_objective_profile,
+            policy=adaptive_household_policy,
+            previous_regime=previous_household_regime,
+            previous_regime_duration_seconds=max(0, previous_duration_seconds),
+        )
+        current_regime = prepared_bundle.snapshot.household_planning_regime
+        if current_regime is not None and (
+            previous_household_regime is None
+            or current_regime.regime != previous_household_regime.regime
+        ):
+            household_regime_started_at = captured_at
+        previous_household_regime = current_regime
+        return prepared_bundle, diagnostics
 
     def execute(
         bundle: PlanningInputBundle,

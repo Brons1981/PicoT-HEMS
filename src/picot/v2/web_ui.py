@@ -651,6 +651,19 @@ DASHBOARD_HTML = """<!doctype html>
       white-space: nowrap;
     }
     th { color: #96a6b8; font-weight: 600; }
+    .planning-facts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 10px;
+    }
+    .planning-fact-card {
+      padding: 12px;
+      border: 1px solid #2a3745;
+      border-radius: 10px;
+      background: #151d26;
+    }
+    .planning-fact-card h3 { margin-top: 0; }
+    .planning-fact-card.full-width { grid-column: 1 / -1; }
     @media (max-width: 1000px) {
       .pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -801,7 +814,16 @@ DASHBOARD_HTML = """<!doctype html>
     </p>
     <section id="pipeline" class="pipeline" aria-live="polite"></section>
 
-    <h2>Wat PicoT overweegt</h2>
+    <h2>Huidige planning en besluit</h2>
+    <section
+      id="planning-status"
+      class="timeline-panel"
+      aria-live="polite"
+    >
+      Nog geen actuele planningsfeiten beschikbaar.
+    </section>
+
+    <h2>Onderliggende energiekansen</h2>
     <section
       id="plan-explanation"
       class="timeline-panel"
@@ -1244,6 +1266,7 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function formatMeasurement(value, unit) {
+      if (value === null || value === undefined) return "—";
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) return "—";
       if (unit === "W") {
@@ -2329,57 +2352,145 @@ DASHBOARD_HTML = """<!doctype html>
         details.className = "plan-explanation-detail";
         details.dataset.explanationKey = `opportunity:${group.label_nl}`;
         const summary = document.createElement("summary");
-        summary.textContent = group.summary_nl;
+        summary.textContent = `${group.label_nl} (${group.count})`;
         details.appendChild(summary);
-        const list = document.createElement("ul");
-        for (const item of group.items ?? []) {
-          const row = document.createElement("li");
-          row.textContent = item.summary_nl;
-          list.appendChild(row);
+        const table = document.createElement("table");
+        const head = document.createElement("thead");
+        const headRow = document.createElement("tr");
+        for (const label of ["Periode", "Prijs", "Confidence", "Reden"]) {
+          const cell = document.createElement("th");
+          cell.textContent = label;
+          headRow.append(cell);
         }
-        details.appendChild(list);
+        head.append(headRow);
+        const body = document.createElement("tbody");
+        for (const item of group.items ?? []) {
+          const row = document.createElement("tr");
+          for (const value of [
+            item.period_nl,
+            item.price_nl,
+            item.confidence_nl,
+            item.reason_nl,
+          ]) {
+            const cell = document.createElement("td");
+            cell.textContent = displayValue(value);
+            row.append(cell);
+          }
+          body.append(row);
+        }
+        table.append(head, body);
+        details.appendChild(table);
         fragment.appendChild(details);
-      }
-
-      const planHeading = document.createElement("h3");
-      planHeading.textContent = "Mogelijke plannen";
-      fragment.appendChild(planHeading);
-      for (const plan of explanation.plans ?? []) {
-        const details = document.createElement("details");
-        details.className = "plan-explanation-detail";
-        details.dataset.explanationKey = `plan:${plan.key}`;
-        const summary = document.createElement("summary");
-        summary.textContent = `${plan.selected ? "Gekozen: " : "Alternatief: "}${plan.label_nl}`;
-        details.appendChild(summary);
-        const description = document.createElement("p");
-        const phases = (plan.phases ?? []).map(
-          (phase) => phase.summary_nl
-        );
-        description.textContent = [
-          plan.period_nl,
-          ...phases,
-          plan.energy_nl,
-          plan.grid_energy_nl,
-          plan.reason_nl
-        ].join(" · ");
-        details.appendChild(description);
-        fragment.appendChild(details);
-      }
-
-      const decision = document.createElement("p");
-      decision.textContent = [
-        explanation.decision?.summary_nl,
-        explanation.decision?.reason_nl
-      ].filter(Boolean).join(" ");
-      fragment.appendChild(decision);
-
-      if (explanation.readiness?.warning_nl) {
-        const warning = document.createElement("p");
-        warning.className = "warning";
-        warning.textContent = explanation.readiness.warning_nl;
-        fragment.appendChild(warning);
       }
       container.replaceChildren(fragment);
+    }
+
+    function renderPlanningStatus(status) {
+      const container = element("planning-status");
+      if (!status) {
+        container.textContent =
+          "Niet beschikbaar · de actuele pipeline-run ontbreekt.";
+        return;
+      }
+      const root = document.createElement("div");
+      root.className = "planning-facts";
+      const addCard = (title, rows, fullWidth = false) => {
+        const panel = document.createElement("article");
+        panel.className = "planning-fact-card" +
+          (fullWidth ? " full-width" : "");
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        const facts = document.createElement("dl");
+        for (const [label, value] of rows) {
+          appendAttribute(facts, label, value);
+        }
+        panel.append(heading, facts);
+        root.append(panel);
+        return panel;
+      };
+      const strategy = status.strategy ?? {};
+      addCard("Huidige strategie", [
+        ["Regime", strategy.status],
+        ["Reden", strategy.reason],
+        ["Prioriteitsvolgorde", (strategy.objective_order ?? []).join(" → ")],
+        ["PV-confidence", formatConfidence(strategy.forecast_confidence)],
+        ["Batterijdoel in gevaar", strategy.storage_target_at_risk],
+      ]);
+      const decision = status.decision ?? {};
+      addCard("Besluit", [
+        ["Status", decision.status],
+        ["Gekozen planfamilie", decision.candidate_family],
+        ["Beslisregel", decision.decisive_step],
+        ["Reden", decision.reason],
+        ["Confidence", formatConfidence(decision.confidence)],
+      ]);
+      const target = status.storage_target ?? {};
+      addCard("Batterijdoel", [
+        ["Doelenergie", formatMeasurement(target.required_energy_wh, "Wh")],
+        ["Doel-SoC", target.required_soc == null
+          ? "Niet beschikbaar"
+          : `${Math.round(Number(target.required_soc) * 100)}%`],
+        ["Deadline", formatTimestamp(target.required_by)],
+        ["Reden", target.reason],
+        ["Doel gehaald in prognose", target.requirement_satisfied],
+        ["Geprojecteerde energie", formatMeasurement(target.projected_energy_wh, "Wh")],
+        ["Bijdrage PV", formatMeasurement(target.pv_contribution_wh, "Wh")],
+        ["Bijdrage net", formatMeasurement(target.grid_contribution_wh, "Wh")],
+        ["Confidence", formatConfidence(target.confidence)],
+      ]);
+      const execution = status.execution ?? {};
+      addCard("Uitvoering", [
+        ["Status", execution.status],
+        ["Reden", execution.reason],
+        ["Planning", execution.timing],
+        ["Primitive", execution.planned_primitive],
+        ["Geplande batterijmodus", execution.planned_vendor_mode],
+        ["Primitive-status", execution.primitive_status],
+        ["Blokkades", (execution.blockers ?? []).join(", ")],
+      ]);
+      addCard("Geldigheid", [
+        ["Vastgelegd", formatTimestamp(status.captured_at)],
+        ["Planningshorizon", formatTimestamp(status.valid_until)],
+        ["Uitvoering vanaf", formatTimestamp(execution.valid_from)],
+        ["Uitvoering tot", formatTimestamp(execution.valid_until)],
+        ["Run", status.run_id],
+        ["Snapshot", status.snapshot_id],
+      ]);
+
+      const alternatives = Array.isArray(status.alternatives)
+        ? status.alternatives : [];
+      const card = addCard("Kandidaten", [], true);
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      for (const label of [
+        "Planfamilie", "Gekozen", "Doel gehaald", "PV", "Net", "Confidence"
+      ]) {
+        const cell = document.createElement("th");
+        cell.textContent = label;
+        headRow.append(cell);
+      }
+      head.append(headRow);
+      const body = document.createElement("tbody");
+      for (const alternative of alternatives) {
+        const row = document.createElement("tr");
+        for (const value of [
+          alternative.family,
+          alternative.selected,
+          alternative.requirement_satisfied,
+          formatMeasurement(alternative.pv_contribution_wh, "Wh"),
+          formatMeasurement(alternative.grid_contribution_wh, "Wh"),
+          formatConfidence(alternative.confidence),
+        ]) {
+          const cell = document.createElement("td");
+          cell.textContent = displayValue(value);
+          row.append(cell);
+        }
+        body.append(row);
+      }
+      table.append(head, body);
+      card.append(table);
+      container.replaceChildren(root);
     }
 
     function renderStorageModeOverride(item) {
@@ -2682,6 +2793,7 @@ DASHBOARD_HTML = """<!doctype html>
       );
       movePanelContent("zendure-now", "overview");
       movePanelContent("price-timeline", "planning");
+      movePanelContent("planning-status", "planning");
       movePanelContent("plan-explanation", "planning");
       movePanelContent("storage-energy-source-needs", "planning");
       movePanelContent("pv-energy-timeline", "planning");
@@ -2885,6 +2997,7 @@ DASHBOARD_HTML = """<!doctype html>
       renderPipeline(pipeline);
       renderPipelineHealth(view.pipeline_health);
       renderZendureNow(view.zendure_now);
+      renderPlanningStatus(view.planning_status);
       renderPlanExplanation(view.plan_explanation);
       renderStorageModeOverride(primitiveBoundary);
       renderStorageEnergySourceNeeds(
@@ -3703,6 +3816,189 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
     }
 
 
+def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
+    """Expose one pipeline run as facts without deriving new conclusions."""
+    candidates_by_id = {
+        candidate.candidate_id: candidate
+        for candidate in run.candidate_set.candidates
+    }
+    outcomes_by_candidate = {
+        outcome.candidate_id: outcome
+        for outcome in run.outcomes.outcomes
+    }
+    winning_candidate_id = run.evaluation.winning_candidate_id
+    winning_candidate = (
+        candidates_by_id.get(winning_candidate_id)
+        if winning_candidate_id is not None
+        else None
+    )
+    winning_outcome = (
+        outcomes_by_candidate.get(winning_candidate_id)
+        if winning_candidate_id is not None
+        else None
+    )
+    requirement = next(
+        iter(run.candidate_set.storage_requirements),
+        None,
+    )
+    regime = run.planning_input.household_planning_regime
+    due_plan = next(
+        (
+            plan
+            for plan in run.execution_plan_set.plans
+            if plan.valid_from <= run.planning_input.captured_at < plan.valid_until
+        ),
+        None,
+    )
+    next_plan = min(
+        (
+            plan
+            for plan in run.execution_plan_set.plans
+            if plan.valid_from > run.planning_input.captured_at
+        ),
+        key=lambda plan: plan.valid_from,
+        default=None,
+    )
+    applicable_plan = due_plan or next_plan
+    return {
+        "run_id": run.planning_input.run_id,
+        "snapshot_id": run.planning_input.snapshot_id,
+        "captured_at": run.planning_input.captured_at.isoformat(),
+        "valid_until": (
+            run.planning_input.horizon_end.isoformat()
+            if run.planning_input.horizon_end is not None
+            else None
+        ),
+        "strategy": {
+            "status": regime.regime if regime is not None else "not_available",
+            "reason": regime.reason if regime is not None else "not_available",
+            "objective_order": (
+                list(regime.objective_order) if regime is not None else []
+            ),
+            "forecast_confidence": (
+                regime.forecast_confidence if regime is not None else None
+            ),
+            "storage_target_at_risk": (
+                regime.storage_target_at_risk if regime is not None else None
+            ),
+        },
+        "decision": {
+            "status": run.evaluation.status,
+            "candidate_family": (
+                winning_candidate.family
+                if winning_candidate is not None
+                else None
+            ),
+            "reason": run.evaluation.reason,
+            "decisive_step": run.evaluation.decisive_step,
+            "confidence": (
+                winning_outcome.confidence
+                if winning_outcome is not None
+                else None
+            ),
+        },
+        "storage_target": {
+            "required_energy_wh": (
+                requirement.required_energy_wh
+                if requirement is not None
+                else None
+            ),
+            "required_soc": (
+                requirement.required_soc if requirement is not None else None
+            ),
+            "required_by": (
+                requirement.required_by.isoformat()
+                if requirement is not None
+                else None
+            ),
+            "reason": requirement.reason if requirement is not None else None,
+            "confidence": (
+                requirement.confidence if requirement is not None else None
+            ),
+            "requirement_satisfied": (
+                winning_outcome.requirement_satisfied
+                if winning_outcome is not None
+                else None
+            ),
+            "projected_energy_wh": (
+                winning_outcome.storage_energy_at_requirement_wh
+                if winning_outcome is not None
+                else None
+            ),
+            "pv_contribution_wh": (
+                winning_outcome.pv_storage_contribution_wh
+                if winning_outcome is not None
+                else None
+            ),
+            "grid_contribution_wh": (
+                winning_outcome.grid_storage_contribution_wh
+                if winning_outcome is not None
+                else None
+            ),
+        },
+        "execution": {
+            "status": run.execution_record.status,
+            "reason": run.execution_record.reason,
+            "timing": (
+                "active" if due_plan is not None
+                else "scheduled" if next_plan is not None
+                else "not_available"
+            ),
+            "valid_from": (
+                applicable_plan.valid_from.isoformat()
+                if applicable_plan is not None
+                else None
+            ),
+            "valid_until": (
+                applicable_plan.valid_until.isoformat()
+                if applicable_plan is not None
+                else None
+            ),
+            "planned_primitive": (
+                applicable_plan.planned_primitive.value
+                if applicable_plan is not None
+                else None
+            ),
+            "planned_vendor_mode": (
+                applicable_plan.planned_vendor_mode
+                if applicable_plan is not None
+                else None
+            ),
+            "primitive_status": run.primitive_boundary.status,
+            "blockers": list(run.primitive_boundary.blockers),
+        },
+        "alternatives": [
+            {
+                "family": candidate.family,
+                "selected": (
+                    candidate.candidate_id
+                    == run.evaluation.winning_candidate_id
+                ),
+                "requirement_satisfied": (
+                    outcome.requirement_satisfied
+                    if outcome is not None
+                    else None
+                ),
+                "confidence": (
+                    outcome.confidence if outcome is not None else None
+                ),
+                "pv_contribution_wh": (
+                    outcome.pv_storage_contribution_wh
+                    if outcome is not None
+                    else 0.0
+                ),
+                "grid_contribution_wh": (
+                    outcome.grid_storage_contribution_wh
+                    if outcome is not None
+                    else 0.0
+                ),
+            }
+            for candidate in run.candidate_set.candidates
+            for outcome in (outcomes_by_candidate.get(candidate.candidate_id),)
+        ],
+    }
+
+
 def build_web_view(
     run: CanonicalPipelineRun,
     projection: Projection,
@@ -4022,6 +4318,7 @@ def build_web_view(
         "pipeline": pipeline,
         "pipeline_health": pipeline_health,
         "zendure_now": _zendure_now(pipeline),
+        "planning_status": _build_planning_status(run),
         "plan_explanation": _build_plan_explanation(run),
         "price_timeline": price_timeline,
         "pv_energy_timeline": pv_energy_timeline,

@@ -65,7 +65,6 @@ class CandidateEngine:
                 ProjectedHouseholdEnergyBalanceInterval
             ] = []
             evidence_ids: list[str] = list(storage.evidence_ids)
-            confidence_values = [storage.confidence]
 
             for pv_interval in pv_intervals:
                 projection_start = max(
@@ -151,11 +150,9 @@ class CandidateEngine:
                         - load_energy_wh,
                     ),
                 )
-                confidence = min(
-                    storage.confidence,
-                    pv_interval.confidence,
-                    load_confidence,
-                )
+                confidence = min(storage.confidence, load_confidence)
+                if pv_energy_wh > 1e-9:
+                    confidence = min(confidence, pv_interval.confidence)
                 interval_evidence = _ordered_unique(
                     storage.evidence_ids
                     + pv_interval.actual_evidence_ids
@@ -166,11 +163,6 @@ class CandidateEngine:
                     )
                 )
                 evidence_ids.extend(interval_evidence)
-                confidence_values.append(pv_interval.confidence)
-                confidence_values.extend(
-                    interval.confidence
-                    for interval in matching_load_intervals
-                )
                 projected_intervals.append(
                     ProjectedHouseholdEnergyBalanceInterval(
                         starts_at=projection_start,
@@ -240,7 +232,6 @@ class CandidateEngine:
                         + (load_interval.source_reference,)
                     )
                     evidence_ids.extend(interval_evidence)
-                    confidence_values.append(0.0)
                     projected_intervals.append(
                         ProjectedHouseholdEnergyBalanceInterval(
                             starts_at=overlap_start,
@@ -337,6 +328,11 @@ class CandidateEngine:
 
             required_energy_wh = storage.usable_capacity_wh
             required_by = first_battery_support_interval.starts_at
+            relevant_intervals = tuple(
+                interval
+                for interval in projected_intervals
+                if interval.starts_at <= required_by
+            )
             requirement = StorageEnergyRequirement(
                 requirement_id=_stable_id(
                     "storage-requirement",
@@ -350,7 +346,15 @@ class CandidateEngine:
                 required_soc=1.0,
                 required_by=required_by,
                 reason="full_before_first_projected_battery_support",
-                confidence=min(confidence_values),
+                confidence=min(
+                    (
+                        storage.confidence,
+                        *(
+                            interval.confidence
+                            for interval in relevant_intervals
+                        ),
+                    )
+                ),
                 evidence_ids=_ordered_unique(tuple(evidence_ids)),
                 reserve_contribution_wh=max(
                     0.0,

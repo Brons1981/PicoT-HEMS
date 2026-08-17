@@ -663,6 +663,7 @@ def assemble_planning_input(
     options_path: str = "/data/options.json",
     captured_at: datetime | None = None,
     household_load_fallback_power_w: float | None = None,
+    household_load_fallback_confidence: float = 0.5,
     household_load_observations: tuple[
         HouseholdLoadObservation,
         ...,
@@ -858,6 +859,7 @@ def assemble_planning_input(
                 starts_at=capture,
                 horizon_end=household_load_horizon_end,
                 fallback_power_w=household_load_fallback_power_w,
+                fallback_confidence=household_load_fallback_confidence,
             )
         )
 

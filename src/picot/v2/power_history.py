@@ -162,6 +162,98 @@ class HomeAssistantPowerHistoryReader:
         )
 
 
+class PowerHistoryCache:
+    """Retain today's series and request only the unseen time tail."""
+
+    def __init__(self) -> None:
+        self._snapshot: PowerHistorySnapshot | None = None
+
+    def update(
+        self,
+        reader: HomeAssistantPowerHistoryReader,
+        *,
+        specs: tuple[PowerSeriesSpec, ...],
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> PowerHistorySnapshot:
+        previous = self._snapshot
+        same_window = previous is not None and previous.starts_at == starts_at
+        read_starts_at = (
+            max(starts_at, previous.ends_at)
+            if same_window and previous is not None
+            else starts_at
+        )
+        if read_starts_at >= ends_at and previous is not None:
+            return previous
+        latest = reader.read(
+            specs=specs,
+            starts_at=read_starts_at,
+            ends_at=ends_at,
+        )
+        if previous is None or not same_window:
+            self._snapshot = latest
+            return latest
+        if latest.status == "unavailable":
+            return replace_snapshot_error(previous, latest.error)
+
+        previous_by_id = {item.series_id: item for item in previous.series}
+        merged_series: list[PowerHistorySeries] = []
+        for latest_series in latest.series:
+            prior = previous_by_id.get(latest_series.series_id)
+            combined = (
+                (*prior.points, *latest_series.points)
+                if prior is not None
+                else latest_series.points
+            )
+            unique = {
+                point.evidence_id: point
+                for point in combined
+            }
+            merged_series.append(
+                PowerHistorySeries(
+                    series_id=latest_series.series_id,
+                    role=latest_series.role,
+                    source_entity_id=latest_series.source_entity_id,
+                    transform=latest_series.transform,
+                    points=tuple(sorted(
+                        unique.values(),
+                        key=lambda point: (
+                            point.sampled_at,
+                            point.evidence_id,
+                        ),
+                    )),
+                )
+            )
+        merged = PowerHistorySnapshot(
+            starts_at=starts_at,
+            ends_at=ends_at,
+            status=(
+                "available"
+                if any(item.points for item in merged_series)
+                else "empty"
+            ),
+            error=None,
+            series=tuple(merged_series),
+        )
+        self._snapshot = merged
+        return merged
+
+
+def replace_snapshot_error(
+    snapshot: PowerHistorySnapshot,
+    error: str | None,
+) -> PowerHistorySnapshot:
+    """Keep proven points while exposing an incremental read failure."""
+    return PowerHistorySnapshot(
+        starts_at=snapshot.starts_at,
+        ends_at=snapshot.ends_at,
+        status=snapshot.status,
+        error=error,
+        series=snapshot.series,
+        method_version=snapshot.method_version,
+    )
+
+
 def _transform_power(value: float, transform: str) -> float:
     if transform == "positive":
         return max(0.0, value)

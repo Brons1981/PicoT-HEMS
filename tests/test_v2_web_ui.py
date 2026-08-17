@@ -11,6 +11,11 @@ from picot.v2.contracts import (
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline
+from picot.v2.power_history import (
+    PowerHistoryPoint,
+    PowerHistorySeries,
+    PowerHistorySnapshot,
+)
 from picot.v2.projection import project
 from picot.v2.web_ui import (
     DASHBOARD_HTML,
@@ -241,6 +246,68 @@ def test_dashboard_contains_canonical_pv_forecast_actual_history_chart() -> None
     assert "Nog geen gesloten PV-intervallen met forecast en werkelijkheid." in (
         DASHBOARD_HTML
     )
+
+
+def test_web_view_serializes_canonical_power_history() -> None:
+    captured_at = datetime(2026, 8, 17, 10, 0, tzinfo=UTC)
+    run = CanonicalPipeline().run(captured_at=captured_at)
+    history = PowerHistorySnapshot(
+        starts_at=captured_at.replace(hour=0),
+        ends_at=captured_at,
+        status="available",
+        error=None,
+        series=(
+            PowerHistorySeries(
+                series_id="pv",
+                role="pv_generation",
+                source_entity_id="sensor.pv",
+                transform="identity",
+                points=(
+                    PowerHistoryPoint(
+                        sampled_at=captured_at,
+                        power_w=1234.0,
+                        evidence_id="evidence-pv-1",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    view = build_web_view(run, project(run), power_history=history)
+
+    assert view["power_history"] == {
+        "available": True,
+        "status": "available",
+        "error": None,
+        "starts_at": "2026-08-17T00:00:00+00:00",
+        "ends_at": "2026-08-17T10:00:00+00:00",
+        "method_version": "home-assistant-power-history:v1",
+        "series": [
+            {
+                "series_id": "pv",
+                "role": "pv_generation",
+                "source_entity_id": "sensor.pv",
+                "transform": "identity",
+                "points": [
+                    {
+                        "sampled_at": "2026-08-17T10:00:00+00:00",
+                        "power_w": 1234.0,
+                        "evidence_id": "evidence-pv-1",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_dashboard_contains_canonical_power_history_chart() -> None:
+    assert 'id="power-history-chart"' in DASHBOARD_HTML
+    assert "renderPowerHistory" in DASHBOARD_HTML
+    assert "view.power_history" in DASHBOARD_HTML
+    assert 'pv_generation: "PV"' in DASHBOARD_HTML
+    assert 'household_load: "Huisverbruik"' in DASHBOARD_HTML
+    assert 'grid_import: "Netimport"' in DASHBOARD_HTML
+    assert 'grid_export: "Netexport"' in DASHBOARD_HTML
 
 
 def test_dashboard_preserves_open_quarter_details_during_refresh() -> None:

@@ -266,15 +266,15 @@ def test_preferred_price_window_is_considered_before_expansion() -> None:
         snapshot=_snapshot(_capability_set()),
         balance=_balance(),
         requirement=_requirement(),
-        preferred_price_windows=((WINDOW_END, REQUIRED_BY),),
+        preferred_price_windows=((BASE, WINDOW_END),),
     )
 
     assert candidate_set.derivation_status == "constructed"
-    assert len(candidate_set.energy_paths) == 3
+    assert len(candidate_set.energy_paths) == 2
     assert [
         (segment.starts_at, segment.ends_at)
         for segment in candidate_set.energy_paths[0].segments
-    ] == [(WINDOW_END, REQUIRED_BY)]
+    ] == [(BASE, WINDOW_END)]
     assert [
         (segment.starts_at, segment.ends_at)
         for segment in candidate_set.energy_paths[1].segments
@@ -290,7 +290,7 @@ def test_progressive_full_horizon_reserves_every_nom_interval() -> None:
         snapshot=_snapshot(_capability_set()),
         balance=_balance(),
         requirement=_requirement(),
-        preferred_price_windows=((WINDOW_END, REQUIRED_BY),),
+        preferred_price_windows=((BASE, WINDOW_END),),
     )
 
     full_horizon_path = candidate_set.energy_paths[1]

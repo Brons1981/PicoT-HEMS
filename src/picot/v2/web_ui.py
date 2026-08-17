@@ -244,7 +244,9 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .power-flow-line {
       fill: none;
-      stroke-width: 2.5;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
     .power-flow-line.pv_generation { stroke: #ffd400; }
     .power-flow-line.household_load { stroke: #3994e6; }
@@ -1024,7 +1026,7 @@ DASHBOARD_HTML = """<!doctype html>
         grid_export: "#aab2bd",
       };
       const signedPower = (role, value) =>
-        ["battery_charge", "grid_export"].includes(role)
+        ["pv_generation", "battery_charge", "grid_export"].includes(role)
           ? -Number(value)
           : Number(value);
       const visible = series.filter((item) => roleLabels[item.role]);
@@ -1036,7 +1038,7 @@ DASHBOARD_HTML = """<!doctype html>
         const swatch = document.createElement("span");
         swatch.className = `power-flow-line ${item.role}`;
         swatch.style.width = "18px";
-        swatch.style.borderTop = "3px solid";
+        swatch.style.borderTop = "2px solid";
         swatch.style.borderColor = roleColors[item.role];
         key.append(swatch, document.createTextNode(roleLabels[item.role]));
         legend.appendChild(key);

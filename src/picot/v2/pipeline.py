@@ -321,9 +321,13 @@ class CanonicalPipeline:
                     else "pv_charge_only maximizes storage progress using PV-only energy"
                 )
                 if has_evaluated_alternatives
-                else "only technically valid bootstrap baseline candidate"
+                else "no actionable candidate with a calculated outcome"
             ),
-            status="winner_selected",
+            status=(
+                "winner_selected"
+                if has_evaluated_alternatives
+                else "fallback_active"
+            ),
             evaluated_candidate_ids=tuple(
                 item.candidate_id for item in candidate_set.candidates
             ),
@@ -334,7 +338,7 @@ class CanonicalPipeline:
                     else "objective:maximize_storage_progress_without_grid"
                 )
                 if has_evaluated_alternatives
-                else "technical_validity:bootstrap_baseline"
+                else "fallback:no_actionable_candidate"
             ),
         )
         evaluation_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
@@ -564,7 +568,9 @@ class CanonicalPipeline:
             execution_record_id=_id("execution", execution_plan_set.plan_set_id),
             plan_set_id=execution_plan_set.plan_set_id,
             status=(
-                (
+                "fallback_active"
+                if not has_evaluated_alternatives and observer_plans
+                else (
                     "live_plan_ready"
                     if control_change_allowed
                     else "observer_only_plan_ready"
@@ -573,7 +579,9 @@ class CanonicalPipeline:
                 else "no_due_segment"
             ),
             reason=(
-                (
+                "safe baseline mode active without an actionable calculated plan"
+                if not has_evaluated_alternatives and observer_plans
+                else (
                     "winning path approved for live execution"
                     if control_change_allowed
                     else "winning path preserved as observer-only execution plan"

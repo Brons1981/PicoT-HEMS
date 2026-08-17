@@ -29,6 +29,7 @@ def build(
     starts_at: datetime = BASE,
     horizon_end: datetime = HORIZON_END,
     fallback_power_w: float = 500.0,
+    fallback_confidence: float = 0.5,
 ):
     return build_fallback_household_load_forecast(
         run_id="run-household-load-builder",
@@ -36,6 +37,7 @@ def build(
         starts_at=starts_at,
         horizon_end=horizon_end,
         fallback_power_w=fallback_power_w,
+        fallback_confidence=fallback_confidence,
     )
 
 
@@ -76,7 +78,7 @@ def test_fallback_intervals_are_contiguous_and_explicit() -> None:
         for interval in result.intervals
     )
     assert all(
-        interval.confidence == pytest.approx(0.0)
+        interval.confidence == pytest.approx(0.5)
         for interval in result.intervals
     )
     assert all(
@@ -88,6 +90,18 @@ def test_fallback_intervals_are_contiguous_and_explicit() -> None:
         == "constant-power-conservative-fallback:v1"
         for interval in result.intervals
     )
+
+
+
+@pytest.mark.parametrize("confidence", (0.0, -0.1, 1.1))
+def test_fallback_forecast_rejects_invalid_confidence(
+    confidence: float,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="fallback_confidence must be greater than 0 and at most 1",
+    ):
+        build(fallback_confidence=confidence)
 
 
 def test_fallback_forecast_is_deterministic() -> None:

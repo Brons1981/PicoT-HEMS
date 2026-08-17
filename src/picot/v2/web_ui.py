@@ -2481,7 +2481,13 @@ DASHBOARD_HTML = """<!doctype html>
         ["Beslisreden", chosenPlan.reason],
         ["Laadvenster vanaf", formatTimestamp(chosenPlan.charge_window_starts_at)],
         ["Laadvenster tot", formatTimestamp(chosenPlan.charge_window_ends_at)],
-        ["Benodigde doelenergie", formatMeasurement(chosenPlan.required_energy_wh, "Wh")],
+        ["Totale doelenergie", formatMeasurement(chosenPlan.required_energy_wh, "Wh")],
+        ["Batterijenergie bij vastleggen", formatMeasurement(
+          chosenPlan.initial_storage_energy_wh, "Wh"
+        )],
+        ["Nog benodigde toevoeging", formatMeasurement(
+          chosenPlan.energy_to_target_wh, "Wh"
+        )],
         ["Energie einde laadvenster", formatMeasurement(
           chosenPlan.storage_energy_at_window_end_wh, "Wh"
         )],
@@ -2540,7 +2546,9 @@ DASHBOARD_HTML = """<!doctype html>
       const head = document.createElement("thead");
       const headRow = document.createElement("tr");
       for (const label of [
-        "Planfamilie", "Gekozen", "Doel gehaald", "PV", "Net", "Confidence"
+        "Kandidaat", "Planfamilie", "Gekozen", "Venster vanaf", "Venster tot",
+        "Energie einde venster", "Energie bij deadline", "Doel gehaald",
+        "PV", "Net", "Herstelbaarheid", "Confidence"
       ]) {
         const cell = document.createElement("th");
         cell.textContent = label;
@@ -2551,11 +2559,17 @@ DASHBOARD_HTML = """<!doctype html>
       for (const alternative of alternatives) {
         const row = document.createElement("tr");
         for (const value of [
+          alternative.candidate_id,
           alternative.family,
           alternative.selected,
+          formatTimestamp(alternative.charge_window_starts_at),
+          formatTimestamp(alternative.charge_window_ends_at),
+          formatMeasurement(alternative.storage_energy_at_window_end_wh, "Wh"),
+          formatMeasurement(alternative.storage_energy_at_requirement_wh, "Wh"),
           alternative.requirement_satisfied,
           formatMeasurement(alternative.pv_contribution_wh, "Wh"),
           formatMeasurement(alternative.grid_contribution_wh, "Wh"),
+          formatConfidence(alternative.recoverability),
           formatConfidence(alternative.confidence),
         ]) {
           const cell = document.createElement("td");
@@ -3925,6 +3939,25 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         iter(run.candidate_set.storage_requirements),
         None,
     )
+    storage_states_by_id = {
+        state.storage_state_id: state
+        for state in run.planning_input.current_storage_states
+    }
+    initial_storage_state = (
+        storage_states_by_id.get(requirement.storage_state_id)
+        if requirement is not None
+        else None
+    )
+    initial_storage_energy_wh = (
+        initial_storage_state.current_stored_energy_wh
+        if initial_storage_state is not None
+        else None
+    )
+    energy_to_target_wh = (
+        max(0.0, requirement.required_energy_wh - initial_storage_energy_wh)
+        if requirement is not None and initial_storage_energy_wh is not None
+        else None
+    )
     regime = run.planning_input.household_planning_regime
     due_plan = next(
         (
@@ -4103,6 +4136,12 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 if winning_outcome is not None and not fallback_active
                 else None
             ),
+            "initial_storage_energy_wh": (
+                initial_storage_energy_wh if not fallback_active else None
+            ),
+            "energy_to_target_wh": (
+                energy_to_target_wh if not fallback_active else None
+            ),
             "storage_energy_at_window_end_wh": (
                 winning_outcome.storage_energy_at_window_end_wh
                 if winning_outcome is not None and not fallback_active
@@ -4169,6 +4208,8 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         },
         "alternatives": [
             {
+                "candidate_id": candidate.candidate_id,
+                "energy_path_id": candidate.energy_path_id,
                 "family": candidate.family,
                 "selected": (
                     not fallback_active
@@ -4176,10 +4217,33 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                     candidate.candidate_id
                     == run.evaluation.winning_candidate_id
                 ),
+                "charge_window_starts_at": (
+                    outcome.charge_window_starts_at.isoformat()
+                    if outcome is not None
+                    else None
+                ),
+                "charge_window_ends_at": (
+                    outcome.charge_window_ends_at.isoformat()
+                    if outcome is not None
+                    else None
+                ),
+                "storage_energy_at_window_end_wh": (
+                    outcome.storage_energy_at_window_end_wh
+                    if outcome is not None
+                    else None
+                ),
+                "storage_energy_at_requirement_wh": (
+                    outcome.storage_energy_at_requirement_wh
+                    if outcome is not None
+                    else None
+                ),
                 "requirement_satisfied": (
                     outcome.requirement_satisfied
                     if outcome is not None
                     else None
+                ),
+                "recoverability": (
+                    outcome.recoverability if outcome is not None else None
                 ),
                 "confidence": (
                     outcome.confidence if outcome is not None else None

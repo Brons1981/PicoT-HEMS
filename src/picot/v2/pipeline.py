@@ -434,7 +434,14 @@ class CanonicalPipeline:
         if not has_due_storage_segment:
             storage_state = next(iter(snapshot.current_storage_states), None)
             capability_set = snapshot.capability_snapshot_set
-            discharge_capability = (
+            baseline_primitive = (
+                ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                if snapshot.household_planning_regime is not None
+                and snapshot.household_planning_regime.regime
+                == "self_consumption_first"
+                else ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+            )
+            baseline_capability = (
                 next(
                     (
                         capability
@@ -443,8 +450,7 @@ class CanonicalPipeline:
                         and capability.capability_id == storage_state.capability_id
                         and capability.execution_scope_id
                         == storage_state.execution_scope_id
-                        and ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
-                        in capability.supported_primitives
+                        and baseline_primitive in capability.supported_primitives
                     ),
                     None,
                 )
@@ -465,7 +471,7 @@ class CanonicalPipeline:
             )
             if (
                 storage_state is not None
-                and discharge_capability is not None
+                and baseline_capability is not None
                 and baseline_until > snapshot.captured_at
                 and winning_candidate.candidate_id is not None
             ):
@@ -474,8 +480,7 @@ class CanonicalPipeline:
                     tuple(
                         mapping.vendor_mode
                         for mapping in mode_evidence.mappings
-                        if ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
-                        in mapping.primitives
+                        if baseline_primitive in mapping.primitives
                     )
                     if mode_evidence is not None
                     else ()
@@ -502,9 +507,7 @@ class CanonicalPipeline:
                         execution_scope_id=storage_state.execution_scope_id,
                         valid_from=snapshot.captured_at,
                         valid_until=baseline_until,
-                        planned_primitive=(
-                            ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
-                        ),
+                        planned_primitive=baseline_primitive,
                         planned_vendor_mode=plan_vendor_mode,
                         lifecycle_status=(
                             "due"
@@ -521,16 +524,21 @@ class CanonicalPipeline:
                                 order=1,
                                 starts_at=snapshot.captured_at,
                                 ends_at=baseline_until,
-                                primitive=(
-                                    ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
-                                ),
-                                capability_id=discharge_capability.capability_id,
+                                primitive=baseline_primitive,
+                                capability_id=baseline_capability.capability_id,
                                 purpose=(
-                                    "Preserve normal discharge-only control "
+                                    "Apply the active household planning regime "
                                     "outside a selected PV charge window"
                                 ),
                                 evidence_ids=(
-                                    discharge_capability.capability_id,
+                                    baseline_capability.capability_id,
+                                    *(
+                                        (
+                                            snapshot.household_planning_regime.regime_id,
+                                        )
+                                        if snapshot.household_planning_regime is not None
+                                        else ()
+                                    ),
                                 ),
                                 requested_power_w=None,
                                 charge_source_policy=None,

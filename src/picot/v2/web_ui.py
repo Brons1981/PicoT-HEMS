@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Condition, Lock
@@ -13,8 +13,92 @@ from zoneinfo import ZoneInfo
 
 from picot.domain.energy_path import PathSegment
 from picot.v2.contracts import CanonicalPipelineRun, PriceForecastPoint
-from picot.v2.power_history import PowerHistorySnapshot
+from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.projection import Projection
+
+POWER_HISTORY_DISPLAY_INTERVAL = timedelta(minutes=5)
+
+
+def _power_history_display_points(
+    series: PowerHistorySeries,
+    *,
+    starts_at: datetime,
+    ends_at: datetime,
+) -> list[dict[str, object]]:
+    """Derive factual five-minute display averages without changing raw evidence."""
+    points = tuple(sorted(series.points, key=lambda item: item.sampled_at))
+    result: list[dict[str, object]] = []
+    bucket_start = starts_at
+    while bucket_start < ends_at:
+        bucket_end = min(bucket_start + POWER_HISTORY_DISPLAY_INTERVAL, ends_at)
+        bucket_points = tuple(
+            point
+            for point in points
+            if bucket_start <= point.sampled_at < bucket_end
+        )
+        evidence_ids: tuple[str, ...]
+        covered_seconds: float
+        average: float | None
+        if series.history_semantics == "state_hold":
+            prior = next(
+                (
+                    point
+                    for point in reversed(points)
+                    if point.sampled_at <= bucket_start
+                ),
+                None,
+            )
+            transitions = tuple(
+                point
+                for point in points
+                if bucket_start < point.sampled_at < bucket_end
+            )
+            current = prior
+            cursor = bucket_start if prior is not None else None
+            weighted_power_seconds = 0.0
+            covered_seconds = 0.0
+            used_evidence: list[str] = []
+            if prior is not None:
+                used_evidence.append(prior.evidence_id)
+            for transition in transitions:
+                if current is not None and cursor is not None:
+                    duration = (transition.sampled_at - cursor).total_seconds()
+                    weighted_power_seconds += current.power_w * duration
+                    covered_seconds += duration
+                current = transition
+                cursor = transition.sampled_at
+                used_evidence.append(transition.evidence_id)
+            if current is not None and cursor is not None:
+                duration = (bucket_end - cursor).total_seconds()
+                weighted_power_seconds += current.power_w * duration
+                covered_seconds += duration
+            average = (
+                weighted_power_seconds / covered_seconds
+                if covered_seconds > 0
+                else None
+            )
+            evidence_ids = tuple(dict.fromkeys(used_evidence))
+        else:
+            covered_seconds = (bucket_end - bucket_start).total_seconds()
+            average = (
+                sum(point.power_w for point in bucket_points) / len(bucket_points)
+                if bucket_points
+                else None
+            )
+            evidence_ids = tuple(point.evidence_id for point in bucket_points)
+        if average is not None:
+            bucket_seconds = (bucket_end - bucket_start).total_seconds()
+            result.append({
+                "sampled_at": (
+                    bucket_start + (bucket_end - bucket_start) / 2
+                ).isoformat(),
+                "power_w": average,
+                "coverage_ratio": min(1.0, covered_seconds / bucket_seconds),
+                "derived_from_evidence_ids": list(evidence_ids),
+            })
+        bucket_start = bucket_end
+    return result
+
 
 DASHBOARD_HTML = """<!doctype html>
 <html lang="nl">
@@ -1186,26 +1270,14 @@ DASHBOARD_HTML = """<!doctype html>
       const windowStartMs = powerHistoryZoomWindow?.startsAt ?? startMs;
       const windowEndMs = powerHistoryZoomWindow?.endsAt ?? fullEndMs;
       const pointsInWindow = (item) => {
-        const sourcePoints = [...item.points].sort((left, right) =>
+        const sourcePoints = [...item.display_points].sort((left, right) =>
           new Date(left.sampled_at).getTime() -
           new Date(right.sampled_at).getTime()
         );
-        if (item.history_semantics !== "state_hold") {
-          return sourcePoints.filter((point) => {
-            const sampledAt = new Date(point.sampled_at).getTime();
-            return sampledAt >= windowStartMs && sampledAt <= windowEndMs;
-          });
-        }
-        const prior = sourcePoints.filter((point) =>
-          new Date(point.sampled_at).getTime() <= windowStartMs
-        ).at(-1);
-        return [
-          ...(prior ? [{ ...prior, sampled_at: new Date(windowStartMs) }] : []),
-          ...sourcePoints.filter((point) => {
-            const sampledAt = new Date(point.sampled_at).getTime();
-            return sampledAt > windowStartMs && sampledAt <= windowEndMs;
-          }),
-        ];
+        return sourcePoints.filter((point) => {
+          const sampledAt = new Date(point.sampled_at).getTime();
+          return sampledAt >= windowStartMs && sampledAt <= windowEndMs;
+        });
       };
       const allValues = visible.flatMap((item) =>
         pointsInWindow(item)
@@ -1334,7 +1406,6 @@ DASHBOARD_HTML = """<!doctype html>
         );
       }
       for (const item of visible) {
-        const isStateHold = item.history_semantics === "state_hold";
         const points = pointsInWindow(item)
           .map((point) => ({
             x: x(point.sampled_at),
@@ -1344,17 +1415,9 @@ DASHBOARD_HTML = """<!doctype html>
         if (points.length === 0) continue;
         let path = `M ${points[0].x} ${points[0].y}`;
         for (const point of points.slice(1)) {
-          path += isStateHold
-            ? ` H ${point.x} V ${point.y}`
-            : ` L ${point.x} ${point.y}`;
+          path += ` L ${point.x} ${point.y}`;
         }
-        if (isStateHold) {
-          const holdEndsAt = Math.min(windowEndMs, end.getTime());
-          path += ` H ${x(holdEndsAt)}`;
-        }
-        const pathEndsAtX = isStateHold
-          ? x(Math.min(windowEndMs, end.getTime()))
-          : points.at(-1).x;
+        const pathEndsAtX = points.at(-1).x;
         if (["grid_export", "battery_charge"].includes(item.role)) {
           const area = `${path} L ${pathEndsAtX} ${y(0)}` +
             ` L ${points[0].x} ${y(0)} Z`;
@@ -3301,6 +3364,12 @@ def build_web_view(
         ],
     }
 
+    power_history_starts_at = (
+        power_history.starts_at if power_history is not None else None
+    )
+    power_history_ends_at = (
+        power_history.ends_at if power_history is not None else None
+    )
     power_history_view: dict[str, object] = {
         "available": power_history is not None and power_history.status == "available",
         "status": power_history.status if power_history is not None else "unavailable",
@@ -3314,6 +3383,11 @@ def build_web_view(
         "method_version": (
             power_history.method_version if power_history is not None else None
         ),
+        "display_aggregation": "five_minute_average",
+        "display_interval_seconds": int(
+            POWER_HISTORY_DISPLAY_INTERVAL.total_seconds()
+        ),
+        "display_curve": "linear_between_bucket_averages",
         "series": [
             {
                 "series_id": series.series_id,
@@ -3321,6 +3395,19 @@ def build_web_view(
                 "source_entity_id": series.source_entity_id,
                 "transform": series.transform,
                 "history_semantics": series.history_semantics,
+                "display_method": (
+                    "time_weighted_average"
+                    if series.history_semantics == "state_hold"
+                    else "sample_average"
+                ),
+                "display_points": _power_history_display_points(
+                    series,
+                    starts_at=power_history_starts_at,
+                    ends_at=power_history_ends_at,
+                )
+                if power_history_starts_at is not None
+                and power_history_ends_at is not None
+                else [],
                 "points": [
                     {
                         "sampled_at": point.sampled_at.isoformat(),

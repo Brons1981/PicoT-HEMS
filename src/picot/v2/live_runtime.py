@@ -20,6 +20,7 @@ from time import perf_counter
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
 from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
     HomeAssistantCanonicalModeAdapter,
@@ -62,6 +63,10 @@ from picot.v2.planning_input import (
     load_options,
 )
 from picot.v2.projection import Card, Projection, project
+from picot.v2.remaining_pv_storage_feasibility import (
+    RemainingPVStorageFeasibility,
+    derive_remaining_pv_storage_feasibility,
+)
 from picot.v2.pv_actual_history import HomeAssistantPVHistoryReader
 from picot.v2.pv_attenuation_aggregation import (
     PVAttenuationAggregationConfig,
@@ -184,6 +189,12 @@ def _adaptive_household_policy(
                 3600,
             )
         ),
+        minimum_conservative_pv_storage_margin_wh=float(
+            options.get(
+                "household_minimum_conservative_pv_storage_margin_wh",
+                500.0,
+            )
+        ),
     )
 
 
@@ -238,6 +249,7 @@ def _attach_live_household_objectives(
     policy: AdaptiveHouseholdObjectivePolicy,
     previous_regime: HouseholdPlanningRegime | None = None,
     previous_regime_duration_seconds: int = 0,
+    storage_feasibility: RemainingPVStorageFeasibility | None = None,
 ) -> PlanningInputBundle:
     cumulative = diagnostics.cumulative_evidence
     deviations = diagnostics.deviation_results
@@ -271,13 +283,44 @@ def _attach_live_household_objectives(
         cumulative_forecast_energy_wh=forecast_energy_wh,
         cumulative_actual_energy_wh=actual_energy_wh,
         underperformance_duration_seconds=duration_seconds,
-        evidence_ids=tuple(dict.fromkeys(evidence_ids)),
+        evidence_ids=tuple(
+            dict.fromkeys(
+                (
+                    *evidence_ids,
+                    *(
+                        storage_feasibility.evidence_ids
+                        if storage_feasibility is not None
+                        else ()
+                    ),
+                )
+            )
+        ),
         previous_regime=previous_regime,
         previous_regime_duration_seconds=previous_regime_duration_seconds,
         recovery_duration_seconds=_rolling_pv_recovery_seconds(deviations),
         overperformance_duration_seconds=_rolling_pv_direction_seconds(
             deviations,
             direction="above_forecast",
+        ),
+        remaining_storage_need_wh=(
+            storage_feasibility.remaining_storage_need_wh
+            if storage_feasibility is not None
+            else None
+        ),
+        conservative_remaining_pv_surplus_wh=(
+            storage_feasibility.conservative_remaining_pv_surplus_wh
+            if storage_feasibility is not None
+            else None
+        ),
+        remaining_pv_storage_margin_wh=(
+            storage_feasibility.margin_wh
+            if storage_feasibility is not None
+            else None
+        ),
+        storage_target_required_by=(
+            storage_feasibility.required_by
+            if storage_feasibility is not None
+            else None
         ),
     )
     return replace(bundle, snapshot=snapshot)
@@ -1517,6 +1560,24 @@ def main() -> None:
                 pv_telemetry_interval_seconds
             ),
         )
+        try:
+            requirement_derivation = CandidateEngine().derive_storage_requirements(
+                prepared_bundle.snapshot
+            )
+            storage_feasibility = derive_remaining_pv_storage_feasibility(
+                prepared_bundle.snapshot,
+                requirements=requirement_derivation.requirements,
+                balances=requirement_derivation.balances,
+            )
+        except CandidateInputError:
+            storage_feasibility = RemainingPVStorageFeasibility(
+                status="unavailable",
+                remaining_storage_need_wh=None,
+                conservative_remaining_pv_surplus_wh=None,
+                margin_wh=None,
+                required_by=None,
+                evidence_ids=(),
+            )
         captured_at = prepared_bundle.snapshot.captured_at
         previous_duration_seconds = (
             int((captured_at - household_regime_started_at).total_seconds())
@@ -1530,6 +1591,7 @@ def main() -> None:
             policy=adaptive_household_policy,
             previous_regime=previous_household_regime,
             previous_regime_duration_seconds=max(0, previous_duration_seconds),
+            storage_feasibility=storage_feasibility,
         )
         current_regime = prepared_bundle.snapshot.household_planning_regime
         if current_regime is not None and (

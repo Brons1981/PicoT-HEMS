@@ -216,6 +216,53 @@ DASHBOARD_HTML = """<!doctype html>
       font-size: 0.78rem;
     }
     .timeline-panel { padding: 14px; overflow-x: auto; }
+    .energy-chart-panel { padding: 14px; overflow: hidden; }
+    .energy-chart-scroll { overflow-x: auto; }
+    .energy-chart {
+      display: block;
+      width: 100%;
+      min-width: 760px;
+      height: auto;
+    }
+    .energy-chart .grid-line { stroke: #27313d; stroke-width: 1; }
+    .energy-chart .axis-label { fill: #96a6b8; font-size: 12px; }
+    .energy-chart .forecast-range {
+      fill: #f2b84b;
+      opacity: 0.16;
+    }
+    .energy-chart .forecast-line {
+      fill: none;
+      stroke: #f2b84b;
+      stroke-width: 3;
+      opacity: 0.48;
+    }
+    .energy-chart .actual-line {
+      fill: none;
+      stroke: #ffd400;
+      stroke-width: 3;
+    }
+    .energy-chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 10px;
+      color: #96a6b8;
+    }
+    .energy-chart-key {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .energy-chart-swatch {
+      width: 18px;
+      height: 4px;
+      border-radius: 2px;
+      background: #ffd400;
+    }
+    .energy-chart-swatch.forecast {
+      background: #f2b84b;
+      opacity: 0.48;
+    }
     .price-panel { padding: 14px; overflow: hidden; }
     .price-legend {
       display: flex;
@@ -348,9 +395,17 @@ DASHBOARD_HTML = """<!doctype html>
     <section
       id="tab-history" class="tab-panel" data-tab-panel="history" hidden
     >
+      <h2>Zon: forecast en werkelijkheid</h2>
+      <section
+        id="pv-forecast-actual-chart"
+        class="timeline-panel energy-chart-panel"
+        aria-live="polite"
+      >
+        Nog geen gesloten PV-intervallen beschikbaar.
+      </section>
       <p class="empty-panel">
-        De gezamenlijke energie- en beslissingshistorie wordt in de volgende
-        dashboard-slice toegevoegd.
+        P1, huisverbruik, batterij, netimport en netexport volgen zodra hun
+        canonieke dagtijdreeksen beschikbaar zijn.
       </p>
     </section>
     <section
@@ -915,6 +970,125 @@ DASHBOARD_HTML = """<!doctype html>
       container.appendChild(details);
     }
 
+    function renderPvForecastActualChart(intervals) {
+      const container = element("pv-forecast-actual-chart");
+      container.replaceChildren();
+      const points = (Array.isArray(intervals) ? intervals : [])
+        .filter((item) =>
+          Number.isFinite(Number(item.forecast_central_energy_wh)) &&
+          Number.isFinite(Number(item.actual_energy_wh))
+        )
+        .sort((left, right) =>
+          new Date(left.starts_at).getTime() -
+          new Date(right.starts_at).getTime()
+        );
+      if (points.length === 0) {
+        container.textContent =
+          "Nog geen gesloten PV-intervallen met forecast en werkelijkheid.";
+        return;
+      }
+
+      const legend = document.createElement("div");
+      legend.className = "energy-chart-legend";
+      for (const [kind, label] of [
+        ["forecast", "Solcast forecast en bereik"],
+        ["actual", "Werkelijke PV"],
+      ]) {
+        const item = document.createElement("span");
+        item.className = "energy-chart-key";
+        const swatch = document.createElement("span");
+        swatch.className = `energy-chart-swatch ${kind}`;
+        item.append(swatch, document.createTextNode(label));
+        legend.appendChild(item);
+      }
+      container.appendChild(legend);
+
+      const width = Math.max(760, points.length * 42 + 100);
+      const height = 340;
+      const plot = { left: 64, right: 24, top: 20, bottom: 48 };
+      const plotWidth = width - plot.left - plot.right;
+      const plotHeight = height - plot.top - plot.bottom;
+      const values = points.flatMap((item) => [
+        Number(item.actual_energy_wh),
+        Number(item.forecast_upper_energy_wh ?? item.forecast_central_energy_wh),
+      ]);
+      const maximum = Math.max(1, ...values);
+      const x = (index) =>
+        plot.left + (points.length === 1
+          ? plotWidth / 2
+          : index * plotWidth / (points.length - 1));
+      const y = (value) =>
+        plot.top + plotHeight -
+        Math.max(0, Number(value)) / maximum * plotHeight;
+
+      const scroll = document.createElement("div");
+      scroll.className = "energy-chart-scroll";
+      const svg = createSvgElement("svg", {
+        class: "energy-chart",
+        viewBox: `0 0 ${width} ${height}`,
+        role: "img",
+        "aria-label": "PV forecast versus werkelijke PV per gesloten interval",
+      });
+      for (let step = 0; step <= 4; step += 1) {
+        const value = maximum * step / 4;
+        const lineY = y(value);
+        svg.appendChild(createSvgElement("line", {
+          x1: plot.left,
+          x2: width - plot.right,
+          y1: lineY,
+          y2: lineY,
+          class: "grid-line",
+        }));
+        appendSvgText(
+          svg,
+          `${Math.round(value)} Wh`,
+          { x: plot.left - 8, y: lineY + 4, "text-anchor": "end" },
+          "axis-label",
+        );
+      }
+
+      const upper = points.map((item, index) =>
+        `${x(index)},${y(
+          item.forecast_upper_energy_wh ?? item.forecast_central_energy_wh
+        )}`
+      );
+      const lower = points.map((item, index) =>
+        `${x(index)},${y(
+          item.forecast_lower_energy_wh ?? item.forecast_central_energy_wh
+        )}`
+      ).reverse();
+      svg.appendChild(createSvgElement("polygon", {
+        points: [...upper, ...lower].join(" "),
+        class: "forecast-range",
+      }));
+      svg.appendChild(createSvgElement("polyline", {
+        points: points.map((item, index) =>
+          `${x(index)},${y(item.forecast_central_energy_wh)}`
+        ).join(" "),
+        class: "forecast-line",
+      }));
+      svg.appendChild(createSvgElement("polyline", {
+        points: points.map((item, index) =>
+          `${x(index)},${y(item.actual_energy_wh)}`
+        ).join(" "),
+        class: "actual-line",
+      }));
+      points.forEach((item, index) => {
+        if (index % 2 !== 0 && points.length > 18) return;
+        appendSvgText(
+          svg,
+          new Date(item.starts_at).toLocaleTimeString("nl-NL", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          { x: x(index), y: height - 18, "text-anchor": "middle" },
+          "axis-label",
+        );
+      });
+      scroll.appendChild(svg);
+      container.appendChild(scroll);
+    }
+
     function renderSources(sources) {
       const container = element("sources");
       container.replaceChildren();
@@ -1477,7 +1651,8 @@ DASHBOARD_HTML = """<!doctype html>
       );
       const scrollPositions = Array.from(
         document.querySelectorAll(
-          ".timeline-panel, .price-chart-scroll, .technical-details pre"
+          ".timeline-panel, .price-chart-scroll, .energy-chart-scroll, " +
+          ".technical-details pre"
         )
       ).map((node) => ({
         left: node.scrollLeft,
@@ -1520,7 +1695,8 @@ DASHBOARD_HTML = """<!doctype html>
       });
       Array.from(
         document.querySelectorAll(
-          ".timeline-panel, .price-chart-scroll, .technical-details pre"
+          ".timeline-panel, .price-chart-scroll, .energy-chart-scroll, " +
+          ".technical-details pre"
         )
       ).forEach((node, index) => {
         const position = state.scrollPositions[index];
@@ -1561,6 +1737,9 @@ DASHBOARD_HTML = """<!doctype html>
         : "Live uitvoering";
       const sources = planningInput?.attributes?.sources;
       renderSources(Array.isArray(sources) ? sources : []);
+      renderPvForecastActualChart(
+        planningInput?.attributes?.pv_interval_deviations ?? []
+      );
       renderPriceTimeline(
         view.price_timeline ?? {
           available: false,

@@ -48,6 +48,11 @@ class PowerHistorySeries:
     source_entity_id: str
     transform: str
     points: tuple[PowerHistoryPoint, ...]
+    history_semantics: str = "state_hold"
+
+    def __post_init__(self) -> None:
+        if self.history_semantics not in {"state_hold", "sampled_linear"}:
+            raise ValueError("unsupported power history semantics")
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +220,7 @@ class PowerHistoryCache:
                     role=latest_series.role,
                     source_entity_id=latest_series.source_entity_id,
                     transform=latest_series.transform,
+                    history_semantics=latest_series.history_semantics,
                     points=tuple(sorted(
                         unique.values(),
                         key=lambda point: (

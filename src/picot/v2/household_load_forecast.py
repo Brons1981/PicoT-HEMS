@@ -228,7 +228,9 @@ def build_fallback_household_load_forecast(
     if fallback_power_w <= 0.0:
         raise ValueError("fallback_power_w must be positive")
     if not 0.0 < fallback_confidence <= 1.0:
-        raise ValueError("fallback_confidence must be greater than 0 and at most 1")
+        raise ValueError(
+            "fallback_confidence must be greater than 0 and at most 1"
+        )
 
     forecast_seed = (
         f"{run_id}|{snapshot_id}|{starts_at.isoformat()}|"

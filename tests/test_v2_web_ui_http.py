@@ -110,4 +110,53 @@ def test_web_server_exposes_auto_refreshing_read_only_dashboard() -> None:
     assert "Technische details" in html
     assert "compactReference" in html
     assert 'fetch("api/view"' in html
-    assert "setInterval(loadView, 5000)" in html
+    assert "watchViewUpdates" in html
+    assert "api/view/updates?revision=" in html
+    assert "setInterval(loadView, 5000)" not in html
+    assert "setInterval(loadView, 60000)" in html
+    assert 'data-tab="overview"' in html
+    assert 'data-tab="planning"' in html
+    assert 'data-tab="history"' in html
+    assert 'data-tab="strategy"' in html
+    assert 'data-tab="technical"' in html
+    assert "formatMeasurement" in html
+    assert 'formatMeasurement(source.raw_state, source.raw_unit)' in html
+
+
+def test_realtime_update_endpoint_returns_published_revision_and_view() -> None:
+    store = WebViewStore()
+    server = create_web_server(store, host="127.0.0.1", port=0)
+    thread = Thread(target=server.serve_forever)
+    thread.start()
+    store.publish(
+        {
+            "schema_version": 1,
+            "run_id": "run-realtime-1",
+            "pipeline": [],
+        }
+    )
+    url = (
+        f"http://127.0.0.1:{server.server_port}"
+        "/api/view/updates?revision=0"
+    )
+
+    try:
+        with urlopen(url, timeout=2) as response:
+            payload = json.loads(response.read())
+
+        assert response.status == 200
+        assert response.headers.get_content_type() == "application/json"
+        assert payload == {
+            "revision": 1,
+            "view": {
+                "schema_version": 1,
+                "run_id": "run-realtime-1",
+                "pipeline": [],
+            },
+        }
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert not thread.is_alive()

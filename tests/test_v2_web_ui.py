@@ -441,3 +441,22 @@ def test_dashboard_preserves_interaction_state_during_refresh() -> None:
     assert "restoreDashboardState" in DASHBOARD_HTML
     assert "openTechnicalDetails" in DASHBOARD_HTML
     assert "scrollPositions" in DASHBOARD_HTML
+
+def test_dashboard_uses_dutch_adaptive_power_and_energy_formatting() -> None:
+    assert "function formatDutchNumber" in DASHBOARD_HTML
+    assert 'minimumFractionDigits: 2' in DASHBOARD_HTML
+    assert 'maximumFractionDigits: 2' in DASHBOARD_HTML
+    assert 'formatMeasurement(value, unit)' in DASHBOARD_HTML
+    assert 'formatDutchNumber(numeric / 1000) + " kW"' in DASHBOARD_HTML
+    assert 'formatDutchNumber(numeric) + " W"' in DASHBOARD_HTML
+    assert 'formatDutchNumber(numeric / 1000) + " kWh"' in DASHBOARD_HTML
+    assert 'formatDutchNumber(numeric) + " Wh"' in DASHBOARD_HTML
+
+
+def test_dashboard_preserves_active_tab_during_realtime_updates() -> None:
+    assert "initializeTabs" in DASHBOARD_HTML
+    assert "activateTab" in DASHBOARD_HTML
+    assert "ACTIVE_TAB_KEY" in DASHBOARD_HTML
+    assert "activeTab:" in DASHBOARD_HTML
+    assert 'activateTab(state.activeTab ?? "overview")' in DASHBOARD_HTML
+

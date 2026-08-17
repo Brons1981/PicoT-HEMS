@@ -244,18 +244,18 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .power-flow-line {
       fill: none;
-      stroke-width: 1.75;
+      stroke-width: 1.2;
       stroke-linecap: round;
       stroke-linejoin: round;
     }
     .power-flow-line.pv_generation { stroke: #ffd400; }
     .power-flow-line.household_load { stroke: #3994e6; }
     .power-flow-line.grid_import { stroke: #ef4444; }
-    .power-flow-line.grid_export { stroke: #aab2bd; }
+    .power-flow-line.grid_export { stroke: #aab2bd; stroke-width: 0.45; }
     .power-flow-line.battery_charge,
     .power-flow-line.battery_discharge { stroke: #35a862; }
-    .power-flow-area { stroke: none; opacity: 0.12; }
-    .power-flow-area.grid_export { fill: #aab2bd; }
+    .power-flow-area { stroke: none; opacity: 0.14; }
+    .power-flow-area.grid_export { fill: #aab2bd; opacity: 0.24; }
     .power-flow-area.battery_charge { fill: #35a862; }
     .power-zero-line { stroke: #96a6b8; stroke-width: 1.5; }
     .energy-chart-legend {
@@ -297,6 +297,29 @@ DASHBOARD_HTML = """<!doctype html>
       display: block;
       margin-top: 2px;
       font-size: 1rem;
+    }
+    .power-chart-toolbar {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .power-chart-toolbar button {
+      min-width: 30px;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      background: #111923;
+      color: #b9c8d8;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+    .power-zoom-hitbox { fill: transparent; cursor: crosshair; }
+    .power-zoom-selection {
+      fill: #62b8f5;
+      opacity: 0.18;
+      stroke: #62b8f5;
+      stroke-width: 1;
+      pointer-events: none;
     }
     .energy-chart-swatch {
       width: 18px;
@@ -1020,6 +1043,7 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     const POWER_HISTORY_SELECTION_KEY = "picot-power-history-selection";
+    let powerHistoryZoomWindow = null;
 
     function renderPowerHistory(history) {
       const container = element("power-history-chart");
@@ -1147,23 +1171,79 @@ DASHBOARD_HTML = """<!doctype html>
       const startMs = start.getTime();
       const dayEnd = new Date(start);
       dayEnd.setDate(dayEnd.getDate() + 1);
-      const endMs = dayEnd.getTime();
+      const fullEndMs = dayEnd.getTime();
+      const validZoom = powerHistoryZoomWindow &&
+        powerHistoryZoomWindow.startsAt >= startMs &&
+        powerHistoryZoomWindow.endsAt <= fullEndMs &&
+        powerHistoryZoomWindow.startsAt < powerHistoryZoomWindow.endsAt;
+      if (!validZoom) powerHistoryZoomWindow = null;
+      const windowStartMs = powerHistoryZoomWindow?.startsAt ?? startMs;
+      const windowEndMs = powerHistoryZoomWindow?.endsAt ?? fullEndMs;
+      const pointInWindow = (point) => {
+        const sampledAt = new Date(point.sampled_at).getTime();
+        return sampledAt >= windowStartMs && sampledAt <= windowEndMs;
+      };
       const allValues = visible.flatMap((item) =>
-        item.points.map((point) => signedPower(item.role, point.power_w))
+        item.points
+          .filter(pointInWindow)
+          .map((point) => signedPower(item.role, point.power_w))
       ).filter(Number.isFinite);
       const rawMinimum = Math.min(0, ...allValues);
       const rawMaximum = Math.max(0, ...allValues);
       const span = Math.max(1, rawMaximum - rawMinimum);
-      const roughStep = span / 4;
-      const magnitude = 10 ** Math.floor(Math.log10(roughStep));
-      const normalized = roughStep / magnitude;
-      const step = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : 5) * magnitude;
-      const minimum = Math.floor((rawMinimum - span * 0.08) / step) * step;
-      const maximum = Math.ceil((rawMaximum + span * 0.08) / step) * step;
+      const padding = span * 0.05;
+      const hasRange = rawMinimum < 0 || rawMaximum > 0;
+      const minimum = hasRange
+        ? (rawMinimum < 0 ? rawMinimum - padding : 0)
+        : -1;
+      const maximum = hasRange
+        ? (rawMaximum > 0 ? rawMaximum + padding : 0)
+        : 1;
       const x = (value) => plot.left +
-        (new Date(value).getTime() - startMs) / (endMs - startMs) * plotWidth;
+        (new Date(value).getTime() - windowStartMs) /
+        (windowEndMs - windowStartMs) * plotWidth;
       const y = (value) => plot.top +
         (maximum - Number(value)) / (maximum - minimum) * plotHeight;
+
+      const toolbar = document.createElement("div");
+      toolbar.className = "power-chart-toolbar";
+      const changeZoom = (factor) => {
+        const fullDuration = fullEndMs - startMs;
+        const currentDuration = windowEndMs - windowStartMs;
+        const duration = Math.min(
+          fullDuration,
+          Math.max(15 * 60 * 1000, currentDuration * factor),
+        );
+        const center = (windowStartMs + windowEndMs) / 2;
+        let startsAt = center - duration / 2;
+        let endsAt = center + duration / 2;
+        if (startsAt < startMs) {
+          endsAt += startMs - startsAt;
+          startsAt = startMs;
+        }
+        if (endsAt > fullEndMs) {
+          startsAt -= endsAt - fullEndMs;
+          endsAt = fullEndMs;
+        }
+        powerHistoryZoomWindow = { startsAt, endsAt };
+        renderPowerHistory(history);
+      };
+      for (const [label, title, action] of [
+        ["+", "Inzoomen", () => changeZoom(0.5)],
+        ["−", "Uitzoomen", () => changeZoom(2)],
+        ["↺", "Volledige dag tonen", () => {
+          powerHistoryZoomWindow = null;
+          renderPowerHistory(history);
+        }],
+      ]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.title = title;
+        button.addEventListener("click", action);
+        toolbar.appendChild(button);
+      }
+      container.appendChild(toolbar);
 
       const scroll = document.createElement("div");
       scroll.className = "energy-chart-scroll";
@@ -1198,8 +1278,10 @@ DASHBOARD_HTML = """<!doctype html>
           "axis-label",
         );
       }
-      for (let hour = 0; hour <= 24; hour += 2) {
-        const tick = new Date(startMs + hour * 60 * 60 * 1000);
+      for (let index = 0; index <= 12; index += 1) {
+        const tick = new Date(
+          windowStartMs + (windowEndMs - windowStartMs) * index / 12
+        );
         appendSvgText(
           svg,
           tick.toLocaleTimeString("nl-NL", {
@@ -1212,6 +1294,7 @@ DASHBOARD_HTML = """<!doctype html>
       }
       for (const item of visible) {
         const points = item.points
+          .filter(pointInWindow)
           .map((point) => ({
             x: x(point.sampled_at),
             y: y(signedPower(item.role, point.power_w)),
@@ -1235,6 +1318,67 @@ DASHBOARD_HTML = """<!doctype html>
           class: `power-flow-line ${item.role}`,
         }));
       }
+      const hitbox = createSvgElement("rect", {
+        x: plot.left,
+        y: plot.top,
+        width: plotWidth,
+        height: plotHeight,
+        class: "power-zoom-hitbox",
+      });
+      let dragStartsAt = null;
+      let selection = null;
+      const svgX = (event) => {
+        const bounds = svg.getBoundingClientRect();
+        return Math.max(
+          plot.left,
+          Math.min(
+            width - plot.right,
+            (event.clientX - bounds.left) * width / bounds.width,
+          ),
+        );
+      };
+      hitbox.addEventListener("pointerdown", (event) => {
+        dragStartsAt = svgX(event);
+        hitbox.setPointerCapture(event.pointerId);
+        selection = createSvgElement("rect", {
+          x: dragStartsAt,
+          y: plot.top,
+          width: 0,
+          height: plotHeight,
+          class: "power-zoom-selection",
+        });
+        svg.appendChild(selection);
+      });
+      hitbox.addEventListener("pointermove", (event) => {
+        if (dragStartsAt === null || !selection) return;
+        const current = svgX(event);
+        selection.setAttribute("x", String(Math.min(dragStartsAt, current)));
+        selection.setAttribute("width", String(Math.abs(current - dragStartsAt)));
+      });
+      hitbox.addEventListener("pointerup", (event) => {
+        if (dragStartsAt === null) return;
+        const dragEndsAt = svgX(event);
+        selection?.remove();
+        selection = null;
+        if (Math.abs(dragEndsAt - dragStartsAt) >= 8) {
+          const left = Math.min(dragStartsAt, dragEndsAt);
+          const right = Math.max(dragStartsAt, dragEndsAt);
+          const toTime = (position) => windowStartMs +
+            (position - plot.left) / plotWidth *
+            (windowEndMs - windowStartMs);
+          powerHistoryZoomWindow = {
+            startsAt: toTime(left),
+            endsAt: toTime(right),
+          };
+          renderPowerHistory(history);
+        }
+        dragStartsAt = null;
+      });
+      hitbox.addEventListener("dblclick", () => {
+        powerHistoryZoomWindow = null;
+        renderPowerHistory(history);
+      });
+      svg.appendChild(hitbox);
       scroll.appendChild(svg);
       container.appendChild(scroll);
     }

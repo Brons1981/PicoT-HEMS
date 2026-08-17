@@ -62,6 +62,7 @@ class AdaptiveHouseholdObjectivePolicy:
     minimum_overperformance_percent: float = 20.0
     minimum_overperformance_wh: float = 500.0
     minimum_overperformance_duration_seconds: int = 3600
+    minimum_conservative_pv_storage_margin_wh: float = 500.0
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.low_pv_confidence_threshold <= 1.0:
@@ -81,6 +82,7 @@ class AdaptiveHouseholdObjectivePolicy:
             self.maximum_recovery_deficit_wh,
             self.minimum_overperformance_percent,
             self.minimum_overperformance_wh,
+            self.minimum_conservative_pv_storage_margin_wh,
         ):
             if value < 0.0 or not isfinite(value):
                 raise ValueError("hysteresis threshold must be finite and non-negative")
@@ -110,6 +112,11 @@ class HouseholdPlanningRegime:
     deviation_percent: float | None
     underperformance_duration_seconds: int
     evidence_ids: tuple[str, ...]
+    remaining_storage_need_wh: float | None = None
+    conservative_remaining_pv_surplus_wh: float | None = None
+    remaining_pv_storage_margin_wh: float | None = None
+    storage_target_at_risk: bool = False
+    storage_target_required_by: str | None = None
     method_version: str = METHOD_VERSION
 
     def __post_init__(self) -> None:
@@ -145,6 +152,10 @@ def derive_household_planning_regime(
     previous_regime_duration_seconds: int = 0,
     recovery_duration_seconds: int = 0,
     overperformance_duration_seconds: int = 0,
+    remaining_storage_need_wh: float | None = None,
+    conservative_remaining_pv_surplus_wh: float | None = None,
+    remaining_pv_storage_margin_wh: float | None = None,
+    storage_target_required_by: str | None = None,
 ) -> HouseholdPlanningRegime:
     """Apply the user's adaptive preference to canonical PV evidence."""
 
@@ -166,6 +177,21 @@ def derive_household_planning_regime(
         "self_consumption_first",
     }:
         raise ValueError("previous household planning regime is unsupported")
+
+    feasibility_values = (
+        remaining_storage_need_wh,
+        conservative_remaining_pv_surplus_wh,
+        remaining_pv_storage_margin_wh,
+    )
+    if any(value is not None and not isfinite(value) for value in feasibility_values):
+        raise ValueError("storage feasibility values must be finite")
+    if remaining_storage_need_wh is not None and remaining_storage_need_wh < 0.0:
+        raise ValueError("remaining storage need must be non-negative")
+    if (
+        conservative_remaining_pv_surplus_wh is not None
+        and conservative_remaining_pv_surplus_wh < 0.0
+    ):
+        raise ValueError("conservative remaining PV surplus must be non-negative")
 
     deviation_wh = cumulative_actual_energy_wh - cumulative_forecast_energy_wh
     deviation_percent = (
@@ -212,11 +238,22 @@ def derive_household_planning_regime(
         previous_regime_duration_seconds
         >= policy.minimum_self_consumption_hold_seconds
     )
+    storage_target_at_risk = (
+        remaining_storage_need_wh is not None
+        and remaining_storage_need_wh > 0.0
+        and remaining_pv_storage_margin_wh is not None
+        and remaining_pv_storage_margin_wh
+        <= policy.minimum_conservative_pv_storage_margin_wh
+    )
 
     if not profile.adaptive_priority_enabled:
         regime = "cost_optimization_first"
         objective_order = _COST_FIRST
         reason = "adaptive_priority_disabled"
+    elif storage_target_at_risk:
+        regime = "self_consumption_first"
+        objective_order = _SELF_CONSUMPTION_FIRST
+        reason = "conservative_pv_storage_margin_at_risk"
     elif previous_regime == "self_consumption_first" and not hold_complete:
         regime = "self_consumption_first"
         objective_order = _SELF_CONSUMPTION_FIRST
@@ -260,6 +297,10 @@ def derive_household_planning_regime(
             str(previous_regime_duration_seconds),
             str(recovery_duration_seconds),
             str(overperformance_duration_seconds),
+            str(remaining_storage_need_wh),
+            str(conservative_remaining_pv_surplus_wh),
+            str(remaining_pv_storage_margin_wh),
+            str(storage_target_required_by),
             *unique_evidence_ids,
             METHOD_VERSION,
         )
@@ -278,4 +319,11 @@ def derive_household_planning_regime(
         deviation_percent=deviation_percent,
         underperformance_duration_seconds=underperformance_duration_seconds,
         evidence_ids=unique_evidence_ids,
+        remaining_storage_need_wh=remaining_storage_need_wh,
+        conservative_remaining_pv_surplus_wh=(
+            conservative_remaining_pv_surplus_wh
+        ),
+        remaining_pv_storage_margin_wh=remaining_pv_storage_margin_wh,
+        storage_target_at_risk=storage_target_at_risk,
+        storage_target_required_by=storage_target_required_by,
     )

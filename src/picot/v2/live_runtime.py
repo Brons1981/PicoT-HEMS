@@ -27,6 +27,11 @@ from picot.v2.canonical_execution_runtime import (
 from picot.v2.fast_grid_power_observation import FastGridPowerObserver
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
+from picot.v2.household_objective_input import attach_household_objectives
+from picot.v2.household_planning_regime import (
+    AdaptiveHouseholdObjectivePolicy,
+    UserObjectiveProfile,
+)
 from picot.v2.live_pv_actual import (
     LivePVActualCache,
     LivePVActualDiagnostics,
@@ -106,6 +111,106 @@ STORAGE_MODE_PROVENANCE_PATH = Path(
     "/data/picot_v2_storage_mode_provenance.json"
 )
 
+
+
+def _household_objective_profile(
+    options: dict[str, Any],
+) -> UserObjectiveProfile:
+    return UserObjectiveProfile(
+        profile_id="profile:household:configured:v1",
+        version=1,
+        cost_optimization_weight=int(
+            options.get("household_cost_optimization_weight", 80)
+        ),
+        self_consumption_weight=int(
+            options.get("household_self_consumption_weight", 70)
+        ),
+        reserve_availability_weight=int(
+            options.get("household_reserve_availability_weight", 60)
+        ),
+        trading_enabled=bool(
+            options.get("household_trading_enabled", False)
+        ),
+        adaptive_priority_enabled=bool(
+            options.get("household_adaptive_priority_enabled", True)
+        ),
+    )
+
+
+def _adaptive_household_policy(
+    options: dict[str, Any],
+) -> AdaptiveHouseholdObjectivePolicy:
+    return AdaptiveHouseholdObjectivePolicy(
+        low_pv_confidence_threshold=float(
+            options.get("household_low_pv_confidence_threshold", 0.50)
+        ),
+        minimum_underperformance_percent=float(
+            options.get("household_minimum_pv_underperformance_percent", 20.0)
+        ),
+        minimum_underperformance_wh=float(
+            options.get("household_minimum_pv_underperformance_wh", 500.0)
+        ),
+        minimum_underperformance_duration_seconds=int(
+            options.get(
+                "household_minimum_pv_underperformance_duration_seconds",
+                1800,
+            )
+        ),
+    )
+
+
+def _trailing_pv_underperformance_seconds(
+    deviations: tuple[PVDeviationResult, ...],
+) -> int:
+    seconds = 0.0
+    for deviation in reversed(deviations):
+        if deviation.direction != "below_forecast":
+            break
+        seconds += (deviation.ends_at - deviation.starts_at).total_seconds()
+    return int(seconds)
+
+
+def _attach_live_household_objectives(
+    bundle: PlanningInputBundle,
+    diagnostics: LivePVActualDiagnostics,
+    *,
+    profile: UserObjectiveProfile,
+    policy: AdaptiveHouseholdObjectivePolicy,
+) -> PlanningInputBundle:
+    cumulative = diagnostics.cumulative_evidence
+    deviations = diagnostics.deviation_results
+    if cumulative is None or cumulative.assessed_interval_count == 0:
+        forecast_confidence = 1.0
+        forecast_energy_wh = 0.0
+        actual_energy_wh = 0.0
+        duration_seconds = 0
+        evidence_ids = (
+            f"{profile.profile_id}:{profile.version}:pv-deviation-unavailable",
+        )
+    else:
+        forecast_confidence = min(
+            deviation.forecast_confidence for deviation in deviations
+        )
+        forecast_energy_wh = cumulative.forecast_central_energy_wh
+        actual_energy_wh = cumulative.actual_energy_wh
+        duration_seconds = _trailing_pv_underperformance_seconds(
+            deviations
+        )
+        evidence_ids = (
+            cumulative.evidence_id,
+            *cumulative.interval_deviation_ids,
+        )
+    snapshot = attach_household_objectives(
+        bundle.snapshot,
+        profile=profile,
+        policy=policy,
+        forecast_confidence=forecast_confidence,
+        cumulative_forecast_energy_wh=forecast_energy_wh,
+        cumulative_actual_energy_wh=actual_energy_wh,
+        underperformance_duration_seconds=duration_seconds,
+        evidence_ids=tuple(dict.fromkeys(evidence_ids)),
+    )
+    return replace(bundle, snapshot=snapshot)
 
 def _planning_input_signature(bundle: PlanningInputBundle) -> str:
     """Return a stable signature for decision-relevant Planning Input content."""
@@ -1127,6 +1232,8 @@ def main() -> None:
 
     options = load_options()
     price_config = _price_opportunity_config(options)
+    household_objective_profile = _household_objective_profile(options)
+    adaptive_household_policy = _adaptive_household_policy(options)
     web_view_store = WebViewStore()
     household_load_history = HouseholdLoadHistoryStore(
         HOUSEHOLD_LOAD_HISTORY_PATH
@@ -1327,7 +1434,7 @@ def main() -> None:
                 timeline=bundle.snapshot.pv_energy_timeline,
                 captured_at=bundle.snapshot.captured_at,
             )
-        return apply_latest_closed_actual_pv(
+        prepared_bundle, diagnostics = apply_latest_closed_actual_pv(
             bundle,
             entity_id=pv_power_entity,
             history_reader=pv_history_reader.read,
@@ -1335,6 +1442,15 @@ def main() -> None:
             telemetry_interval_seconds=(
                 pv_telemetry_interval_seconds
             ),
+        )
+        return (
+            _attach_live_household_objectives(
+                prepared_bundle,
+                diagnostics,
+                profile=household_objective_profile,
+                policy=adaptive_household_policy,
+            ),
+            diagnostics,
         )
 
     def execute(

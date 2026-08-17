@@ -119,7 +119,9 @@ def test_full_storage_builds_tomorrow_pv_plan_after_current_support_phase() -> N
     outcome = run.outcomes.outcomes[0]
     assert outcome.charge_window_starts_at == base + timedelta(hours=1)
     assert outcome.charge_window_ends_at == base + timedelta(hours=2)
+    assert outcome.pv_storage_contribution_wh == 200.0
     assert outcome.requirement_satisfied is True
+    assert outcome.confidence > 0.0
 
 
 def test_planning_fallback_notification_is_deduplicated_and_recovers() -> None:

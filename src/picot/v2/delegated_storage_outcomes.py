@@ -59,6 +59,10 @@ def _simulate_path(
         (state for state in path.projected_states if state.at == window_end),
         None,
     )
+    window_start_state = next(
+        (state for state in path.projected_states if state.at == window_start),
+        None,
+    )
     requirement_state = next(
         (
             state
@@ -82,7 +86,12 @@ def _simulate_path(
     )
     if not window_intervals or window_intervals[0].starts_at != window_start:
         raise ValueError("delegated storage charge window must match projected intervals")
-    starting_energy_wh = window_intervals[0].current_usable_storage_energy_wh
+    starting_energy_wh = (
+        window_start_state.storage_energy_wh
+        if window_start_state is not None
+        and window_start_state.storage_energy_wh is not None
+        else window_intervals[0].current_usable_storage_energy_wh
+    )
     available_surplus_wh = sum(
         max(
             0.0,
@@ -113,7 +122,8 @@ def _simulate_path(
         *(interval.confidence for interval in relevant_intervals),
     )
     requirement_satisfied = (
-        requirement_state.storage_energy_wh >= requirement.required_energy_wh
+        requirement_state.storage_energy_wh + 1e-6
+        >= requirement.required_energy_wh
     )
     evidence_ids = tuple(
         dict.fromkeys(

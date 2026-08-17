@@ -184,7 +184,7 @@ def _attach_live_household_objectives(
         forecast_energy_wh = 0.0
         actual_energy_wh = 0.0
         duration_seconds = 0
-        evidence_ids = (
+        evidence_ids: tuple[str, ...] = (
             f"{profile.profile_id}:{profile.version}:pv-deviation-unavailable",
         )
     else:

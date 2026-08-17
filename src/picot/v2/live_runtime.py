@@ -25,6 +25,7 @@ from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
     HomeAssistantCanonicalModeAdapter,
 )
+from picot.v2.contracts import CanonicalPipelineRun
 from picot.v2.fast_grid_power_observation import FastGridPowerObserver
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
@@ -106,6 +107,10 @@ from picot.v2.remaining_pv_storage_feasibility import (
     RemainingPVStorageFeasibility,
     derive_remaining_pv_storage_feasibility,
 )
+from picot.v2.storage_mode_transition_history import (
+    StorageModeTransitionEvent,
+    StorageModeTransitionHistoryStore,
+)
 from picot.v2.web_ui import (
     WebViewStore,
     build_web_view,
@@ -124,6 +129,58 @@ PV_ATTENUATION_EVIDENCE_PATH = Path(
 STORAGE_MODE_PROVENANCE_PATH = Path(
     "/data/picot_v2_storage_mode_provenance.json"
 )
+STORAGE_MODE_TRANSITION_HISTORY_PATH = Path(
+    "/data/picot_v2_storage_mode_transition_history.jsonl"
+)
+
+
+def _winning_plan_confidence(run: CanonicalPipelineRun) -> float | None:
+    winning_id = run.evaluation.winning_candidate_id
+    for outcome in run.outcomes.outcomes:
+        if outcome.candidate_id == winning_id:
+            return outcome.confidence
+    if winning_id is not None and run.planning_input.current_storage_states:
+        return min(
+            state.confidence
+            for state in run.planning_input.current_storage_states
+        )
+    return None
+
+
+def _append_storage_mode_transition(
+    store: StorageModeTransitionHistoryStore | None,
+    *,
+    previous_vendor_mode: str,
+    requested_vendor_mode: str,
+    source: str,
+    reason: str,
+    confidence: float | None,
+    run_id: str,
+    snapshot_id: str,
+    evaluation_id: str | None,
+    plan_id: str | None,
+    application_id: str,
+    occurred_at: datetime,
+) -> None:
+    if store is None or previous_vendor_mode == requested_vendor_mode:
+        return
+    event_seed = f"{application_id}|{previous_vendor_mode}|{requested_vendor_mode}"
+    store.append(
+        StorageModeTransitionEvent(
+            event_id=f"storage-mode-transition-{sha256(event_seed.encode()).hexdigest()[:16]}",
+            occurred_at=occurred_at,
+            previous_vendor_mode=previous_vendor_mode,
+            requested_vendor_mode=requested_vendor_mode,
+            source=source,
+            reason=reason,
+            confidence=confidence,
+            run_id=run_id,
+            snapshot_id=snapshot_id,
+            evaluation_id=evaluation_id,
+            plan_id=plan_id,
+            application_id=application_id,
+        )
+    )
 
 
 def _dashboard_power_history_specs(
@@ -1230,6 +1287,9 @@ def _execute_planning_bundle(
     storage_mode_provenance_runtime: (
         LiveStorageModeProvenanceRuntime | None
     ) = None,
+    storage_mode_transition_history: (
+        StorageModeTransitionHistoryStore | None
+    ) = None,
     canonical_execution_runtime: CanonicalExecutionRuntime | None = None,
     canonical_execution_enabled: bool = False,
 ) -> None:
@@ -1251,15 +1311,35 @@ def _execute_planning_bundle(
             and run.vendor_result.planned_vendor_mode is not None
             and storage_mode_provenance_runtime is not None
         ):
-            storage_mode_provenance_runtime.record_planner_application(
+            application_id = (
+                "canonical-execution:"
+                f"{run.planning_input.run_id}:"
+                f"{run.vendor_result.command_id or 'already-active'}"
+            )
+            provenance = storage_mode_provenance_runtime.record_planner_application(
                 run.vendor_result.planned_vendor_mode,
                 applied_at=bundle.snapshot.captured_at,
-                application_id=(
-                    "canonical-execution:"
-                    f"{run.planning_input.run_id}:"
-                    f"{run.vendor_result.command_id or 'already-active'}"
-                ),
+                application_id=application_id,
             )
+            if run.vendor_result.status == "dispatched":
+                _append_storage_mode_transition(
+                    storage_mode_transition_history,
+                    previous_vendor_mode=provenance.observed_vendor_mode,
+                    requested_vendor_mode=run.vendor_result.planned_vendor_mode,
+                    source="canonical_execution",
+                    reason=run.evaluation.reason,
+                    confidence=_winning_plan_confidence(run),
+                    run_id=run.planning_input.run_id,
+                    snapshot_id=run.planning_input.snapshot_id,
+                    evaluation_id=run.evaluation.evaluation_id,
+                    plan_id=(
+                        run.execution_plan_set.plans[0].plan_id
+                        if run.execution_plan_set.plans
+                        else None
+                    ),
+                    application_id=application_id,
+                    occurred_at=bundle.snapshot.captured_at,
+                )
     planner_cycle_ms = stage_timings.canonical_total_ms
     pipeline_total_ms = round(planning_input_ms + stage_timings.canonical_total_ms, 3)
 
@@ -1335,14 +1415,37 @@ def _execute_planning_bundle(
                 and canary_result.requested_vendor_mode is not None
                 and storage_mode_provenance_runtime is not None
             ):
-                storage_mode_provenance_runtime.record_planner_application(
+                application_id = (
+                    "live-pv-canary:"
+                    f"{run.planning_input.run_id}:"
+                    f"{bundle.snapshot.captured_at.isoformat()}"
+                )
+                provenance = storage_mode_provenance_runtime.record_planner_application(
                     canary_result.requested_vendor_mode,
                     applied_at=bundle.snapshot.captured_at,
-                    application_id=(
-                        "live-pv-canary:"
-                        f"{run.planning_input.run_id}:"
-                        f"{bundle.snapshot.captured_at.isoformat()}"
+                    application_id=application_id,
+                )
+                _append_storage_mode_transition(
+                    storage_mode_transition_history,
+                    previous_vendor_mode=provenance.observed_vendor_mode,
+                    requested_vendor_mode=canary_result.requested_vendor_mode,
+                    source="live_pv_canary",
+                    reason=canary_result.reason,
+                    confidence=(
+                        bundle.snapshot.household_planning_regime.forecast_confidence
+                        if bundle.snapshot.household_planning_regime is not None
+                        else None
                     ),
+                    run_id=run.planning_input.run_id,
+                    snapshot_id=run.planning_input.snapshot_id,
+                    evaluation_id=run.evaluation.evaluation_id,
+                    plan_id=(
+                        run.execution_plan_set.plans[0].plan_id
+                        if run.execution_plan_set.plans
+                        else None
+                    ),
+                    application_id=application_id,
+                    occurred_at=bundle.snapshot.captured_at,
                 )
         projection = Projection(
             cards=(
@@ -1370,6 +1473,11 @@ def _execute_planning_bundle(
         projection,
         display_price_points=display_price_points,
         power_history=power_history,
+        storage_mode_transitions=(
+            storage_mode_transition_history.load()
+            if storage_mode_transition_history is not None
+            else ()
+        ),
     )
     web_view_build_ms = round(
         (perf_counter() - web_view_build_started) * 1000.0,
@@ -1471,6 +1579,9 @@ def main() -> None:
     pv_actual_cache = LivePVActualCache()
     storage_mode_provenance_runtime = LiveStorageModeProvenanceRuntime(
         StorageModeProvenanceStore(STORAGE_MODE_PROVENANCE_PATH)
+    )
+    storage_mode_transition_history = StorageModeTransitionHistoryStore(
+        STORAGE_MODE_TRANSITION_HISTORY_PATH
     )
     live_pv_canary_mode = str(
         options.get("live_pv_canary_mode", "observer")
@@ -1809,6 +1920,9 @@ def main() -> None:
             ),
             storage_mode_provenance_runtime=(
                 storage_mode_provenance_runtime
+            ),
+            storage_mode_transition_history=(
+                storage_mode_transition_history
             ),
             canonical_execution_runtime=canonical_execution_runtime,
             canonical_execution_enabled=canonical_execution_enabled,

@@ -16,6 +16,7 @@ from picot.domain.energy_path import PathSegment
 from picot.v2.contracts import CanonicalPipelineRun, PriceForecastPoint
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.projection import Projection
+from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
 
 POWER_HISTORY_DISPLAY_INTERVAL = timedelta(minutes=5)
 SELF_CONSUMPTION_DISPLAY_INTERVAL = timedelta(minutes=10)
@@ -702,6 +703,14 @@ DASHBOARD_HTML = """<!doctype html>
     <section
       id="tab-history" class="tab-panel" data-tab-panel="history" hidden
     >
+      <h2>Schakelhistorie batterijmodus</h2>
+      <section
+        id="storage-mode-transition-history"
+        class="timeline-panel"
+        aria-live="polite"
+      >
+        Nog geen door PicoT uitgevoerde moduswissels vastgelegd.
+      </section>
       <h2>Energiestromen vandaag</h2>
       <section
         id="power-history-chart"
@@ -2772,6 +2781,53 @@ DASHBOARD_HTML = """<!doctype html>
       );
     }
 
+    function renderStorageModeTransitionHistory(events) {
+      const container = element("storage-mode-transition-history");
+      container.replaceChildren();
+      if (!Array.isArray(events) || events.length === 0) {
+        container.textContent =
+          "Nog geen door PicoT uitgevoerde moduswissels vastgelegd.";
+        return;
+      }
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      for (const label of [
+        "Moment", "Van", "Naar", "Reden", "Confidence", "Run"
+      ]) {
+        const cell = document.createElement("th");
+        cell.textContent = label;
+        headerRow.append(cell);
+      }
+      head.append(headerRow);
+      const body = document.createElement("tbody");
+      for (const event of [...events].reverse()) {
+        const row = document.createElement("tr");
+        const occurredAt = new Date(event.occurred_at);
+        const confidence = Number(event.confidence);
+        const values = [
+          Number.isNaN(occurredAt.getTime())
+            ? displayValue(event.occurred_at)
+            : occurredAt.toLocaleString("nl-NL"),
+          displayValue(event.previous_vendor_mode),
+          displayValue(event.requested_vendor_mode),
+          displayValue(event.reason),
+          Number.isFinite(confidence)
+            ? `${Math.round(confidence * 100)}%`
+            : "—",
+          displayValue(event.run_id),
+        ];
+        for (const value of values) {
+          const cell = document.createElement("td");
+          cell.textContent = value;
+          row.append(cell);
+        }
+        body.append(row);
+      }
+      table.append(head, body);
+      container.append(table);
+    }
+
     function renderView(view) {
       const dashboardState = captureDashboardState();
       element("version").textContent = displayValue(view.picot_version);
@@ -2810,6 +2866,9 @@ DASHBOARD_HTML = """<!doctype html>
         ends_at: null,
         series: [],
       });
+      renderStorageModeTransitionHistory(
+        view.storage_mode_transition_history ?? []
+      );
       renderPriceTimeline(
         view.price_timeline ?? {
           available: false,
@@ -3650,6 +3709,7 @@ def build_web_view(
     *,
     display_price_points: tuple[PriceForecastPoint, ...] | None = None,
     power_history: PowerHistorySnapshot | None = None,
+    storage_mode_transitions: tuple[StorageModeTransitionEvent, ...] = (),
 ) -> dict[str, object]:
     """Build one JSON-serializable observer view without side effects."""
     planning_input = run.planning_input
@@ -3968,4 +4028,21 @@ def build_web_view(
         "household_load_forecast": household_load_forecast,
         "power_history": power_history_view,
         "self_consumption_history": _self_consumption_history_view(power_history),
+        "storage_mode_transition_history": [
+            {
+                "event_id": event.event_id,
+                "occurred_at": event.occurred_at.isoformat(),
+                "previous_vendor_mode": event.previous_vendor_mode,
+                "requested_vendor_mode": event.requested_vendor_mode,
+                "source": event.source,
+                "reason": event.reason,
+                "confidence": event.confidence,
+                "run_id": event.run_id,
+                "snapshot_id": event.snapshot_id,
+                "evaluation_id": event.evaluation_id,
+                "plan_id": event.plan_id,
+                "application_id": event.application_id,
+            }
+            for event in storage_mode_transitions
+        ],
     }

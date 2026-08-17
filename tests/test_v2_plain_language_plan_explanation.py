@@ -93,6 +93,46 @@ def test_web_view_compares_plans_and_explains_the_winner_without_ids() -> None:
     assert "candidate-" not in decision["reason_nl"]
 
 
+def test_day_planning_exposes_one_run_of_canonical_decision_facts() -> None:
+    run = CanonicalPipeline().run(planning_input=_snapshot())
+
+    view = build_web_view(run, project(run))
+    status = view["planning_status"]
+
+    assert status["run_id"] == run.planning_input.run_id
+    assert status["snapshot_id"] == run.planning_input.snapshot_id
+    assert status["captured_at"] == run.planning_input.captured_at.isoformat()
+    assert status["valid_until"] == run.planning_input.horizon_end.isoformat()
+    assert status["decision"] == {
+        "status": run.evaluation.status,
+        "candidate_family": "pv_charge_only",
+        "reason": run.evaluation.reason,
+        "decisive_step": run.evaluation.decisive_step,
+        "confidence": run.outcomes.outcomes[0].confidence,
+    }
+    assert status["strategy"]["status"] == "not_available"
+    assert status["strategy"]["reason"] == "not_available"
+    assert status["storage_target"]["required_energy_wh"] > 0
+    assert status["storage_target"]["required_by"]
+    assert status["storage_target"]["requirement_satisfied"] is True
+    assert status["execution"]["status"] == run.execution_record.status
+    assert status["execution"]["reason"] == run.execution_record.reason
+    assert status["execution"]["primitive_status"] == run.primitive_boundary.status
+    assert len(status["alternatives"]) == len(run.candidate_set.candidates)
+    assert sum(item["selected"] for item in status["alternatives"]) == 1
+
+
+def test_day_planning_dashboard_renders_fact_sections_not_a_merged_sentence() -> None:
+    html = import_module("picot.v2.web_ui").DASHBOARD_HTML
+
+    assert "function renderPlanningStatus" in html
+    assert 'id="planning-status"' in html
+    assert '"Huidige strategie"' in html
+    assert '"Besluit"' in html
+    assert '"Uitvoering"' in html
+    assert '"Geldigheid"' in html
+
+
 def test_zero_confidence_is_a_visible_readiness_blocker() -> None:
     source = _snapshot()
     low_confidence = replace(
@@ -118,7 +158,7 @@ def test_zero_confidence_is_a_visible_readiness_blocker() -> None:
 def test_dashboard_renders_the_plain_language_explanation_before_details() -> None:
     html = import_module("picot.v2.web_ui").DASHBOARD_HTML
 
-    assert '<h2>Wat PicoT overweegt</h2>' in html
+    assert '<h2>Onderliggende energiekansen</h2>' in html
     assert 'id="plan-explanation"' in html
     assert "function renderPlanExplanation" in html
     assert "renderPlanExplanation(view.plan_explanation)" in html

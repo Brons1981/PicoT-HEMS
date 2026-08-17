@@ -1,7 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-
 from picot.v2.remaining_pv_storage_feasibility import (
     derive_remaining_pv_storage_feasibility,
 )

@@ -152,6 +152,43 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
     ]
     payload = {
         "strategy_id": bundle.snapshot.strategy_id,
+        "user_objective_profile": (
+            {
+                "profile_id": profile.profile_id,
+                "version": profile.version,
+                "cost_optimization_weight": profile.cost_optimization_weight,
+                "self_consumption_weight": profile.self_consumption_weight,
+                "reserve_availability_weight": profile.reserve_availability_weight,
+                "trading_enabled": profile.trading_enabled,
+                "adaptive_priority_enabled": profile.adaptive_priority_enabled,
+            }
+            if (profile := bundle.snapshot.user_objective_profile) is not None
+            else None
+        ),
+        "household_planning_regime": (
+            {
+                "regime_id": regime.regime_id,
+                "regime": regime.regime,
+                "objective_order": regime.objective_order,
+                "reason": regime.reason,
+                "forecast_confidence": regime.forecast_confidence,
+                "cumulative_forecast_energy_wh": (
+                    regime.cumulative_forecast_energy_wh
+                ),
+                "cumulative_actual_energy_wh": (
+                    regime.cumulative_actual_energy_wh
+                ),
+                "deviation_energy_wh": regime.deviation_energy_wh,
+                "deviation_percent": regime.deviation_percent,
+                "underperformance_duration_seconds": (
+                    regime.underperformance_duration_seconds
+                ),
+                "evidence_ids": regime.evidence_ids,
+                "method_version": regime.method_version,
+            }
+            if (regime := bundle.snapshot.household_planning_regime) is not None
+            else None
+        ),
         "horizon_end": (
             bundle.snapshot.horizon_end.isoformat() if bundle.snapshot.horizon_end else None
         ),

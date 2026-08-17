@@ -36,7 +36,12 @@ from picot.v2.delegated_storage_candidates import (
 from picot.v2.delegated_storage_outcomes import (
     simulate_pv_charge_only_outcomes,
 )
-from picot.v2.opportunity_engine import OpportunityEngine, PriceOpportunityConfig
+from picot.v2.opportunity_engine import (
+    LOWEST_PRICE_WINDOW,
+    NEGATIVE_PRICE_WINDOW,
+    OpportunityEngine,
+    PriceOpportunityConfig,
+)
 from picot.v2.pv_forecast_assumptions import (
     derive_pv_forecast_basis_assumptions,
 )
@@ -194,10 +199,35 @@ class CanonicalPipeline:
                 balance = balances_by_id.get(requirement.projected_balance_id)
                 if balance is None:
                     continue
+                preferred_price_windows = tuple(
+                    (item.starts_at, item.ends_at)
+                    for item in sorted(
+                        (
+                            opportunity
+                            for opportunity in opportunities.opportunities
+                            if opportunity.kind
+                            in {
+                                NEGATIVE_PRICE_WINDOW,
+                                LOWEST_PRICE_WINDOW,
+                            }
+                            and opportunity.ends_at > snapshot.captured_at
+                            and opportunity.starts_at < requirement.required_by
+                        ),
+                        key=lambda opportunity: (
+                            0
+                            if opportunity.kind == NEGATIVE_PRICE_WINDOW
+                            else 1,
+                            opportunity.metrics.average_price_eur_per_kwh,
+                            opportunity.starts_at,
+                            opportunity.opportunity_id,
+                        ),
+                    )
+                )
                 delegated_set = construct_pv_charge_only_candidate(
                     snapshot=snapshot,
                     balance=balance,
                     requirement=requirement,
+                    preferred_price_windows=preferred_price_windows,
                 )
                 if not delegated_set.candidates:
                     continue
@@ -279,10 +309,15 @@ class CanonicalPipeline:
         candidate_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
+        candidate_priority = {
+            item.candidate_id: index
+            for index, item in enumerate(delegated_candidates)
+        }
         winning_outcome = (
             min(
                 actionable_outcomes,
                 key=lambda item: (
+                    candidate_priority[item.candidate_id],
                     item.grid_storage_contribution_wh,
                     -item.pv_storage_contribution_wh,
                     item.conversion_losses_wh,

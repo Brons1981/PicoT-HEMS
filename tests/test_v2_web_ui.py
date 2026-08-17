@@ -310,6 +310,17 @@ def test_dashboard_contains_canonical_power_history_chart() -> None:
     assert 'grid_export: "Netexport"' in DASHBOARD_HTML
 
 
+def test_power_history_inverts_pv_and_uses_thin_rounded_step_lines() -> None:
+    assert (
+        '["pv_generation", "battery_charge", "grid_export"].includes(role)'
+        in DASHBOARD_HTML
+    )
+    assert "stroke-width: 1.75;" in DASHBOARD_HTML
+    assert "stroke-linecap: round;" in DASHBOARD_HTML
+    assert "stroke-linejoin: round;" in DASHBOARD_HTML
+    assert "path += ` H ${point.x} V ${point.y}`;" in DASHBOARD_HTML
+
+
 def test_dashboard_preserves_open_quarter_details_during_refresh() -> None:
     assert (
         'container.querySelector("details")?.open ?? false'

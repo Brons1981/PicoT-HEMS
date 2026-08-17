@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from picot.v2.household_objective_input import (
     attach_household_objectives,

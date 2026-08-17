@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from hashlib import sha256
 
 from picot.domain.capability_snapshot import (
@@ -134,7 +135,7 @@ def _window_selections(
 
 def _progressive_window_selections(
     intervals: tuple[ProjectedHouseholdEnergyBalanceInterval, ...],
-    preferred_price_windows: tuple[tuple[object, object], ...],
+    preferred_price_windows: tuple[tuple[datetime, datetime], ...],
 ) -> tuple[tuple[int, ...], ...]:
     """Order PV-only NOM windows from preferred price window to full horizon."""
 
@@ -216,7 +217,7 @@ def construct_pv_charge_only_candidate(
     snapshot: PlanningInputSnapshot,
     balance: ProjectedHouseholdEnergyBalance,
     requirement: StorageEnergyRequirement,
-    preferred_price_windows: tuple[tuple[object, object], ...] = (),
+    preferred_price_windows: tuple[tuple[datetime, datetime], ...] = (),
 ) -> CandidateSet:
     """Construct one timed PV-only delegated Candidate without selecting it."""
 
@@ -291,7 +292,7 @@ def construct_pv_charge_only_candidate(
     candidate_balance = replace(balance, intervals=intervals)
     candidates: list[Candidate] = []
     paths: list[EnergyPath] = []
-    seen_segment_windows: set[tuple[tuple[object, object], ...]] = set()
+    seen_segment_windows: set[tuple[tuple[datetime, datetime], ...]] = set()
     confidence = min(
         storage.confidence,
         capability.confidence,

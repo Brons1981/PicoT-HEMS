@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from test_v2_delegated_storage_pipeline_integration import _snapshot
@@ -68,6 +68,58 @@ def test_baseline_without_calculated_outcome_is_explicit_fallback() -> None:
     }
     assert status["decision"]["confidence"] is None
     assert status["alternatives"][0]["confidence"] is None
+
+
+def test_full_storage_builds_tomorrow_pv_plan_after_current_support_phase() -> None:
+    source = _snapshot()
+    base = source.captured_at
+    pv_template = source.pv_energy_timeline.intervals[0]
+    load_template = source.household_load_forecast.intervals[0]
+    full = replace(
+        source,
+        horizon_end=base + timedelta(hours=3),
+        current_storage_states=tuple(
+            replace(state, current_soc=1.0)
+            for state in source.current_storage_states
+        ),
+        pv_energy_timeline=replace(
+            source.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    pv_template,
+                    interval_id=f"pv-{index}",
+                    starts_at=base + timedelta(hours=index),
+                    ends_at=base + timedelta(hours=index + 1),
+                    pv_energy_wh=pv_wh,
+                )
+                for index, pv_wh in enumerate((0.0, 800.0, 0.0))
+            ),
+        ),
+        household_load_forecast=replace(
+            source.household_load_forecast,
+            intervals=tuple(
+                replace(
+                    load_template,
+                    interval_id=f"load-{index}",
+                    starts_at=base + timedelta(hours=index),
+                    ends_at=base + timedelta(hours=index + 1),
+                    expected_energy_wh=200.0,
+                    source_reference=f"load-{index}",
+                )
+                for index in range(3)
+            ),
+        ),
+    )
+
+    run = CanonicalPipeline().run(planning_input=full)
+
+    assert run.evaluation.status == "winner_selected"
+    assert run.execution_record.status == "observer_only_plan_ready"
+    assert run.outcomes.outcomes
+    outcome = run.outcomes.outcomes[0]
+    assert outcome.charge_window_starts_at == base + timedelta(hours=1)
+    assert outcome.charge_window_ends_at == base + timedelta(hours=2)
+    assert outcome.requirement_satisfied is True
 
 
 def test_planning_fallback_notification_is_deduplicated_and_recovers() -> None:

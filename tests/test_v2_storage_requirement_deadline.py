@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from picot.v2 import (
@@ -117,6 +118,29 @@ def test_current_deficit_requires_battery_at_snapshot_time() -> None:
     assert result.requirements[0].required_by == snapshot.captured_at
 
 
+def test_current_support_uses_next_support_phase_after_future_pv_surplus() -> None:
+    snapshot = _snapshot(
+        pv_wh=(0.0, 600.0, 600.0, 0.0),
+        load_wh=(200.0, 200.0, 200.0, 200.0),
+    )
+    snapshot = replace(
+        snapshot,
+        current_storage_states=(
+            replace(
+                snapshot.current_storage_states[0],
+                current_soc=1.0,
+            ),
+        ),
+    )
+
+    result = CandidateEngine().derive_storage_requirements(snapshot)
+
+    requirement = result.requirements[0]
+    assert requirement.required_by == BASE + timedelta(hours=1, minutes=30)
+    assert requirement.required_by > snapshot.captured_at
+    assert result.balances[0].intervals[1].projected_storage_energy_wh == 8000.0
+
+
 def test_no_projected_deficit_creates_no_artificial_horizon_deadline() -> None:
     snapshot = _snapshot(
         pv_wh=(600.0, 600.0, 600.0, 600.0),
@@ -140,4 +164,3 @@ def test_fallback_load_keeps_preliminary_deadline_but_zero_confidence() -> None:
     requirement = result.requirements[0]
     assert requirement.required_by == BASE + timedelta(hours=1)
     assert requirement.confidence == 0.0
-

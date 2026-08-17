@@ -142,10 +142,14 @@ class CandidateEngine:
                     for interval in matching_load_intervals
                 )
                 interval_start_energy_wh = projected_energy_wh
-                projected_energy_wh = (
-                    interval_start_energy_wh
-                    + pv_energy_wh
-                    - load_energy_wh
+                projected_energy_wh = min(
+                    storage.usable_capacity_wh,
+                    max(
+                        0.0,
+                        interval_start_energy_wh
+                        + pv_energy_wh
+                        - load_energy_wh,
+                    ),
                 )
                 confidence = min(
                     storage.confidence,
@@ -227,7 +231,10 @@ class CandidateEngine:
                         / interval_seconds
                     )
                     interval_start_energy_wh = projected_energy_wh
-                    projected_energy_wh -= load_energy_wh
+                    projected_energy_wh = max(
+                        0.0,
+                        projected_energy_wh - load_energy_wh,
+                    )
                     interval_evidence = _ordered_unique(
                         storage.evidence_ids
                         + (load_interval.source_reference,)
@@ -292,15 +299,38 @@ class CandidateEngine:
                 storage_state_id=storage.storage_state_id,
                 intervals=tuple(projected_intervals),
             )
-            first_battery_support_interval = next(
-                (
-                    interval
-                    for interval in projected_intervals
-                    if interval.projected_storage_energy_wh
-                    < interval.current_usable_storage_energy_wh
-                ),
-                None,
+            support_indexes = tuple(
+                index
+                for index, interval in enumerate(projected_intervals)
+                if interval.projected_storage_energy_wh
+                < interval.current_usable_storage_energy_wh
             )
+            first_battery_support_interval = (
+                projected_intervals[support_indexes[0]]
+                if support_indexes
+                else None
+            )
+            if (
+                first_battery_support_interval is not None
+                and first_battery_support_interval.starts_at
+                == snapshot.captured_at
+            ):
+                next_support_phase = next(
+                    (
+                        projected_intervals[index]
+                        for index in support_indexes
+                        if index > 0
+                        and projected_intervals[
+                            index - 1
+                        ].projected_storage_energy_wh
+                        >= projected_intervals[
+                            index - 1
+                        ].current_usable_storage_energy_wh
+                    ),
+                    None,
+                )
+                if next_support_phase is not None:
+                    first_battery_support_interval = next_support_phase
             balances.append(balance)
             if first_battery_support_interval is None:
                 continue

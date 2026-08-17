@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from picot.domain.energy_path import PathSegment
 from picot.v2.contracts import CanonicalPipelineRun, PriceForecastPoint
+from picot.v2.power_history import PowerHistorySnapshot
 from picot.v2.projection import Projection
 
 DASHBOARD_HTML = """<!doctype html>
@@ -241,6 +242,17 @@ DASHBOARD_HTML = """<!doctype html>
       stroke: #ffd400;
       stroke-width: 3;
     }
+    .power-flow-line {
+      fill: none;
+      stroke-width: 2.5;
+    }
+    .power-flow-line.pv_generation { stroke: #ffd400; }
+    .power-flow-line.household_load { stroke: #3994e6; }
+    .power-flow-line.grid_import { stroke: #ef4444; }
+    .power-flow-line.grid_export { stroke: #aab2bd; }
+    .power-flow-line.battery_charge,
+    .power-flow-line.battery_discharge { stroke: #35a862; }
+    .power-zero-line { stroke: #96a6b8; stroke-width: 1.5; }
     .energy-chart-legend {
       display: flex;
       flex-wrap: wrap;
@@ -395,6 +407,14 @@ DASHBOARD_HTML = """<!doctype html>
     <section
       id="tab-history" class="tab-panel" data-tab-panel="history" hidden
     >
+      <h2>Energiestromen vandaag</h2>
+      <section
+        id="power-history-chart"
+        class="timeline-panel energy-chart-panel"
+        aria-live="polite"
+      >
+        Nog geen canonieke vermogenshistorie beschikbaar.
+      </section>
       <h2>Zon: forecast en werkelijkheid</h2>
       <section
         id="pv-forecast-actual-chart"
@@ -403,10 +423,6 @@ DASHBOARD_HTML = """<!doctype html>
       >
         Nog geen gesloten PV-intervallen beschikbaar.
       </section>
-      <p class="empty-panel">
-        P1, huisverbruik, batterij, netimport en netexport volgen zodra hun
-        canonieke dagtijdreeksen beschikbaar zijn.
-      </p>
     </section>
     <section
       id="tab-strategy" class="tab-panel" data-tab-panel="strategy" hidden
@@ -968,6 +984,138 @@ DASHBOARD_HTML = """<!doctype html>
       raw.textContent = JSON.stringify(value, null, 2);
       details.append(summary, raw);
       container.appendChild(details);
+    }
+
+    function renderPowerHistory(history) {
+      const container = element("power-history-chart");
+      container.replaceChildren();
+      const series = Array.isArray(history?.series)
+        ? history.series.filter((item) => Array.isArray(item.points))
+        : [];
+      const start = new Date(history?.starts_at);
+      const end = new Date(history?.ends_at);
+      if (
+        history?.status !== "available" ||
+        Number.isNaN(start.getTime()) ||
+        Number.isNaN(end.getTime()) ||
+        end <= start ||
+        !series.some((item) => item.points.length > 0)
+      ) {
+        container.textContent = history?.error
+          ? `Vermogenshistorie niet beschikbaar: ${history.error}.`
+          : "Nog geen canonieke vermogenshistorie beschikbaar.";
+        return;
+      }
+
+      const roleLabels = {
+        pv_generation: "PV",
+        household_load: "Huisverbruik",
+        battery_charge: "Batterij laden",
+        battery_discharge: "Batterij ontladen",
+        grid_import: "Netimport",
+        grid_export: "Netexport",
+      };
+      const roleColors = {
+        pv_generation: "#ffd400",
+        household_load: "#3994e6",
+        battery_charge: "#35a862",
+        battery_discharge: "#35a862",
+        grid_import: "#ef4444",
+        grid_export: "#aab2bd",
+      };
+      const signedPower = (role, value) =>
+        ["battery_charge", "grid_export"].includes(role)
+          ? -Number(value)
+          : Number(value);
+      const visible = series.filter((item) => roleLabels[item.role]);
+      const legend = document.createElement("div");
+      legend.className = "energy-chart-legend";
+      for (const item of visible) {
+        const key = document.createElement("span");
+        key.className = "energy-chart-key";
+        const swatch = document.createElement("span");
+        swatch.className = `power-flow-line ${item.role}`;
+        swatch.style.width = "18px";
+        swatch.style.borderTop = "3px solid";
+        swatch.style.borderColor = roleColors[item.role];
+        key.append(swatch, document.createTextNode(roleLabels[item.role]));
+        legend.appendChild(key);
+      }
+      container.appendChild(legend);
+
+      const width = 1180;
+      const height = 390;
+      const plot = { left: 72, right: 24, top: 20, bottom: 48 };
+      const plotWidth = width - plot.left - plot.right;
+      const plotHeight = height - plot.top - plot.bottom;
+      const startMs = start.getTime();
+      const endMs = end.getTime();
+      const allValues = visible.flatMap((item) =>
+        item.points.map((point) => signedPower(item.role, point.power_w))
+      ).filter(Number.isFinite);
+      const maximum = Math.max(1, ...allValues.map(Math.abs));
+      const x = (value) => plot.left +
+        (new Date(value).getTime() - startMs) / (endMs - startMs) * plotWidth;
+      const y = (value) => plot.top + plotHeight / 2 -
+        Number(value) / maximum * plotHeight / 2;
+
+      const scroll = document.createElement("div");
+      scroll.className = "energy-chart-scroll";
+      const svg = createSvgElement("svg", {
+        class: "energy-chart",
+        viewBox: `0 0 ${width} ${height}`,
+        role: "img",
+        "aria-label": "Canonieke vermogensstromen van vandaag",
+      });
+      for (const factor of [-1, -0.5, 0, 0.5, 1]) {
+        const value = maximum * factor;
+        const lineY = y(value);
+        svg.appendChild(createSvgElement("line", {
+          x1: plot.left,
+          x2: width - plot.right,
+          y1: lineY,
+          y2: lineY,
+          class: factor === 0 ? "power-zero-line" : "grid-line",
+        }));
+        appendSvgText(
+          svg,
+          `${Math.round(value)} W`,
+          { x: plot.left - 8, y: lineY + 4, "text-anchor": "end" },
+          "axis-label",
+        );
+      }
+      for (let hour = 0; hour <= 24; hour += 2) {
+        const tick = new Date(startMs + hour * 60 * 60 * 1000);
+        if (tick > end) break;
+        appendSvgText(
+          svg,
+          tick.toLocaleTimeString("nl-NL", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          { x: x(tick), y: height - 18, "text-anchor": "middle" },
+          "axis-label",
+        );
+      }
+      for (const item of visible) {
+        const points = item.points
+          .map((point) => ({
+            x: x(point.sampled_at),
+            y: y(signedPower(item.role, point.power_w)),
+          }))
+          .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+        if (points.length === 0) continue;
+        let path = `M ${points[0].x} ${points[0].y}`;
+        for (const point of points.slice(1)) {
+          path += ` H ${point.x} V ${point.y}`;
+        }
+        svg.appendChild(createSvgElement("path", {
+          d: path,
+          class: `power-flow-line ${item.role}`,
+        }));
+      }
+      scroll.appendChild(svg);
+      container.appendChild(scroll);
     }
 
     function renderPvForecastActualChart(intervals) {
@@ -1740,6 +1888,14 @@ DASHBOARD_HTML = """<!doctype html>
       renderPvForecastActualChart(
         planningInput?.attributes?.pv_interval_deviations ?? []
       );
+      renderPowerHistory(view.power_history ?? {
+        available: false,
+        status: "unavailable",
+        error: null,
+        starts_at: null,
+        ends_at: null,
+        series: [],
+      });
       renderPriceTimeline(
         view.price_timeline ?? {
           available: false,
@@ -2573,6 +2729,7 @@ def build_web_view(
     projection: Projection,
     *,
     display_price_points: tuple[PriceForecastPoint, ...] | None = None,
+    power_history: PowerHistorySnapshot | None = None,
 ) -> dict[str, object]:
     """Build one JSON-serializable observer view without side effects."""
     planning_input = run.planning_input
@@ -2801,6 +2958,38 @@ def build_web_view(
         ],
     }
 
+    power_history_view: dict[str, object] = {
+        "available": power_history is not None and power_history.status == "available",
+        "status": power_history.status if power_history is not None else "unavailable",
+        "error": power_history.error if power_history is not None else None,
+        "starts_at": (
+            power_history.starts_at.isoformat() if power_history is not None else None
+        ),
+        "ends_at": (
+            power_history.ends_at.isoformat() if power_history is not None else None
+        ),
+        "method_version": (
+            power_history.method_version if power_history is not None else None
+        ),
+        "series": [
+            {
+                "series_id": series.series_id,
+                "role": series.role,
+                "source_entity_id": series.source_entity_id,
+                "transform": series.transform,
+                "points": [
+                    {
+                        "sampled_at": point.sampled_at.isoformat(),
+                        "power_w": point.power_w,
+                        "evidence_id": point.evidence_id,
+                    }
+                    for point in series.points
+                ],
+            }
+            for series in (power_history.series if power_history is not None else ())
+        ],
+    }
+
     return {
         "schema_version": 1,
         "observer_only": observer_only,
@@ -2815,4 +3004,5 @@ def build_web_view(
         "price_timeline": price_timeline,
         "pv_energy_timeline": pv_energy_timeline,
         "household_load_forecast": household_load_forecast,
+        "power_history": power_history_view,
     }

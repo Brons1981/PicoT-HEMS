@@ -320,7 +320,7 @@ def _current_storage_states_from_evidence(
                 current_soc=current_soc,
                 usable_capacity_wh=config.usable_capacity_wh,
                 measured_at=item.observed_at,
-                confidence=0.0,
+                confidence=1.0,
                 evidence_ids=(item.evidence_id,),
             )
         )

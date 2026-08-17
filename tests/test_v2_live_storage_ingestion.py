@@ -102,6 +102,7 @@ def test_available_zendure_soc_becomes_current_storage_state(
     assert state.usable_capacity_wh == pytest.approx(8160.0)
     assert state.current_stored_energy_wh == pytest.approx(3264.0)
     assert state.measured_at == observed_at
+    assert state.confidence == pytest.approx(1.0)
     assert state.evidence_ids == ("evidence-zendure-soc",)
 
 
@@ -204,6 +205,7 @@ def test_default_assembly_loads_storage_config_from_same_options(
     assert state.current_soc == pytest.approx(0.40)
     assert state.usable_capacity_wh == pytest.approx(8160.0)
     assert state.current_stored_energy_wh == pytest.approx(3264.0)
+    assert state.confidence == pytest.approx(1.0)
     assert state.evidence_ids == ("evidence-zendure-live",)
 
 

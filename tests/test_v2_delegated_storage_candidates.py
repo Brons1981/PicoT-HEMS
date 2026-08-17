@@ -257,3 +257,46 @@ def test_bidirectional_balance_capability_supports_pv_charge_alternative() -> No
     assert candidate_set.energy_paths[0].segments[0].primitive is (
         ExecutionPrimitive.BALANCE_BIDIRECTIONAL
     )
+
+
+
+def test_preferred_price_window_is_considered_before_expansion() -> None:
+    module = import_module("picot.v2.delegated_storage_candidates")
+    candidate_set = module.construct_pv_charge_only_candidate(
+        snapshot=_snapshot(_capability_set()),
+        balance=_balance(),
+        requirement=_requirement(),
+        preferred_price_windows=((BASE, WINDOW_END),),
+    )
+
+    assert candidate_set.derivation_status == "constructed"
+    assert len(candidate_set.energy_paths) == 2
+    assert [
+        (segment.starts_at, segment.ends_at)
+        for segment in candidate_set.energy_paths[0].segments
+    ] == [(BASE, WINDOW_END)]
+    assert [
+        (segment.starts_at, segment.ends_at)
+        for segment in candidate_set.energy_paths[1].segments
+    ] == [
+        (BASE, WINDOW_END),
+        (WINDOW_END, REQUIRED_BY),
+    ]
+
+
+def test_progressive_full_horizon_reserves_every_nom_interval() -> None:
+    module = import_module("picot.v2.delegated_storage_candidates")
+    candidate_set = module.construct_pv_charge_only_candidate(
+        snapshot=_snapshot(_capability_set()),
+        balance=_balance(),
+        requirement=_requirement(),
+        preferred_price_windows=((BASE, WINDOW_END),),
+    )
+
+    full_horizon_path = candidate_set.energy_paths[1]
+    assert full_horizon_path.segments[0].starts_at == BASE
+    assert full_horizon_path.segments[-1].ends_at == REQUIRED_BY
+    assert all(
+        segment.charge_source_policy is ChargeSourcePolicy.PV_ONLY
+        for segment in full_horizon_path.segments
+    )

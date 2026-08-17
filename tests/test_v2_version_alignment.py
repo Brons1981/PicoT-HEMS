@@ -17,7 +17,7 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
 
 
 def test_v2_visible_dutch_card_summary_batch_uses_dev_67() -> None:
-    assert __version__ == "2.0.0-dev.96"
+    assert __version__ == "2.0.0-dev.97"
 
 
 def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:

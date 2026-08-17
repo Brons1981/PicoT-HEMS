@@ -62,6 +62,14 @@ from picot.v2.planning_input import (
     assemble_planning_input,
     load_options,
 )
+from picot.v2.power_history import (
+    HomeAssistantPowerHistoryReader,
+    PowerHistoryCache,
+    PowerHistoryPoint,
+    PowerHistorySeries,
+    PowerHistorySnapshot,
+    PowerSeriesSpec,
+)
 from picot.v2.projection import Card, Projection, project
 from picot.v2.pv_actual_history import HomeAssistantPVHistoryReader
 from picot.v2.pv_attenuation_aggregation import (
@@ -116,6 +124,92 @@ PV_ATTENUATION_EVIDENCE_PATH = Path(
 STORAGE_MODE_PROVENANCE_PATH = Path(
     "/data/picot_v2_storage_mode_provenance.json"
 )
+
+
+def _dashboard_power_history_specs(
+    options: dict[str, Any],
+) -> tuple[PowerSeriesSpec, ...]:
+    specs: list[PowerSeriesSpec] = []
+    configured = (
+        (
+            "pv",
+            "pv_generation",
+            "pv_power_entity",
+            "identity",
+        ),
+        (
+            "grid-import",
+            "grid_import",
+            "p1_power_entity",
+            "positive",
+        ),
+        (
+            "grid-export",
+            "grid_export",
+            "p1_power_entity",
+            "negative_magnitude",
+        ),
+        (
+            "battery-discharge",
+            "battery_discharge",
+            "zendure_power_to_house_entity",
+            "identity",
+        ),
+        (
+            "battery-charge",
+            "battery_charge",
+            "zendure_power_from_house_entity",
+            "identity",
+        ),
+    )
+    for series_id, role, option_name, transform in configured:
+        entity_id = str(options.get(option_name, "")).strip()
+        if entity_id:
+            specs.append(
+                PowerSeriesSpec(
+                    series_id=series_id,
+                    role=role,
+                    entity_id=entity_id,
+                    transform=transform,
+                )
+            )
+    return tuple(specs)
+
+
+def _attach_household_power_history(
+    snapshot: PowerHistorySnapshot,
+    observations: tuple[HouseholdLoadObservation, ...],
+) -> PowerHistorySnapshot:
+    points = tuple(
+        PowerHistoryPoint(
+            sampled_at=observation.sampled_at,
+            power_w=observation.power_w,
+            evidence_id=(
+                observation.evidence_ids[0]
+                if observation.evidence_ids
+                else f"household-load:{observation.sampled_at.isoformat()}"
+            ),
+        )
+        for observation in observations
+        if snapshot.starts_at <= observation.sampled_at <= snapshot.ends_at
+    )
+    household = PowerHistorySeries(
+        series_id="household-load",
+        role="household_load",
+        source_entity_id="picot:household-load-observation",
+        transform="identity",
+        points=points,
+    )
+    series = (*snapshot.series, household)
+    return replace(
+        snapshot,
+        status=(
+            "available"
+            if any(item.points for item in series)
+            else snapshot.status
+        ),
+        series=series,
+    )
 
 
 
@@ -1114,6 +1208,7 @@ def _execute_planning_bundle(
     price_config: PriceOpportunityConfig,
     bundle: PlanningInputBundle,
     web_view_store: WebViewStore,
+    power_history: PowerHistorySnapshot | None = None,
     pv_actual_diagnostics: (
         LivePVActualDiagnostics | None
     ) = None,
@@ -1312,6 +1407,7 @@ def _execute_planning_bundle(
             run,
             projection,
             display_price_points=display_price_points,
+            power_history=power_history,
         )
     )
 
@@ -1352,6 +1448,8 @@ def main() -> None:
         HOUSEHOLD_LOAD_HISTORY_PATH
     )
     pv_history_reader = HomeAssistantPVHistoryReader(token)
+    power_history_reader = HomeAssistantPowerHistoryReader(token)
+    power_history_cache = PowerHistoryCache()
     pv_actual_cache = LivePVActualCache()
     storage_mode_provenance_runtime = LiveStorageModeProvenanceRuntime(
         StorageModeProvenanceStore(STORAGE_MODE_PROVENANCE_PATH)
@@ -1434,6 +1532,7 @@ def main() -> None:
     ).strip()
     if not pv_power_entity:
         raise ValueError("pv_power_entity must be explicit")
+    dashboard_power_history_specs = _dashboard_power_history_specs(options)
 
     pv_installation_scope_id = str(
         options.get("pv_installation_scope_id", "pv-installation-home")
@@ -1606,6 +1705,20 @@ def main() -> None:
         bundle: PlanningInputBundle,
         pv_actual_diagnostics: LivePVActualDiagnostics,
     ) -> None:
+        captured_at = bundle.snapshot.captured_at
+        history_starts_at = captured_at.astimezone(
+            pv_sunset_timezone
+        ).replace(hour=0, minute=0, second=0, microsecond=0)
+        power_history = power_history_cache.update(
+            power_history_reader,
+            specs=dashboard_power_history_specs,
+            starts_at=history_starts_at,
+            ends_at=captured_at,
+        )
+        power_history = _attach_household_power_history(
+            power_history,
+            household_load_history.load(),
+        )
         timeline = bundle.snapshot.pv_energy_timeline
         pv_sunset_source = pv_sunset_reader.read(
             local_timezone=pv_sunset_timezone
@@ -1656,6 +1769,7 @@ def main() -> None:
             price_config=price_config,
             bundle=bundle,
             web_view_store=web_view_store,
+            power_history=power_history,
             pv_actual_diagnostics=pv_actual_diagnostics,
             pv_attenuated_ranges=pv_attenuated_ranges,
             pv_sunset_source=pv_sunset_source,

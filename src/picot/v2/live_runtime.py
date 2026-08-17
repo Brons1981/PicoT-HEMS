@@ -9,7 +9,7 @@ import json
 import os
 import time
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from http.server import ThreadingHTTPServer

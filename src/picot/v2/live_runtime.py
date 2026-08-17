@@ -24,6 +24,7 @@ from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
     HomeAssistantCanonicalModeAdapter,
 )
+from picot.v2.fast_grid_power_observation import FastGridPowerObserver
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
 from picot.v2.live_pv_actual import (
@@ -47,8 +48,10 @@ from picot.v2.live_storage_mode_provenance import (
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.planning_input import (
+    HomeAssistantStateReader,
     HouseholdLoadObservation,
     PlanningInputBundle,
+    SourceBinding,
     assemble_planning_input,
     load_options,
 )
@@ -794,6 +797,62 @@ def _start_web_server(
     return server, thread
 
 
+def _grid_power_observation_interval_seconds(
+    options: dict[str, Any],
+) -> float:
+    raw_interval = options.get(
+        "grid_power_observation_interval_seconds",
+        1,
+    )
+    if isinstance(raw_interval, bool):
+        raise ValueError(
+            "grid power observation interval must be a positive number"
+        )
+    try:
+        interval = float(raw_interval)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "grid power observation interval must be a positive number"
+        ) from None
+    if not isfinite(interval) or interval <= 0.0:
+        raise ValueError(
+            "grid power observation interval must be a positive number"
+        )
+    return interval
+
+
+def _start_fast_grid_power_observer(
+    *,
+    token: str,
+    entity_id: str,
+    interval_seconds: float,
+    web_view_store: WebViewStore,
+) -> Thread:
+    """Start independent near-live grid-power observation."""
+    observer = FastGridPowerObserver(
+        binding=SourceBinding(
+            category="p1",
+            semantic_role="grid_power",
+            entity_id=entity_id,
+        ),
+        read_source=HomeAssistantStateReader(token).read,
+        publish=web_view_store.publish_fast_grid_power_source,
+    )
+
+    def observe() -> None:
+        while True:
+            observer.poll_once(polled_at=datetime.now(UTC))
+            time.sleep(interval_seconds)
+
+    thread = Thread(
+        target=observe,
+        name="picot-v2-fast-grid-power",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 def _execute_planning_bundle(
     *,
     token: str,
@@ -1190,6 +1249,18 @@ def main() -> None:
         )
 
     _start_web_server(web_view_store)
+    grid_power_entity = str(
+        options.get("p1_power_entity", "")
+    ).strip()
+    if grid_power_entity:
+        _start_fast_grid_power_observer(
+            token=token,
+            entity_id=grid_power_entity,
+            interval_seconds=(
+                _grid_power_observation_interval_seconds(options)
+            ),
+            web_view_store=web_view_store,
+        )
     raw_poll_interval = options.get("live_poll_interval_seconds", 60.0)
     try:
         poll_interval_seconds = float(raw_poll_interval)

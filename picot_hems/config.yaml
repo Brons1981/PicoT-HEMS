@@ -34,6 +34,7 @@ options:
   nordpool_price_entity: "sensor.nordpool_kwh_nl_eur_3_095_0"
   price_low_margin_eur_per_kwh: 0.04
   price_high_margin_eur_per_kwh: 0.04
+  grid_power_observation_interval_seconds: 1
   live_poll_interval_seconds: 60
   live_pv_canary_mode: "observer"
   canonical_execution_mode: "observer"
@@ -59,6 +60,7 @@ schema:
   nordpool_price_entity: str
   price_low_margin_eur_per_kwh: float(0,1)
   price_high_margin_eur_per_kwh: float(0,1)
+  grid_power_observation_interval_seconds: int(1,60)
   live_poll_interval_seconds: int(5,3600)
   live_pv_canary_mode: list(observer|live)
   canonical_execution_mode: list(observer|live)

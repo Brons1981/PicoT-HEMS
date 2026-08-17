@@ -232,3 +232,19 @@ def test_poll_cycle_prepares_actual_pv_before_signature_and_execution(
         ("executed", enriched),
     ]
     assert result == _planning_input_signature(enriched)
+
+def test_grid_power_observation_defaults_to_one_second() -> None:
+    assert live_runtime._grid_power_observation_interval_seconds({}) == 1.0
+
+
+def test_grid_power_observation_interval_is_independent_from_planner_poll() -> None:
+    options = {
+        "grid_power_observation_interval_seconds": 1,
+        "live_poll_interval_seconds": 60,
+    }
+
+    assert (
+        live_runtime._grid_power_observation_interval_seconds(options)
+        == 1.0
+    )
+

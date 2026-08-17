@@ -466,3 +466,52 @@ def test_dashboard_preserves_active_tab_during_realtime_updates() -> None:
     assert "activeTab:" in DASHBOARD_HTML
     assert 'activateTab(state.activeTab ?? "overview")' in DASHBOARD_HTML
 
+def test_web_view_store_overlays_fast_grid_power_without_planner_run() -> None:
+    store = WebViewStore()
+    base_view: dict[str, object] = {
+        "run_id": "run-planner-1",
+        "pipeline": [
+            {
+                "stage": 1,
+                "attributes": {
+                    "sources": [
+                        {
+                            "category": "p1",
+                            "semantic_role": "grid_power",
+                            "raw_state": "100",
+                            "raw_unit": "W",
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+    store.publish(base_view)
+    store.publish_fast_grid_power_source(
+        {
+            "category": "p1",
+            "semantic_role": "grid_power",
+            "entity_id": "sensor.ct_shelly_pro_3em_api",
+            "raw_state": "8.345",
+            "raw_unit": "W",
+            "observed_at": "2026-08-17T07:00:01+00:00",
+            "availability": "available",
+        }
+    )
+
+    latest_json = store.latest_json()
+    assert latest_json is not None
+    latest = json.loads(latest_json)
+    assert latest["run_id"] == "run-planner-1"
+    assert latest["pipeline"][0]["attributes"]["sources"][0][
+        "raw_state"
+    ] == "8.345"
+
+    store.publish(base_view)
+    republished_json = store.latest_json()
+    assert republished_json is not None
+    republished = json.loads(republished_json)
+    assert republished["pipeline"][0]["attributes"]["sources"][0][
+        "raw_state"
+    ] == "8.345"
+

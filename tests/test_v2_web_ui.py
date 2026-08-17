@@ -288,6 +288,7 @@ def test_web_view_serializes_canonical_power_history() -> None:
                 "role": "pv_generation",
                 "source_entity_id": "sensor.pv",
                 "transform": "identity",
+                "history_semantics": "state_hold",
                 "points": [
                     {
                         "sampled_at": "2026-08-17T10:00:00+00:00",
@@ -328,14 +329,19 @@ def test_power_history_uses_readable_selectable_day_chart() -> None:
     assert "const hasRange = rawMinimum < 0 || rawMaximum > 0;" in DASHBOARD_HTML
     assert "const gridValues = Array.from(new Set([" in DASHBOARD_HTML
     assert "class: value === 0" in DASHBOARD_HTML
-    assert "path += ` L ${point.x} ${point.y}`;" in DASHBOARD_HTML
+    assert "? ` H ${point.x} V ${point.y}`" in DASHBOARD_HTML
+    assert ": ` L ${point.x} ${point.y}`;" in DASHBOARD_HTML
     assert 'class: `power-flow-area ${item.role}`' in DASHBOARD_HTML
     assert "powerHistoryZoomWindow" in DASHBOARD_HTML
     assert '["+", "Inzoomen"' in DASHBOARD_HTML
     assert '["−", "Uitzoomen"' in DASHBOARD_HTML
-    assert 'class: "power-zoom-hitbox"' in DASHBOARD_HTML
+    assert 'class: `power-zoom-hitbox ${powerHistoryInteractionMode}`' in DASHBOARD_HTML
     assert 'hitbox.addEventListener("pointerdown"' in DASHBOARD_HTML
     assert 'hitbox.addEventListener("pointerup"' in DASHBOARD_HTML
+    assert 'item.history_semantics === "state_hold"' in DASHBOARD_HTML
+    assert "powerHistoryInteractionMode" in DASHBOARD_HTML
+    assert '["pan", "✋", "Versleep het ingezoomde tijdvak"]' in DASHBOARD_HTML
+    assert 'powerHistoryInteractionMode === "pan"' in DASHBOARD_HTML
 
 
 def test_dashboard_preserves_open_quarter_details_during_refresh() -> None:

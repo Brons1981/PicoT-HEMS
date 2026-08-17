@@ -183,6 +183,93 @@ def project(run: CanonicalPipelineRun) -> Projection:
             "ready",
             base("bootstrap", p.snapshot_id, "unchanged")
             | {
+                "strategy_id": p.strategy_id,
+                "user_objective_profile_id": (
+                    p.user_objective_profile.profile_id
+                    if p.user_objective_profile is not None
+                    else None
+                ),
+                "user_objective_profile_version": (
+                    p.user_objective_profile.version
+                    if p.user_objective_profile is not None
+                    else None
+                ),
+                "cost_optimization_weight": (
+                    p.user_objective_profile.cost_optimization_weight
+                    if p.user_objective_profile is not None
+                    else None
+                ),
+                "self_consumption_weight": (
+                    p.user_objective_profile.self_consumption_weight
+                    if p.user_objective_profile is not None
+                    else None
+                ),
+                "reserve_availability_weight": (
+                    p.user_objective_profile.reserve_availability_weight
+                    if p.user_objective_profile is not None
+                    else None
+                ),
+                "trading_enabled": (
+                    p.user_objective_profile.trading_enabled
+                    if p.user_objective_profile is not None
+                    else False
+                ),
+                "adaptive_priority_enabled": (
+                    p.user_objective_profile.adaptive_priority_enabled
+                    if p.user_objective_profile is not None
+                    else False
+                ),
+                "household_planning_regime": (
+                    p.household_planning_regime.regime
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_objective_order": (
+                    list(p.household_planning_regime.objective_order)
+                    if p.household_planning_regime is not None
+                    else []
+                ),
+                "household_regime_reason": (
+                    p.household_planning_regime.reason
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_forecast_confidence": (
+                    p.household_planning_regime.forecast_confidence
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_forecast_energy_wh": (
+                    p.household_planning_regime.cumulative_forecast_energy_wh
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_actual_energy_wh": (
+                    p.household_planning_regime.cumulative_actual_energy_wh
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_deviation_energy_wh": (
+                    p.household_planning_regime.deviation_energy_wh
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_deviation_percent": (
+                    p.household_planning_regime.deviation_percent
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_underperformance_duration_seconds": (
+                    p.household_planning_regime
+                    .underperformance_duration_seconds
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_evidence_ids": (
+                    list(p.household_planning_regime.evidence_ids)
+                    if p.household_planning_regime is not None
+                    else []
+                ),
                 "current_storage_state_count": len(
                     p.current_storage_states
                 ),

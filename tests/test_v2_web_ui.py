@@ -21,6 +21,7 @@ from picot.v2.web_ui import (
     DASHBOARD_HTML,
     WebViewStore,
     _power_history_display_points,
+    _self_consumption_history_view,
     build_web_view,
 )
 
@@ -377,6 +378,64 @@ def test_power_history_display_averages_samples_without_filling_gaps() -> None:
             "derived_from_evidence_ids": ["household-20", "household-40"],
         }
     ]
+
+
+def test_self_consumption_history_subtracts_export_from_pv() -> None:
+    starts_at = datetime(2026, 8, 17, 10, 0, tzinfo=UTC)
+
+    def series(role: str, power_w: float) -> PowerHistorySeries:
+        return PowerHistorySeries(
+            series_id=role,
+            role=role,
+            source_entity_id=f"sensor.{role}",
+            transform="identity",
+            points=(PowerHistoryPoint(
+                sampled_at=starts_at,
+                power_w=power_w,
+                evidence_id=f"evidence-{role}",
+            ),),
+        )
+
+    view = _self_consumption_history_view(PowerHistorySnapshot(
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(minutes=10),
+        status="available",
+        error=None,
+        series=(
+            series("pv_generation", 1000.0),
+            series("grid_export", 300.0),
+            series("grid_import", 0.0),
+        ),
+    ))
+
+    assert view["available"] is True
+    assert view["display_interval_seconds"] == 600
+    assert view["definition"] == (
+        "clamp(pv_generation_w-grid_export_w,0,pv_generation_w)"
+    )
+    result_series = view["series"]
+    assert isinstance(result_series, list)
+    local_pv = next(
+        item for item in result_series if item["role"] == "local_pv_use"
+    )
+    assert local_pv["points"] == [{
+        "sampled_at": "2026-08-17T10:05:00+00:00",
+        "power_w": 700.0,
+        "coverage_ratio": 1.0,
+        "derived_from_evidence_ids": [
+            "evidence-pv_generation",
+            "evidence-grid_export",
+        ],
+    }]
+
+
+def test_dashboard_contains_self_consumption_history_chart() -> None:
+    assert 'id="self-consumption-history-chart"' in DASHBOARD_HTML
+    assert "renderSelfConsumptionHistory" in DASHBOARD_HTML
+    assert "Zelfverbruik ten opzichte van PV" in DASHBOARD_HTML
+    assert 'local_pv_use: "Lokaal gebruikte PV"' in DASHBOARD_HTML
+    assert 'grid_import: "Netimport"' in DASHBOARD_HTML
+    assert 'stroke: "#ffb300"' in DASHBOARD_HTML
 
 
 def test_dashboard_contains_canonical_power_history_chart() -> None:

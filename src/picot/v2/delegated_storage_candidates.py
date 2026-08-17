@@ -262,7 +262,11 @@ def construct_pv_charge_only_candidate(
         storage_energy_wh = storage.current_stored_energy_wh
         segments: list[PathSegment] = []
         projected_states: list[ProjectedEnergyState] = []
+        storage_energy_at_interval_start: dict[object, float] = {}
         for index, interval in enumerate(intervals):
+            storage_energy_at_interval_start[interval.starts_at] = (
+                storage_energy_wh
+            )
             acquired_wh = 0.0
             if index in selected_indexes:
                 energy_needed_wh = max(
@@ -329,6 +333,18 @@ def construct_pv_charge_only_candidate(
 
         if not segments:
             continue
+        window_start = segments[0].starts_at
+        if window_start > snapshot.captured_at:
+            projected_states.insert(
+                0,
+                ProjectedEnergyState(
+                    at=window_start,
+                    confidence=confidence,
+                    storage_energy_wh=storage_energy_at_interval_start[
+                        window_start
+                    ],
+                ),
+            )
         segment_window = tuple(
             (segment.starts_at, segment.ends_at) for segment in segments
         )

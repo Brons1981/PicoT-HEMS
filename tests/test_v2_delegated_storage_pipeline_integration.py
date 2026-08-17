@@ -259,6 +259,37 @@ def test_projection_explains_winner_and_observer_only_plan() -> None:
     assert planned["segments"][0]["requested_power_w"] is None
 
 
+def test_zero_confidence_outcome_cannot_be_released_as_a_winner() -> None:
+    source = _snapshot()
+    assert source.household_load_forecast is not None
+    snapshot = replace(
+        source,
+        household_load_forecast=replace(
+            source.household_load_forecast,
+            intervals=tuple(
+                replace(interval, confidence=0.0)
+                for interval in source.household_load_forecast.intervals
+            ),
+            fallback_active=True,
+            fallback_reason="configured_power",
+        ),
+    )
+
+    run = CanonicalPipeline().run(
+        planning_input=snapshot,
+        control_change_allowed=True,
+    )
+
+    outcome = run.outcomes.outcomes[0]
+    assert outcome.requirement_satisfied is True
+    assert outcome.pv_storage_contribution_wh > 0.0
+    assert outcome.confidence == 0.0
+    assert run.evaluation.status == "fallback_active"
+    assert run.evaluation.winning_candidate_id != outcome.candidate_id
+    assert run.evaluation.decisive_step == "fallback:no_actionable_candidate"
+    assert run.execution_record.status != "live_plan_ready"
+
+
 def test_partial_pv_progress_cannot_be_released_as_a_winner() -> None:
     source = _snapshot()
     first_pv = source.pv_energy_timeline.intervals[0]

@@ -108,6 +108,61 @@ def test_trading_is_a_user_choice_and_not_part_of_regime_derivation() -> None:
     assert "trading" not in regime.objective_order
 
 
+def test_self_consumption_regime_does_not_exit_during_minimum_hold() -> None:
+    regime = derive_household_planning_regime(
+        profile=_profile(),
+        policy=AdaptiveHouseholdObjectivePolicy(),
+        forecast_confidence=0.90,
+        cumulative_forecast_energy_wh=4000.0,
+        cumulative_actual_energy_wh=4500.0,
+        underperformance_duration_seconds=0,
+        evidence_ids=("solcast-forecast-1", "goodwe-actual-1"),
+        previous_regime="self_consumption_first",
+        previous_regime_duration_seconds=1800,
+        recovery_duration_seconds=1800,
+        overperformance_duration_seconds=1800,
+    )
+
+    assert regime.regime == "self_consumption_first"
+    assert regime.reason == "minimum_self_consumption_hold_active"
+
+
+def test_sustained_recovery_exits_self_consumption_after_hold() -> None:
+    regime = derive_household_planning_regime(
+        profile=_profile(),
+        policy=AdaptiveHouseholdObjectivePolicy(),
+        forecast_confidence=0.70,
+        cumulative_forecast_energy_wh=4000.0,
+        cumulative_actual_energy_wh=3800.0,
+        underperformance_duration_seconds=0,
+        evidence_ids=("solcast-forecast-1", "goodwe-actual-1"),
+        previous_regime="self_consumption_first",
+        previous_regime_duration_seconds=7200,
+        recovery_duration_seconds=3600,
+    )
+
+    assert regime.regime == "cost_optimization_first"
+    assert regime.reason == "sustained_pv_recovery"
+
+
+def test_structural_actual_overperformance_exits_after_hold() -> None:
+    regime = derive_household_planning_regime(
+        profile=_profile(),
+        policy=AdaptiveHouseholdObjectivePolicy(),
+        forecast_confidence=0.30,
+        cumulative_forecast_energy_wh=4000.0,
+        cumulative_actual_energy_wh=5000.0,
+        underperformance_duration_seconds=0,
+        evidence_ids=("solcast-forecast-1", "goodwe-actual-1"),
+        previous_regime="self_consumption_first",
+        previous_regime_duration_seconds=7200,
+        overperformance_duration_seconds=3600,
+    )
+
+    assert regime.regime == "cost_optimization_first"
+    assert regime.reason == "actual_pv_structurally_above_forecast"
+
+
 def test_profile_rejects_hidden_or_invalid_weights() -> None:
     with pytest.raises(ValueError, match="objective weight"):
         UserObjectiveProfile(

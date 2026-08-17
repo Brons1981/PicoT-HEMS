@@ -448,6 +448,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         live_pv_canary_enabled: bool,
         live_pv_canary_target_entity: str,
         storage_mode_provenance_runtime: object,
+        storage_mode_transition_history: object,
         canonical_execution_runtime: object,
         canonical_execution_enabled: bool,
     ) -> None:
@@ -464,6 +465,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             live_pv_canary_enabled,
             live_pv_canary_target_entity,
             storage_mode_provenance_runtime,
+            storage_mode_transition_history,
             canonical_execution_runtime,
             canonical_execution_enabled,
         )

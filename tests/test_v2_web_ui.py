@@ -455,6 +455,12 @@ def test_dashboard_uses_dutch_adaptive_power_and_energy_formatting() -> None:
 
 def test_dashboard_preserves_active_tab_during_realtime_updates() -> None:
     assert "initializeTabs" in DASHBOARD_HTML
+    assert 'document.querySelector(\'.tab-button[aria-selected="true"]\')' in (
+        DASHBOARD_HTML
+    )
+    assert 'document.querySelector(".tab-button[aria-selected="true"]")' not in (
+        DASHBOARD_HTML
+    )
     assert "activateTab" in DASHBOARD_HTML
     assert "ACTIVE_TAB_KEY" in DASHBOARD_HTML
     assert "activeTab:" in DASHBOARD_HTML

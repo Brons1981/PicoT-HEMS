@@ -54,6 +54,14 @@ class AdaptiveHouseholdObjectivePolicy:
     minimum_underperformance_percent: float = 20.0
     minimum_underperformance_wh: float = 500.0
     minimum_underperformance_duration_seconds: int = 1800
+    minimum_self_consumption_hold_seconds: int = 7200
+    recovery_confidence_threshold: float = 0.60
+    maximum_recovery_deficit_percent: float = 10.0
+    maximum_recovery_deficit_wh: float = 250.0
+    minimum_recovery_duration_seconds: int = 3600
+    minimum_overperformance_percent: float = 20.0
+    minimum_overperformance_wh: float = 500.0
+    minimum_overperformance_duration_seconds: int = 3600
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.low_pv_confidence_threshold <= 1.0:
@@ -66,6 +74,23 @@ class AdaptiveHouseholdObjectivePolicy:
                 raise ValueError("underperformance threshold must be finite and non-negative")
         if self.minimum_underperformance_duration_seconds < 0:
             raise ValueError("underperformance duration must be non-negative")
+        if not 0.0 <= self.recovery_confidence_threshold <= 1.0:
+            raise ValueError("recovery confidence threshold must be between 0 and 1")
+        for value in (
+            self.maximum_recovery_deficit_percent,
+            self.maximum_recovery_deficit_wh,
+            self.minimum_overperformance_percent,
+            self.minimum_overperformance_wh,
+        ):
+            if value < 0.0 or not isfinite(value):
+                raise ValueError("hysteresis threshold must be finite and non-negative")
+        for value in (
+            self.minimum_self_consumption_hold_seconds,
+            self.minimum_recovery_duration_seconds,
+            self.minimum_overperformance_duration_seconds,
+        ):
+            if value < 0:
+                raise ValueError("hysteresis duration must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +141,10 @@ def derive_household_planning_regime(
     cumulative_actual_energy_wh: float,
     underperformance_duration_seconds: int,
     evidence_ids: tuple[str, ...],
+    previous_regime: str | None = None,
+    previous_regime_duration_seconds: int = 0,
+    recovery_duration_seconds: int = 0,
+    overperformance_duration_seconds: int = 0,
 ) -> HouseholdPlanningRegime:
     """Apply the user's adaptive preference to canonical PV evidence."""
 
@@ -123,8 +152,20 @@ def derive_household_planning_regime(
         raise ValueError("forecast confidence must be between 0 and 1")
     if cumulative_forecast_energy_wh < 0.0 or cumulative_actual_energy_wh < 0.0:
         raise ValueError("PV energy must be non-negative")
-    if underperformance_duration_seconds < 0:
-        raise ValueError("underperformance duration must be non-negative")
+    for duration in (
+        underperformance_duration_seconds,
+        previous_regime_duration_seconds,
+        recovery_duration_seconds,
+        overperformance_duration_seconds,
+    ):
+        if duration < 0:
+            raise ValueError("regime duration must be non-negative")
+    if previous_regime not in {
+        None,
+        "cost_optimization_first",
+        "self_consumption_first",
+    }:
+        raise ValueError("previous household planning regime is unsupported")
 
     deviation_wh = cumulative_actual_energy_wh - cumulative_forecast_energy_wh
     deviation_percent = (
@@ -149,11 +190,52 @@ def derive_household_planning_regime(
         and material_percent
         and sustained
     )
+    recovered = (
+        forecast_confidence >= policy.recovery_confidence_threshold
+        and deviation_wh >= -policy.maximum_recovery_deficit_wh
+        and (
+            deviation_percent is not None
+            and deviation_percent >= -policy.maximum_recovery_deficit_percent
+        )
+        and recovery_duration_seconds >= policy.minimum_recovery_duration_seconds
+    )
+    structurally_above_forecast = (
+        deviation_wh >= policy.minimum_overperformance_wh
+        and (
+            deviation_percent is not None
+            and deviation_percent >= policy.minimum_overperformance_percent
+        )
+        and overperformance_duration_seconds
+        >= policy.minimum_overperformance_duration_seconds
+    )
+    hold_complete = (
+        previous_regime_duration_seconds
+        >= policy.minimum_self_consumption_hold_seconds
+    )
 
     if not profile.adaptive_priority_enabled:
         regime = "cost_optimization_first"
         objective_order = _COST_FIRST
         reason = "adaptive_priority_disabled"
+    elif previous_regime == "self_consumption_first" and not hold_complete:
+        regime = "self_consumption_first"
+        objective_order = _SELF_CONSUMPTION_FIRST
+        reason = "minimum_self_consumption_hold_active"
+    elif previous_regime == "self_consumption_first" and recovered:
+        regime = "cost_optimization_first"
+        objective_order = _COST_FIRST
+        reason = "sustained_pv_recovery"
+    elif (
+        previous_regime == "self_consumption_first"
+        and structurally_above_forecast
+    ):
+        regime = "cost_optimization_first"
+        objective_order = _COST_FIRST
+        reason = "actual_pv_structurally_above_forecast"
+    elif previous_regime == "self_consumption_first":
+        regime = "self_consumption_first"
+        objective_order = _SELF_CONSUMPTION_FIRST
+        reason = "self_consumption_hysteresis_active"
     elif prioritize_self_consumption:
         regime = "self_consumption_first"
         objective_order = _SELF_CONSUMPTION_FIRST
@@ -174,6 +256,10 @@ def derive_household_planning_regime(
             str(cumulative_forecast_energy_wh),
             str(cumulative_actual_energy_wh),
             str(underperformance_duration_seconds),
+            str(previous_regime),
+            str(previous_regime_duration_seconds),
+            str(recovery_duration_seconds),
+            str(overperformance_duration_seconds),
             *unique_evidence_ids,
             METHOD_VERSION,
         )

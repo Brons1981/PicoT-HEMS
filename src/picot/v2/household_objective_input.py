@@ -7,6 +7,7 @@ from dataclasses import replace
 from picot.v2.contracts import PlanningInputSnapshot
 from picot.v2.household_planning_regime import (
     AdaptiveHouseholdObjectivePolicy,
+    HouseholdPlanningRegime,
     UserObjectiveProfile,
     derive_household_planning_regime,
 )
@@ -22,6 +23,10 @@ def attach_household_objectives(
     cumulative_actual_energy_wh: float,
     underperformance_duration_seconds: int,
     evidence_ids: tuple[str, ...],
+    previous_regime: HouseholdPlanningRegime | None = None,
+    previous_regime_duration_seconds: int = 0,
+    recovery_duration_seconds: int = 0,
+    overperformance_duration_seconds: int = 0,
 ) -> PlanningInputSnapshot:
     """Return a new snapshot with one evidence-backed strategy regime."""
 
@@ -33,6 +38,12 @@ def attach_household_objectives(
         cumulative_actual_energy_wh=cumulative_actual_energy_wh,
         underperformance_duration_seconds=underperformance_duration_seconds,
         evidence_ids=evidence_ids,
+        previous_regime=(
+            previous_regime.regime if previous_regime is not None else None
+        ),
+        previous_regime_duration_seconds=previous_regime_duration_seconds,
+        recovery_duration_seconds=recovery_duration_seconds,
+        overperformance_duration_seconds=overperformance_duration_seconds,
     )
     return replace(
         snapshot,

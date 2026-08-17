@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -1131,3 +1132,29 @@ def test_main_feeds_visible_sunset_evidence_into_attenuation_ranges(
     assert derived.minutes_from_sunset == pytest.approx(-580.0)
     assert derived.status == "unavailable"
     assert derived.unavailable_reason == "profile_unavailable"
+
+
+def test_regime_duration_window_is_not_reset_by_one_positive_interval() -> None:
+    starts_at = datetime(2026, 8, 17, 9, 30, tzinfo=UTC)
+    deviations = (
+        SimpleNamespace(
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(minutes=30),
+            direction="below_forecast",
+        ),
+        SimpleNamespace(
+            starts_at=starts_at + timedelta(minutes=30),
+            ends_at=starts_at + timedelta(minutes=60),
+            direction="above_forecast",
+        ),
+    )
+
+    assert live_runtime._rolling_pv_direction_seconds(
+        deviations,
+        direction="below_forecast",
+    ) == 1800
+    assert live_runtime._rolling_pv_recovery_seconds(deviations) == 1800
+    assert live_runtime._rolling_pv_direction_seconds(
+        deviations,
+        direction="above_forecast",
+    ) == 1800

@@ -81,6 +81,7 @@ def test_reader_builds_canonical_directional_series_in_one_request(
         "grid_import",
         "grid_export",
     ]
+    assert all(item.history_semantics == "state_hold" for item in result.series)
     assert [point.power_w for point in result.series[0].points] == [1200.0]
     assert [point.power_w for point in result.series[1].points] == [250.0, 0.0]
     assert [point.power_w for point in result.series[2].points] == [0.0, 800.0]
@@ -154,6 +155,22 @@ def test_spec_rejects_implicit_or_unknown_transform() -> None:
         assert str(exc) == "unsupported power history transform"
     else:
         raise AssertionError("unsupported transform was accepted")
+
+
+def test_series_rejects_unknown_history_semantics() -> None:
+    try:
+        PowerHistorySeries(
+            series_id="pv",
+            role="pv_generation",
+            source_entity_id=PV,
+            transform="identity",
+            points=(),
+            history_semantics="smoothed",
+        )
+    except ValueError as exc:
+        assert str(exc) == "unsupported power history semantics"
+    else:
+        raise AssertionError("unsupported history semantics were accepted")
 
 
 def test_cache_reads_only_new_tail_and_deduplicates_boundary() -> None:

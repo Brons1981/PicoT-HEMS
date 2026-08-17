@@ -132,6 +132,52 @@ def _window_selections(
     return tuple(selections)
 
 
+def _progressive_window_selections(
+    intervals: tuple[ProjectedHouseholdEnergyBalanceInterval, ...],
+    preferred_price_windows: tuple[tuple[object, object], ...],
+) -> tuple[tuple[int, ...], ...]:
+    """Order PV-only NOM windows from preferred price window to full horizon."""
+
+    selections: list[tuple[int, ...]] = []
+    seen: set[tuple[int, ...]] = set()
+
+    def add(indexes: tuple[int, ...]) -> None:
+        if indexes and indexes not in seen:
+            seen.add(indexes)
+            selections.append(indexes)
+
+    for preferred_start, preferred_end in preferred_price_windows:
+        preferred = tuple(
+            index
+            for index, interval in enumerate(intervals)
+            if interval.ends_at > preferred_start
+            and interval.starts_at < preferred_end
+        )
+        if not preferred:
+            continue
+        first = preferred[0]
+        last = preferred[-1]
+        expansions = sorted(
+            (
+                (
+                    (first - left) + (right - last),
+                    intervals[left].starts_at,
+                    tuple(range(left, right + 1)),
+                )
+                for left in range(first, -1, -1)
+                for right in range(last, len(intervals))
+            ),
+            key=lambda item: (item[0], item[1]),
+        )
+        for _, _, indexes in expansions:
+            add(indexes)
+
+    add(tuple(range(len(intervals))))
+    for indexes in _window_selections(_surplus_windows(intervals)):
+        add(indexes)
+    return tuple(selections)
+
+
 def _clip_interval_to_snapshot(
     interval: ProjectedHouseholdEnergyBalanceInterval,
     snapshot: PlanningInputSnapshot,
@@ -170,6 +216,7 @@ def construct_pv_charge_only_candidate(
     snapshot: PlanningInputSnapshot,
     balance: ProjectedHouseholdEnergyBalance,
     requirement: StorageEnergyRequirement,
+    preferred_price_windows: tuple[tuple[object, object], ...] = (),
 ) -> CandidateSet:
     """Construct one timed PV-only delegated Candidate without selecting it."""
 
@@ -251,8 +298,10 @@ def construct_pv_charge_only_candidate(
         requirement.confidence,
         *(interval.confidence for interval in intervals),
     )
-    surplus_windows = _surplus_windows(intervals)
-    for window_indexes in _window_selections(surplus_windows):
+    for window_indexes in _progressive_window_selections(
+        intervals,
+        preferred_price_windows,
+    ):
         selected_indexes = frozenset(window_indexes)
         required_at_end = _required_energy_at_interval_end(
             intervals,
@@ -274,7 +323,7 @@ def construct_pv_charge_only_candidate(
                     required_at_end[interval.ends_at] - storage_energy_wh,
                 )
                 acquired_wh = min(_surplus_wh(interval), energy_needed_wh)
-            if acquired_wh > 0.0:
+            if index in selected_indexes:
                 segment_id = _stable_id(
                     "path-segment",
                     f"{snapshot.snapshot_id}|{requirement.requirement_id}|"
@@ -293,8 +342,8 @@ def construct_pv_charge_only_candidate(
                         primitive=planned_primitive,
                         capability_id=capability.capability_id,
                         purpose=(
-                            "Acquire required storage energy from forecast "
-                            "PV surplus"
+                            "Reserve the progressive PV-only NOM window and "
+                            "acquire available forecast PV surplus"
                         ),
                         evidence_ids=tuple(
                             dict.fromkeys(
@@ -307,7 +356,21 @@ def construct_pv_charge_only_candidate(
                         charge_source_policy=ChargeSourcePolicy.PV_ONLY,
                     )
                 )
+
+            if acquired_wh > 0.0:
                 storage_energy_wh += acquired_wh
+            else:
+                deficit_wh = max(
+                    0.0,
+                    interval.household_load_forecast_energy_wh
+                    + interval.known_future_demand_energy_wh
+                    + interval.conversion_losses_wh
+                    + interval.other_planned_household_energy_flows_wh
+                    - interval.expected_usable_pv_energy_wh,
+                )
+                storage_energy_wh = max(0.0, storage_energy_wh - deficit_wh)
+
+            if index in selected_indexes:
                 projected_states.append(
                     ProjectedEnergyState(
                         at=interval.ends_at,
@@ -320,16 +383,6 @@ def construct_pv_charge_only_candidate(
                         storage_energy_wh=storage_energy_wh,
                     )
                 )
-                continue
-            deficit_wh = max(
-                0.0,
-                interval.household_load_forecast_energy_wh
-                + interval.known_future_demand_energy_wh
-                + interval.conversion_losses_wh
-                + interval.other_planned_household_energy_flows_wh
-                - interval.expected_usable_pv_energy_wh,
-            )
-            storage_energy_wh = max(0.0, storage_energy_wh - deficit_wh)
 
         if not segments:
             continue

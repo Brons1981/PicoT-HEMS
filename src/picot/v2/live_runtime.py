@@ -55,6 +55,7 @@ from picot.v2.live_storage_mode_provenance import (
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
+from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.planning_input import (
     HomeAssistantStateReader,
     HouseholdLoadObservation,
@@ -139,11 +140,6 @@ def _winning_plan_confidence(run: CanonicalPipelineRun) -> float | None:
     for outcome in run.outcomes.outcomes:
         if outcome.candidate_id == winning_id:
             return outcome.confidence
-    if winning_id is not None and run.planning_input.current_storage_states:
-        return min(
-            state.confidence
-            for state in run.planning_input.current_storage_states
-        )
     return None
 
 
@@ -1292,6 +1288,7 @@ def _execute_planning_bundle(
     ) = None,
     canonical_execution_runtime: CanonicalExecutionRuntime | None = None,
     canonical_execution_enabled: bool = False,
+    planning_fallback_notifier: PlanningFallbackNotifier | None = None,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -1340,6 +1337,25 @@ def _execute_planning_bundle(
                     application_id=application_id,
                     occurred_at=bundle.snapshot.captured_at,
                 )
+    if planning_fallback_notifier is not None:
+        try:
+            planning_fallback_notifier.update(
+                token,
+                run=run,
+                now=bundle.snapshot.captured_at,
+            )
+        except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_planning_notification_error",
+                        "run_id": run.planning_input.run_id,
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
     planner_cycle_ms = stage_timings.canonical_total_ms
     pipeline_total_ms = round(planning_input_ms + stage_timings.canonical_total_ms, 3)
 
@@ -1625,6 +1641,8 @@ def main() -> None:
             requested_at=lambda: datetime.now(UTC),
         )
     )
+    planning_fallback_notifier = PlanningFallbackNotifier()
+
     def reset_storage_mode_override(
         reset_id: str,
     ) -> dict[str, object]:
@@ -1926,6 +1944,7 @@ def main() -> None:
             ),
             canonical_execution_runtime=canonical_execution_runtime,
             canonical_execution_enabled=canonical_execution_enabled,
+            planning_fallback_notifier=planning_fallback_notifier,
         )
 
     previous_signature: str | None = None

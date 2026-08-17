@@ -664,6 +664,14 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .planning-fact-card h3 { margin-top: 0; }
     .planning-fact-card.full-width { grid-column: 1 / -1; }
+    .planning-attention {
+      grid-column: 1 / -1;
+      padding: 12px;
+      border: 1px solid #ef5350;
+      border-radius: 10px;
+      background: rgba(239, 83, 80, 0.14);
+      color: #ffb4ab;
+    }
     @media (max-width: 1000px) {
       .pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -2394,6 +2402,13 @@ DASHBOARD_HTML = """<!doctype html>
       }
       const root = document.createElement("div");
       root.className = "planning-facts";
+      const attention = status.attention ?? {};
+      if (attention.required === true) {
+        const warning = document.createElement("section");
+        warning.className = "planning-attention";
+        warning.textContent = `${attention.title} — ${attention.message}`;
+        root.append(warning);
+      }
       const addCard = (title, rows, fullWidth = false) => {
         const panel = document.createElement("article");
         panel.className = "planning-fact-card" +
@@ -3860,6 +3875,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         default=None,
     )
     applicable_plan = due_plan or next_plan
+    fallback_active = run.evaluation.status == "fallback_active"
     return {
         "run_id": run.planning_input.run_id,
         "snapshot_id": run.planning_input.snapshot_id,
@@ -3869,6 +3885,22 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             if run.planning_input.horizon_end is not None
             else None
         ),
+        "attention": {
+            "required": fallback_active,
+            "code": (
+                "fallback_no_actionable_plan" if fallback_active else None
+            ),
+            "title": (
+                "Geen uitvoerbaar plan beschikbaar"
+                if fallback_active
+                else None
+            ),
+            "message": (
+                "De veilige terugvalmodus blijft actief; aandacht vereist."
+                if fallback_active
+                else None
+            ),
+        },
         "strategy": {
             "status": regime.regime if regime is not None else "not_available",
             "reason": regime.reason if regime is not None else "not_available",
@@ -3886,7 +3918,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "status": run.evaluation.status,
             "candidate_family": (
                 winning_candidate.family
-                if winning_candidate is not None
+                if winning_candidate is not None and not fallback_active
                 else None
             ),
             "reason": run.evaluation.reason,
@@ -3971,6 +4003,8 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             {
                 "family": candidate.family,
                 "selected": (
+                    not fallback_active
+                    and
                     candidate.candidate_id
                     == run.evaluation.winning_candidate_id
                 ),
@@ -3985,12 +4019,12 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 "pv_contribution_wh": (
                     outcome.pv_storage_contribution_wh
                     if outcome is not None
-                    else 0.0
+                    else None
                 ),
                 "grid_contribution_wh": (
                     outcome.grid_storage_contribution_wh
                     if outcome is not None
-                    else 0.0
+                    else None
                 ),
             }
             for candidate in run.candidate_set.candidates

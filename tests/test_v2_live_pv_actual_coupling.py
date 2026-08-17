@@ -449,9 +449,10 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         live_pv_canary_target_entity: str,
         storage_mode_provenance_runtime: object,
         storage_mode_transition_history: object,
-        canonical_execution_runtime: object,
-        canonical_execution_enabled: bool,
-    ) -> None:
+            canonical_execution_runtime: object,
+            canonical_execution_enabled: bool,
+            planning_fallback_notifier: object,
+        ) -> None:
         del (
                 price_config,
                 web_view_store,
@@ -466,9 +467,10 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             live_pv_canary_target_entity,
             storage_mode_provenance_runtime,
             storage_mode_transition_history,
-            canonical_execution_runtime,
-            canonical_execution_enabled,
-        )
+                canonical_execution_runtime,
+                canonical_execution_enabled,
+                planning_fallback_notifier,
+            )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))
         power_history_timings.append(power_history_read_ms)

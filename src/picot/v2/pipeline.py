@@ -252,6 +252,17 @@ class CanonicalPipeline:
             derivation_reason=derivation_reason,
         )
         has_evaluated_alternatives = bool(delegated_outcomes)
+        actionable_outcomes = tuple(
+            outcome
+            for outcome in delegated_outcomes
+            if outcome.requirement_satisfied
+            and (
+                outcome.pv_storage_contribution_wh
+                + outcome.grid_storage_contribution_wh
+            )
+            > 1e-6
+        )
+        has_actionable_alternatives = bool(actionable_outcomes)
         outcomes = CandidateOutcomeSet(
             run_id=run_id,
             snapshot_id=snapshot_id,
@@ -269,7 +280,7 @@ class CanonicalPipeline:
         stage_started = perf_counter()
         winning_outcome = (
             min(
-                delegated_outcomes,
+                actionable_outcomes,
                 key=lambda item: (
                     item.grid_storage_contribution_wh,
                     -item.pv_storage_contribution_wh,
@@ -280,7 +291,7 @@ class CanonicalPipeline:
                     item.candidate_id,
                 ),
             )
-            if has_evaluated_alternatives
+            if has_actionable_alternatives
             else None
         )
         winning_candidate = (
@@ -320,12 +331,12 @@ class CanonicalPipeline:
                     if requirement_satisfied
                     else "pv_charge_only maximizes storage progress using PV-only energy"
                 )
-                if has_evaluated_alternatives
+                if has_actionable_alternatives
                 else "no actionable candidate with a calculated outcome"
             ),
             status=(
                 "winner_selected"
-                if has_evaluated_alternatives
+                if has_actionable_alternatives
                 else "fallback_active"
             ),
             evaluated_candidate_ids=tuple(
@@ -337,7 +348,7 @@ class CanonicalPipeline:
                     if requirement_satisfied
                     else "objective:maximize_storage_progress_without_grid"
                 )
-                if has_evaluated_alternatives
+                if has_actionable_alternatives
                 else "fallback:no_actionable_candidate"
             ),
         )
@@ -569,7 +580,7 @@ class CanonicalPipeline:
             plan_set_id=execution_plan_set.plan_set_id,
             status=(
                 "fallback_active"
-                if not has_evaluated_alternatives and observer_plans
+                if not has_actionable_alternatives and observer_plans
                 else (
                     "live_plan_ready"
                     if control_change_allowed
@@ -580,7 +591,7 @@ class CanonicalPipeline:
             ),
             reason=(
                 "safe baseline mode active without an actionable calculated plan"
-                if not has_evaluated_alternatives and observer_plans
+                if not has_actionable_alternatives and observer_plans
                 else (
                     "winning path approved for live execution"
                     if control_change_allowed

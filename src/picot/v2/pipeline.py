@@ -256,6 +256,7 @@ class CanonicalPipeline:
             outcome
             for outcome in delegated_outcomes
             if outcome.requirement_satisfied
+            and outcome.confidence > 0.0
             and (
                 outcome.pv_storage_contribution_wh
                 + outcome.grid_storage_contribution_wh

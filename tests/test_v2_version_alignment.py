@@ -95,8 +95,13 @@ def test_v2_addon_exposes_household_load_fallback_power() -> None:
     }
 
     assert options.get("household_load_fallback_power_w") == "500.0"
+    assert options.get("household_load_fallback_confidence") == "0.50"
     assert (
         "  household_load_fallback_power_w: float(0,)"
+        in schema_lines
+    )
+    assert (
+        "  household_load_fallback_confidence: float(0,1)"
         in schema_lines
     )
 

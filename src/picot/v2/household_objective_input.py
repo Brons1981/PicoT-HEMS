@@ -27,6 +27,10 @@ def attach_household_objectives(
     previous_regime_duration_seconds: int = 0,
     recovery_duration_seconds: int = 0,
     overperformance_duration_seconds: int = 0,
+    remaining_storage_need_wh: float | None = None,
+    conservative_remaining_pv_surplus_wh: float | None = None,
+    remaining_pv_storage_margin_wh: float | None = None,
+    storage_target_required_by: str | None = None,
 ) -> PlanningInputSnapshot:
     """Return a new snapshot with one evidence-backed strategy regime."""
 
@@ -44,6 +48,12 @@ def attach_household_objectives(
         previous_regime_duration_seconds=previous_regime_duration_seconds,
         recovery_duration_seconds=recovery_duration_seconds,
         overperformance_duration_seconds=overperformance_duration_seconds,
+        remaining_storage_need_wh=remaining_storage_need_wh,
+        conservative_remaining_pv_surplus_wh=(
+            conservative_remaining_pv_surplus_wh
+        ),
+        remaining_pv_storage_margin_wh=remaining_pv_storage_margin_wh,
+        storage_target_required_by=storage_target_required_by,
     )
     return replace(
         snapshot,

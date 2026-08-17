@@ -9,6 +9,7 @@ from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
 )
 from picot.v2.contracts import BMSCalibrationEvidence
+from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.storage_capability_snapshot import (
     build_storage_capability_snapshot_set,
@@ -179,6 +180,71 @@ def test_canonical_plan_restores_smart_discharge_before_future_pv_window() -> No
         "balance_discharge_only"
     )
     assert run.primitive_boundary.planned_vendor_mode == "Alleen slim ontladen"
+
+
+def test_self_consumption_regime_uses_nom_before_future_pv_window() -> None:
+    live = _live_run()
+    planning_input = live.planning_input
+    assert planning_input.pv_energy_timeline is not None
+    assert planning_input.household_load_forecast is not None
+    shift = timedelta(hours=1)
+    shifted_input = replace(
+        planning_input,
+        horizon_end=(planning_input.horizon_end + shift),
+        pv_energy_timeline=replace(
+            planning_input.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    interval,
+                    starts_at=interval.starts_at + shift,
+                    ends_at=interval.ends_at + shift,
+                )
+                for interval in planning_input.pv_energy_timeline.intervals
+            ),
+        ),
+        household_load_forecast=replace(
+            planning_input.household_load_forecast,
+            intervals=tuple(
+                replace(
+                    interval,
+                    starts_at=interval.starts_at + shift,
+                    ends_at=interval.ends_at + shift,
+                )
+                for interval in planning_input.household_load_forecast.intervals
+            ),
+        ),
+        household_planning_regime=HouseholdPlanningRegime(
+            regime_id="household-regime-self-consumption-test",
+            profile_id="profile-test",
+            profile_version=1,
+            regime="self_consumption_first",
+            objective_order=(
+                "self_consumption",
+                "cost_optimization",
+                "reserve_availability",
+            ),
+            reason="low_confidence_and_material_pv_underperformance",
+            forecast_confidence=0.40,
+            cumulative_forecast_energy_wh=2000.0,
+            cumulative_actual_energy_wh=1000.0,
+            deviation_energy_wh=-1000.0,
+            deviation_percent=-50.0,
+            underperformance_duration_seconds=1800,
+            evidence_ids=("pv-evidence-test",),
+        ),
+    )
+
+    run = CanonicalPipeline().run(
+        planning_input=shifted_input,
+        control_change_allowed=True,
+    )
+
+    assert run.primitive_boundary.status == "request_ready"
+    assert run.primitive_boundary.planned_primitive is not None
+    assert run.primitive_boundary.planned_primitive.value == (
+        "balance_bidirectional"
+    )
+    assert run.primitive_boundary.planned_vendor_mode == "Nul op de meter"
 
 
 def test_canonical_runtime_dispatches_the_exact_approved_mode() -> None:

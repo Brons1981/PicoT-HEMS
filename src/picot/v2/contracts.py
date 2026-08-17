@@ -857,7 +857,8 @@ class DelegatedStorageCandidateOutcome:
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"Candidate Outcome {label} must be between 0 and 1")
         if self.requirement_satisfied != (
-            self.storage_energy_at_requirement_wh >= self.required_energy_wh
+            self.storage_energy_at_requirement_wh + 1e-6
+            >= self.required_energy_wh
         ):
             raise ValueError("requirement satisfaction must match projected storage energy")
         for values, label in (

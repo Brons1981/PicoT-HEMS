@@ -27,6 +27,7 @@ REQUIREMENT_ID = "storage-requirement"
 def _candidate_set(
     *,
     source_policy: ChargeSourcePolicy = ChargeSourcePolicy.PV_ONLY,
+    required_energy_wh: float = 1200.0,
 ) -> CandidateSet:
     segment = PathSegment(
         segment_id="segment-pv-charge-only",
@@ -110,7 +111,7 @@ def _candidate_set(
         snapshot_id=SNAPSHOT_ID,
         storage_state_id="storage-home",
         projected_balance_id=balance.balance_id,
-        required_energy_wh=1200.0,
+        required_energy_wh=required_energy_wh,
         required_soc=0.15,
         required_by=REQUIRED_BY,
         reason="household_requirement",
@@ -172,6 +173,17 @@ def test_outcome_preserves_confidence_recoverability_and_lineage() -> None:
         "storage-evidence",
     }
     assert outcome.method_version == "delegated-storage-outcome:v1"
+
+
+def test_outcome_accepts_sub_microwatt_hour_rounding_at_requirement() -> None:
+    outcome_set = _simulate(
+        _candidate_set(required_energy_wh=1200.0000005)
+    )
+
+    outcome = outcome_set.outcomes[0]
+    assert outcome.requirement_satisfied is True
+    assert outcome.storage_energy_at_requirement_wh == pytest.approx(1200.0)
+    assert outcome.required_energy_wh == pytest.approx(1200.0000005)
 
 
 def test_pv_only_simulation_rejects_grid_supported_source_policy() -> None:

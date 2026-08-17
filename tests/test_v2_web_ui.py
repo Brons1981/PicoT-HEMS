@@ -229,6 +229,20 @@ def test_dashboard_contains_readable_household_load_forecast_panel() -> None:
     assert "view.household_load_forecast" in DASHBOARD_HTML
 
 
+def test_dashboard_contains_canonical_pv_forecast_actual_history_chart() -> None:
+    assert 'id="pv-forecast-actual-chart"' in DASHBOARD_HTML
+    assert "renderPvForecastActualChart" in DASHBOARD_HTML
+    assert "planningInput?.attributes?.pv_interval_deviations" in DASHBOARD_HTML
+    assert "Solcast forecast en bereik" in DASHBOARD_HTML
+    assert "Werkelijke PV" in DASHBOARD_HTML
+    assert 'class: "forecast-range"' in DASHBOARD_HTML
+    assert 'class: "forecast-line"' in DASHBOARD_HTML
+    assert 'class: "actual-line"' in DASHBOARD_HTML
+    assert "Nog geen gesloten PV-intervallen met forecast en werkelijkheid." in (
+        DASHBOARD_HTML
+    )
+
+
 def test_dashboard_preserves_open_quarter_details_during_refresh() -> None:
     assert (
         'container.querySelector("details")?.open ?? false'
@@ -514,4 +528,3 @@ def test_web_view_store_overlays_fast_grid_power_without_planner_run() -> None:
     assert republished["pipeline"][0]["attributes"]["sources"][0][
         "raw_state"
     ] == "8.345"
-

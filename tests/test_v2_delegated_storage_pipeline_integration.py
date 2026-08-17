@@ -259,7 +259,7 @@ def test_projection_explains_winner_and_observer_only_plan() -> None:
     assert planned["segments"][0]["requested_power_w"] is None
 
 
-def test_partial_pv_progress_wins_when_full_target_is_unreachable() -> None:
+def test_partial_pv_progress_cannot_be_released_as_a_winner() -> None:
     source = _snapshot()
     first_pv = source.pv_energy_timeline.intervals[0]
     snapshot = replace(
@@ -278,21 +278,12 @@ def test_partial_pv_progress_wins_when_full_target_is_unreachable() -> None:
     outcome = run.outcomes.outcomes[0]
     assert outcome.requirement_satisfied is False
     assert outcome.pv_storage_contribution_wh == pytest.approx(100.0)
-    assert run.evaluation.winning_candidate_id == outcome.candidate_id
-    assert run.evaluation.decisive_step == (
-        "objective:maximize_storage_progress_without_grid"
-    )
-    assert run.evaluation.reason == (
-        "pv_charge_only maximizes storage progress using PV-only energy"
-    )
-    assert len(run.execution_plan_set.plans) == 1
+    assert run.evaluation.status == "fallback_active"
+    assert run.evaluation.winning_candidate_id != outcome.candidate_id
+    assert run.evaluation.decisive_step == "fallback:no_actionable_candidate"
+    assert run.execution_record.status != "observer_only_plan_ready"
     explanation = _build_plan_explanation(run)
-    selected = next(plan for plan in explanation["plans"] if plan["selected"])
-    assert selected["reason_nl"] == (
-        "Gekozen omdat dit plan zoveel mogelijk verwachte PV opslaat zonder "
-        "netladen; het batterijdoel blijft naar verwachting 0,10 kWh tekort."
+    partial = next(
+        plan for plan in explanation["plans"] if plan["family"] == "pv_charge_only"
     )
-    assert explanation["decision"]["reason_nl"] == (
-        "Dit plan slaat zoveel mogelijk verwachte PV op zonder netladen; het "
-        "volledige batterijdoel is binnen de deadline niet haalbaar."
-    )
+    assert partial["selected"] is False

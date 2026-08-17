@@ -1688,18 +1688,70 @@ class WebViewStore:
         self._lock = Lock()
         self._condition = Condition(self._lock)
         self._latest_json: str | None = None
+        self._fast_grid_power_source: dict[str, object] | None = None
         self._revision = 0
         self._reset_storage_mode_override: (
             Callable[[str], dict[str, object]] | None
         ) = None
 
+    def _overlay_fast_grid_power_source(
+        self,
+        view: dict[str, object],
+    ) -> None:
+        source = self._fast_grid_power_source
+        pipeline = view.get("pipeline")
+        if source is None or not isinstance(pipeline, list):
+            return
+        for item in pipeline:
+            if not isinstance(item, dict) or item.get("stage") != 1:
+                continue
+            attributes = item.get("attributes")
+            if not isinstance(attributes, dict):
+                return
+            sources = attributes.get("sources")
+            if not isinstance(sources, list):
+                return
+            for index, candidate in enumerate(sources):
+                if (
+                    isinstance(candidate, dict)
+                    and candidate.get("semantic_role") == "grid_power"
+                ):
+                    sources[index] = dict(source)
+                    return
+
+    def _replace_latest_locked(
+        self,
+        view: dict[str, object],
+    ) -> None:
+        self._overlay_fast_grid_power_source(view)
+        self._latest_json = json.dumps(view, separators=(",", ":"))
+        self._revision += 1
+        self._condition.notify_all()
+
     def publish(self, view: dict[str, object]) -> None:
         """Serialize completely before atomically replacing the snapshot."""
-        serialized = json.dumps(view, separators=(",", ":"))
+        copied: object = json.loads(json.dumps(view))
+        if not isinstance(copied, dict):
+            raise TypeError("web view must serialize to an object")
         with self._condition:
-            self._latest_json = serialized
-            self._revision += 1
-            self._condition.notify_all()
+            self._replace_latest_locked(copied)
+
+    def publish_fast_grid_power_source(
+        self,
+        source: dict[str, object],
+    ) -> None:
+        """Overlay changed source evidence without running the Planner."""
+        copied_source: object = json.loads(json.dumps(source))
+        if not isinstance(copied_source, dict):
+            raise TypeError("fast grid power source must be an object")
+        with self._condition:
+            self._fast_grid_power_source = copied_source
+            if self._latest_json is None:
+                return
+            latest: object = json.loads(self._latest_json)
+            if not isinstance(latest, dict):
+                raise TypeError("latest web view must be an object")
+            self._replace_latest_locked(latest)
 
     def latest_json(self) -> str | None:
         """Return the latest immutable JSON snapshot, when available."""

@@ -63,10 +63,6 @@ from picot.v2.planning_input import (
     load_options,
 )
 from picot.v2.projection import Card, Projection, project
-from picot.v2.remaining_pv_storage_feasibility import (
-    RemainingPVStorageFeasibility,
-    derive_remaining_pv_storage_feasibility,
-)
 from picot.v2.pv_actual_history import HomeAssistantPVHistoryReader
 from picot.v2.pv_attenuation_aggregation import (
     PVAttenuationAggregationConfig,
@@ -97,6 +93,10 @@ from picot.v2.pv_sunset_runtime import (
 from picot.v2.pv_sunset_source import (
     HomeAssistantSunsetReader,
     SunsetReadResult,
+)
+from picot.v2.remaining_pv_storage_feasibility import (
+    RemainingPVStorageFeasibility,
+    derive_remaining_pv_storage_feasibility,
 )
 from picot.v2.web_ui import (
     WebViewStore,

@@ -318,21 +318,52 @@ DASHBOARD_HTML = """<!doctype html>
     </header>
 
     <nav class="dashboard-tabs" aria-label="Dashboardweergave">
-      <button class="tab-button" type="button" data-tab="overview" aria-selected="true">Overzicht</button>
-      <button class="tab-button" type="button" data-tab="planning" aria-selected="false">Dagplanning</button>
-      <button class="tab-button" type="button" data-tab="history" aria-selected="false">Historie</button>
-      <button class="tab-button" type="button" data-tab="strategy" aria-selected="false">Strategie</button>
-      <button class="tab-button" type="button" data-tab="technical" aria-selected="false">Techniek</button>
+      <button
+        class="tab-button" type="button" data-tab="overview"
+        aria-selected="true"
+      >Overzicht</button>
+      <button
+        class="tab-button" type="button" data-tab="planning"
+        aria-selected="false"
+      >Dagplanning</button>
+      <button
+        class="tab-button" type="button" data-tab="history"
+        aria-selected="false"
+      >Historie</button>
+      <button
+        class="tab-button" type="button" data-tab="strategy"
+        aria-selected="false"
+      >Strategie</button>
+      <button
+        class="tab-button" type="button" data-tab="technical"
+        aria-selected="false"
+      >Techniek</button>
     </nav>
-    <section id="tab-overview" class="tab-panel" data-tab-panel="overview"></section>
-    <section id="tab-planning" class="tab-panel" data-tab-panel="planning" hidden></section>
-    <section id="tab-history" class="tab-panel" data-tab-panel="history" hidden>
-      <p class="empty-panel">De gezamenlijke energie- en beslissingshistorie wordt in de volgende dashboard-slice toegevoegd.</p>
+    <section
+      id="tab-overview" class="tab-panel" data-tab-panel="overview"
+    ></section>
+    <section
+      id="tab-planning" class="tab-panel" data-tab-panel="planning" hidden
+    ></section>
+    <section
+      id="tab-history" class="tab-panel" data-tab-panel="history" hidden
+    >
+      <p class="empty-panel">
+        De gezamenlijke energie- en beslissingshistorie wordt in de volgende
+        dashboard-slice toegevoegd.
+      </p>
     </section>
-    <section id="tab-strategy" class="tab-panel" data-tab-panel="strategy" hidden>
-      <p class="empty-panel">Plannerstrategie en gebruikerskeuzes worden hier zichtbaar zodra de bijbehorende canonieke contracten beschikbaar zijn.</p>
+    <section
+      id="tab-strategy" class="tab-panel" data-tab-panel="strategy" hidden
+    >
+      <p class="empty-panel">
+        Plannerstrategie en gebruikerskeuzes worden hier zichtbaar zodra de
+        bijbehorende canonieke contracten beschikbaar zijn.
+      </p>
     </section>
-    <section id="tab-technical" class="tab-panel" data-tab-panel="technical" hidden></section>
+    <section
+      id="tab-technical" class="tab-panel" data-tab-panel="technical" hidden
+    ></section>
 
     <section class="metadata" aria-label="Runinformatie">
       <div class="metric">

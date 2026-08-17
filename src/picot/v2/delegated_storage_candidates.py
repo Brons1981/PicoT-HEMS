@@ -173,9 +173,9 @@ def _progressive_window_selections(
         for _, _, indexes in expansions:
             add(indexes)
 
-    add(tuple(range(len(intervals))))
     for indexes in _window_selections(_surplus_windows(intervals)):
         add(indexes)
+    add(tuple(range(len(intervals))))
     return tuple(selections)
 
 

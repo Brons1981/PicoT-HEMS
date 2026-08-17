@@ -20,6 +20,7 @@ from picot.v2.projection import project
 from picot.v2.web_ui import (
     DASHBOARD_HTML,
     WebViewStore,
+    _power_history_display_points,
     build_web_view,
 )
 
@@ -282,6 +283,9 @@ def test_web_view_serializes_canonical_power_history() -> None:
         "starts_at": "2026-08-17T00:00:00+00:00",
         "ends_at": "2026-08-17T10:00:00+00:00",
         "method_version": "home-assistant-power-history:v1",
+        "display_aggregation": "five_minute_average",
+        "display_interval_seconds": 300,
+        "display_curve": "linear_between_bucket_averages",
         "series": [
             {
                 "series_id": "pv",
@@ -289,6 +293,8 @@ def test_web_view_serializes_canonical_power_history() -> None:
                 "source_entity_id": "sensor.pv",
                 "transform": "identity",
                 "history_semantics": "state_hold",
+                "display_method": "time_weighted_average",
+                "display_points": [],
                 "points": [
                     {
                         "sampled_at": "2026-08-17T10:00:00+00:00",
@@ -299,6 +305,78 @@ def test_web_view_serializes_canonical_power_history() -> None:
             }
         ],
     }
+
+
+def test_power_history_display_time_weights_state_hold_transitions() -> None:
+    starts_at = datetime(2026, 8, 17, 10, 0, tzinfo=UTC)
+    series = PowerHistorySeries(
+        series_id="battery",
+        role="battery_charge",
+        source_entity_id="sensor.battery",
+        transform="identity",
+        history_semantics="state_hold",
+        points=(
+            PowerHistoryPoint(
+                sampled_at=starts_at,
+                power_w=0.0,
+                evidence_id="battery-0",
+            ),
+            PowerHistoryPoint(
+                sampled_at=starts_at + timedelta(minutes=2),
+                power_w=100.0,
+                evidence_id="battery-100",
+            ),
+        ),
+    )
+
+    assert _power_history_display_points(
+        series,
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(minutes=5),
+    ) == [
+        {
+            "sampled_at": "2026-08-17T10:02:30+00:00",
+            "power_w": 60.0,
+            "coverage_ratio": 1.0,
+            "derived_from_evidence_ids": ["battery-0", "battery-100"],
+        }
+    ]
+
+
+def test_power_history_display_averages_samples_without_filling_gaps() -> None:
+    starts_at = datetime(2026, 8, 17, 10, 0, tzinfo=UTC)
+    series = PowerHistorySeries(
+        series_id="household",
+        role="household_load",
+        source_entity_id="sensor.household",
+        transform="identity",
+        history_semantics="sampled_linear",
+        points=(
+            PowerHistoryPoint(
+                sampled_at=starts_at + timedelta(minutes=1),
+                power_w=20.0,
+                evidence_id="household-20",
+            ),
+            PowerHistoryPoint(
+                sampled_at=starts_at + timedelta(minutes=4),
+                power_w=40.0,
+                evidence_id="household-40",
+            ),
+        ),
+    )
+
+    assert _power_history_display_points(
+        series,
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(minutes=10),
+    ) == [
+        {
+            "sampled_at": "2026-08-17T10:02:30+00:00",
+            "power_w": 30.0,
+            "coverage_ratio": 1.0,
+            "derived_from_evidence_ids": ["household-20", "household-40"],
+        }
+    ]
 
 
 def test_dashboard_contains_canonical_power_history_chart() -> None:
@@ -329,8 +407,8 @@ def test_power_history_uses_readable_selectable_day_chart() -> None:
     assert "const hasRange = rawMinimum < 0 || rawMaximum > 0;" in DASHBOARD_HTML
     assert "const gridValues = Array.from(new Set([" in DASHBOARD_HTML
     assert "class: value === 0" in DASHBOARD_HTML
-    assert "? ` H ${point.x} V ${point.y}`" in DASHBOARD_HTML
-    assert ": ` L ${point.x} ${point.y}`;" in DASHBOARD_HTML
+    assert "const sourcePoints = [...item.display_points]" in DASHBOARD_HTML
+    assert "path += ` L ${point.x} ${point.y}`;" in DASHBOARD_HTML
     assert 'class: `power-flow-area ${item.role}`' in DASHBOARD_HTML
     assert "powerHistoryZoomWindow" in DASHBOARD_HTML
     assert '["+", "Inzoomen"' in DASHBOARD_HTML
@@ -338,7 +416,6 @@ def test_power_history_uses_readable_selectable_day_chart() -> None:
     assert 'class: `power-zoom-hitbox ${powerHistoryInteractionMode}`' in DASHBOARD_HTML
     assert 'hitbox.addEventListener("pointerdown"' in DASHBOARD_HTML
     assert 'hitbox.addEventListener("pointerup"' in DASHBOARD_HTML
-    assert 'item.history_semantics === "state_hold"' in DASHBOARD_HTML
     assert "powerHistoryInteractionMode" in DASHBOARD_HTML
     assert '["pan", "✋", "Versleep het ingezoomde tijdvak"]' in DASHBOARD_HTML
     assert 'powerHistoryInteractionMode === "pan"' in DASHBOARD_HTML

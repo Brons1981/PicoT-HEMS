@@ -199,6 +199,7 @@ def _attach_household_power_history(
         source_entity_id="picot:household-load-observation",
         transform="identity",
         points=points,
+        history_semantics="sampled_linear",
     )
     series = (*snapshot.series, household)
     return replace(

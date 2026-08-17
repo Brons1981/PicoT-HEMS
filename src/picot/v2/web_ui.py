@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Condition, Lock
+from typing import TypedDict
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -17,6 +18,14 @@ from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.projection import Projection
 
 POWER_HISTORY_DISPLAY_INTERVAL = timedelta(minutes=5)
+SELF_CONSUMPTION_DISPLAY_INTERVAL = timedelta(minutes=10)
+
+
+class _DisplayPowerPoint(TypedDict):
+    sampled_at: str
+    power_w: float
+    coverage_ratio: float
+    derived_from_evidence_ids: list[str]
 
 
 def _power_history_display_points(
@@ -24,13 +33,14 @@ def _power_history_display_points(
     *,
     starts_at: datetime,
     ends_at: datetime,
-) -> list[dict[str, object]]:
+    interval: timedelta = POWER_HISTORY_DISPLAY_INTERVAL,
+) -> list[_DisplayPowerPoint]:
     """Derive factual five-minute display averages without changing raw evidence."""
     points = tuple(sorted(series.points, key=lambda item: item.sampled_at))
-    result: list[dict[str, object]] = []
+    result: list[_DisplayPowerPoint] = []
     bucket_start = starts_at
     while bucket_start < ends_at:
-        bucket_end = min(bucket_start + POWER_HISTORY_DISPLAY_INTERVAL, ends_at)
+        bucket_end = min(bucket_start + interval, ends_at)
         bucket_points = tuple(
             point
             for point in points
@@ -98,6 +108,125 @@ def _power_history_display_points(
             })
         bucket_start = bucket_end
     return result
+
+
+def _self_consumption_history_view(
+    power_history: PowerHistorySnapshot | None,
+) -> dict[str, object]:
+    """Derive the Dutch PV self-consumption view from canonical flows."""
+    if power_history is None:
+        return {
+            "available": False,
+            "status": "unavailable",
+            "error": None,
+            "starts_at": None,
+            "ends_at": None,
+            "display_interval_seconds": 600,
+            "definition": "clamp(pv_generation_w-grid_export_w,0,pv_generation_w)",
+            "current_values": {},
+            "series": [],
+        }
+
+    by_role = {series.role: series for series in power_history.series}
+    missing_roles = [
+        role
+        for role in ("pv_generation", "grid_export", "grid_import")
+        if role not in by_role or not by_role[role].points
+    ]
+    if power_history.status != "available" or missing_roles:
+        return {
+            "available": False,
+            "status": power_history.status,
+            "error": (
+                "missing_roles:" + ",".join(missing_roles)
+                if missing_roles
+                else power_history.error
+            ),
+            "starts_at": power_history.starts_at.isoformat(),
+            "ends_at": power_history.ends_at.isoformat(),
+            "display_interval_seconds": 600,
+            "definition": "clamp(pv_generation_w-grid_export_w,0,pv_generation_w)",
+            "current_values": {},
+            "series": [],
+        }
+
+    display_by_role = {
+        role: _power_history_display_points(
+            by_role[role],
+            starts_at=power_history.starts_at,
+            ends_at=power_history.ends_at,
+            interval=SELF_CONSUMPTION_DISPLAY_INTERVAL,
+        )
+        for role in ("pv_generation", "grid_export", "grid_import")
+    }
+    pv_by_time = {
+        point["sampled_at"]: point
+        for point in display_by_role["pv_generation"]
+    }
+    export_by_time = {
+        point["sampled_at"]: point
+        for point in display_by_role["grid_export"]
+    }
+    local_pv_points: list[_DisplayPowerPoint] = []
+    for sampled_at, pv_point in pv_by_time.items():
+        export_point = export_by_time.get(sampled_at)
+        if export_point is None:
+            continue
+        pv_power_w = max(0.0, pv_point["power_w"])
+        grid_export_w = max(0.0, export_point["power_w"])
+        local_pv_points.append({
+            "sampled_at": sampled_at,
+            "power_w": min(pv_power_w, max(0.0, pv_power_w - grid_export_w)),
+            "coverage_ratio": min(
+                pv_point["coverage_ratio"],
+                export_point["coverage_ratio"],
+            ),
+            "derived_from_evidence_ids": list(dict.fromkeys([
+                *pv_point["derived_from_evidence_ids"],
+                *export_point["derived_from_evidence_ids"],
+            ])),
+        })
+
+    current_pv_w = max(0.0, by_role["pv_generation"].points[-1].power_w)
+    current_export_w = max(0.0, by_role["grid_export"].points[-1].power_w)
+    current_import_w = max(0.0, by_role["grid_import"].points[-1].power_w)
+
+    return {
+        "available": bool(local_pv_points),
+        "status": "available" if local_pv_points else "empty",
+        "error": None,
+        "starts_at": power_history.starts_at.isoformat(),
+        "ends_at": power_history.ends_at.isoformat(),
+        "display_interval_seconds": int(
+            SELF_CONSUMPTION_DISPLAY_INTERVAL.total_seconds()
+        ),
+        "definition": "clamp(pv_generation_w-grid_export_w,0,pv_generation_w)",
+        "current_values": {
+            "pv_generation": current_pv_w,
+            "local_pv_use": min(
+                current_pv_w,
+                max(0.0, current_pv_w - current_export_w),
+            ),
+            "grid_import": current_import_w,
+        },
+        "series": [
+            {
+                "series_id": "pv_generation_total",
+                "role": "pv_generation",
+                "points": display_by_role["pv_generation"],
+            },
+            {
+                "series_id": "local_pv_use",
+                "role": "local_pv_use",
+                "points": local_pv_points,
+            },
+            {
+                "series_id": "grid_import_positive",
+                "role": "grid_import",
+                "points": display_by_role["grid_import"],
+            },
+        ],
+    }
 
 
 DASHBOARD_HTML = """<!doctype html>
@@ -341,6 +470,17 @@ DASHBOARD_HTML = """<!doctype html>
     .power-flow-area { stroke: none; opacity: 0.14; }
     .power-flow-area.grid_export { fill: #aab2bd; opacity: 0.24; }
     .power-flow-area.battery_charge { fill: #35a862; }
+    .self-consumption-area.pv_generation { fill: #ffd600; opacity: 0.22; }
+    .self-consumption-area.local_pv_use { fill: #2196f3; opacity: 0.80; }
+    .self-consumption-area.grid_import { fill: #d32f2f; opacity: 0.38; }
+    .self-consumption-line {
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .self-consumption-line.pv_generation { stroke: #ffd600; stroke-width: 2; }
+    .self-consumption-line.local_pv_use { stroke: #2196f3; stroke-width: 2; }
+    .self-consumption-line.grid_import { stroke: #d32f2f; stroke-width: 1.5; }
     .power-zero-line { stroke: #96a6b8; stroke-width: 1.5; }
     .energy-chart-legend {
       display: flex;
@@ -559,6 +699,14 @@ DASHBOARD_HTML = """<!doctype html>
         aria-live="polite"
       >
         Nog geen canonieke vermogenshistorie beschikbaar.
+      </section>
+      <h2>Zelfverbruik ten opzichte van PV</h2>
+      <section
+        id="self-consumption-history-chart"
+        class="timeline-panel energy-chart-panel"
+        aria-live="polite"
+      >
+        Nog geen zelfverbruikshistorie beschikbaar.
       </section>
       <h2>Zon: forecast en werkelijkheid</h2>
       <section
@@ -1524,6 +1672,150 @@ DASHBOARD_HTML = """<!doctype html>
       container.appendChild(scroll);
     }
 
+    function renderSelfConsumptionHistory(history) {
+      const container = element("self-consumption-history-chart");
+      container.replaceChildren();
+      const series = Array.isArray(history?.series) ? history.series : [];
+      const start = new Date(history?.starts_at);
+      const end = new Date(history?.ends_at);
+      if (
+        history?.status !== "available" ||
+        Number.isNaN(start.getTime()) ||
+        Number.isNaN(end.getTime()) ||
+        !series.some((item) => item.points?.length > 0)
+      ) {
+        container.textContent = history?.error
+          ? `Zelfverbruikshistorie niet beschikbaar: ${history.error}.`
+          : "Nog geen zelfverbruikshistorie beschikbaar.";
+        return;
+      }
+
+      const labels = {
+        pv_generation: "PV-opwek totaal",
+        local_pv_use: "Lokaal gebruikte PV",
+        grid_import: "Netimport",
+      };
+      const colors = {
+        pv_generation: "#ffd600",
+        local_pv_use: "#2196f3",
+        grid_import: "#d32f2f",
+      };
+      const visible = series.filter((item) => labels[item.role]);
+      const currentValues = document.createElement("div");
+      currentValues.className = "power-current-values";
+      for (const item of visible) {
+        const current = Number(history.current_values?.[item.role]);
+        if (!Number.isFinite(current)) continue;
+        const value = document.createElement("div");
+        value.className = "power-current-value";
+        const amount = document.createElement("strong");
+        amount.style.color = colors[item.role];
+        amount.textContent = `${new Intl.NumberFormat("nl-NL", {
+          maximumFractionDigits: 1,
+        }).format(Math.max(0, current))} W`;
+        value.append(document.createTextNode(labels[item.role]), amount);
+        currentValues.appendChild(value);
+      }
+      container.appendChild(currentValues);
+
+      const width = 1180;
+      const height = 330;
+      const plot = { left: 72, right: 24, top: 20, bottom: 48 };
+      const plotWidth = width - plot.left - plot.right;
+      const plotHeight = height - plot.top - plot.bottom;
+      const startMs = start.getTime();
+      const dayEnd = new Date(start);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const endMs = dayEnd.getTime();
+      const values = visible.flatMap((item) =>
+        item.points.map((point) => Math.max(0, Number(point.power_w)))
+      ).filter(Number.isFinite);
+      const maximum = Math.max(1, ...values) * 1.05;
+      const x = (value) => plot.left +
+        (new Date(value).getTime() - startMs) / (endMs - startMs) * plotWidth;
+      const y = (value) => plot.top +
+        (maximum - Math.max(0, Number(value))) / maximum * plotHeight;
+
+      const scroll = document.createElement("div");
+      scroll.className = "energy-chart-scroll";
+      const svg = createSvgElement("svg", {
+        class: "energy-chart",
+        viewBox: `0 0 ${width} ${height}`,
+        role: "img",
+        "aria-label": "Zelfverbruik ten opzichte van PV vandaag",
+      });
+      for (let index = 0; index <= 4; index += 1) {
+        const value = maximum * index / 4;
+        const lineY = y(value);
+        svg.appendChild(createSvgElement("line", {
+          x1: plot.left,
+          x2: width - plot.right,
+          y1: lineY,
+          y2: lineY,
+          class: value === 0 ? "power-zero-line" : "grid-line",
+        }));
+        appendSvgText(
+          svg,
+          `${Math.round(value)} W`,
+          { x: plot.left - 8, y: lineY + 4, "text-anchor": "end" },
+          "axis-label",
+        );
+      }
+      for (let index = 0; index <= 12; index += 1) {
+        const tick = new Date(startMs + (endMs - startMs) * index / 12);
+        appendSvgText(
+          svg,
+          tick.toLocaleTimeString("nl-NL", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          { x: x(tick), y: height - 18, "text-anchor": "middle" },
+          "axis-label",
+        );
+      }
+      for (const item of visible) {
+        const points = item.points.map((point) => ({
+          x: x(point.sampled_at),
+          y: y(point.power_w),
+        })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+        if (points.length === 0) continue;
+        let path = `M ${points[0].x} ${points[0].y}`;
+        for (const point of points.slice(1)) {
+          path += ` L ${point.x} ${point.y}`;
+        }
+        const area = `${path} L ${points.at(-1).x} ${y(0)}` +
+          ` L ${points[0].x} ${y(0)} Z`;
+        svg.appendChild(createSvgElement("path", {
+          d: area,
+          class: `self-consumption-area ${item.role}`,
+        }));
+        svg.appendChild(createSvgElement("path", {
+          d: path,
+          class: `self-consumption-line ${item.role}`,
+        }));
+      }
+      const now = Date.now();
+      if (now >= startMs && now <= endMs) {
+        svg.appendChild(createSvgElement("line", {
+          x1: x(now),
+          x2: x(now),
+          y1: plot.top,
+          y2: height - plot.bottom,
+          stroke: "#ffb300",
+          "stroke-width": 1.5,
+          "stroke-dasharray": "4 4",
+        }));
+        appendSvgText(
+          svg,
+          "Nu",
+          { x: x(now) + 4, y: plot.top + 12 },
+          "axis-label",
+        );
+      }
+      scroll.appendChild(svg);
+      container.appendChild(scroll);
+    }
+
     function renderPvForecastActualChart(intervals) {
       const container = element("pv-forecast-actual-chart");
       container.replaceChildren();
@@ -2295,6 +2587,14 @@ DASHBOARD_HTML = """<!doctype html>
         planningInput?.attributes?.pv_interval_deviations ?? []
       );
       renderPowerHistory(view.power_history ?? {
+        available: false,
+        status: "unavailable",
+        error: null,
+        starts_at: null,
+        ends_at: null,
+        series: [],
+      });
+      renderSelfConsumptionHistory(view.self_consumption_history ?? {
         available: false,
         status: "unavailable",
         error: null,
@@ -3436,4 +3736,5 @@ def build_web_view(
         "pv_energy_timeline": pv_energy_timeline,
         "household_load_forecast": household_load_forecast,
         "power_history": power_history_view,
+        "self_consumption_history": _self_consumption_history_view(power_history),
     }

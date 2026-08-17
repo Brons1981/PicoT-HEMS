@@ -31,12 +31,14 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
         config_version="test:v1",
     )
     published_cards: list[Card] = []
+    store = WebViewStore()
 
     class FakeSink:
         def __init__(self, token: str) -> None:
             assert token == "test-token"
 
         def publish(self, card: Card) -> None:
+            assert store.latest_json() is not None
             published_cards.append(card)
 
     monkeypatch.setattr(
@@ -44,13 +46,12 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
         "HomeAssistantProjectionSink",
         FakeSink,
     )
-    store = WebViewStore()
-
     live_runtime._execute_planning_bundle(
         token="test-token",
         price_config=price_config,
         bundle=bundle,
         web_view_store=store,
+        power_history_read_ms=12.5,
     )
 
     latest_json = store.latest_json()
@@ -65,3 +66,10 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
     assert [item["stage"] for item in view["pipeline"]] == list(
         range(1, 10)
     )
+    performance = next(
+        card for card in published_cards
+        if card.entity_id == "sensor.picot_v2_diagnostic_performance"
+    )
+    assert performance.attributes["power_history_read_ms"] == 12.5
+    assert performance.attributes["web_view_build_ms"] >= 0.0
+    assert performance.attributes["web_view_publish_ms"] >= 0.0

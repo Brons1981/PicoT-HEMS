@@ -1210,6 +1210,7 @@ def _execute_planning_bundle(
     bundle: PlanningInputBundle,
     web_view_store: WebViewStore,
     power_history: PowerHistorySnapshot | None = None,
+    power_history_read_ms: float = 0.0,
     pv_actual_diagnostics: (
         LivePVActualDiagnostics | None
     ) = None,
@@ -1358,6 +1359,29 @@ def _execute_planning_bundle(
     json.dumps([asdict(card) for card in projection.cards], separators=(",", ":"))
     serialization_ms = round((perf_counter() - serialization_started) * 1000.0, 3)
 
+    display_price_points = tuple(
+        point
+        for evidence in bundle.evidence
+        for point in evidence.price_points
+    )
+    web_view_build_started = perf_counter()
+    web_view = build_web_view(
+        run,
+        projection,
+        display_price_points=display_price_points,
+        power_history=power_history,
+    )
+    web_view_build_ms = round(
+        (perf_counter() - web_view_build_started) * 1000.0,
+        3,
+    )
+    web_view_publish_started = perf_counter()
+    web_view_store.publish(web_view)
+    web_view_publish_ms = round(
+        (perf_counter() - web_view_publish_started) * 1000.0,
+        3,
+    )
+
     sink = HomeAssistantProjectionSink(token)
     publish_started = perf_counter()
     for card in projection.cards:
@@ -1386,6 +1410,9 @@ def _execute_planning_bundle(
                 "diagnostic_projection_ms": projection.projection_ms,
                 "serialization_ms": serialization_ms,
                 "ha_publish_ms": publish_ms,
+                "power_history_read_ms": power_history_read_ms,
+                "web_view_build_ms": web_view_build_ms,
+                "web_view_publish_ms": web_view_publish_ms,
                 "persistence_ms": 0.0,
                 "trace_events_per_run": len(projection.cards),
                 "buffer_depth": 0,
@@ -1395,20 +1422,6 @@ def _execute_planning_bundle(
                 ),
                 "observer_only": True,
             },
-        )
-    )
-
-    display_price_points = tuple(
-        point
-        for evidence in bundle.evidence
-        for point in evidence.price_points
-    )
-    web_view_store.publish(
-        build_web_view(
-            run,
-            projection,
-            display_price_points=display_price_points,
-            power_history=power_history,
         )
     )
 
@@ -1427,6 +1440,10 @@ def _execute_planning_bundle(
                 "opportunities": len(run.opportunities.opportunities),
                 "opportunity_status": run.opportunities.detection_status,
                 "pipeline_total_ms": pipeline_total_ms,
+                "power_history_read_ms": power_history_read_ms,
+                "web_view_build_ms": web_view_build_ms,
+                "web_view_publish_ms": web_view_publish_ms,
+                "ha_publish_ms": publish_ms,
                 "cards": len(projection.cards),
             },
             separators=(",", ":"),
@@ -1710,6 +1727,7 @@ def main() -> None:
         history_starts_at = captured_at.astimezone(
             pv_sunset_timezone
         ).replace(hour=0, minute=0, second=0, microsecond=0)
+        power_history_started = perf_counter()
         power_history = power_history_cache.update(
             power_history_reader,
             specs=dashboard_power_history_specs,
@@ -1719,6 +1737,10 @@ def main() -> None:
         power_history = _attach_household_power_history(
             power_history,
             household_load_history.load(),
+        )
+        power_history_read_ms = round(
+            (perf_counter() - power_history_started) * 1000.0,
+            3,
         )
         timeline = bundle.snapshot.pv_energy_timeline
         pv_sunset_source = pv_sunset_reader.read(
@@ -1771,6 +1793,7 @@ def main() -> None:
             bundle=bundle,
             web_view_store=web_view_store,
             power_history=power_history,
+            power_history_read_ms=power_history_read_ms,
             pv_actual_diagnostics=pv_actual_diagnostics,
             pv_attenuated_ranges=pv_attenuated_ranges,
             pv_sunset_source=pv_sunset_source,

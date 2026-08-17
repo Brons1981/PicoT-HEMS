@@ -1493,7 +1493,7 @@ DASHBOARD_HTML = """<!doctype html>
         selectedPriceDetail:
           document.querySelector(".price-detail")?.textContent ?? null,
         activeTab:
-          document.querySelector(".tab-button[aria-selected=\"true\"]")
+          document.querySelector(\'.tab-button[aria-selected="true"]\')
             ?.dataset.tab ?? "overview"
       };
     }

@@ -265,6 +265,33 @@ def project(run: CanonicalPipelineRun) -> Projection:
                     if p.household_planning_regime is not None
                     else None
                 ),
+                "household_regime_remaining_storage_need_wh": (
+                    p.household_planning_regime.remaining_storage_need_wh
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_conservative_remaining_pv_surplus_wh": (
+                    p.household_planning_regime
+                    .conservative_remaining_pv_surplus_wh
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_remaining_pv_storage_margin_wh": (
+                    p.household_planning_regime
+                    .remaining_pv_storage_margin_wh
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_storage_target_at_risk": (
+                    p.household_planning_regime.storage_target_at_risk
+                    if p.household_planning_regime is not None
+                    else False
+                ),
+                "household_regime_storage_target_required_by": (
+                    p.household_planning_regime.storage_target_required_by
+                    if p.household_planning_regime is not None
+                    else None
+                ),
                 "household_regime_evidence_ids": (
                     list(p.household_planning_regime.evidence_ids)
                     if p.household_planning_regime is not None

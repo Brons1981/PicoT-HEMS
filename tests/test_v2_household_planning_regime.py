@@ -163,6 +163,48 @@ def test_structural_actual_overperformance_exits_after_hold() -> None:
     assert regime.reason == "actual_pv_structurally_above_forecast"
 
 
+def test_conservative_pv_storage_margin_overrides_price_first() -> None:
+    regime = derive_household_planning_regime(
+        profile=_profile(),
+        policy=AdaptiveHouseholdObjectivePolicy(
+            minimum_conservative_pv_storage_margin_wh=500.0,
+        ),
+        forecast_confidence=0.80,
+        cumulative_forecast_energy_wh=4000.0,
+        cumulative_actual_energy_wh=4000.0,
+        underperformance_duration_seconds=0,
+        evidence_ids=("storage-requirement-1", "pv-lower-bound-1"),
+        previous_regime="cost_optimization_first",
+        remaining_storage_need_wh=3000.0,
+        conservative_remaining_pv_surplus_wh=3200.0,
+        remaining_pv_storage_margin_wh=200.0,
+        storage_target_required_by="2026-08-17T18:00:00+02:00",
+    )
+
+    assert regime.regime == "self_consumption_first"
+    assert regime.reason == "conservative_pv_storage_margin_at_risk"
+    assert regime.storage_target_at_risk is True
+    assert regime.remaining_pv_storage_margin_wh == 200.0
+
+
+def test_completed_storage_target_does_not_force_self_consumption() -> None:
+    regime = derive_household_planning_regime(
+        profile=_profile(),
+        policy=AdaptiveHouseholdObjectivePolicy(),
+        forecast_confidence=0.80,
+        cumulative_forecast_energy_wh=4000.0,
+        cumulative_actual_energy_wh=4000.0,
+        underperformance_duration_seconds=0,
+        evidence_ids=("storage-requirement-1",),
+        remaining_storage_need_wh=0.0,
+        conservative_remaining_pv_surplus_wh=0.0,
+        remaining_pv_storage_margin_wh=0.0,
+    )
+
+    assert regime.regime == "cost_optimization_first"
+    assert regime.storage_target_at_risk is False
+
+
 def test_profile_rejects_hidden_or_invalid_weights() -> None:
     with pytest.raises(ValueError, match="objective weight"):
         UserObjectiveProfile(

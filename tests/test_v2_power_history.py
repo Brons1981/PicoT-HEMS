@@ -3,7 +3,13 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, unquote, urlparse
 
 from picot.v2 import power_history
-from picot.v2.power_history import PowerSeriesSpec
+from picot.v2.power_history import (
+    PowerHistoryCache,
+    PowerHistoryPoint,
+    PowerHistorySeries,
+    PowerHistorySnapshot,
+    PowerSeriesSpec,
+)
 
 START = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 END = START + timedelta(hours=12)
@@ -148,3 +154,125 @@ def test_spec_rejects_implicit_or_unknown_transform() -> None:
         assert str(exc) == "unsupported power history transform"
     else:
         raise AssertionError("unsupported transform was accepted")
+
+
+def test_cache_reads_only_new_tail_and_deduplicates_boundary() -> None:
+    first_end = START + timedelta(hours=8)
+    second_end = first_end + timedelta(minutes=1)
+    boundary = PowerHistoryPoint(first_end, 800.0, "evidence-boundary")
+    new_point = PowerHistoryPoint(second_end, 900.0, "evidence-new")
+
+    class FakeReader:
+        def __init__(self) -> None:
+            self.windows: list[tuple[datetime, datetime]] = []
+
+        def read(
+            self,
+            *,
+            specs: tuple[PowerSeriesSpec, ...],
+            starts_at: datetime,
+            ends_at: datetime,
+        ) -> PowerHistorySnapshot:
+            self.windows.append((starts_at, ends_at))
+            points = (
+                (boundary,)
+                if len(self.windows) == 1
+                else (boundary, new_point)
+            )
+            return PowerHistorySnapshot(
+                starts_at=starts_at,
+                ends_at=ends_at,
+                status="available",
+                error=None,
+                series=(PowerHistorySeries(
+                    series_id=specs[0].series_id,
+                    role=specs[0].role,
+                    source_entity_id=specs[0].entity_id,
+                    transform=specs[0].transform,
+                    points=points,
+                ),),
+            )
+
+    reader = FakeReader()
+    cache = PowerHistoryCache()
+    specs = (PowerSeriesSpec("pv", "pv_generation", PV),)
+
+    cache.update(  # type: ignore[arg-type]
+        reader,
+        specs=specs,
+        starts_at=START,
+        ends_at=first_end,
+    )
+    result = cache.update(  # type: ignore[arg-type]
+        reader,
+        specs=specs,
+        starts_at=START,
+        ends_at=second_end,
+    )
+
+    assert reader.windows == [(START, first_end), (first_end, second_end)]
+    assert result.starts_at == START
+    assert result.ends_at == second_end
+    assert result.series[0].points == (boundary, new_point)
+
+
+def test_cache_keeps_proven_points_when_incremental_read_fails() -> None:
+    first_end = START + timedelta(hours=8)
+    second_end = first_end + timedelta(minutes=1)
+    proven = PowerHistoryPoint(first_end, 800.0, "evidence-proven")
+
+    class FakeReader:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def read(
+            self,
+            *,
+            specs: tuple[PowerSeriesSpec, ...],
+            starts_at: datetime,
+            ends_at: datetime,
+        ) -> PowerHistorySnapshot:
+            self.call_count += 1
+            if self.call_count == 2:
+                return PowerHistorySnapshot(
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    status="unavailable",
+                    error="TimeoutError",
+                    series=(),
+                )
+            return PowerHistorySnapshot(
+                starts_at=starts_at,
+                ends_at=ends_at,
+                status="available",
+                error=None,
+                series=(PowerHistorySeries(
+                    series_id=specs[0].series_id,
+                    role=specs[0].role,
+                    source_entity_id=specs[0].entity_id,
+                    transform=specs[0].transform,
+                    points=(proven,),
+                ),),
+            )
+
+    reader = FakeReader()
+    cache = PowerHistoryCache()
+    specs = (PowerSeriesSpec("pv", "pv_generation", PV),)
+    cache.update(  # type: ignore[arg-type]
+        reader,
+        specs=specs,
+        starts_at=START,
+        ends_at=first_end,
+    )
+
+    result = cache.update(  # type: ignore[arg-type]
+        reader,
+        specs=specs,
+        starts_at=START,
+        ends_at=second_end,
+    )
+
+    assert result.status == "available"
+    assert result.error == "TimeoutError"
+    assert result.ends_at == first_end
+    assert result.series[0].points == (proven,)

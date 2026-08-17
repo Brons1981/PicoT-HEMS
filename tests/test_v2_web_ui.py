@@ -770,3 +770,49 @@ def test_web_view_store_overlays_fast_grid_power_without_planner_run() -> None:
     assert republished["pipeline"][0]["attributes"]["sources"][0][
         "raw_state"
     ] == "8.345"
+
+def test_dashboard_exposes_exact_chosen_execution_plan_facts() -> None:
+    assert "Gekozen uitvoeringsplan" in DASHBOARD_HTML
+    assert 'const chosenPlan = status.chosen_plan ?? {};' in DASHBOARD_HTML
+    assert '"Laadvenster vanaf"' in DASHBOARD_HTML
+    assert '"Energie einde laadvenster"' in DASHBOARD_HTML
+    assert '"Energie bij deadline"' in DASHBOARD_HTML
+    assert '"Bijdrage PV"' in DASHBOARD_HTML
+    assert '"Bijdrage net"' in DASHBOARD_HTML
+    assert '"Planconfidence"' in DASHBOARD_HTML
+    assert 'chosenPlan.execution_segments' in DASHBOARD_HTML
+    assert '"Batterijmodus"' in DASHBOARD_HTML
+    assert '"Laadbron"' in DASHBOARD_HTML
+
+
+def test_web_view_exposes_chosen_plan_contract_even_without_a_winner() -> None:
+    run = CanonicalPipeline().run(
+        captured_at=datetime(2026, 8, 17, 10, 0, tzinfo=UTC)
+    )
+
+    chosen_plan = build_web_view(run, project(run))["planning_status"][
+        "chosen_plan"
+    ]
+
+    assert set(chosen_plan) == {
+        "candidate_id",
+        "energy_path_id",
+        "family",
+        "decisive_step",
+        "reason",
+        "charge_window_starts_at",
+        "charge_window_ends_at",
+        "required_energy_wh",
+        "storage_energy_at_window_end_wh",
+        "storage_energy_at_requirement_wh",
+        "pv_contribution_wh",
+        "grid_contribution_wh",
+        "conversion_losses_wh",
+        "requirement_satisfied",
+        "recoverability",
+        "confidence",
+        "requirement_confidence",
+        "execution_segments",
+    }
+    assert isinstance(chosen_plan["execution_segments"], list)
+

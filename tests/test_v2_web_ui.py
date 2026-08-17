@@ -315,7 +315,7 @@ def test_power_history_uses_readable_selectable_day_chart() -> None:
         '["pv_generation", "battery_charge", "grid_export"].includes(role)'
         in DASHBOARD_HTML
     )
-    assert "stroke-width: 1.75;" in DASHBOARD_HTML
+    assert "stroke-width: 1.2;" in DASHBOARD_HTML
     assert "stroke-linecap: round;" in DASHBOARD_HTML
     assert "stroke-linejoin: round;" in DASHBOARD_HTML
     assert "POWER_HISTORY_SELECTION_KEY" in DASHBOARD_HTML
@@ -324,10 +324,18 @@ def test_power_history_uses_readable_selectable_day_chart() -> None:
     assert "dayEnd.setDate(dayEnd.getDate() + 1);" in DASHBOARD_HTML
     assert "rawMinimum" in DASHBOARD_HTML
     assert "rawMaximum" in DASHBOARD_HTML
+    assert "const padding = span * 0.05;" in DASHBOARD_HTML
+    assert "const hasRange = rawMinimum < 0 || rawMaximum > 0;" in DASHBOARD_HTML
     assert "const gridValues = Array.from(new Set([" in DASHBOARD_HTML
     assert "class: value === 0" in DASHBOARD_HTML
     assert "path += ` L ${point.x} ${point.y}`;" in DASHBOARD_HTML
     assert 'class: `power-flow-area ${item.role}`' in DASHBOARD_HTML
+    assert "powerHistoryZoomWindow" in DASHBOARD_HTML
+    assert '["+", "Inzoomen"' in DASHBOARD_HTML
+    assert '["−", "Uitzoomen"' in DASHBOARD_HTML
+    assert 'class: "power-zoom-hitbox"' in DASHBOARD_HTML
+    assert 'hitbox.addEventListener("pointerdown"' in DASHBOARD_HTML
+    assert 'hitbox.addEventListener("pointerup"' in DASHBOARD_HTML
 
 
 def test_dashboard_preserves_open_quarter_details_during_refresh() -> None:

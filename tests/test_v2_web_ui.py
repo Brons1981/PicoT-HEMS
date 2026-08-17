@@ -775,6 +775,9 @@ def test_dashboard_exposes_exact_chosen_execution_plan_facts() -> None:
     assert "Gekozen uitvoeringsplan" in DASHBOARD_HTML
     assert 'const chosenPlan = status.chosen_plan ?? {};' in DASHBOARD_HTML
     assert '"Laadvenster vanaf"' in DASHBOARD_HTML
+    assert '"Totale doelenergie"' in DASHBOARD_HTML
+    assert '"Batterijenergie bij vastleggen"' in DASHBOARD_HTML
+    assert '"Nog benodigde toevoeging"' in DASHBOARD_HTML
     assert '"Energie einde laadvenster"' in DASHBOARD_HTML
     assert '"Energie bij deadline"' in DASHBOARD_HTML
     assert '"Bijdrage PV"' in DASHBOARD_HTML
@@ -803,6 +806,8 @@ def test_web_view_exposes_chosen_plan_contract_even_without_a_winner() -> None:
         "charge_window_starts_at",
         "charge_window_ends_at",
         "required_energy_wh",
+        "initial_storage_energy_wh",
+        "energy_to_target_wh",
         "storage_energy_at_window_end_wh",
         "storage_energy_at_requirement_wh",
         "pv_contribution_wh",
@@ -815,4 +820,20 @@ def test_web_view_exposes_chosen_plan_contract_even_without_a_winner() -> None:
         "execution_segments",
     }
     assert isinstance(chosen_plan["execution_segments"], list)
+
+
+def test_dashboard_compares_chosen_and_rejected_candidate_facts() -> None:
+    assert '"Kandidaat", "Planfamilie", "Gekozen", "Venster vanaf", "Venster tot"' in (
+        DASHBOARD_HTML
+    )
+    assert '"Energie einde venster", "Energie bij deadline", "Doel gehaald"' in (
+        DASHBOARD_HTML
+    )
+    assert '"PV", "Net", "Herstelbaarheid", "Confidence"' in DASHBOARD_HTML
+    assert "alternative.candidate_id" in DASHBOARD_HTML
+    assert "alternative.charge_window_starts_at" in DASHBOARD_HTML
+    assert "alternative.charge_window_ends_at" in DASHBOARD_HTML
+    assert "alternative.storage_energy_at_window_end_wh" in DASHBOARD_HTML
+    assert "alternative.storage_energy_at_requirement_wh" in DASHBOARD_HTML
+    assert "alternative.recoverability" in DASHBOARD_HTML
 

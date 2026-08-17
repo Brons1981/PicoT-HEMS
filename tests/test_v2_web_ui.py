@@ -240,14 +240,17 @@ def test_dashboard_contains_canonical_pv_forecast_actual_history_chart() -> None
     assert 'id="pv-forecast-actual-chart"' in DASHBOARD_HTML
     assert "renderPvForecastActualChart" in DASHBOARD_HTML
     assert "planningInput?.attributes?.pv_interval_deviations" in DASHBOARD_HTML
-    assert "Solcast forecast en bereik" in DASHBOARD_HTML
-    assert "Werkelijke PV" in DASHBOARD_HTML
+    assert 'view.pv_energy_timeline ?? { intervals: [] }' in DASHBOARD_HTML
+    assert 'view.power_history ?? { pv_actual_display_points: [] }' in DASHBOARD_HTML
+    assert "Solcast verwacht" in DASHBOARD_HTML
+    assert "GoodWe werkelijk" in DASHBOARD_HTML
+    assert "energyWh / durationHours" in DASHBOARD_HTML
+    assert "pvForecastZoomWindow" in DASHBOARD_HTML
+    assert "pvForecastInteractionMode" in DASHBOARD_HTML
     assert 'class: "forecast-range"' in DASHBOARD_HTML
     assert 'class: "forecast-line"' in DASHBOARD_HTML
     assert 'class: "actual-line"' in DASHBOARD_HTML
-    assert "Nog geen gesloten PV-intervallen met forecast en werkelijkheid." in (
-        DASHBOARD_HTML
-    )
+    assert "Nog geen Solcast- of GoodWe-vermogensdata." in DASHBOARD_HTML
 
 
 def test_web_view_serializes_canonical_power_history() -> None:
@@ -287,6 +290,8 @@ def test_web_view_serializes_canonical_power_history() -> None:
         "display_aggregation": "five_minute_average",
         "display_interval_seconds": 300,
         "display_curve": "linear_between_bucket_averages",
+        "pv_actual_display_interval_seconds": 120,
+        "pv_actual_display_points": [],
         "series": [
             {
                 "series_id": "pv",

@@ -3364,6 +3364,12 @@ def build_web_view(
         ],
     }
 
+    power_history_starts_at = (
+        power_history.starts_at if power_history is not None else None
+    )
+    power_history_ends_at = (
+        power_history.ends_at if power_history is not None else None
+    )
     power_history_view: dict[str, object] = {
         "available": power_history is not None and power_history.status == "available",
         "status": power_history.status if power_history is not None else "unavailable",
@@ -3396,9 +3402,12 @@ def build_web_view(
                 ),
                 "display_points": _power_history_display_points(
                     series,
-                    starts_at=power_history.starts_at,
-                    ends_at=power_history.ends_at,
-                ),
+                    starts_at=power_history_starts_at,
+                    ends_at=power_history_ends_at,
+                )
+                if power_history_starts_at is not None
+                and power_history_ends_at is not None
+                else [],
                 "points": [
                     {
                         "sampled_at": point.sampled_at.isoformat(),

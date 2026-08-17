@@ -27,27 +27,42 @@ def historical_observations() -> tuple[HouseholdLoadObservation, ...]:
 
 
 @pytest.mark.parametrize(
-    ("options", "expected_power_w"),
+    ("options", "expected_power_w", "expected_confidence"),
     (
-        ({}, 500.0),
-        ({"household_load_fallback_power_w": 750.0}, 750.0),
-        ({"household_load_fallback_power_w": "625.5"}, 625.5),
+        ({}, 500.0, 0.5),
+        ({"household_load_fallback_power_w": 750.0}, 750.0, 0.5),
+        (
+            {
+                "household_load_fallback_power_w": "625.5",
+                "household_load_fallback_confidence": "0.6",
+            },
+            625.5,
+            0.6,
+        ),
     ),
 )
 def test_live_planning_input_passes_household_load_fallback_to_assembly(
     monkeypatch: object,
     options: dict[str, object],
     expected_power_w: float,
+    expected_confidence: float,
 ) -> None:
     sentinel = object()
-    calls: list[tuple[str, float]] = []
+    calls: list[tuple[str, float, float]] = []
 
     def fake_assemble_planning_input(
         token: str,
         *,
         household_load_fallback_power_w: float,
+        household_load_fallback_confidence: float,
     ) -> object:
-        calls.append((token, household_load_fallback_power_w))
+        calls.append(
+            (
+                token,
+                household_load_fallback_power_w,
+                household_load_fallback_confidence,
+            )
+        )
         return sentinel
 
     monkeypatch.setattr(  # type: ignore[attr-defined]
@@ -59,7 +74,7 @@ def test_live_planning_input_passes_household_load_fallback_to_assembly(
     result = live_runtime._load_live_planning_input("token", options)
 
     assert result is sentinel
-    assert calls == [("token", expected_power_w)]
+    assert calls == [("token", expected_power_w, expected_confidence)]
 
 
 def test_live_planning_input_loads_persisted_household_history(
@@ -76,6 +91,7 @@ def test_live_planning_input_loads_persisted_household_history(
         tuple[
             str,
             float,
+            float,
             tuple[HouseholdLoadObservation, ...],
         ]
     ] = []
@@ -84,6 +100,7 @@ def test_live_planning_input_loads_persisted_household_history(
         token: str,
         *,
         household_load_fallback_power_w: float,
+        household_load_fallback_confidence: float,
         household_load_observations: tuple[
             HouseholdLoadObservation,
             ...,
@@ -93,6 +110,7 @@ def test_live_planning_input_loads_persisted_household_history(
             (
                 token,
                 household_load_fallback_power_w,
+                household_load_fallback_confidence,
                 household_load_observations,
             )
         )
@@ -111,7 +129,7 @@ def test_live_planning_input_loads_persisted_household_history(
     )
 
     assert result is sentinel
-    assert calls == [("token", 500.0, expected)]
+    assert calls == [("token", 500.0, 0.5, expected)]
 
 
 def test_planning_input_prefers_history_and_preserves_fallback() -> None:
@@ -159,6 +177,7 @@ def test_planning_input_prefers_history_and_preserves_fallback() -> None:
     assert fallback_forecast.intervals[0].expected_energy_wh == (
         pytest.approx(125.0)
     )
+    assert fallback_forecast.intervals[0].confidence == pytest.approx(0.5)
 
 
 @pytest.mark.parametrize(
@@ -192,4 +211,35 @@ def test_live_planning_input_rejects_invalid_household_load_fallback(
         live_runtime._load_live_planning_input(
             "token",
             {"household_load_fallback_power_w": invalid_power_w},
+        )
+
+
+
+@pytest.mark.parametrize(
+    "invalid_confidence",
+    (None, "not-a-number", 0, -0.1, 1.1, float("nan"), float("inf")),
+)
+def test_live_planning_input_rejects_invalid_household_fallback_confidence(
+    monkeypatch: object,
+    invalid_confidence: object,
+) -> None:
+    def unexpected_assembly(*args: object, **kwargs: object) -> None:
+        pytest.fail("assemble_planning_input must not run with invalid configuration")
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        live_runtime,
+        "assemble_planning_input",
+        unexpected_assembly,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "household_load_fallback_confidence must be greater than 0 "
+            "and at most 1"
+        ),
+    ):
+        live_runtime._load_live_planning_input(
+            "token",
+            {"household_load_fallback_confidence": invalid_confidence},
         )

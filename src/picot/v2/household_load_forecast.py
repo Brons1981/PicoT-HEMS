@@ -220,16 +220,22 @@ def build_fallback_household_load_forecast(
     starts_at: datetime,
     horizon_end: datetime,
     fallback_power_w: float,
+    fallback_confidence: float,
 ) -> HouseholdLoadForecast:
     """Build an explicit low-confidence fallback over one rolling horizon."""
     if starts_at >= horizon_end:
         raise ValueError("starts_at must be before horizon_end")
     if fallback_power_w <= 0.0:
         raise ValueError("fallback_power_w must be positive")
+    if not 0.0 < fallback_confidence <= 1.0:
+        raise ValueError(
+            "fallback_confidence must be greater than 0 and at most 1"
+        )
 
     forecast_seed = (
         f"{run_id}|{snapshot_id}|{starts_at.isoformat()}|"
         f"{horizon_end.isoformat()}|{fallback_power_w}|"
+        f"{fallback_confidence}|"
         f"{FALLBACK_METHOD_VERSION}"
     )
     intervals: list[HouseholdLoadForecastInterval] = []
@@ -255,7 +261,7 @@ def build_fallback_household_load_forecast(
                 expected_energy_wh=(
                     fallback_power_w * duration_hours
                 ),
-                confidence=0.0,
+                confidence=fallback_confidence,
                 source_reference=FALLBACK_SOURCE_REFERENCE,
                 method_version=FALLBACK_METHOD_VERSION,
             )

@@ -1169,15 +1169,33 @@ def _load_live_planning_input(
             "household_load_fallback_power_w must be a finite positive number"
         )
 
+    raw_confidence = options.get("household_load_fallback_confidence", 0.5)
+    try:
+        fallback_confidence = float(raw_confidence)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "household_load_fallback_confidence must be greater than 0 and at most 1"
+        ) from None
+
+    if (
+        not isfinite(fallback_confidence)
+        or not 0.0 < fallback_confidence <= 1.0
+    ):
+        raise ValueError(
+            "household_load_fallback_confidence must be greater than 0 and at most 1"
+        )
+
     if household_load_history is None:
         return assemble_planning_input(
             token,
             household_load_fallback_power_w=fallback_power_w,
+            household_load_fallback_confidence=fallback_confidence,
         )
 
     return assemble_planning_input(
         token,
         household_load_fallback_power_w=fallback_power_w,
+        household_load_fallback_confidence=fallback_confidence,
         household_load_observations=household_load_history.load(),
     )
 

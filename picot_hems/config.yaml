@@ -28,6 +28,7 @@ options:
   storage_capability_id: "storage-capability-home-battery"
   storage_usable_capacity_wh: 8160.0
   household_load_fallback_power_w: 500.0
+  household_load_fallback_confidence: 0.50
   solcast_forecast_entity: "sensor.solcast_pv_forecast_voorspelling_vandaag"
   solcast_forecast_tomorrow_entity: "sensor.solcast_pv_forecast_voorspelling_morgen"
   solcast_forecast_day_3_entity: "sensor.solcast_pv_forecast_voorspelling_dag_3"
@@ -72,6 +73,7 @@ schema:
   storage_capability_id: str
   storage_usable_capacity_wh: float(0,)
   household_load_fallback_power_w: float(0,)
+  household_load_fallback_confidence: float(0,1)
   solcast_forecast_entity: str
   solcast_forecast_tomorrow_entity: str
   solcast_forecast_day_3_entity: str

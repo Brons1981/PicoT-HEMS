@@ -314,6 +314,11 @@ DASHBOARD_HTML = """<!doctype html>
       cursor: pointer;
     }
     .power-zoom-hitbox { fill: transparent; cursor: crosshair; }
+    .power-zoom-hitbox.pan { cursor: grab; }
+    .power-chart-toolbar button[aria-pressed="true"] {
+      border-color: #62b8f5;
+      color: #62b8f5;
+    }
     .power-zoom-selection {
       fill: #62b8f5;
       opacity: 0.18;
@@ -1044,6 +1049,7 @@ DASHBOARD_HTML = """<!doctype html>
 
     const POWER_HISTORY_SELECTION_KEY = "picot-power-history-selection";
     let powerHistoryZoomWindow = null;
+    let powerHistoryInteractionMode = "zoom";
 
     function renderPowerHistory(history) {
       const container = element("power-history-chart");
@@ -1179,13 +1185,30 @@ DASHBOARD_HTML = """<!doctype html>
       if (!validZoom) powerHistoryZoomWindow = null;
       const windowStartMs = powerHistoryZoomWindow?.startsAt ?? startMs;
       const windowEndMs = powerHistoryZoomWindow?.endsAt ?? fullEndMs;
-      const pointInWindow = (point) => {
-        const sampledAt = new Date(point.sampled_at).getTime();
-        return sampledAt >= windowStartMs && sampledAt <= windowEndMs;
+      const pointsInWindow = (item) => {
+        const sourcePoints = [...item.points].sort((left, right) =>
+          new Date(left.sampled_at).getTime() -
+          new Date(right.sampled_at).getTime()
+        );
+        if (item.history_semantics !== "state_hold") {
+          return sourcePoints.filter((point) => {
+            const sampledAt = new Date(point.sampled_at).getTime();
+            return sampledAt >= windowStartMs && sampledAt <= windowEndMs;
+          });
+        }
+        const prior = sourcePoints.filter((point) =>
+          new Date(point.sampled_at).getTime() <= windowStartMs
+        ).at(-1);
+        return [
+          ...(prior ? [{ ...prior, sampled_at: new Date(windowStartMs) }] : []),
+          ...sourcePoints.filter((point) => {
+            const sampledAt = new Date(point.sampled_at).getTime();
+            return sampledAt > windowStartMs && sampledAt <= windowEndMs;
+          }),
+        ];
       };
       const allValues = visible.flatMap((item) =>
-        item.points
-          .filter(pointInWindow)
+        pointsInWindow(item)
           .map((point) => signedPower(item.role, point.power_w))
       ).filter(Number.isFinite);
       const rawMinimum = Math.min(0, ...allValues);
@@ -1243,6 +1266,24 @@ DASHBOARD_HTML = """<!doctype html>
         button.addEventListener("click", action);
         toolbar.appendChild(button);
       }
+      for (const [mode, label, title] of [
+        ["zoom", "⌕", "Sleep om een tijdvak te vergroten"],
+        ["pan", "✋", "Versleep het ingezoomde tijdvak"],
+      ]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.title = title;
+        button.setAttribute(
+          "aria-pressed",
+          String(powerHistoryInteractionMode === mode),
+        );
+        button.addEventListener("click", () => {
+          powerHistoryInteractionMode = mode;
+          renderPowerHistory(history);
+        });
+        toolbar.prepend(button);
+      }
       container.appendChild(toolbar);
 
       const scroll = document.createElement("div");
@@ -1293,8 +1334,8 @@ DASHBOARD_HTML = """<!doctype html>
         );
       }
       for (const item of visible) {
-        const points = item.points
-          .filter(pointInWindow)
+        const isStateHold = item.history_semantics === "state_hold";
+        const points = pointsInWindow(item)
           .map((point) => ({
             x: x(point.sampled_at),
             y: y(signedPower(item.role, point.power_w)),
@@ -1303,10 +1344,19 @@ DASHBOARD_HTML = """<!doctype html>
         if (points.length === 0) continue;
         let path = `M ${points[0].x} ${points[0].y}`;
         for (const point of points.slice(1)) {
-          path += ` L ${point.x} ${point.y}`;
+          path += isStateHold
+            ? ` H ${point.x} V ${point.y}`
+            : ` L ${point.x} ${point.y}`;
         }
+        if (isStateHold) {
+          const holdEndsAt = Math.min(windowEndMs, end.getTime());
+          path += ` H ${x(holdEndsAt)}`;
+        }
+        const pathEndsAtX = isStateHold
+          ? x(Math.min(windowEndMs, end.getTime()))
+          : points.at(-1).x;
         if (["grid_export", "battery_charge"].includes(item.role)) {
-          const area = `${path} L ${points.at(-1).x} ${y(0)}` +
+          const area = `${path} L ${pathEndsAtX} ${y(0)}` +
             ` L ${points[0].x} ${y(0)} Z`;
           svg.appendChild(createSvgElement("path", {
             d: area,
@@ -1323,7 +1373,7 @@ DASHBOARD_HTML = """<!doctype html>
         y: plot.top,
         width: plotWidth,
         height: plotHeight,
-        class: "power-zoom-hitbox",
+        class: `power-zoom-hitbox ${powerHistoryInteractionMode}`,
       });
       let dragStartsAt = null;
       let selection = null;
@@ -1340,17 +1390,23 @@ DASHBOARD_HTML = """<!doctype html>
       hitbox.addEventListener("pointerdown", (event) => {
         dragStartsAt = svgX(event);
         hitbox.setPointerCapture(event.pointerId);
-        selection = createSvgElement("rect", {
-          x: dragStartsAt,
-          y: plot.top,
-          width: 0,
-          height: plotHeight,
-          class: "power-zoom-selection",
-        });
-        svg.appendChild(selection);
+        if (powerHistoryInteractionMode === "zoom") {
+          selection = createSvgElement("rect", {
+            x: dragStartsAt,
+            y: plot.top,
+            width: 0,
+            height: plotHeight,
+            class: "power-zoom-selection",
+          });
+          svg.appendChild(selection);
+        }
       });
       hitbox.addEventListener("pointermove", (event) => {
-        if (dragStartsAt === null || !selection) return;
+        if (
+          dragStartsAt === null ||
+          powerHistoryInteractionMode !== "zoom" ||
+          !selection
+        ) return;
         const current = svgX(event);
         selection.setAttribute("x", String(Math.min(dragStartsAt, current)));
         selection.setAttribute("width", String(Math.abs(current - dragStartsAt)));
@@ -1360,7 +1416,29 @@ DASHBOARD_HTML = """<!doctype html>
         const dragEndsAt = svgX(event);
         selection?.remove();
         selection = null;
-        if (Math.abs(dragEndsAt - dragStartsAt) >= 8) {
+        if (
+          powerHistoryInteractionMode === "pan" &&
+          powerHistoryZoomWindow &&
+          Math.abs(dragEndsAt - dragStartsAt) >= 2
+        ) {
+          const duration = windowEndMs - windowStartMs;
+          const shift = -(dragEndsAt - dragStartsAt) / plotWidth * duration;
+          let startsAt = windowStartMs + shift;
+          let endsAt = windowEndMs + shift;
+          if (startsAt < startMs) {
+            endsAt += startMs - startsAt;
+            startsAt = startMs;
+          }
+          if (endsAt > fullEndMs) {
+            startsAt -= endsAt - fullEndMs;
+            endsAt = fullEndMs;
+          }
+          powerHistoryZoomWindow = { startsAt, endsAt };
+          renderPowerHistory(history);
+        } else if (
+          powerHistoryInteractionMode === "zoom" &&
+          Math.abs(dragEndsAt - dragStartsAt) >= 8
+        ) {
           const left = Math.min(dragStartsAt, dragEndsAt);
           const right = Math.max(dragStartsAt, dragEndsAt);
           const toTime = (position) => windowStartMs +
@@ -3242,6 +3320,7 @@ def build_web_view(
                 "role": series.role,
                 "source_entity_id": series.source_entity_id,
                 "transform": series.transform,
+                "history_semantics": series.history_semantics,
                 "points": [
                     {
                         "sampled_at": point.sampled_at.isoformat(),

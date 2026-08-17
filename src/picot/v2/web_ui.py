@@ -7,8 +7,8 @@ from collections.abc import Callable, Mapping
 from datetime import date, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Lock
-from urllib.parse import urlsplit
+from threading import Condition, Lock
+from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 from picot.domain.energy_path import PathSegment
@@ -43,6 +43,35 @@ DASHBOARD_HTML = """<!doctype html>
     h2 { margin: 28px 0 12px; font-size: 1.15rem; }
     h3 { margin-bottom: 10px; font-size: 1rem; }
     .muted { color: #96a6b8; }
+    .dashboard-tabs {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 18px;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+    .tab-button {
+      border: 1px solid #386f96;
+      border-radius: 8px;
+      padding: 9px 13px;
+      background: #10283a;
+      color: #b9dcf5;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .tab-button[aria-selected="true"] {
+      border-color: #5db9f3;
+      background: #17466a;
+      color: #ffffff;
+    }
+    .tab-panel[hidden] { display: none; }
+    .empty-panel {
+      padding: 14px;
+      border: 1px solid #27313d;
+      border-radius: 12px;
+      background: #151b23;
+      color: #96a6b8;
+    }
     .observer {
       padding: 8px 12px;
       border: 1px solid #386f96;
@@ -288,6 +317,23 @@ DASHBOARD_HTML = """<!doctype html>
       <div id="execution-mode" class="observer">Status wordt geladen</div>
     </header>
 
+    <nav class="dashboard-tabs" aria-label="Dashboardweergave">
+      <button class="tab-button" type="button" data-tab="overview" aria-selected="true">Overzicht</button>
+      <button class="tab-button" type="button" data-tab="planning" aria-selected="false">Dagplanning</button>
+      <button class="tab-button" type="button" data-tab="history" aria-selected="false">Historie</button>
+      <button class="tab-button" type="button" data-tab="strategy" aria-selected="false">Strategie</button>
+      <button class="tab-button" type="button" data-tab="technical" aria-selected="false">Techniek</button>
+    </nav>
+    <section id="tab-overview" class="tab-panel" data-tab-panel="overview"></section>
+    <section id="tab-planning" class="tab-panel" data-tab-panel="planning" hidden></section>
+    <section id="tab-history" class="tab-panel" data-tab-panel="history" hidden>
+      <p class="empty-panel">De gezamenlijke energie- en beslissingshistorie wordt in de volgende dashboard-slice toegevoegd.</p>
+    </section>
+    <section id="tab-strategy" class="tab-panel" data-tab-panel="strategy" hidden>
+      <p class="empty-panel">Plannerstrategie en gebruikerskeuzes worden hier zichtbaar zodra de bijbehorende canonieke contracten beschikbaar zijn.</p>
+    </section>
+    <section id="tab-technical" class="tab-panel" data-tab-panel="technical" hidden></section>
+
     <section class="metadata" aria-label="Runinformatie">
       <div class="metric">
         <span class="muted">Versie</span><span id="version" class="value">—</span>
@@ -401,6 +447,9 @@ DASHBOARD_HTML = """<!doctype html>
     const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
     const PRICE_DISPLAY_HOURS = 48;
     let pendingView = null;
+    let viewRevision = 0;
+    let updateWatcherStopped = false;
+    const ACTIVE_TAB_KEY = "picot-active-dashboard-tab";
 
     function createSvgElement(name, attributes = {}) {
       const node = document.createElementNS(SVG_NAMESPACE, name);
@@ -773,13 +822,40 @@ DASHBOARD_HTML = """<!doctype html>
         : "—";
     }
 
+    function formatDutchNumber(value) {
+      return new Intl.NumberFormat("nl-NL", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(value);
+    }
+
+    function formatMeasurement(value, unit) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return "—";
+      if (unit === "W") {
+        return Math.abs(numeric) >= 1000
+          ? formatDutchNumber(numeric / 1000) + " kW"
+          : formatDutchNumber(numeric) + " W";
+      }
+      if (unit === "Wh") {
+        return Math.abs(numeric) >= 1000
+          ? formatDutchNumber(numeric / 1000) + " kWh"
+          : formatDutchNumber(numeric) + " Wh";
+      }
+      return formatDutchNumber(numeric) + (unit ? " " + unit : "");
+    }
+
+    function formatAttributeValue(key, value) {
+      if (typeof value !== "number") return compactReference(key, value);
+      if (/_w$/.test(key)) return formatMeasurement(value, "W");
+      if (/_wh$/.test(key)) return formatMeasurement(value, "Wh");
+      return compactReference(key, value);
+    }
+
     function formatEnergyKwh(valueWh) {
       const numeric = Number(valueWh);
       return Number.isFinite(numeric)
-        ? new Intl.NumberFormat(
-            "nl-NL",
-            { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-          ).format(numeric / 1000) + " kWh"
+        ? formatDutchNumber(numeric / 1000) + " kWh"
         : "—";
     }
 
@@ -845,8 +921,10 @@ DASHBOARD_HTML = """<!doctype html>
           "Waarde",
           source.raw_state === null || source.raw_state === undefined
             ? "—"
-            : String(source.raw_state) +
-              (source.raw_unit ? " " + source.raw_unit : "")
+            : ["W", "Wh"].includes(source.raw_unit)
+              ? formatMeasurement(source.raw_state, source.raw_unit)
+              : String(source.raw_state) +
+                (source.raw_unit ? " " + source.raw_unit : "")
         );
         appendAttribute(
           attributes,
@@ -912,7 +990,7 @@ DASHBOARD_HTML = """<!doctype html>
           appendAttribute(
             attributes,
             key,
-            compactReference(key, value),
+            formatAttributeValue(key, value),
             value
           );
         }
@@ -1302,6 +1380,55 @@ DASHBOARD_HTML = """<!doctype html>
       container.appendChild(table);
     }
 
+    function movePanelContent(elementId, panelName, includeHeading = true) {
+      const node = element(elementId);
+      const panel = element("tab-" + panelName);
+      if (!node || !panel) return;
+      if (includeHeading && node.previousElementSibling?.tagName === "H2") {
+        panel.appendChild(node.previousElementSibling);
+      }
+      panel.appendChild(node);
+    }
+
+    function activateTab(tabName) {
+      const available = Array.from(
+        document.querySelectorAll("[data-tab-panel]")
+      ).map((panel) => panel.dataset.tabPanel);
+      const selected = available.includes(tabName) ? tabName : "overview";
+      document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
+        panel.hidden = panel.dataset.tabPanel !== selected;
+      });
+      document.querySelectorAll(".tab-button").forEach((button) => {
+        button.setAttribute(
+          "aria-selected",
+          String(button.dataset.tab === selected)
+        );
+      });
+      localStorage.setItem(ACTIVE_TAB_KEY, selected);
+    }
+
+    function initializeTabs() {
+      const overview = element("tab-overview");
+      overview.append(
+        document.querySelector(".metadata"),
+        element("status"),
+        element("storage-mode-override")
+      );
+      movePanelContent("zendure-now", "overview");
+      movePanelContent("price-timeline", "planning");
+      movePanelContent("plan-explanation", "planning");
+      movePanelContent("storage-energy-source-needs", "planning");
+      movePanelContent("pv-energy-timeline", "planning");
+      movePanelContent("household-load-forecast", "planning");
+      movePanelContent("sources", "technical");
+      movePanelContent("pipeline-health", "technical");
+      movePanelContent("pipeline", "technical", false);
+      document.querySelectorAll(".tab-button").forEach((button) => {
+        button.addEventListener("click", () => activateTab(button.dataset.tab));
+      });
+      activateTab(localStorage.getItem(ACTIVE_TAB_KEY) ?? "overview");
+    }
+
     function captureDashboardState() {
       const openStageCards = Array.from(
         document.querySelectorAll("details.stage-card")
@@ -1333,7 +1460,10 @@ DASHBOARD_HTML = """<!doctype html>
         windowScrollX: window.scrollX,
         windowScrollY: window.scrollY,
         selectedPriceDetail:
-          document.querySelector(".price-detail")?.textContent ?? null
+          document.querySelector(".price-detail")?.textContent ?? null,
+        activeTab:
+          document.querySelector(".tab-button[aria-selected=\"true\"]")
+            ?.dataset.tab ?? "overview"
       };
     }
 
@@ -1372,6 +1502,7 @@ DASHBOARD_HTML = """<!doctype html>
       if (priceDetail && state.selectedPriceDetail) {
         priceDetail.textContent = state.selectedPriceDetail;
       }
+      activateTab(state.activeTab ?? "overview");
       window.scrollTo(state.windowScrollX, state.windowScrollY);
     }
 
@@ -1441,6 +1572,21 @@ DASHBOARD_HTML = """<!doctype html>
       restoreDashboardState(dashboardState);
     }
 
+    function applyView(view) {
+      const status = element("status");
+      if (shouldDeferRenderForSelection()) {
+        pendingView = view;
+        status.dataset.state = "ready";
+        status.textContent =
+          "Realtime · nieuwe data wacht tot de selectie is afgerond";
+        return;
+      }
+      pendingView = null;
+      renderView(view);
+      status.dataset.state = "ready";
+      status.textContent = "Realtime verbonden";
+    }
+
     async function loadView() {
       const status = element("status");
       try {
@@ -1448,25 +1594,38 @@ DASHBOARD_HTML = """<!doctype html>
         if (response.status === 503) {
           status.dataset.state = "waiting";
           status.textContent = "Wachten op de eerste pipeline-run…";
-          return;
+          return false;
         }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-        const view = await response.json();
-        if (shouldDeferRenderForSelection()) {
-          pendingView = view;
-          status.dataset.state = "ready";
-          status.textContent =
-            "Live · nieuwe data wacht tot de selectie is afgerond";
-          return;
-        }
-        pendingView = null;
-        renderView(view);
-        status.dataset.state = "ready";
-        status.textContent = "Live · automatisch ververst iedere 5 seconden";
+        applyView(await response.json());
+        return true;
       } catch (error) {
         status.dataset.state = "error";
         status.textContent = `Dashboarddata niet beschikbaar: ${error.message}`;
+        return false;
+      }
+    }
+
+    async function watchViewUpdates() {
+      const status = element("status");
+      while (!updateWatcherStopped) {
+        try {
+          const response = await fetch(
+            `api/view/updates?revision=${viewRevision}`,
+            { cache: "no-store" }
+          );
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const update = await response.json();
+          if (update.revision > viewRevision) {
+            viewRevision = update.revision;
+            applyView(update.view);
+          }
+        } catch (error) {
+          status.dataset.state = "error";
+          status.textContent =
+            `Realtime verbinding verbroken: ${error.message}; opnieuw verbinden…`;
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+        }
       }
     }
 
@@ -1482,8 +1641,9 @@ DASHBOARD_HTML = """<!doctype html>
       "click",
       resetStorageModeOverride
     );
-    loadView();
-    setInterval(loadView, 5000);
+    initializeTabs();
+    loadView().finally(watchViewUpdates);
+    setInterval(loadView, 60000);
   </script>
 </body>
 </html>
@@ -1495,7 +1655,9 @@ class WebViewStore:
 
     def __init__(self) -> None:
         self._lock = Lock()
+        self._condition = Condition(self._lock)
         self._latest_json: str | None = None
+        self._revision = 0
         self._reset_storage_mode_override: (
             Callable[[str], dict[str, object]] | None
         ) = None
@@ -1503,13 +1665,29 @@ class WebViewStore:
     def publish(self, view: dict[str, object]) -> None:
         """Serialize completely before atomically replacing the snapshot."""
         serialized = json.dumps(view, separators=(",", ":"))
-        with self._lock:
+        with self._condition:
             self._latest_json = serialized
+            self._revision += 1
+            self._condition.notify_all()
 
     def latest_json(self) -> str | None:
         """Return the latest immutable JSON snapshot, when available."""
         with self._lock:
             return self._latest_json
+
+    def wait_for_update(
+        self,
+        after_revision: int,
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> tuple[int, str | None]:
+        """Wait until a newer immutable snapshot is published."""
+        with self._condition:
+            self._condition.wait_for(
+                lambda: self._revision > after_revision,
+                timeout=timeout_seconds,
+            )
+            return self._revision, self._latest_json
 
     def set_storage_mode_override_reset(
         self,
@@ -1576,9 +1754,39 @@ def create_web_server(
             self.wfile.write(encoded)
 
         def do_GET(self) -> None:
-            path = urlsplit(self.path).path
+            parsed_url = urlsplit(self.path)
+            path = parsed_url.path
             if path == "/":
                 self._send_html(HTTPStatus.OK, DASHBOARD_HTML)
+                return
+
+            if path == "/api/view/updates":
+                query = parse_qs(parsed_url.query)
+                try:
+                    revision = int(query.get("revision", ["0"])[0])
+                except ValueError:
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        '{"status":"invalid_revision"}',
+                    )
+                    return
+                current_revision, latest = store.wait_for_update(revision)
+                if latest is None:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        '{"status":"waiting_for_first_run"}',
+                    )
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    (
+                        '{"revision":'
+                        + str(current_revision)
+                        + ',"view":'
+                        + latest
+                        + "}"
+                    ),
+                )
                 return
 
             if path != "/api/view":

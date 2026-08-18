@@ -65,6 +65,8 @@ class SourceEvidence:
     observed_at: datetime | None
     availability: str
     mapping_version: str
+    last_changed_at: datetime | None = None
+    last_updated_at: datetime | None = None
     error: str | None = None
     price_points: tuple[PriceForecastPoint, ...] = ()
     pv_energy_intervals: tuple[PVEnergyTimelineInterval, ...] = ()
@@ -644,6 +646,8 @@ class HomeAssistantStateReader:
             observed_at=_parse_datetime(payload.get("last_updated")),
             availability="unavailable" if unavailable else "available",
             mapping_version=mapping_version,
+            last_changed_at=_parse_datetime(payload.get("last_changed")),
+            last_updated_at=_parse_datetime(payload.get("last_updated")),
             error=(
                 "price_forecast_points_missing"
                 if binding.category == "nordpool" and not unavailable and not price_points

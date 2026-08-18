@@ -1,7 +1,9 @@
 import json
+from io import BytesIO
 from threading import Thread
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from zipfile import ZipFile
 
 import pytest
 
@@ -119,8 +121,52 @@ def test_web_server_exposes_auto_refreshing_read_only_dashboard() -> None:
     assert 'data-tab="history"' in html
     assert 'data-tab="strategy"' in html
     assert 'data-tab="technical"' in html
+    assert 'id="planning-incident-history"' in html
+    assert 'href="downloads/planning-incidents.jsonl"' in html
+    assert 'href="downloads/picot-diagnostics.zip"' in html
     assert "formatMeasurement" in html
     assert 'formatMeasurement(source.raw_state, source.raw_unit)' in html
+
+
+def test_web_server_exposes_incident_overview_and_downloads(tmp_path) -> None:
+    incident = tmp_path / "picot_v2_planning_incident_history.jsonl"
+    provenance = tmp_path / "picot_v2_storage_mode_provenance.json"
+    incident.write_text(
+        '{"event":"fallback_started","poll":{"run_id":"run-1"}}\n',
+        encoding="utf-8",
+    )
+    provenance.write_text("{}", encoding="utf-8")
+    store = WebViewStore()
+    store.set_diagnostic_paths(
+        (incident, provenance),
+        incident_history_path=incident,
+    )
+    server = create_web_server(store, host="127.0.0.1", port=0)
+    thread = Thread(target=server.serve_forever)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+
+    try:
+        with urlopen(f"{base}/api/diagnostics/incidents", timeout=2) as response:
+            overview = json.loads(response.read())
+        assert overview[0]["event"] == "fallback_started"
+
+        with urlopen(
+            f"{base}/downloads/planning-incidents.jsonl", timeout=2
+        ) as response:
+            assert response.headers.get_content_type() == "application/x-ndjson"
+            assert "attachment" in response.headers["Content-Disposition"]
+            assert response.read() == incident.read_bytes()
+
+        with urlopen(f"{base}/downloads/picot-diagnostics.zip", timeout=2) as response:
+            payload = response.read()
+            assert response.headers.get_content_type() == "application/zip"
+        with ZipFile(BytesIO(payload)) as archive:
+            assert archive.namelist() == [incident.name, provenance.name]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_realtime_update_endpoint_returns_published_revision_and_view() -> None:

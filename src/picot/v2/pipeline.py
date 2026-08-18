@@ -294,10 +294,21 @@ class CanonicalPipeline:
             > 1e-6
         )
         has_actionable_alternatives = bool(actionable_outcomes)
+        storage_states_by_id = {
+            state.storage_state_id: state
+            for state in snapshot.current_storage_states
+        }
         storage_requirement_already_satisfied = (
             candidate_derivation is not None
             and derivation_status == "ready"
-            and not candidate_derivation.requirements
+            and all(
+                requirement.storage_state_id in storage_states_by_id
+                and storage_states_by_id[
+                    requirement.storage_state_id
+                ].current_soc
+                >= requirement.required_soc
+                for requirement in candidate_derivation.requirements
+            )
         )
         has_valid_plan = (
             has_actionable_alternatives

@@ -47,24 +47,61 @@ def _full_storage_run() -> object:
     )
 
 
-def test_baseline_without_calculated_outcome_is_explicit_fallback() -> None:
+def _missing_forecast_fallback_run() -> object:
+    source = _snapshot()
+    assert source.capability_snapshot_set is not None
+    invalid = replace(
+        source,
+        household_load_forecast=None,
+        capability_snapshot_set=replace(
+            source.capability_snapshot_set,
+            capabilities=tuple(
+                replace(
+                    capability,
+                    supported_primitives=(
+                        *capability.supported_primitives,
+                        ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+                    ),
+                )
+                for capability in source.capability_snapshot_set.capabilities
+            ),
+        ),
+    )
+    return CanonicalPipeline().run(
+        planning_input=invalid,
+        control_change_allowed=True,
+    )
+
+
+def test_full_storage_without_charge_action_is_valid_plan() -> None:
     run = _full_storage_run()
 
-    assert run.outcomes.outcomes == ()
-    assert run.evaluation.status == "fallback_active"
-    assert run.evaluation.reason == (
-        "no actionable candidate with a calculated outcome"
+    assert run.candidate_set.derivation_status == "ready"
+    assert run.candidate_set.storage_requirements
+    assert all(
+        state.current_soc >= requirement.required_soc
+        for state in run.planning_input.current_storage_states
+        for requirement in run.candidate_set.storage_requirements
+        if state.storage_state_id == requirement.storage_state_id
     )
-    assert run.evaluation.decisive_step == "fallback:no_actionable_candidate"
-    assert run.execution_record.status == "fallback_active"
+    assert run.outcomes.outcomes == ()
+    assert run.evaluation.status == "winner_selected"
+    assert run.evaluation.reason == (
+        "storage requirement already satisfied; "
+        "no additional charge action required"
+    )
+    assert run.evaluation.decisive_step == (
+        "hard_constraint:storage_requirement_already_satisfied"
+    )
+    assert run.execution_record.status == "live_plan_ready"
     assert run.execution_plan_set.plans
 
     status = build_web_view(run, project(run))["planning_status"]
     assert status["attention"] == {
-        "required": True,
-        "code": "fallback_no_actionable_plan",
-        "title": "Geen uitvoerbaar plan beschikbaar",
-        "message": "De veilige terugvalmodus blijft actief; aandacht vereist.",
+        "required": False,
+        "code": None,
+        "title": None,
+        "message": None,
     }
     assert status["decision"]["confidence"] is None
     assert status["alternatives"][0]["confidence"] is None
@@ -125,7 +162,7 @@ def test_full_storage_builds_tomorrow_pv_plan_after_current_support_phase() -> N
 
 
 def test_planning_fallback_notification_is_deduplicated_and_recovers() -> None:
-    fallback = _full_storage_run()
+    fallback = _missing_forecast_fallback_run()
     normal = CanonicalPipeline().run(planning_input=_snapshot())
     calls: list[dict[str, Any]] = []
 

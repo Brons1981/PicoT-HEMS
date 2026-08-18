@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 from test_v2_delegated_storage_pipeline_integration import _snapshot
-from test_v2_planning_fallback import _full_storage_run
+from test_v2_planning_fallback import _missing_forecast_fallback_run
 
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.planning_incident_history import PlanningIncidentHistory
@@ -45,7 +45,7 @@ def test_fallback_persists_five_preceding_polls_and_recovery(tmp_path) -> None:
         run = CanonicalPipeline().run(planning_input=source)
         history.record(bundle=_bundle(source, state=str(index)), run=run)
 
-    fallback = _full_storage_run()
+    fallback = _missing_forecast_fallback_run()
     history.record(
         bundle=_bundle(fallback.planning_input, state="0"),
         run=fallback,
@@ -86,7 +86,7 @@ def test_fallback_persists_five_preceding_polls_and_recovery(tmp_path) -> None:
 def test_identical_active_fallback_does_not_grow_history(tmp_path) -> None:
     path = tmp_path / "planning-incidents.jsonl"
     history = PlanningIncidentHistory(path)
-    fallback = _full_storage_run()
+    fallback = _missing_forecast_fallback_run()
     bundle = _bundle(fallback.planning_input, state="0")
 
     history.record(bundle=bundle, run=fallback)

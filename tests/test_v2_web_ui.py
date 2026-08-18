@@ -253,6 +253,14 @@ def test_dashboard_contains_canonical_pv_forecast_actual_history_chart() -> None
     assert "Nog geen Solcast- of GoodWe-vermogensdata." in DASHBOARD_HTML
 
 
+def test_incident_history_refresh_preserves_open_details() -> None:
+    assert "planningIncidentHistorySignature" in DASHBOARD_HTML
+    assert "signature === planningIncidentHistorySignature" in DASHBOARD_HTML
+    assert 'container.querySelectorAll("details[open]")' in DASHBOARD_HTML
+    assert "details.dataset.incidentKey = incidentKey" in DASHBOARD_HTML
+    assert "details.open = openIncidentKeys.has(incidentKey)" in DASHBOARD_HTML
+
+
 def test_web_view_serializes_canonical_power_history() -> None:
     captured_at = datetime(2026, 8, 17, 10, 0, tzinfo=UTC)
     run = CanonicalPipeline().run(captured_at=captured_at)
@@ -836,4 +844,3 @@ def test_dashboard_compares_chosen_and_rejected_candidate_facts() -> None:
     assert "alternative.storage_energy_at_window_end_wh" in DASHBOARD_HTML
     assert "alternative.storage_energy_at_requirement_wh" in DASHBOARD_HTML
     assert "alternative.recoverability" in DASHBOARD_HTML
-

@@ -290,7 +290,7 @@ def test_zero_confidence_outcome_cannot_be_released_as_a_winner() -> None:
     assert run.execution_record.status != "live_plan_ready"
 
 
-def test_partial_pv_progress_cannot_be_released_as_a_winner() -> None:
+def test_partial_pv_progress_is_released_as_a_winner() -> None:
     source = _snapshot()
     first_pv = source.pv_energy_timeline.intervals[0]
     snapshot = replace(
@@ -309,12 +309,18 @@ def test_partial_pv_progress_cannot_be_released_as_a_winner() -> None:
     outcome = run.outcomes.outcomes[0]
     assert outcome.requirement_satisfied is False
     assert outcome.pv_storage_contribution_wh == pytest.approx(100.0)
-    assert run.evaluation.status == "fallback_active"
-    assert run.evaluation.winning_candidate_id != outcome.candidate_id
-    assert run.evaluation.decisive_step == "fallback:no_actionable_candidate"
-    assert run.execution_record.status != "observer_only_plan_ready"
+    assert outcome.confidence > 0.0
+    assert run.evaluation.status == "winner_selected"
+    assert run.evaluation.winning_candidate_id == outcome.candidate_id
+    assert run.evaluation.reason == (
+        "pv_charge_only maximizes storage progress using PV-only energy"
+    )
+    assert run.evaluation.decisive_step == (
+        "objective:maximize_storage_progress_without_grid"
+    )
+    assert run.execution_record.status == "observer_only_plan_ready"
     explanation = _build_plan_explanation(run)
     partial = next(
         plan for plan in explanation["plans"] if plan["family"] == "pv_charge_only"
     )
-    assert partial["selected"] is False
+    assert partial["selected"] is True

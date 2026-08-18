@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from threading import Condition, Lock
 from typing import TypedDict
 from urllib.parse import parse_qs, urlsplit
@@ -14,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from picot.domain.energy_path import PathSegment
 from picot.v2.contracts import CanonicalPipelineRun, PriceForecastPoint
+from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.projection import Projection
 from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
@@ -731,6 +733,20 @@ DASHBOARD_HTML = """<!doctype html>
         aria-live="polite"
       >
         Nog geen door PicoT uitgevoerde moduswissels vastgelegd.
+      </section>
+      <h2>Incidenthistorie</h2>
+      <section class="timeline-panel" aria-live="polite">
+        <div class="incident-download-actions">
+          <a href="downloads/planning-incidents.jsonl" download>
+            Download incidenthistorie
+          </a>
+          <a href="downloads/picot-diagnostics.zip" download>
+            Download alle diagnosebestanden
+          </a>
+        </div>
+        <div id="planning-incident-history">
+          Nog geen fallbackincidenten vastgelegd.
+        </div>
       </section>
       <h2>Energiestromen vandaag</h2>
       <section
@@ -3030,6 +3046,68 @@ DASHBOARD_HTML = """<!doctype html>
       container.append(table);
     }
 
+    function renderPlanningIncidentHistory(events) {
+      const container = element("planning-incident-history");
+      container.replaceChildren();
+      if (!Array.isArray(events) || events.length === 0) {
+        container.textContent = "Nog geen fallbackincidenten vastgelegd.";
+        return;
+      }
+      for (const incident of [...events].reverse()) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        const moment = new Date(incident.captured_at_local);
+        summary.textContent = [
+          Number.isNaN(moment.getTime())
+            ? displayValue(incident.captured_at_local)
+            : moment.toLocaleString("nl-NL"),
+          displayValue(incident.event),
+          displayValue(incident.reason),
+        ].join(" — ");
+        details.append(summary);
+        for (const poll of incident.polls ?? []) {
+          const heading = document.createElement("h4");
+          heading.textContent = [
+            displayValue(poll.captured_at_local),
+            displayValue(poll.run_id),
+          ].join(" · ");
+          details.append(heading);
+          const table = document.createElement("table");
+          const body = document.createElement("tbody");
+          for (const entity of poll.entities ?? []) {
+            const row = document.createElement("tr");
+            for (const value of [
+              entity.entity_id,
+              entity.state,
+              entity.unit,
+              entity.availability,
+              entity.last_updated_at,
+            ]) {
+              const cell = document.createElement("td");
+              cell.textContent = displayValue(value);
+              row.append(cell);
+            }
+            body.append(row);
+          }
+          table.append(body);
+          details.append(table);
+        }
+        container.append(details);
+      }
+    }
+
+    async function loadPlanningIncidentHistory() {
+      try {
+        const response = await fetch("api/diagnostics/incidents", {
+          cache: "no-store"
+        });
+        if (!response.ok) return;
+        renderPlanningIncidentHistory(await response.json());
+      } catch (_error) {
+        // The main dashboard remains usable when no incident file exists.
+      }
+    }
+
     function renderView(view) {
       const dashboardState = captureDashboardState();
       element("version").textContent = displayValue(view.picot_version);
@@ -3071,6 +3149,7 @@ DASHBOARD_HTML = """<!doctype html>
       renderStorageModeTransitionHistory(
         view.storage_mode_transition_history ?? []
       );
+      loadPlanningIncidentHistory();
       renderPriceTimeline(
         view.price_timeline ?? {
           available: false,
@@ -3204,6 +3283,8 @@ class WebViewStore:
         self._reset_storage_mode_override: (
             Callable[[str], dict[str, object]] | None
         ) = None
+        self._diagnostic_paths: tuple[Path, ...] = ()
+        self._incident_history_path: Path | None = None
 
     def _overlay_fast_grid_power_source(
         self,
@@ -3297,6 +3378,25 @@ class WebViewStore:
         with self._lock:
             return self._reset_storage_mode_override
 
+    def set_diagnostic_paths(
+        self,
+        paths: tuple[Path, ...],
+        *,
+        incident_history_path: Path,
+    ) -> None:
+        """Register the fixed runtime export allow-list before serving."""
+        with self._lock:
+            self._diagnostic_paths = paths
+            self._incident_history_path = incident_history_path
+
+    def diagnostic_paths(self) -> tuple[Path, ...]:
+        with self._lock:
+            return self._diagnostic_paths
+
+    def incident_history_path(self) -> Path | None:
+        with self._lock:
+            return self._incident_history_path
+
 
 def create_web_server(
     store: WebViewStore,
@@ -3353,6 +3453,22 @@ def create_web_server(
             self.end_headers()
             self.wfile.write(encoded)
 
+        def _send_download(
+            self,
+            body: bytes,
+            *,
+            content_type: str,
+            filename: str,
+        ) -> None:
+            self.send_response(int(HTTPStatus.OK))
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self) -> None:
             parsed_url = urlsplit(self.path)
             path = parsed_url.path
@@ -3386,6 +3502,42 @@ def create_web_server(
                         + latest
                         + "}"
                     ),
+                )
+                return
+
+            if path == "/api/diagnostics/incidents":
+                incident_path = store.incident_history_path()
+                overview = (
+                    incident_overview(incident_path)
+                    if incident_path is not None
+                    else []
+                )
+                self._send_json(
+                    HTTPStatus.OK,
+                    json.dumps(overview, separators=(",", ":")),
+                )
+                return
+
+            if path == "/downloads/planning-incidents.jsonl":
+                incident_path = store.incident_history_path()
+                if incident_path is None or not incident_path.is_file():
+                    self._send_json(
+                        HTTPStatus.NOT_FOUND,
+                        '{"status":"incident_history_not_found"}',
+                    )
+                    return
+                self._send_download(
+                    incident_path.read_bytes(),
+                    content_type="application/x-ndjson",
+                    filename=incident_path.name,
+                )
+                return
+
+            if path == "/downloads/picot-diagnostics.zip":
+                self._send_download(
+                    diagnostic_zip(store.diagnostic_paths()),
+                    content_type="application/zip",
+                    filename="picot-diagnostics.zip",
                 )
                 return
 

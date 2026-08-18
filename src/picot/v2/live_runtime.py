@@ -56,6 +56,7 @@ from picot.v2.live_storage_mode_provenance import (
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
+from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import (
     HomeAssistantStateReader,
     HouseholdLoadObservation,
@@ -132,6 +133,9 @@ STORAGE_MODE_PROVENANCE_PATH = Path(
 )
 STORAGE_MODE_TRANSITION_HISTORY_PATH = Path(
     "/data/picot_v2_storage_mode_transition_history.jsonl"
+)
+PLANNING_INCIDENT_HISTORY_PATH = Path(
+    "/data/picot_v2_planning_incident_history.jsonl"
 )
 
 
@@ -1307,6 +1311,7 @@ def _execute_planning_bundle(
     canonical_execution_runtime: CanonicalExecutionRuntime | None = None,
     canonical_execution_enabled: bool = False,
     planning_fallback_notifier: PlanningFallbackNotifier | None = None,
+    planning_incident_history: PlanningIncidentHistory | None = None,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -1355,6 +1360,44 @@ def _execute_planning_bundle(
                     application_id=application_id,
                     occurred_at=bundle.snapshot.captured_at,
                 )
+    if planning_incident_history is not None:
+        try:
+            planning_incident_history.record(
+                bundle=bundle,
+                run=run,
+                runtime_diagnostics={
+                    "pv_actual": (
+                        asdict(pv_actual_diagnostics)
+                        if pv_actual_diagnostics is not None
+                        else None
+                    ),
+                    "sunset_source": (
+                        asdict(pv_sunset_source)
+                        if pv_sunset_source is not None
+                        else None
+                    ),
+                    "pv_attenuated_ranges": [
+                        asdict(item) for item in pv_attenuated_ranges
+                    ],
+                    "pv_attenuation_learning": (
+                        asdict(pv_attenuation_learning_result)
+                        if pv_attenuation_learning_result is not None
+                        else None
+                    ),
+                },
+            )
+        except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_planning_incident_history_error",
+                        "run_id": run.planning_input.run_id,
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
     if planning_fallback_notifier is not None:
         try:
             planning_fallback_notifier.update(
@@ -1660,6 +1703,12 @@ def main() -> None:
         )
     )
     planning_fallback_notifier = PlanningFallbackNotifier()
+    planning_incident_history = PlanningIncidentHistory(
+        PLANNING_INCIDENT_HISTORY_PATH,
+        local_timezone_name=str(
+            options.get("pv_local_timezone", "Europe/Amsterdam")
+        ).strip(),
+    )
 
     def reset_storage_mode_override(
         reset_id: str,
@@ -1963,6 +2012,7 @@ def main() -> None:
             canonical_execution_runtime=canonical_execution_runtime,
             canonical_execution_enabled=canonical_execution_enabled,
             planning_fallback_notifier=planning_fallback_notifier,
+            planning_incident_history=planning_incident_history,
         )
 
     previous_signature: str | None = None

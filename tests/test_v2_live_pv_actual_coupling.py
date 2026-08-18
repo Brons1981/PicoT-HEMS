@@ -384,6 +384,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         tuple[PlanningInputBundle, LivePVActualDiagnostics]
     ] = []
     power_history_timings: list[float] = []
+    incident_histories: list[object] = []
 
     class StopLoop(Exception):
         pass
@@ -452,6 +453,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             canonical_execution_runtime: object,
             canonical_execution_enabled: bool,
             planning_fallback_notifier: object,
+            planning_incident_history: object,
         ) -> None:
         del (
                 price_config,
@@ -474,6 +476,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))
         power_history_timings.append(power_history_read_ms)
+        incident_histories.append(planning_incident_history)
 
     monkeypatch.setenv("SUPERVISOR_TOKEN", "supervisor-token")
     monkeypatch.setattr(
@@ -523,6 +526,11 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     assert len(executed) == 1
     assert len(power_history_timings) == 1
     assert power_history_timings[0] >= 0.0
+    assert len(incident_histories) == 1
+    assert isinstance(
+        incident_histories[0],
+        live_runtime.PlanningIncidentHistory,
+    )
     executed_bundle, diagnostics = executed[0]
     assert executed_bundle.snapshot.pv_energy_timeline is not None
     actual, future = (

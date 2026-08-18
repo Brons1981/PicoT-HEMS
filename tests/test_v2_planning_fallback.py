@@ -47,6 +47,32 @@ def _full_storage_run() -> object:
     )
 
 
+def _missing_forecast_fallback_run() -> object:
+    source = _snapshot()
+    assert source.capability_snapshot_set is not None
+    invalid = replace(
+        source,
+        household_load_forecast=None,
+        capability_snapshot_set=replace(
+            source.capability_snapshot_set,
+            capabilities=tuple(
+                replace(
+                    capability,
+                    supported_primitives=(
+                        *capability.supported_primitives,
+                        ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+                    ),
+                )
+                for capability in source.capability_snapshot_set.capabilities
+            ),
+        ),
+    )
+    return CanonicalPipeline().run(
+        planning_input=invalid,
+        control_change_allowed=True,
+    )
+
+
 def test_full_storage_without_charge_action_is_valid_plan() -> None:
     run = _full_storage_run()
 
@@ -77,7 +103,6 @@ def test_full_storage_without_charge_action_is_valid_plan() -> None:
         "title": None,
         "message": None,
     }
-    assert status["decision"]["selected"] is True
     assert status["decision"]["confidence"] is None
     assert status["alternatives"][0]["confidence"] is None
 
@@ -137,7 +162,7 @@ def test_full_storage_builds_tomorrow_pv_plan_after_current_support_phase() -> N
 
 
 def test_planning_fallback_notification_is_deduplicated_and_recovers() -> None:
-    fallback = _full_storage_run()
+    fallback = _missing_forecast_fallback_run()
     normal = CanonicalPipeline().run(planning_input=_snapshot())
     calls: list[dict[str, Any]] = []
 

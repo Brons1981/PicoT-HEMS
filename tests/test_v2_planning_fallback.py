@@ -144,4 +144,6 @@ def test_planning_fallback_notification_is_deduplicated_and_recovers() -> None:
     assert calls[0]["notification_id"] == "picot_planning_fallback"
     assert "aandacht vereist" in calls[0]["title"]
     assert "terugvalmodus" in calls[0]["message"]
+    assert "2026-08-17T22:00:00+02:00" in calls[0]["message"]
+    assert "UTC 2026-08-17T20:00:00+00:00" in calls[0]["message"]
     assert "hersteld" in calls[1]["title"]

@@ -7,12 +7,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from picot.v2.contracts import CanonicalPipelineRun
 
 SUPERVISOR_BASE_URL = "http://supervisor/core"
 HTTP_TIMEOUT_SECONDS = 10.0
 NOTIFICATION_ID = "picot_planning_fallback"
+LOCAL_TIMEZONE = ZoneInfo("Europe/Amsterdam")
+
+
+def _display_time(value: datetime) -> str:
+    return (
+        f"{value.astimezone(LOCAL_TIMEZONE).isoformat()} (Europe/Amsterdam; "
+        f"UTC {value.astimezone(ZoneInfo('UTC')).isoformat()})"
+    )
 
 
 @dataclass(slots=True)
@@ -50,7 +59,7 @@ class PlanningFallbackNotifier:
                     f"Oorzaak: {run.evaluation.reason}\n"
                     f"Kandidaatafleiding: {run.candidate_set.derivation_status}\n"
                     f"Detail: {run.candidate_set.derivation_reason or 'geen'}\n"
-                    f"Vastgesteld: {now.isoformat()}\n"
+                    f"Vastgesteld: {_display_time(now)}\n"
                     f"Run: {run.planning_input.run_id}\n"
                     "Een identieke oorzaak wordt niet opnieuw gemeld."
                 ),
@@ -66,7 +75,7 @@ class PlanningFallbackNotifier:
             title="PicoT planning hersteld",
             message=(
                 "PicoT heeft opnieuw een inhoudelijk berekend plan beschikbaar.\n\n"
-                f"Hersteld: {now.isoformat()}\n"
+                f"Hersteld: {_display_time(now)}\n"
                 f"Run: {run.planning_input.run_id}"
             ),
             opener=opener,

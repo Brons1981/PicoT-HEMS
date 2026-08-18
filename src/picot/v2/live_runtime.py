@@ -1709,6 +1709,17 @@ def main() -> None:
             options.get("pv_local_timezone", "Europe/Amsterdam")
         ).strip(),
     )
+    web_view_store.set_diagnostic_paths(
+        (
+            PLANNING_INCIDENT_HISTORY_PATH,
+            HOUSEHOLD_LOAD_HISTORY_PATH,
+            PV_ATTENUATION_FORECAST_BASIS_PATH,
+            PV_ATTENUATION_EVIDENCE_PATH,
+            STORAGE_MODE_PROVENANCE_PATH,
+            STORAGE_MODE_TRANSITION_HISTORY_PATH,
+        ),
+        incident_history_path=PLANNING_INCIDENT_HISTORY_PATH,
+    )
 
     def reset_storage_mode_override(
         reset_id: str,

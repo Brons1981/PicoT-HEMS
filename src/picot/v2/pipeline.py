@@ -285,8 +285,7 @@ class CanonicalPipeline:
         actionable_outcomes = tuple(
             outcome
             for outcome in delegated_outcomes
-            if outcome.requirement_satisfied
-            and outcome.confidence > 0.0
+            if outcome.confidence > 0.0
             and (
                 outcome.pv_storage_contribution_wh
                 + outcome.grid_storage_contribution_wh

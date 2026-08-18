@@ -51,7 +51,13 @@ def test_full_storage_without_charge_action_is_valid_plan() -> None:
     run = _full_storage_run()
 
     assert run.candidate_set.derivation_status == "ready"
-    assert run.candidate_set.storage_requirements == ()
+    assert run.candidate_set.storage_requirements
+    assert all(
+        state.current_soc >= requirement.required_soc
+        for state in run.planning_input.current_storage_states
+        for requirement in run.candidate_set.storage_requirements
+        if state.storage_state_id == requirement.storage_state_id
+    )
     assert run.outcomes.outcomes == ()
     assert run.evaluation.status == "winner_selected"
     assert run.evaluation.reason == (

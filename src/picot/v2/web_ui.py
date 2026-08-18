@@ -1350,6 +1350,7 @@ DASHBOARD_HTML = """<!doctype html>
     let powerHistoryInteractionMode = "zoom";
     let pvForecastZoomWindow = null;
     let pvForecastInteractionMode = "pan";
+    let planningIncidentHistorySignature = null;
 
     function renderPowerHistory(history) {
       const container = element("power-history-chart");
@@ -3048,13 +3049,29 @@ DASHBOARD_HTML = """<!doctype html>
 
     function renderPlanningIncidentHistory(events) {
       const container = element("planning-incident-history");
+      const signature = JSON.stringify(events);
+      if (signature === planningIncidentHistorySignature) return;
+      const openIncidentKeys = new Set(
+        [...container.querySelectorAll("details[open]")]
+          .map((details) => details.dataset.incidentKey)
+          .filter(Boolean)
+      );
       container.replaceChildren();
+      planningIncidentHistorySignature = signature;
       if (!Array.isArray(events) || events.length === 0) {
         container.textContent = "Nog geen fallbackincidenten vastgelegd.";
         return;
       }
       for (const incident of [...events].reverse()) {
         const details = document.createElement("details");
+        const incidentKey = [
+          incident.incident_id,
+          incident.event,
+          incident.captured_at_utc,
+          incident.run_id,
+        ].map(displayValue).join("|");
+        details.dataset.incidentKey = incidentKey;
+        details.open = openIncidentKeys.has(incidentKey);
         const summary = document.createElement("summary");
         const moment = new Date(incident.captured_at_local);
         summary.textContent = [

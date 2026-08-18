@@ -107,6 +107,47 @@ def test_full_storage_without_charge_action_is_valid_plan() -> None:
     assert status["alternatives"][0]["confidence"] is None
 
 
+def test_partial_pv_progress_is_actionable_when_target_cannot_be_met() -> None:
+    source = _snapshot()
+    assert source.pv_energy_timeline is not None
+    partial = replace(
+        source,
+        current_storage_states=tuple(
+            replace(state, current_soc=0.99)
+            for state in source.current_storage_states
+        ),
+        pv_energy_timeline=replace(
+            source.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    interval,
+                    pv_energy_wh=min(interval.pv_energy_wh, 10.0),
+                )
+                for interval in source.pv_energy_timeline.intervals
+            ),
+        ),
+    )
+
+    run = CanonicalPipeline().run(
+        planning_input=partial,
+        control_change_allowed=True,
+    )
+
+    assert run.outcomes.outcomes
+    outcome = run.outcomes.outcomes[0]
+    assert outcome.requirement_satisfied is False
+    assert outcome.confidence > 0.0
+    assert outcome.pv_storage_contribution_wh > 0.0
+    assert run.evaluation.status == "winner_selected"
+    assert run.evaluation.reason == (
+        "pv_charge_only maximizes storage progress using PV-only energy"
+    )
+    assert run.evaluation.decisive_step == (
+        "objective:maximize_storage_progress_without_grid"
+    )
+    assert run.execution_record.status == "live_plan_ready"
+
+
 def test_full_storage_builds_tomorrow_pv_plan_after_current_support_phase() -> None:
     source = _snapshot()
     base = source.captured_at

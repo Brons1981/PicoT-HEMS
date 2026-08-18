@@ -47,25 +47,31 @@ def _full_storage_run() -> object:
     )
 
 
-def test_baseline_without_calculated_outcome_is_explicit_fallback() -> None:
+def test_full_storage_without_charge_action_is_valid_plan() -> None:
     run = _full_storage_run()
 
+    assert run.candidate_set.derivation_status == "ready"
+    assert run.candidate_set.storage_requirements == ()
     assert run.outcomes.outcomes == ()
-    assert run.evaluation.status == "fallback_active"
+    assert run.evaluation.status == "winner_selected"
     assert run.evaluation.reason == (
-        "no actionable candidate with a calculated outcome"
+        "storage requirement already satisfied; "
+        "no additional charge action required"
     )
-    assert run.evaluation.decisive_step == "fallback:no_actionable_candidate"
-    assert run.execution_record.status == "fallback_active"
+    assert run.evaluation.decisive_step == (
+        "hard_constraint:storage_requirement_already_satisfied"
+    )
+    assert run.execution_record.status == "live_plan_ready"
     assert run.execution_plan_set.plans
 
     status = build_web_view(run, project(run))["planning_status"]
     assert status["attention"] == {
-        "required": True,
-        "code": "fallback_no_actionable_plan",
-        "title": "Geen uitvoerbaar plan beschikbaar",
-        "message": "De veilige terugvalmodus blijft actief; aandacht vereist.",
+        "required": False,
+        "code": None,
+        "title": None,
+        "message": None,
     }
+    assert status["decision"]["selected"] is True
     assert status["decision"]["confidence"] is None
     assert status["alternatives"][0]["confidence"] is None
 

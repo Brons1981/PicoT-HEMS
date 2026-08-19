@@ -513,13 +513,7 @@ class CanonicalPipeline:
         if not has_due_storage_segment:
             storage_state = next(iter(snapshot.current_storage_states), None)
             capability_set = snapshot.capability_snapshot_set
-            baseline_primitive = (
-                ExecutionPrimitive.BALANCE_BIDIRECTIONAL
-                if snapshot.household_planning_regime is not None
-                and snapshot.household_planning_regime.regime
-                == "self_consumption_first"
-                else ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
-            )
+            baseline_primitive = ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
             baseline_capability = (
                 next(
                     (

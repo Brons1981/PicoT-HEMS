@@ -1,5 +1,76 @@
 # PicoT v2 Development Log
 
+## 2026-08-19 — dev.118 scheduled PV baseline and diagnostic plan history
+
+PicoT version: `2.0.0-dev.118`
+Branch: `agent/dev118-plan-history-smart-discharge`
+Baseline main commit: `ae38869dae1f2d9eacf7a4affa2893187e0913a0`
+Architecture authority: ADR-001 through ADR-039 plus accepted V2ADR-051
+State: **IMPLEMENTED and locally verified; not CI or live verified**
+
+### COMPLETED
+
+- Corrected the canonical storage baseline outside a selected PV-acquisition
+  window to `BALANCE_DISCHARGE_ONLY`, translated by the existing adapter to
+  `Alleen slim ontladen`.
+- Preserved `BALANCE_BIDIRECTIONAL` / `Nul op de meter` for the selected
+  PV-acquisition window itself.
+- Added passive persistence of a complete canonical planning snapshot whenever
+  the semantic plan outcome changes, including evaluation, candidates,
+  outcomes, execution plans and vendor result.
+- Kept existing fallback lifecycle history and five preceding in-memory polls.
+- Bounded diagnostic growth by fingerprinting semantic plan state instead of
+  persisting an unchanged multi-megabyte candidate set every planner cycle.
+
+### DECISIONS MADE
+
+- A future `pv_charge_only` winner does not activate NOM before
+  `valid_from`.
+- The normal mode before and after the selected acquisition window is
+  `Alleen slim ontladen`, independent of the household optimisation regime.
+- A plan-history snapshot is persisted when evaluation status/reason,
+  decisive step, winning family, future window, lifecycle, primitive or vendor
+  mode changes.
+- Diagnostic persistence remains a passive consumer of immutable canonical
+  output and does not calculate or alter planner decisions.
+
+### VERIFIED
+
+- Pytest: **875 passed**.
+- Ruff: changed v2 source and tests green.
+- Mypy: **Success**, 51 v2 source files checked.
+- The repository-wide Ruff command still reports 83 pre-existing legacy
+  findings outside this change; no unrelated legacy files were modified.
+
+### NOT LIVE VERIFIED
+
+- dev.118 has not yet been installed in Home Assistant.
+- The overnight transition must confirm `Alleen slim ontladen` before the
+  selected window, NOM at `valid_from`, and return to smart discharge at
+  `valid_until`.
+- A fresh diagnostics export must confirm `planning_outcome_changed` records
+  after dev.118 without a fallback incident.
+
+### DO NOT CHANGE / CRITICAL CONTEXT
+
+- Do not let low-confidence future PV activate NOM before the selected window.
+- Do not persist every unchanged minute-level candidate set; the live candidate
+  payload can be many megabytes.
+- Preserve manual override and fallback/storing behaviour.
+- Do not move vendor mode names into Core decision logic.
+
+### EXACT CURRENT POSITION
+
+Phase: canonical storage lifecycle correction and diagnostics
+Version: `2.0.0-dev.118`
+Position: implementation prepared from dev.117; CI and live verification remain.
+
+### FIRST NEXT ACTION
+
+Run CI, merge the dev.118 release PR after it is green, install it in Home
+Assistant, and verify the scheduled smart-discharge → NOM → smart-discharge
+lifecycle plus normal plan-history export.
+
 
 ## 2026-08-15 — Actual PV evidence, confidence and sunset-relative attenuation foundation
 
@@ -602,4 +673,3 @@ Before implementation:
 - define exact red tests;
 - confirm how the Zendure adapter can execute the winning grid-charge primitive without Core vendor knowledge;
 - keep the 2027 valuation observer-only and versioned.
-

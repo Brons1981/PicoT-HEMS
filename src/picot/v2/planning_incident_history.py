@@ -1,4 +1,4 @@
-"""Persistent diagnostic history around canonical planning fallback incidents."""
+"""Persistent diagnostic history for canonical plan changes and fallback incidents."""
 
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ def _poll_snapshot(
 
 @dataclass(slots=True)
 class PlanningIncidentHistory:
-    """Keep recent polls in memory and persist the complete fallback lifecycle."""
+    """Persist meaningful plan changes plus the complete fallback lifecycle."""
 
     path: Path
     preceding_poll_count: int = DEFAULT_PRECEDING_POLLS
@@ -120,6 +120,7 @@ class PlanningIncidentHistory:
     _polls: deque[dict[str, object]] = field(init=False)
     _active_incident_id: str | None = field(default=None, init=False)
     _active_fingerprint: str | None = field(default=None, init=False)
+    _planning_outcome_fingerprint: str | None = field(default=None, init=False)
     _household_fallback_active: bool | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
@@ -142,6 +143,19 @@ class PlanningIncidentHistory:
             runtime_diagnostics=runtime_diagnostics,
         )
         household_forecast = bundle.snapshot.household_load_forecast
+        planning_outcome_fingerprint = self._planning_fingerprint(run)
+        if (
+            run.evaluation.status != "fallback_active"
+            and planning_outcome_fingerprint != self._planning_outcome_fingerprint
+        ):
+            self._append(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "event": "planning_outcome_changed",
+                    "poll": snapshot,
+                }
+            )
+            self._planning_outcome_fingerprint = planning_outcome_fingerprint
         household_fallback = bool(
             household_forecast is not None and household_forecast.fallback_active
         )
@@ -207,6 +221,46 @@ class PlanningIncidentHistory:
             self._active_incident_id = None
             self._active_fingerprint = None
         self._polls.append(snapshot)
+
+    @staticmethod
+    def _planning_fingerprint(run: CanonicalPipelineRun) -> str:
+        winning_candidate = next(
+            (
+                candidate
+                for candidate in run.candidate_set.candidates
+                if candidate.candidate_id == run.evaluation.winning_candidate_id
+            ),
+            None,
+        )
+        value = {
+            "evaluation_status": run.evaluation.status,
+            "evaluation_reason": run.evaluation.reason,
+            "decisive_step": run.evaluation.decisive_step,
+            "winning_family": (
+                winning_candidate.family if winning_candidate is not None else None
+            ),
+            "plans": [
+                {
+                    "execution_scope_id": plan.execution_scope_id,
+                    "valid_from": (
+                        plan.valid_from
+                        if plan.lifecycle_status.startswith("scheduled")
+                        else None
+                    ),
+                    "valid_until": plan.valid_until,
+                    "planned_primitive": plan.planned_primitive,
+                    "planned_vendor_mode": plan.planned_vendor_mode,
+                    "lifecycle_status": plan.lifecycle_status,
+                }
+                for plan in run.execution_plan_set.plans
+            ],
+        }
+        return json.dumps(
+            value,
+            default=_json_value,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     def _append(self, record: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

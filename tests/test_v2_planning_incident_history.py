@@ -55,13 +55,14 @@ def test_fallback_persists_five_preceding_polls_and_recovery(tmp_path) -> None:
 
     records = [json.loads(line) for line in path.read_text().splitlines()]
     assert [record["event"] for record in records] == [
+        "planning_outcome_changed",
         "fallback_started",
         "fallback_recovered",
     ]
-    assert len(records[0]["preceding_polls"]) == 5
-    assert records[0]["preceding_polls"][0]["entities"][0]["state"] == "1"
-    assert records[0]["poll"]["evaluation"]["status"] == "fallback_active"
-    assert records[0]["poll"]["entities"][0] == {
+    assert len(records[1]["preceding_polls"]) == 5
+    assert records[1]["preceding_polls"][0]["entities"][0]["state"] == "1"
+    assert records[1]["poll"]["evaluation"]["status"] == "fallback_active"
+    assert records[1]["poll"]["entities"][0] == {
         "entity_id": "sensor.goodwe_vermogen",
         "category": "pv",
         "semantic_role": "pv_power",
@@ -79,8 +80,8 @@ def test_fallback_persists_five_preceding_polls_and_recovery(tmp_path) -> None:
         "price_points": [],
         "pv_energy_intervals": [],
     }
-    assert records[1]["incident_id"] == records[0]["incident_id"]
-    assert records[1]["poll"]["captured_at_local"].endswith("+02:00")
+    assert records[2]["incident_id"] == records[1]["incident_id"]
+    assert records[2]["poll"]["captured_at_local"].endswith("+02:00")
 
 
 def test_identical_active_fallback_does_not_grow_history(tmp_path) -> None:
@@ -94,6 +95,36 @@ def test_identical_active_fallback_does_not_grow_history(tmp_path) -> None:
 
     records = [json.loads(line) for line in path.read_text().splitlines()]
     assert [record["event"] for record in records] == ["fallback_started"]
+
+
+def test_normal_plan_outcome_changes_are_persisted(tmp_path) -> None:
+    path = tmp_path / "planning-incidents.jsonl"
+    history = PlanningIncidentHistory(path)
+    source = _snapshot()
+    first = CanonicalPipeline().run(planning_input=source)
+
+    history.record(bundle=_bundle(source, state="100"), run=first)
+    history.record(bundle=_bundle(source, state="101"), run=first)
+
+    changed = replace(
+        first,
+        evaluation=replace(
+            first.evaluation,
+            reason="same winner with materially changed plan evidence",
+        ),
+    )
+    history.record(bundle=_bundle(source, state="102"), run=changed)
+
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    plan_records = [
+        record for record in records if record["event"] == "planning_outcome_changed"
+    ]
+    assert len(plan_records) == 2
+    assert plan_records[0]["poll"]["outcomes"]
+    assert plan_records[0]["poll"]["execution_plan_set"]
+    assert plan_records[1]["poll"]["evaluation"]["reason"] == (
+        "same winner with materially changed plan evidence"
+    )
 
 
 def test_household_fallback_transition_is_persisted(tmp_path) -> None:

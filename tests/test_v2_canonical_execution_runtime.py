@@ -182,7 +182,7 @@ def test_canonical_plan_restores_smart_discharge_before_future_pv_window() -> No
     assert run.primitive_boundary.planned_vendor_mode == "Alleen slim ontladen"
 
 
-def test_self_consumption_regime_uses_nom_before_future_pv_window() -> None:
+def test_future_pv_window_uses_smart_discharge_until_window_starts() -> None:
     live = _live_run()
     planning_input = live.planning_input
     assert planning_input.pv_energy_timeline is not None
@@ -242,9 +242,9 @@ def test_self_consumption_regime_uses_nom_before_future_pv_window() -> None:
     assert run.primitive_boundary.status == "request_ready"
     assert run.primitive_boundary.planned_primitive is not None
     assert run.primitive_boundary.planned_primitive.value == (
-        "balance_bidirectional"
+        "balance_discharge_only"
     )
-    assert run.primitive_boundary.planned_vendor_mode == "Nul op de meter"
+    assert run.primitive_boundary.planned_vendor_mode == "Alleen slim ontladen"
 
 
 def test_canonical_runtime_dispatches_the_exact_approved_mode() -> None:

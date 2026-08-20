@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 
@@ -270,33 +271,54 @@ def test_preferred_price_window_is_considered_before_expansion() -> None:
     )
 
     assert candidate_set.derivation_status == "constructed"
-    assert len(candidate_set.energy_paths) == 2
+    assert len(candidate_set.energy_paths) == 1
     assert [
         (segment.starts_at, segment.ends_at)
         for segment in candidate_set.energy_paths[0].segments
     ] == [(BASE, WINDOW_END)]
-    assert [
-        (segment.starts_at, segment.ends_at)
-        for segment in candidate_set.energy_paths[1].segments
-    ] == [
-        (BASE, WINDOW_END),
-        (WINDOW_END, REQUIRED_BY),
-    ]
 
 
-def test_progressive_full_horizon_reserves_every_nom_interval() -> None:
+def test_preferred_window_executes_only_between_first_and_last_acquisition() -> None:
     module = import_module("picot.v2.delegated_storage_candidates")
+    required_by = BASE + timedelta(hours=5)
+    intervals = tuple(
+        ProjectedHouseholdEnergyBalanceInterval(
+            starts_at=BASE + timedelta(hours=index),
+            ends_at=BASE + timedelta(hours=index + 1),
+            current_usable_storage_energy_wh=1000.0,
+            expected_usable_pv_energy_wh=pv_wh,
+            planned_grid_energy_wh=0.0,
+            household_load_forecast_energy_wh=load_wh,
+            known_future_demand_energy_wh=0.0,
+            conversion_losses_wh=0.0,
+            other_planned_household_energy_flows_wh=0.0,
+            projected_storage_energy_wh=1000.0,
+            confidence=0.7,
+            evidence_ids=(f"interval-{index}",),
+        )
+        for index, (pv_wh, load_wh) in enumerate(
+            ((0.0, 100.0), (500.0, 100.0), (0.0, 0.0), (500.0, 100.0), (0.0, 100.0))
+        )
+    )
     candidate_set = module.construct_pv_charge_only_candidate(
-        snapshot=_snapshot(_capability_set()),
-        balance=_balance(),
-        requirement=_requirement(),
-        preferred_price_windows=((BASE, WINDOW_END),),
+        snapshot=replace(
+            _snapshot(_capability_set()),
+            horizon_end=required_by,
+        ),
+        balance=replace(_balance(), intervals=intervals),
+        requirement=replace(
+            _requirement(),
+            required_energy_wh=1500.0,
+            required_by=required_by,
+        ),
+        preferred_price_windows=((BASE, required_by),),
     )
 
-    full_horizon_path = candidate_set.energy_paths[1]
-    assert full_horizon_path.segments[0].starts_at == BASE
-    assert full_horizon_path.segments[-1].ends_at == REQUIRED_BY
+    path = candidate_set.energy_paths[0]
+    assert path.segments[0].starts_at == BASE + timedelta(hours=1)
+    assert path.segments[-1].ends_at == BASE + timedelta(hours=4)
+    assert len(path.segments) == 3
     assert all(
         segment.charge_source_policy is ChargeSourcePolicy.PV_ONLY
-        for segment in full_horizon_path.segments
+        for segment in path.segments
     )

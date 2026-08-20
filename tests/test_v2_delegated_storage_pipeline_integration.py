@@ -17,10 +17,11 @@ from picot.v2.contracts import (
     HouseholdLoadForecast,
     HouseholdLoadForecastInterval,
     PlanningInputSnapshot,
+    PriceForecastPoint,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
-from picot.v2.pipeline import CanonicalPipeline
+from picot.v2.pipeline import CanonicalPipeline, _average_price_for_window
 from picot.v2.projection import project
 from picot.v2.web_ui import _build_plan_explanation
 
@@ -192,6 +193,57 @@ def test_evaluation_selects_requirement_satisfying_path_deterministically() -> N
         "pv_charge_only satisfies the storage requirement using PV-only energy"
     )
     assert first.evaluation == second.evaluation
+
+
+def test_executable_window_uses_duration_weighted_quarter_prices() -> None:
+    source = _snapshot()
+    quarter = timedelta(minutes=15)
+    prices = tuple(
+        PriceForecastPoint(
+            point_id=f"price-{index}",
+            starts_at=BASE + quarter * index,
+            ends_at=BASE + quarter * (index + 1),
+            value_eur_per_kwh=value,
+            confidence=1.0,
+            evidence_id="price-evidence",
+        )
+        for index, value in enumerate((0.40, 0.30, 0.20, 0.10))
+    )
+    snapshot = replace(source, price_points=prices)
+
+    assert _average_price_for_window(
+        snapshot,
+        BASE,
+        BASE + timedelta(hours=1),
+    ) == pytest.approx(0.25)
+    assert _average_price_for_window(
+        snapshot,
+        BASE + timedelta(minutes=30),
+        BASE + timedelta(hours=1),
+    ) == pytest.approx(0.15)
+
+
+def test_executable_window_requires_complete_price_coverage() -> None:
+    source = _snapshot()
+    snapshot = replace(
+        source,
+        price_points=(
+            PriceForecastPoint(
+                point_id="price-partial",
+                starts_at=BASE,
+                ends_at=BASE + timedelta(minutes=15),
+                value_eur_per_kwh=0.10,
+                confidence=1.0,
+                evidence_id="price-evidence",
+            ),
+        ),
+    )
+
+    assert _average_price_for_window(
+        snapshot,
+        BASE,
+        BASE + timedelta(minutes=30),
+    ) == float("inf")
 
 
 def test_winning_delegated_path_becomes_unchanged_observer_plan() -> None:

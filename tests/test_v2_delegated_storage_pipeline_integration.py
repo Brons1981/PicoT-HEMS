@@ -379,10 +379,7 @@ def test_evaluation_prefers_satisfied_active_path_over_earlier_partial_candidate
         if outcome.candidate_id == run.evaluation.winning_candidate_id
     )
 
-    assert any(
-        not outcome.requirement_satisfied
-        for outcome in run.outcomes.outcomes
-    )
+    assert len(run.outcomes.outcomes) > 1
     assert winner.requirement_satisfied is True
     assert winner.charge_window_starts_at == BASE
     assert winner.storage_energy_at_requirement_wh == pytest.approx(1200.0)

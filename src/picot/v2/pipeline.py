@@ -336,9 +336,18 @@ class CanonicalPipeline:
             min(
                 actionable_outcomes,
                 key=lambda item: (
-                    candidate_priority[item.candidate_id],
+                    not item.requirement_satisfied,
                     item.grid_storage_contribution_wh,
-                    -item.pv_storage_contribution_wh,
+                    not (
+                        item.charge_window_starts_at
+                        <= snapshot.captured_at
+                        < item.charge_window_ends_at
+                    ),
+                    -(
+                        item.pv_storage_contribution_wh
+                        + item.grid_storage_contribution_wh
+                    ),
+                    candidate_priority[item.candidate_id],
                     item.conversion_losses_wh,
                     -item.confidence,
                     -item.recoverability,

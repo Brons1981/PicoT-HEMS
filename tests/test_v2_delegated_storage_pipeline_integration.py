@@ -324,3 +324,64 @@ def test_partial_pv_progress_is_released_as_a_winner() -> None:
         plan for plan in explanation["plans"] if plan["family"] == "pv_charge_only"
     )
     assert partial["selected"] is True
+
+
+def test_evaluation_prefers_satisfied_active_path_over_earlier_partial_candidate() -> None:
+    source = _snapshot()
+    half_hour = timedelta(minutes=30)
+    first_end = BASE + half_hour
+    pv_intervals = (
+        replace(
+            source.pv_energy_timeline.intervals[0],
+            interval_id="pv-first-half",
+            ends_at=first_end,
+            pv_energy_wh=250.0,
+        ),
+        replace(
+            source.pv_energy_timeline.intervals[0],
+            interval_id="pv-second-half",
+            starts_at=first_end,
+            pv_energy_wh=250.0,
+        ),
+        source.pv_energy_timeline.intervals[1],
+    )
+    load_intervals = (
+        replace(
+            source.household_load_forecast.intervals[0],
+            interval_id="load-first-half",
+            ends_at=first_end,
+            expected_energy_wh=100.0,
+        ),
+        replace(
+            source.household_load_forecast.intervals[0],
+            interval_id="load-second-half",
+            starts_at=first_end,
+            expected_energy_wh=100.0,
+        ),
+        source.household_load_forecast.intervals[1],
+    )
+    snapshot = replace(
+        source,
+        pv_energy_timeline=replace(
+            source.pv_energy_timeline,
+            intervals=pv_intervals,
+        ),
+        household_load_forecast=replace(
+            source.household_load_forecast,
+            intervals=load_intervals,
+        ),
+    )
+
+    run = CanonicalPipeline().run(planning_input=snapshot)
+    winner = next(
+        outcome
+        for outcome in run.outcomes.outcomes
+        if outcome.candidate_id == run.evaluation.winning_candidate_id
+    )
+
+    assert winner.requirement_satisfied is True
+    assert winner.charge_window_starts_at == BASE
+    assert winner.storage_energy_at_requirement_wh == pytest.approx(1200.0)
+    assert run.evaluation.decisive_step == (
+        "hard_constraint:storage_requirement_satisfied"
+    )

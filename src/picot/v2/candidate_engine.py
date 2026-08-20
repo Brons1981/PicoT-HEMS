@@ -303,14 +303,17 @@ class CandidateEngine:
             )
             if (
                 first_battery_support_interval is not None
-                and first_battery_support_interval.starts_at
-                == snapshot.captured_at
+                and (
+                    storage.current_soc >= 1.0 - 1e-9
+                    or first_battery_support_interval.starts_at
+                    == snapshot.captured_at
+                )
             ):
                 next_support_phase = next(
                     (
                         projected_intervals[index]
                         for index in support_indexes
-                        if index > 0
+                        if index > support_indexes[0]
                         and projected_intervals[
                             index - 1
                         ].projected_storage_energy_wh

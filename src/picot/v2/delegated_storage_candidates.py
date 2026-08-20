@@ -324,7 +324,11 @@ def construct_pv_charge_only_candidate(
                     0.0,
                     required_at_end[interval.ends_at] - storage_energy_wh,
                 )
-                acquired_wh = min(_surplus_wh(interval), energy_needed_wh)
+                acquired_wh = min(
+                    _surplus_wh(interval),
+                    energy_needed_wh,
+                    max(0.0, storage.usable_capacity_wh - storage_energy_wh),
+                )
             total_acquired_wh += acquired_wh
             reserve_interval = (
                 index in selected_indexes

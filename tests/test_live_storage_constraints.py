@@ -43,12 +43,14 @@ def test_explicit_storage_config_builds_capability_without_telemetry_inference()
         maximum_charge_power_w=3200.0,
         power_step_w=100.0,
         maximum_soc=0.95,
+        minimum_soc=0.10,
     )
 
     capability = capabilities.capabilities[0]
     assert capability.maximum_power_w == 3200.0
     assert capability.power_step_w == 100.0
     assert capability.maximum_soc == 0.95
+    assert capability.minimum_soc == 0.10
     assert capability.source_mapping_id == "configured-storage-primary"
 
 

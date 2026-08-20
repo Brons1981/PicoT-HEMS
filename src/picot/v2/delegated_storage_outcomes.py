@@ -116,11 +116,26 @@ def _simulate_path(
         if interval.starts_at >= window_start
         and interval.ends_at <= requirement.required_by
     )
-    confidence = min(
-        requirement.confidence,
-        *(state.confidence for state in path.projected_states),
-        *(interval.confidence for interval in relevant_intervals),
+    confidence_weights = tuple(
+        max(
+            interval.expected_usable_pv_energy_wh
+            + interval.household_load_forecast_energy_wh,
+            1.0,
+        )
+        for interval in relevant_intervals
     )
+    interval_confidence = (
+        sum(
+            interval.confidence * weight
+            for interval, weight in zip(
+                relevant_intervals,
+                confidence_weights,
+                strict=True,
+            )
+        )
+        / sum(confidence_weights)
+    )
+    confidence = min(requirement.confidence, interval_confidence)
     requirement_satisfied = (
         requirement_state.storage_energy_wh + 1e-6
         >= requirement.required_energy_wh

@@ -282,6 +282,91 @@ class CanonicalPipeline:
             derivation_reason=derivation_reason,
         )
         has_evaluated_alternatives = bool(delegated_outcomes)
+        storage_capabilities_by_id = {
+            capability.capability_id: capability
+            for capability in (
+                snapshot.capability_snapshot_set.capabilities
+                if snapshot.capability_snapshot_set is not None
+                else ()
+            )
+        }
+        balances_by_id = {
+            balance.balance_id: balance
+            for balance in (
+                candidate_derivation.balances
+                if candidate_derivation is not None
+                else ()
+            )
+        }
+        requirements_by_id = {
+            requirement.requirement_id: requirement
+            for requirement in (
+                candidate_derivation.requirements
+                if candidate_derivation is not None
+                else ()
+            )
+        }
+
+        def reserve_is_safe(
+            outcome: DelegatedStorageCandidateOutcome,
+        ) -> bool:
+            requirement = requirements_by_id.get(outcome.storage_requirement_id)
+            if requirement is None:
+                return False
+            storage = next(
+                (
+                    item
+                    for item in snapshot.current_storage_states
+                    if item.storage_state_id == requirement.storage_state_id
+                ),
+                None,
+            )
+            if storage is None:
+                return False
+            capability = storage_capabilities_by_id.get(storage.capability_id)
+            minimum_soc = capability.minimum_soc if capability is not None else None
+            if minimum_soc is None:
+                return False
+            balance = balances_by_id.get(requirement.projected_balance_id)
+            if balance is None:
+                return False
+            energy_at_next_charge = next(
+                (
+                    interval.current_usable_storage_energy_wh
+                    for interval in balance.intervals
+                    if interval.starts_at == requirement.required_by
+                ),
+                None,
+            )
+            return (
+                energy_at_next_charge is not None
+                and energy_at_next_charge + 1e-6
+                >= minimum_soc * storage.usable_capacity_wh
+            )
+
+        def is_micro_charge(
+            outcome: DelegatedStorageCandidateOutcome,
+        ) -> bool:
+            requirement = requirements_by_id.get(outcome.storage_requirement_id)
+            if requirement is None:
+                return False
+            storage = next(
+                (
+                    item
+                    for item in snapshot.current_storage_states
+                    if item.storage_state_id == requirement.storage_state_id
+                ),
+                None,
+            )
+            contribution = (
+                outcome.pv_storage_contribution_wh
+                + outcome.grid_storage_contribution_wh
+            )
+            return (
+                storage is not None
+                and contribution <= storage.usable_capacity_wh * 0.01 + 1e-6
+            )
+
         actionable_outcomes = tuple(
             outcome
             for outcome in delegated_outcomes
@@ -291,6 +376,7 @@ class CanonicalPipeline:
                 + outcome.grid_storage_contribution_wh
             )
             > 1e-6
+            and not (is_micro_charge(outcome) and reserve_is_safe(outcome))
         )
         has_actionable_alternatives = bool(actionable_outcomes)
         storage_states_by_id = {
@@ -309,9 +395,20 @@ class CanonicalPipeline:
                 for requirement in candidate_derivation.requirements
             )
         )
+        micro_charge_suppressed = (
+            bool(delegated_outcomes)
+            and not has_actionable_alternatives
+            and all(
+                is_micro_charge(outcome) and reserve_is_safe(outcome)
+                for outcome in delegated_outcomes
+            )
+        )
+        storage_requirement_operationally_satisfied = (
+            storage_requirement_already_satisfied or micro_charge_suppressed
+        )
         has_valid_plan = (
             has_actionable_alternatives
-            or storage_requirement_already_satisfied
+            or storage_requirement_operationally_satisfied
         )
         outcomes = CandidateOutcomeSet(
             run_id=run_id,
@@ -397,9 +494,14 @@ class CanonicalPipeline:
                 )
                 if has_actionable_alternatives
                 else (
-                    "storage requirement already satisfied; "
-                    "no additional charge action required"
-                    if storage_requirement_already_satisfied
+                    (
+                        "remaining storage gap is at or below one percent; "
+                        "reserve remains sufficient until the next charge opportunity"
+                        if micro_charge_suppressed
+                        else "storage requirement already satisfied; "
+                        "no additional charge action required"
+                    )
+                    if storage_requirement_operationally_satisfied
                     else "no actionable candidate with a calculated outcome"
                 )
             ),
@@ -419,8 +521,12 @@ class CanonicalPipeline:
                 )
                 if has_actionable_alternatives
                 else (
-                    "hard_constraint:storage_requirement_already_satisfied"
-                    if storage_requirement_already_satisfied
+                    (
+                        "stability:micro_charge_suppressed_with_safe_reserve"
+                        if micro_charge_suppressed
+                        else "hard_constraint:storage_requirement_already_satisfied"
+                    )
+                    if storage_requirement_operationally_satisfied
                     else "fallback:no_actionable_candidate"
                 )
             ),
@@ -548,8 +654,9 @@ class CanonicalPipeline:
                 ),
                 default=None,
             )
-            baseline_until = future_start or snapshot.horizon_end or (
-                snapshot.captured_at + timedelta(minutes=15)
+            baseline_until = min(
+                future_start or (snapshot.captured_at + timedelta(minutes=15)),
+                snapshot.captured_at + timedelta(minutes=15),
             )
             if (
                 storage_state is not None

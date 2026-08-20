@@ -333,6 +333,25 @@ class CandidateEngine:
                 for interval in projected_intervals
                 if interval.starts_at <= required_by
             )
+            confidence_weights = tuple(
+                max(
+                    interval.expected_usable_pv_energy_wh
+                    + interval.household_load_forecast_energy_wh,
+                    1.0,
+                )
+                for interval in relevant_intervals
+            )
+            forecast_confidence = (
+                sum(
+                    interval.confidence * weight
+                    for interval, weight in zip(
+                        relevant_intervals,
+                        confidence_weights,
+                        strict=True,
+                    )
+                )
+                / sum(confidence_weights)
+            )
             requirement = StorageEnergyRequirement(
                 requirement_id=_stable_id(
                     "storage-requirement",
@@ -346,15 +365,7 @@ class CandidateEngine:
                 required_soc=1.0,
                 required_by=required_by,
                 reason="full_before_first_projected_battery_support",
-                confidence=min(
-                    (
-                        storage.confidence,
-                        *(
-                            interval.confidence
-                            for interval in relevant_intervals
-                        ),
-                    )
-                ),
+                confidence=min(storage.confidence, forecast_confidence),
                 evidence_ids=_ordered_unique(tuple(evidence_ids)),
                 reserve_contribution_wh=max(
                     0.0,

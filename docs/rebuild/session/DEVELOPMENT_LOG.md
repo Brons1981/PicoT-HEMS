@@ -2,7 +2,7 @@
 
 ## 2026-08-19 — dev.118 scheduled PV baseline and diagnostic plan history
 
-PicoT version: `2.0.0-dev.118`
+PicoT version: `2.0.0-dev.119`
 Branch: `agent/dev118-plan-history-smart-discharge`
 Baseline main commit: `ae38869dae1f2d9eacf7a4affa2893187e0913a0`
 Architecture authority: ADR-001 through ADR-039 plus accepted V2ADR-051
@@ -62,7 +62,7 @@ State: **IMPLEMENTED and locally verified; not CI or live verified**
 ### EXACT CURRENT POSITION
 
 Phase: canonical storage lifecycle correction and diagnostics
-Version: `2.0.0-dev.118`
+Version: `2.0.0-dev.119`
 Position: implementation prepared from dev.117; CI and live verification remain.
 
 ### FIRST NEXT ACTION
@@ -673,3 +673,11 @@ Before implementation:
 - define exact red tests;
 - confirm how the Zendure adapter can execute the winning grid-charge primitive without Core vendor knowledge;
 - keep the 2027 valuation observer-only and versioned.
+
+
+## 2026-08-20 — 2.0.0-dev.119
+
+- Fixed delegated storage evaluation so a requirement-satisfying PV-only path cannot lose to an earlier generated partial candidate.
+- Active charge windows are preferred over future windows after hard constraints and grid-energy use.
+- Partial candidates now rank by actual storage progress before deterministic generation order.
+- Regression verified against planning incident run-426744e8c00cc75f; PR #421.

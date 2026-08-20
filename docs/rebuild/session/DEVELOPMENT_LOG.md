@@ -689,3 +689,11 @@ Before implementation:
 - Limited baseline `Alleen slim ontladen` execution to a 15-minute replan window instead of the full rolling horizon.
 - Replaced lowest-interval plan confidence with energy-weighted confidence across the intervals the plan actually depends on.
 - Added explicit micro-charge suppression reasoning and regression coverage; PR #423.
+
+## 2026-08-20 — 2.0.0-dev.121
+
+- Restored future PV charging after a full battery when remaining evening PV delays the first discharge phase.
+- Full storage now skips the first discharge phase and targets the next support phase after a real PV recovery window.
+- Prevented delegated storage simulation from acquiring forecast PV beyond physical usable capacity.
+- Preserved preferred price-window ordering, one-percent micro-charge suppression and Slim ontladen as the current baseline mode.
+- Added a regression covering evening PV, overnight discharge and next-day PV replenishment; PR #425.

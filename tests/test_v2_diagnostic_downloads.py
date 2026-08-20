@@ -74,3 +74,27 @@ def test_diagnostic_zip_only_contains_existing_allow_list_files(tmp_path) -> Non
     with ZipFile(BytesIO(payload)) as archive:
         assert archive.namelist() == ["incidents.jsonl", "provenance.json"]
         assert archive.read("incidents.jsonl") == b"incident\n"
+
+
+def test_incident_overview_reads_only_the_bounded_file_tail(tmp_path) -> None:
+    path = tmp_path / "incidents.jsonl"
+    records = [
+        {
+            "detail_level": "basic",
+            "event": "planning_outcome_changed",
+            "captured_at_utc": f"2026-08-18T05:{index:02d}:00+00:00",
+            "run_id": f"run-{index}",
+            "evaluation_reason": f"reason-{index}",
+        }
+        for index in range(30)
+    ]
+    path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+    overview = incident_overview(path)
+
+    assert len(overview) == 20
+    assert overview[0]["run_id"] == "run-10"
+    assert overview[-1]["reason"] == "reason-29"

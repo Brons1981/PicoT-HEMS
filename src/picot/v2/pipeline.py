@@ -52,6 +52,30 @@ def _id(prefix: str, seed: str) -> str:
     return f"{prefix}-{digest}"
 
 
+def _average_price_for_window(
+    snapshot: PlanningInputSnapshot,
+    starts_at: datetime,
+    ends_at: datetime,
+) -> float:
+    """Return the duration-weighted quarter-price for one executable window."""
+
+    window_seconds = (ends_at - starts_at).total_seconds()
+    priced_seconds = 0.0
+    weighted_price = 0.0
+    for point in snapshot.price_points:
+        overlap_start = max(starts_at, point.starts_at)
+        overlap_end = min(ends_at, point.ends_at)
+        overlap_seconds = max(
+            0.0,
+            (overlap_end - overlap_start).total_seconds(),
+        )
+        priced_seconds += overlap_seconds
+        weighted_price += point.value_eur_per_kwh * overlap_seconds
+    if window_seconds <= 0.0 or priced_seconds + 1e-6 < window_seconds:
+        return float("inf")
+    return weighted_price / priced_seconds
+
+
 def _bootstrap_snapshot(captured_at: datetime | None = None) -> PlanningInputSnapshot:
     now = captured_at or datetime.now(UTC)
     if now.tzinfo is None or now.utcoffset() is None:
@@ -439,6 +463,11 @@ class CanonicalPipeline:
                         item.charge_window_starts_at
                         <= snapshot.captured_at
                         < item.charge_window_ends_at
+                    ),
+                    _average_price_for_window(
+                        snapshot,
+                        item.charge_window_starts_at,
+                        item.charge_window_ends_at,
                     ),
                     -(
                         item.pv_storage_contribution_wh

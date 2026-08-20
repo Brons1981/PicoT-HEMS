@@ -681,3 +681,11 @@ Before implementation:
 - Active charge windows are preferred over future windows after hard constraints and grid-energy use.
 - Partial candidates now rank by actual storage progress before deterministic generation order.
 - Regression verified against planning incident run-426744e8c00cc75f; PR #421.
+
+## 2026-08-20 — 2.0.0-dev.120
+
+- Suppressed charge sessions of at most one percent when projected storage remains above the live Zendure minimum SoC until the next charge opportunity.
+- Passed the live minimum SoC into the canonical storage capability as explicit reserve evidence.
+- Limited baseline `Alleen slim ontladen` execution to a 15-minute replan window instead of the full rolling horizon.
+- Replaced lowest-interval plan confidence with energy-weighted confidence across the intervals the plan actually depends on.
+- Added explicit micro-charge suppression reasoning and regression coverage; PR #423.

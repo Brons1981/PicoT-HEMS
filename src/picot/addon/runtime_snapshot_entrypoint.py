@@ -274,6 +274,7 @@ def telemetry_evidence_events_with_snapshot(
     events.append(snapshot_log_event(snapshot))
 
     live_max_soc = _soc_fraction(telemetry_event, "zendure_allowed_max_soc_percent")
+    live_min_soc = _soc_fraction(telemetry_event, "zendure_allowed_min_soc_percent")
     effective_max_soc = live_max_soc if live_max_soc is not None else _storage_max_soc
     capabilities = build_live_storage_capabilities(
         captured_at=snapshot.captured_at,
@@ -281,6 +282,7 @@ def telemetry_evidence_events_with_snapshot(
         maximum_charge_power_w=_storage_max_charge_power_w,
         power_step_w=_storage_power_step_w,
         maximum_soc=effective_max_soc,
+        minimum_soc=live_min_soc,
     )
     effective_limit = None
     if snapshot.current_storage_states:

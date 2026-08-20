@@ -95,6 +95,8 @@ def test_full_storage_without_charge_action_is_valid_plan() -> None:
     )
     assert run.execution_record.status == "live_plan_ready"
     assert run.execution_plan_set.plans
+    baseline = run.execution_plan_set.plans[0]
+    assert baseline.valid_until - baseline.valid_from == timedelta(minutes=15)
 
     status = build_web_view(run, project(run))["planning_status"]
     assert status["attention"] == {
@@ -105,6 +107,56 @@ def test_full_storage_without_charge_action_is_valid_plan() -> None:
     }
     assert status["decision"]["confidence"] is None
     assert status["alternatives"][0]["confidence"] is None
+
+
+def test_one_percent_gap_does_not_create_charge_session_when_reserve_is_safe() -> None:
+    source = _snapshot()
+    assert source.capability_snapshot_set is not None
+    near_full = replace(
+        source,
+        current_storage_states=tuple(
+            replace(state, current_soc=0.99)
+            for state in source.current_storage_states
+        ),
+        capability_snapshot_set=replace(
+            source.capability_snapshot_set,
+            capabilities=tuple(
+                replace(
+                    capability,
+                    minimum_soc=0.10,
+                    supported_primitives=(
+                        *capability.supported_primitives,
+                        ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+                    ),
+                )
+                for capability in source.capability_snapshot_set.capabilities
+            ),
+        ),
+    )
+
+    run = CanonicalPipeline().run(
+        planning_input=near_full,
+        control_change_allowed=True,
+    )
+
+    assert run.outcomes.outcomes
+    assert all(
+        outcome.pv_storage_contribution_wh
+        <= near_full.current_storage_states[0].usable_capacity_wh * 0.01 + 1e-6
+        for outcome in run.outcomes.outcomes
+    )
+    assert run.evaluation.status == "winner_selected"
+    assert run.evaluation.reason == (
+        "remaining storage gap is at or below one percent; "
+        "reserve remains sufficient until the next charge opportunity"
+    )
+    assert run.evaluation.decisive_step == (
+        "stability:micro_charge_suppressed_with_safe_reserve"
+    )
+    assert all(
+        plan.planned_primitive is ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+        for plan in run.execution_plan_set.plans
+    )
 
 
 def test_full_storage_builds_tomorrow_pv_plan_after_current_support_phase() -> None:

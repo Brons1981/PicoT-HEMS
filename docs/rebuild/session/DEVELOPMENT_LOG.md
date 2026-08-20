@@ -705,3 +705,11 @@ Before implementation:
 - Preserved internal intervals within one charging phase to avoid unnecessary Zendure mode switching.
 - Restored the 15-minute `Alleen slim ontladen` baseline until a future charging window actually starts.
 - Added regression coverage for empty leading and trailing intervals while retaining preferred price-window ordering; PR #427.
+
+## 2026-08-20 — 2.0.0-dev.123
+
+- Ranked physically feasible PV charging plans by their real duration-weighted quarter-hour price.
+- Removed broad `LOWEST_PRICE_WINDOW` candidate order as the deciding factor between feasible plans.
+- Preserved dynamic charging duration from required energy and available PV instead of imposing a fixed window.
+- Retained an already active valid charging window to prevent unnecessary Zendure mode switching.
+- Added price-coverage and weighted-average regression coverage; PR #429.

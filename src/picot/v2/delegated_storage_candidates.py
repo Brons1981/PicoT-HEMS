@@ -298,7 +298,6 @@ def construct_pv_charge_only_candidate(
         requirement.confidence,
         *(interval.confidence for interval in intervals),
     )
-    reserve_selected_intervals = bool(preferred_price_windows)
     for window_indexes in _progressive_window_selections(
         intervals,
         preferred_price_windows,
@@ -313,6 +312,8 @@ def construct_pv_charge_only_candidate(
         segments: list[PathSegment] = []
         projected_states: list[ProjectedEnergyState] = []
         storage_energy_at_interval_start: dict[object, float] = {}
+        storage_energy_at_interval_end: dict[object, float] = {}
+        acquired_energy_by_index: dict[int, float] = {}
         total_acquired_wh = 0.0
         for index, interval in enumerate(intervals):
             storage_energy_at_interval_start[interval.starts_at] = (
@@ -329,45 +330,8 @@ def construct_pv_charge_only_candidate(
                     energy_needed_wh,
                     max(0.0, storage.usable_capacity_wh - storage_energy_wh),
                 )
+            acquired_energy_by_index[index] = acquired_wh
             total_acquired_wh += acquired_wh
-            reserve_interval = (
-                index in selected_indexes
-                and (reserve_selected_intervals or acquired_wh > 0.0)
-            )
-            if reserve_interval:
-                segment_id = _stable_id(
-                    "path-segment",
-                    f"{snapshot.snapshot_id}|{requirement.requirement_id}|"
-                    f"{intervals[window_indexes[0]].starts_at.isoformat()}|"
-                    f"{intervals[window_indexes[-1]].ends_at.isoformat()}|"
-                    f"{interval.starts_at.isoformat()}|"
-                    f"{interval.ends_at.isoformat()}",
-                )
-                segments.append(
-                    PathSegment(
-                        segment_id=segment_id,
-                        order=len(segments) + 1,
-                        execution_scope_id=storage.execution_scope_id,
-                        starts_at=interval.starts_at,
-                        ends_at=interval.ends_at,
-                        primitive=planned_primitive,
-                        capability_id=capability.capability_id,
-                        purpose=(
-                            "Reserve the progressive PV-only NOM window and "
-                            "acquire available forecast PV surplus"
-                        ),
-                        evidence_ids=tuple(
-                            dict.fromkeys(
-                                (requirement.requirement_id,)
-                                + interval.evidence_ids
-                                + (capability.capability_id,)
-                            )
-                        ),
-                        requested_power_w=None,
-                        charge_source_policy=ChargeSourcePolicy.PV_ONLY,
-                    )
-                )
-
             if acquired_wh > 0.0:
                 storage_energy_wh += acquired_wh
             else:
@@ -380,23 +344,71 @@ def construct_pv_charge_only_candidate(
                     - interval.expected_usable_pv_energy_wh,
                 )
                 storage_energy_wh = max(0.0, storage_energy_wh - deficit_wh)
+            storage_energy_at_interval_end[interval.ends_at] = storage_energy_wh
 
-            if reserve_interval:
-                projected_states.append(
-                    ProjectedEnergyState(
-                        at=interval.ends_at,
-                        confidence=min(
-                            storage.confidence,
-                            capability.confidence,
-                            requirement.confidence,
-                            interval.confidence,
-                        ),
-                        storage_energy_wh=storage_energy_wh,
-                    )
-                )
-
-        if not segments or total_acquired_wh <= 0.0:
+        acquisition_indexes = tuple(
+            index
+            for index in window_indexes
+            if acquired_energy_by_index[index] > 0.0
+        )
+        if not acquisition_indexes or total_acquired_wh <= 0.0:
             continue
+        first_acquisition_index = acquisition_indexes[0]
+        last_acquisition_index = acquisition_indexes[-1]
+        reserved_indexes = tuple(
+            index
+            for index in window_indexes
+            if first_acquisition_index <= index <= last_acquisition_index
+        )
+        for index in reserved_indexes:
+            interval = intervals[index]
+            segment_id = _stable_id(
+                "path-segment",
+                f"{snapshot.snapshot_id}|{requirement.requirement_id}|"
+                f"{intervals[first_acquisition_index].starts_at.isoformat()}|"
+                f"{intervals[last_acquisition_index].ends_at.isoformat()}|"
+                f"{interval.starts_at.isoformat()}|"
+                f"{interval.ends_at.isoformat()}",
+            )
+            segments.append(
+                PathSegment(
+                    segment_id=segment_id,
+                    order=len(segments) + 1,
+                    execution_scope_id=storage.execution_scope_id,
+                    starts_at=interval.starts_at,
+                    ends_at=interval.ends_at,
+                    primitive=planned_primitive,
+                    capability_id=capability.capability_id,
+                    purpose=(
+                        "Reserve the progressive PV-only NOM window and "
+                        "acquire available forecast PV surplus"
+                    ),
+                    evidence_ids=tuple(
+                        dict.fromkeys(
+                            (requirement.requirement_id,)
+                            + interval.evidence_ids
+                            + (capability.capability_id,)
+                        )
+                    ),
+                    requested_power_w=None,
+                    charge_source_policy=ChargeSourcePolicy.PV_ONLY,
+                )
+            )
+            projected_states.append(
+                ProjectedEnergyState(
+                    at=interval.ends_at,
+                    confidence=min(
+                        storage.confidence,
+                        capability.confidence,
+                        requirement.confidence,
+                        interval.confidence,
+                    ),
+                    storage_energy_wh=storage_energy_at_interval_end[
+                        interval.ends_at
+                    ],
+                )
+            )
+
         window_start = segments[0].starts_at
         if window_start > snapshot.captured_at:
             projected_states.insert(
@@ -423,8 +435,8 @@ def construct_pv_charge_only_candidate(
                     storage_energy_wh=storage_energy_wh,
                 )
             )
-        window_start = intervals[window_indexes[0]].starts_at
-        window_end = intervals[window_indexes[-1]].ends_at
+        window_start = segments[0].starts_at
+        window_end = segments[-1].ends_at
         path_id = _stable_id(
             "energy-path",
             f"{snapshot.snapshot_id}|{requirement.requirement_id}|"

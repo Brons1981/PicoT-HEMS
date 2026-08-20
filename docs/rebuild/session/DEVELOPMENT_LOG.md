@@ -713,3 +713,11 @@ Before implementation:
 - Preserved dynamic charging duration from required energy and available PV instead of imposing a fixed window.
 - Retained an already active valid charging window to prevent unnecessary Zendure mode switching.
 - Added price-coverage and weighted-average regression coverage; PR #429.
+
+## 2026-08-20 — 2.0.0-dev.124
+
+- Prevented a moving 15-minute `due` baseline expiry from generating repeated false planning incidents.
+- Retained complete incident evidence for 36 hours and compacted older records to essential decision and execution facts.
+- Bounded dashboard incident reads to the final records instead of loading the complete JSONL history into memory.
+- Rebuilt Home Assistant power history in retryable two-hour chunks so an initial timeout cannot leave graphs permanently incomplete.
+- Added incident-retention, bounded-read and history-bootstrap regression coverage; PR #431.

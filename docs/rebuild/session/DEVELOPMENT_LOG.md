@@ -697,3 +697,11 @@ Before implementation:
 - Prevented delegated storage simulation from acquiring forecast PV beyond physical usable capacity.
 - Preserved preferred price-window ordering, one-percent micro-charge suppression and Slim ontladen as the current baseline mode.
 - Added a regression covering evening PV, overnight discharge and next-day PV replenishment; PR #425.
+
+## 2026-08-20 — 2.0.0-dev.122
+
+- Prevented zero-energy price and PV reservations from becoming active NOM execution segments.
+- Limited a delegated PV execution window to the first and last interval with real storage acquisition.
+- Preserved internal intervals within one charging phase to avoid unnecessary Zendure mode switching.
+- Restored the 15-minute `Alleen slim ontladen` baseline until a future charging window actually starts.
+- Added regression coverage for empty leading and trailing intervals while retaining preferred price-window ordering; PR #427.

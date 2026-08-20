@@ -213,6 +213,64 @@ def test_full_storage_builds_tomorrow_pv_plan_after_current_support_phase() -> N
     assert outcome.confidence > 0.0
 
 
+def test_full_storage_builds_future_pv_plan_after_delayed_evening_support() -> None:
+    source = _snapshot()
+    base = source.captured_at
+    pv_template = source.pv_energy_timeline.intervals[0]
+    load_template = source.household_load_forecast.intervals[0]
+    full = replace(
+        source,
+        horizon_end=base + timedelta(hours=4),
+        current_storage_states=tuple(
+            replace(state, current_soc=1.0)
+            for state in source.current_storage_states
+        ),
+        pv_energy_timeline=replace(
+            source.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    pv_template,
+                    interval_id=f"delayed-pv-{index}",
+                    starts_at=base + timedelta(hours=index),
+                    ends_at=base + timedelta(hours=index + 1),
+                    pv_energy_wh=pv_wh,
+                )
+                for index, pv_wh in enumerate((400.0, 0.0, 500.0, 0.0))
+            ),
+        ),
+        household_load_forecast=replace(
+            source.household_load_forecast,
+            intervals=tuple(
+                replace(
+                    load_template,
+                    interval_id=f"delayed-load-{index}",
+                    starts_at=base + timedelta(hours=index),
+                    ends_at=base + timedelta(hours=index + 1),
+                    expected_energy_wh=load_wh,
+                    source_reference=f"delayed-load-{index}",
+                )
+                for index, load_wh in enumerate((100.0, 200.0, 100.0, 200.0))
+            ),
+        ),
+    )
+
+    run = CanonicalPipeline().run(planning_input=full)
+
+    assert run.candidate_set.storage_requirements[0].required_by == (
+        base + timedelta(hours=3)
+    )
+    assert run.outcomes.outcomes
+    outcome = next(
+        item
+        for item in run.outcomes.outcomes
+        if item.candidate_id == run.evaluation.winning_candidate_id
+    )
+    assert outcome.charge_window_starts_at == base + timedelta(hours=2)
+    assert outcome.charge_window_ends_at == base + timedelta(hours=3)
+    assert outcome.pv_storage_contribution_wh == 200.0
+    assert outcome.requirement_satisfied is True
+
+
 def test_planning_fallback_notification_is_deduplicated_and_recovers() -> None:
     fallback = _missing_forecast_fallback_run()
     normal = CanonicalPipeline().run(planning_input=_snapshot())

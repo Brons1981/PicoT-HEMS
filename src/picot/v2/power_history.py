@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 from math import isfinite
 from urllib.error import HTTPError, URLError
@@ -167,6 +167,9 @@ class HomeAssistantPowerHistoryReader:
         )
 
 
+HISTORY_BOOTSTRAP_CHUNK = timedelta(hours=2)
+
+
 class PowerHistoryCache:
     """Retain today's series and request only the unseen time tail."""
 
@@ -190,12 +193,15 @@ class PowerHistoryCache:
         )
         if read_starts_at >= ends_at and previous is not None:
             return previous
+        read_ends_at = min(read_starts_at + HISTORY_BOOTSTRAP_CHUNK, ends_at)
         latest = reader.read(
             specs=specs,
             starts_at=read_starts_at,
-            ends_at=ends_at,
+            ends_at=read_ends_at,
         )
         if previous is None or not same_window:
+            if latest.status == "unavailable":
+                return latest
             self._snapshot = latest
             return latest
         if latest.status == "unavailable":
@@ -232,7 +238,7 @@ class PowerHistoryCache:
             )
         merged = PowerHistorySnapshot(
             starts_at=starts_at,
-            ends_at=ends_at,
+            ends_at=read_ends_at,
             status=(
                 "available"
                 if any(item.points for item in merged_series)

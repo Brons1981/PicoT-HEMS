@@ -28,6 +28,7 @@ def build_live_storage_capabilities(
     maximum_charge_power_w: float | None,
     power_step_w: float | None,
     maximum_soc: float,
+    minimum_soc: float | None = None,
 ) -> CapabilitySnapshotSet:
     """Build a commissioned storage capability, or an empty fail-closed set."""
 
@@ -57,6 +58,7 @@ def build_live_storage_capabilities(
                 minimum_power_w=0.0,
                 maximum_power_w=maximum_charge_power_w,
                 maximum_soc=maximum_soc,
+                minimum_soc=minimum_soc,
                 power_step_w=(power_step_w if power_step_w and power_step_w > 0 else None),
             ),
         )

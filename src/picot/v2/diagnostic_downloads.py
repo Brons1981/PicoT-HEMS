@@ -8,6 +8,7 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 MAX_INCIDENT_EVENTS = 20
+TAIL_READ_CHUNK_BYTES = 64 * 1024
 
 
 def incident_overview(path: Path) -> list[dict[str, object]]:
@@ -15,14 +16,34 @@ def incident_overview(path: Path) -> list[dict[str, object]]:
     if not path.is_file():
         return []
     records: list[dict[str, object]] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in _tail_lines(path, MAX_INCIDENT_EVENTS):
         try:
             value: object = json.loads(raw_line)
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict):
             records.append(_compact_incident(value))
-    return records[-MAX_INCIDENT_EVENTS:]
+    return records
+
+
+def _tail_lines(path: Path, count: int) -> list[str]:
+    """Read only the final JSONL records, even when the file is very large."""
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        position = handle.tell()
+        chunks: list[bytes] = []
+        newline_count = 0
+        while position > 0 and newline_count <= count:
+            size = min(TAIL_READ_CHUNK_BYTES, position)
+            position -= size
+            handle.seek(position)
+            chunk = handle.read(size)
+            chunks.append(chunk)
+            newline_count += chunk.count(b"\n")
+    return [
+        line.decode("utf-8", errors="replace")
+        for line in b"".join(reversed(chunks)).splitlines()[-count:]
+    ]
 
 
 def diagnostic_zip(paths: tuple[Path, ...]) -> bytes:
@@ -36,6 +57,16 @@ def diagnostic_zip(paths: tuple[Path, ...]) -> bytes:
 
 
 def _compact_incident(record: dict[str, object]) -> dict[str, object]:
+    if record.get("detail_level") == "basic":
+        return {
+            "event": record.get("event"),
+            "incident_id": record.get("incident_id"),
+            "captured_at_local": record.get("captured_at_local"),
+            "captured_at_utc": record.get("captured_at_utc"),
+            "run_id": record.get("run_id"),
+            "reason": record.get("evaluation_reason"),
+            "polls": [],
+        }
     poll = record.get("poll")
     current = poll if isinstance(poll, dict) else {}
     preceding = record.get("preceding_polls")

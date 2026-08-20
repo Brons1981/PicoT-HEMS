@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from test_v2_delegated_storage_pipeline_integration import _snapshot
 from test_v2_planning_fallback import _missing_forecast_fallback_run
@@ -157,3 +157,80 @@ def test_household_fallback_transition_is_persisted(tmp_path) -> None:
         "household_fallback_started",
         "household_fallback_recovered",
     ]
+
+
+def test_moving_due_plan_expiry_does_not_create_a_new_outcome(tmp_path) -> None:
+    path = tmp_path / "planning-incidents.jsonl"
+    history = PlanningIncidentHistory(path)
+    source = _snapshot()
+    first = CanonicalPipeline().run(planning_input=source)
+    history.record(bundle=_bundle(source, state="100"), run=first)
+
+    shifted_plans = tuple(
+        replace(plan, valid_until=plan.valid_until + timedelta(seconds=5))
+        if not plan.lifecycle_status.startswith("scheduled")
+        else plan
+        for plan in first.execution_plan_set.plans
+    )
+    shifted = replace(
+        first,
+        execution_plan_set=replace(first.execution_plan_set, plans=shifted_plans),
+    )
+    history.record(bundle=_bundle(source, state="101"), run=shifted)
+
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [record["event"] for record in records] == [
+        "planning_outcome_changed"
+    ]
+
+
+def test_records_older_than_36_hours_keep_only_basic_incident_facts(tmp_path) -> None:
+    path = tmp_path / "planning-incidents.jsonl"
+    old_at = datetime.now(UTC) - timedelta(hours=37)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "planning_outcome_changed",
+                "poll": {
+                    "captured_at_utc": old_at.isoformat(),
+                    "captured_at_local": old_at.isoformat(),
+                    "run_id": "run-old",
+                    "snapshot_id": "snapshot-old",
+                    "picot_version": "2.0.0-test",
+                    "entities": [{"large": "evidence"}],
+                    "evaluation": {
+                        "status": "winner_selected",
+                        "reason": "old decision",
+                        "decisive_step": "hard_constraint",
+                        "winning_candidate_id": "candidate-old",
+                        "winning_energy_path_id": "path-old",
+                    },
+                    "execution_plan_set": {
+                        "plans": [{
+                            "execution_scope_id": "scope-old",
+                            "planned_primitive": "balance_discharge_only",
+                            "planned_vendor_mode": "smart_discharge",
+                            "lifecycle_status": "due",
+                            "large": "omitted",
+                        }]
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    PlanningIncidentHistory(path)
+
+    record = json.loads(path.read_text())
+    assert record["detail_level"] == "basic"
+    assert record["evaluation_reason"] == "old decision"
+    assert record["plans"] == [{
+        "execution_scope_id": "scope-old",
+        "planned_primitive": "balance_discharge_only",
+        "planned_vendor_mode": "smart_discharge",
+        "lifecycle_status": "due",
+    }]
+    assert "poll" not in record

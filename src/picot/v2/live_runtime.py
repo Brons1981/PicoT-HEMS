@@ -15,7 +15,7 @@ from hashlib import sha256
 from http.server import ThreadingHTTPServer
 from math import isfinite
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from time import perf_counter
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -55,7 +55,10 @@ from picot.v2.live_storage_mode_provenance import (
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
-from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
+from picot.v2.plan_commitment_store import (
+    COMMITMENT_METHOD_VERSION,
+    ActivePlanCommitmentStore,
+)
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import (
@@ -744,6 +747,12 @@ def _restore_active_plan_commitments(
             store.clear(commitment.execution_scope_id)
             store.record_recovery_rejection("expired_at_restart")
             continue
+        if commitment.selection_method_version != COMMITMENT_METHOD_VERSION:
+            store.clear(commitment.execution_scope_id)
+            store.record_recovery_rejection(
+                "legacy_commitment_requires_household_replan"
+            )
+            continue
         capability = next(
             (
                 item
@@ -853,6 +862,20 @@ def _poll_live_cycle(
         bundle=bundle,
         execute=execute,
     )
+
+
+def _wait_for_poll_or_reset(
+    reset_requested: Event,
+    timeout_seconds: float,
+) -> None:
+    """Wait interruptibly while preserving the runtime's testable clock boundary."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while not reset_requested.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            return
+        time.sleep(min(0.25, remaining))
 
 
 def _project_cumulative_pv_evidence(
@@ -1806,6 +1829,7 @@ def main() -> None:
     household_objective_profile = _household_objective_profile(options)
     adaptive_household_policy = _adaptive_household_policy(options)
     web_view_store = WebViewStore()
+    planning_reset_requested = Event()
     household_load_history = HouseholdLoadHistoryStore(
         HOUSEHOLD_LOAD_HISTORY_PATH
     )
@@ -1905,6 +1929,26 @@ def main() -> None:
     web_view_store.set_storage_mode_override_reset(
         reset_storage_mode_override
     )
+
+    def reset_planning(reset_id: str) -> dict[str, object]:
+        if not reset_id.strip():
+            raise ValueError("reset_id must be explicit")
+        removed = active_plan_commitment_store.clear_all()
+        active_plan_commitment_store.record_manual_reset(
+            reset_id=reset_id,
+            removed=removed,
+        )
+        canonical_execution_runtime.reset_pending_state()
+        planning_reset_requested.set()
+        return {
+            "status": "manual_planning_reset_requested",
+            "reset_id": reset_id,
+            "removed_commitment_count": len(removed),
+            "removed_plan_ids": [item.plan_id for item in removed],
+            "history_preserved": True,
+        }
+
+    web_view_store.set_planning_reset(reset_planning)
     pv_sunset_local_timezone = str(
         options.get("pv_local_timezone", "Europe/Amsterdam")
     ).strip()
@@ -2201,6 +2245,9 @@ def main() -> None:
 
     previous_signature: str | None = None
     while True:
+        if planning_reset_requested.is_set():
+            planning_reset_requested.clear()
+            previous_signature = None
         previous_signature = _poll_live_cycle(
             previous_signature=previous_signature,
             load_bundle=load_bundle,
@@ -2208,7 +2255,10 @@ def main() -> None:
             execute=execute,
             persist_observation=household_load_history.append,
         )
-        time.sleep(poll_interval_seconds)
+        _wait_for_poll_or_reset(
+            planning_reset_requested,
+            poll_interval_seconds,
+        )
 
 
 if __name__ == "__main__":

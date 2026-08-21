@@ -785,7 +785,10 @@ def test_dashboard_exposes_exact_chosen_execution_plan_facts() -> None:
     assert '"Laadvenster vanaf"' in DASHBOARD_HTML
     assert '"Totale doelenergie"' in DASHBOARD_HTML
     assert '"Batterijenergie bij vastleggen"' in DASHBOARD_HTML
-    assert '"Nog benodigde toevoeging"' in DASHBOARD_HTML
+    assert '"Verwacht accuverbruik tot laadstart"' in DASHBOARD_HTML
+    assert '"Verwachte energie bij laadstart"' in DASHBOARD_HTML
+    assert '"Benodigde toevoeging bij laadstart"' in DASHBOARD_HTML
+    assert '"Gebruikte PV-forecastbasis"' in DASHBOARD_HTML
     assert '"Energie einde laadvenster"' in DASHBOARD_HTML
     assert '"Energie bij deadline"' in DASHBOARD_HTML
     assert '"Bijdrage PV"' in DASHBOARD_HTML
@@ -815,7 +818,11 @@ def test_web_view_exposes_chosen_plan_contract_even_without_a_winner() -> None:
         "charge_window_ends_at",
         "required_energy_wh",
         "initial_storage_energy_wh",
-        "energy_to_target_wh",
+            "energy_to_target_wh",
+            "storage_energy_at_window_start_wh",
+            "projected_storage_use_before_window_wh",
+            "required_storage_addition_wh",
+            "pv_forecast_basis",
         "storage_energy_at_window_end_wh",
         "storage_energy_at_requirement_wh",
         "pv_contribution_wh",

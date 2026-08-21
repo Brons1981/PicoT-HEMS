@@ -426,6 +426,7 @@ def construct_pv_charge_only_candidate(
             index
             for index, interval in enumerate(intervals)
             if active_commitment is not None
+            and interval.ends_at > active_commitment.starts_at
             and interval.ends_at > snapshot.captured_at
             and interval.starts_at < active_commitment.ends_at
         )

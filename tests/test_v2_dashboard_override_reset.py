@@ -260,6 +260,47 @@ def test_reset_endpoint_accepts_only_explicit_reset_request() -> None:
         thread.join(timeout=2)
 
 
+def test_planning_reset_endpoint_is_explicit_and_separate_from_history() -> None:
+    calls: list[str] = []
+
+    def reset(reset_id: str) -> dict[str, object]:
+        calls.append(reset_id)
+        return {
+            "status": "manual_planning_reset_requested",
+            "reset_id": reset_id,
+            "removed_commitment_count": 1,
+            "history_preserved": True,
+        }
+
+    server = create_web_server(
+        WebViewStore(),
+        host="127.0.0.1",
+        port=0,
+        reset_planning=reset,
+    )
+    thread = Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/api/planning/reset",
+            data=json.dumps({"reset_id": "planning-reset-1"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=2) as response:
+            payload = json.loads(response.read())
+
+        assert response.status == 200
+        assert payload["status"] == "manual_planning_reset_requested"
+        assert payload["removed_commitment_count"] == 1
+        assert payload["history_preserved"] is True
+        assert calls == ["planning-reset-1"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 def test_reset_endpoint_fails_closed_when_reset_is_rejected() -> None:
     def reject_reset(reset_id: str) -> dict[str, object]:
         raise ValueError(f"reset rejected: {reset_id}")

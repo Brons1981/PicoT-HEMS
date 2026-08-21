@@ -274,6 +274,16 @@ def _simulate_path(
         method_version=METHOD_VERSION,
         confidence_assessment=confidence_assessment,
         pv_forecast_basis=candidate.pv_forecast_basis,
+        storage_energy_at_window_start_wh=starting_energy_wh,
+        projected_storage_use_before_window_wh=max(
+            0.0,
+            balance.intervals[0].current_usable_storage_energy_wh
+            - starting_energy_wh,
+        ),
+        required_storage_addition_wh=max(
+            0.0,
+            requirement.required_energy_wh - starting_energy_wh,
+        ),
     )
 
 

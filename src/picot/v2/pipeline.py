@@ -15,7 +15,6 @@ from picot.planner.delegated_storage_evaluation_engine import (
     DelegatedStorageEvaluationEngine,
 )
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
-from picot.v2.active_plan_candidate import construct_active_plan_candidate
 from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
 from picot.v2.contracts import (
     Candidate,
@@ -291,15 +290,6 @@ class CanonicalPipeline:
                 balance = balances_by_id.get(requirement.projected_balance_id)
                 if balance is None:
                     continue
-                incumbent = construct_active_plan_candidate(
-                    snapshot,
-                    requirement,
-                )
-                if incumbent is not None:
-                    incumbent_candidate, incumbent_path, incumbent_outcome = incumbent
-                    delegated_candidates.append(incumbent_candidate)
-                    delegated_paths.append(incumbent_path)
-                    delegated_outcomes.append(incumbent_outcome)
                 forecast_basis = "lower" if lower_assumption is not None else "central"
                 candidate_balance = (
                     _balance_for_pv_forecast_basis(balance, lower_assumption)
@@ -568,7 +558,14 @@ class CanonicalPipeline:
                 winning_path.path_id
             ),
             reason=(
-                "active plan commitment retained while storage acquisition continues"
+                (
+                    "scheduled plan commitment retained after current household "
+                    "energy-path simulation"
+                    if winning_outcome is not None
+                    and winning_outcome.charge_window_starts_at > snapshot.captured_at
+                    else "active plan commitment retained while storage acquisition "
+                    "continues"
+                )
                 if delegated_evaluation.incumbent_retained
                 else (
                     "pv_charge_only satisfies the storage requirement using PV-only energy"

@@ -77,6 +77,11 @@ class CanonicalExecutionRuntime:
     commitment_store: ActivePlanCommitmentStore | None = None
     _pending_vendor_mode: str | None = None
 
+    def reset_pending_state(self) -> None:
+        """Drop only process-local dispatch state after a manual plan reset."""
+
+        self._pending_vendor_mode = None
+
     def apply(self, run: CanonicalPipelineRun) -> CanonicalPipelineRun:
         """Dispatch one due intent, or preserve the fail-closed result."""
         self._persist_selected_pv_commitment(run)

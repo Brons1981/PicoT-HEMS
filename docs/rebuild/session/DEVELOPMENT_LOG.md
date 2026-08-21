@@ -818,3 +818,29 @@ Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.128 and verify that the selected future window,
 its duration and plan identity remain stable through ordinary forecast and SOC
 updates.
+
+## 2026-08-22 — 2.0.0-dev.129
+
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
+
+- Removed the separate forecast-independent incumbent calculation that reused
+  only `target energy - current energy` and therefore omitted expected battery
+  support before a future charge window.
+- Rebuilt a committed window through the same complete remaining household
+  Energy Path as every challenger, preserving its time bounds while updating
+  expected storage use, energy at charge start, required addition and technical
+  feasibility from current evidence.
+- Made a full executable-interval change or loss of target feasibility an
+  explicit material replanning boundary while preserving non-material plan
+  stability.
+- Added visible charge-start energy, projected pre-window storage use, gross
+  required addition and forecast-basis evidence to the chosen-plan dashboard.
+- Added an explicit confirmed `Planning resetten` action that atomically clears
+  commitments and pending dispatch state, preserves history, learning and
+  configuration, records an audit incident and immediately wakes a fresh
+  Planner Run.
+- Invalidated legacy commitments without the household-simulation method once
+  on upgrade so dev.128 planning state cannot bypass the corrected calculation.
+
+Exact next action: install dev.129, verify the first fresh plan's expected
+storage energy at charge start, then exercise the manual planning reset once.

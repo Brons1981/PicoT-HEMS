@@ -779,3 +779,18 @@ Known release boundary:
 
 Exact next action after installation: observe one complete live plan lifecycle,
 including commitment recovery across a controlled add-on restart.
+
+## 2026-08-21 — 2.0.0-dev.127
+
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
+
+- Released the dev.126 add-on packaging correction under a new version so Home
+  Assistant can discover and rebuild the image instead of reusing the broken
+  dev.126 package.
+- Packaged the canonical `picot.planner` layer required by
+  `DelegatedStorageEvaluationEngine`.
+- Added a regression assertion for the exact add-on Docker packaging boundary.
+- Mypy passed for 53 v2 source files, Ruff passed and all 900 tests passed.
+
+Exact next action: install dev.127, confirm the live runtime starts, then observe
+one complete plan lifecycle before classifying the ADR restoration live verified.

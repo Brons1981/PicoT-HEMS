@@ -825,6 +825,7 @@ def test_web_view_exposes_chosen_plan_contract_even_without_a_winner() -> None:
         "recoverability",
         "confidence",
         "requirement_confidence",
+        "confidence_assessment",
         "execution_segments",
     }
     assert isinstance(chosen_plan["execution_segments"], list)

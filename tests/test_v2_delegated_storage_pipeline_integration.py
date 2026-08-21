@@ -22,6 +22,7 @@ from picot.v2.contracts import (
     PVEnergyTimelineInterval,
 )
 from picot.v2.pipeline import CanonicalPipeline, _average_price_for_window
+from picot.v2.plan_commitment_store import ActivePlanCommitment
 from picot.v2.projection import project
 from picot.v2.web_ui import _build_plan_explanation
 
@@ -193,6 +194,101 @@ def test_evaluation_selects_requirement_satisfying_path_deterministically() -> N
         "pv_charge_only satisfies the storage requirement using PV-only energy"
     )
     assert first.evaluation == second.evaluation
+
+
+def test_active_commitment_is_retained_with_stable_plan_identity() -> None:
+    first = CanonicalPipeline().run(
+        planning_input=_snapshot(),
+        control_change_allowed=True,
+    )
+    active_plan = first.execution_plan_set.plans[0]
+    captured_at = BASE + timedelta(minutes=15)
+    source = _snapshot()
+    snapshot = replace(
+        source,
+        captured_at=captured_at,
+        capability_snapshot_set=replace(
+            source.capability_snapshot_set,
+            captured_at=captured_at,
+        ),
+        active_plan_commitments=(
+            ActivePlanCommitment(
+                execution_scope_id=active_plan.execution_scope_id,
+                plan_id=active_plan.plan_id,
+                plan_revision=1,
+                primitive=active_plan.planned_primitive.value,
+                source_policy="pv_only",
+                starts_at=active_plan.valid_from,
+                ends_at=active_plan.valid_until,
+                target_energy_wh=1200.0,
+            ),
+        ),
+    )
+
+    continued = CanonicalPipeline().run(
+        planning_input=snapshot,
+        control_change_allowed=True,
+    )
+
+    assert continued.evaluation.decisive_step == (
+        "stability:active_plan_commitment_retained"
+    )
+    assert continued.evaluation.reason == (
+        "active plan commitment retained while storage acquisition continues"
+    )
+    assert continued.execution_plan_set.plans[0].plan_id == active_plan.plan_id
+
+
+def test_active_commitment_survives_forecast_with_no_remaining_surplus() -> None:
+    first = CanonicalPipeline().run(
+        planning_input=_snapshot(),
+        control_change_allowed=True,
+    )
+    active_plan = first.execution_plan_set.plans[0]
+    captured_at = BASE + timedelta(minutes=15)
+    source = _snapshot()
+    assert source.pv_energy_timeline is not None
+    depleted_timeline = replace(
+        source.pv_energy_timeline,
+        intervals=(
+            replace(
+                source.pv_energy_timeline.intervals[0],
+                pv_energy_wh=100.0,
+            ),
+            source.pv_energy_timeline.intervals[1],
+        ),
+    )
+    snapshot = replace(
+        source,
+        captured_at=captured_at,
+        pv_energy_timeline=depleted_timeline,
+        capability_snapshot_set=replace(
+            source.capability_snapshot_set,
+            captured_at=captured_at,
+        ),
+        active_plan_commitments=(
+            ActivePlanCommitment(
+                active_plan.execution_scope_id,
+                active_plan.plan_id,
+                1,
+                active_plan.planned_primitive.value,
+                "pv_only",
+                active_plan.valid_from,
+                active_plan.valid_until,
+                1200.0,
+            ),
+        ),
+    )
+
+    continued = CanonicalPipeline().run(
+        planning_input=snapshot,
+        control_change_allowed=True,
+    )
+
+    assert continued.evaluation.decisive_step == (
+        "stability:active_plan_commitment_retained"
+    )
+    assert continued.execution_plan_set.plans[0].plan_id == active_plan.plan_id
 
 
 def test_executable_window_uses_duration_weighted_quarter_prices() -> None:

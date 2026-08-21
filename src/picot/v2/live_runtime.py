@@ -25,7 +25,7 @@ from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
     HomeAssistantCanonicalModeAdapter,
 )
-from picot.v2.contracts import CanonicalPipelineRun
+from picot.v2.contracts import CanonicalPipelineRun, PlanningInputSnapshot
 from picot.v2.fast_grid_power_observation import FastGridPowerObserver
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
@@ -55,6 +55,7 @@ from picot.v2.live_storage_mode_provenance import (
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
+from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import (
@@ -133,6 +134,10 @@ STORAGE_MODE_PROVENANCE_PATH = Path(
 )
 STORAGE_MODE_TRANSITION_HISTORY_PATH = Path(
     "/data/picot_v2_storage_mode_transition_history.jsonl"
+)
+ACTIVE_PLAN_COMMITMENT_PATH = Path("/data/picot_v2_active_plan_commitments.json")
+ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH = Path(
+    "/data/picot_v2_active_plan_commitment_incidents.jsonl"
 )
 PLANNING_INCIDENT_HISTORY_PATH = Path(
     "/data/picot_v2_planning_incident_history.jsonl"
@@ -405,8 +410,46 @@ def _attach_live_household_objectives(
 ) -> PlanningInputBundle:
     cumulative = diagnostics.cumulative_evidence
     deviations = diagnostics.deviation_results
+    timeline = bundle.snapshot.pv_energy_timeline
+    future_intervals = tuple(
+        interval
+        for interval in (timeline.intervals if timeline is not None else ())
+        if interval.evidence_type == "FORECAST"
+        and interval.ends_at > bundle.snapshot.captured_at
+    )
+    future_weights = tuple(
+        max(interval.pv_energy_wh, 1.0) for interval in future_intervals
+    )
+    if future_intervals:
+        forecast_confidence = sum(
+            interval.confidence * weight
+            for interval, weight in zip(
+                future_intervals,
+                future_weights,
+                strict=True,
+            )
+        ) / sum(future_weights)
+        future_confidence_evidence_ids = tuple(
+            dict.fromkeys(
+                evidence_id
+                for interval in future_intervals
+                for evidence_id in interval.forecast_evidence_ids
+            )
+        )
+        forecast_confidence_method_version = (
+            "remaining-pv-energy-weighted-source-confidence:v1"
+        )
+        forecast_confidence_available = True
+    else:
+        # The numeric field remains for wire compatibility; availability is the
+        # authority and prevents this sentinel from becoming planning evidence.
+        forecast_confidence = 0.0
+        future_confidence_evidence_ids = ()
+        forecast_confidence_method_version = (
+            "remaining-pv-confidence-unavailable:v1"
+        )
+        forecast_confidence_available = False
     if cumulative is None or cumulative.assessed_interval_count == 0:
-        forecast_confidence = 1.0
         forecast_energy_wh = 0.0
         actual_energy_wh = 0.0
         duration_seconds = 0
@@ -414,9 +457,6 @@ def _attach_live_household_objectives(
             f"{profile.profile_id}:{profile.version}:pv-deviation-unavailable",
         )
     else:
-        forecast_confidence = min(
-            deviation.forecast_confidence for deviation in deviations
-        )
         forecast_energy_wh = cumulative.forecast_central_energy_wh
         actual_energy_wh = cumulative.actual_energy_wh
         duration_seconds = _rolling_pv_direction_seconds(
@@ -439,6 +479,7 @@ def _attach_live_household_objectives(
             dict.fromkeys(
                 (
                     *evidence_ids,
+                    *future_confidence_evidence_ids,
                     *(
                         storage_feasibility.evidence_ids
                         if storage_feasibility is not None
@@ -474,11 +515,16 @@ def _attach_live_household_objectives(
             if storage_feasibility is not None
             else None
         ),
+        forecast_confidence_method_version=(
+            forecast_confidence_method_version
+        ),
+        forecast_confidence_available=forecast_confidence_available,
     )
     return replace(bundle, snapshot=snapshot)
 
 def _planning_input_signature(bundle: PlanningInputBundle) -> str:
     """Return a stable signature for decision-relevant Planning Input content."""
+    active_commitments = bundle.snapshot.active_plan_commitments
     facts = [
         {
             "category": fact.category,
@@ -520,6 +566,13 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
             else ()
         )
     ]
+    if active_commitments:
+        # ADR-034: raw telemetry and rolling forecasts are plan progress while
+        # an accepted execution commitment is active. Hard authority,
+        # capability and completion facts remain decision-relevant below.
+        facts = []
+        price_points = []
+        pv_energy_intervals = []
     payload = {
         "strategy_id": bundle.snapshot.strategy_id,
         "user_objective_profile": (
@@ -542,6 +595,12 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
                 "objective_order": regime.objective_order,
                 "reason": regime.reason,
                 "forecast_confidence": regime.forecast_confidence,
+                "forecast_confidence_method_version": (
+                    regime.forecast_confidence_method_version
+                ),
+                "forecast_confidence_available": (
+                    regime.forecast_confidence_available
+                ),
                 "cumulative_forecast_energy_wh": (
                     regime.cumulative_forecast_energy_wh
                 ),
@@ -556,18 +615,25 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
                 "evidence_ids": regime.evidence_ids,
                 "method_version": regime.method_version,
             }
-            if (regime := bundle.snapshot.household_planning_regime) is not None
+            if not active_commitments
+            and (regime := bundle.snapshot.household_planning_regime) is not None
             else None
         ),
         "horizon_end": (
-            bundle.snapshot.horizon_end.isoformat() if bundle.snapshot.horizon_end else None
+            bundle.snapshot.horizon_end.isoformat()
+            if bundle.snapshot.horizon_end and not active_commitments
+            else None
         ),
         "facts": facts,
         "price_points": price_points,
         "pv_energy_intervals": pv_energy_intervals,
         "storage_mode_capability_evidence": (
             {
-                "current_vendor_mode": mode_evidence.current_vendor_mode,
+                "current_vendor_mode": (
+                    None
+                    if active_commitments
+                    else mode_evidence.current_vendor_mode
+                ),
                 "status": mode_evidence.status,
                 "unavailable_reason": mode_evidence.unavailable_reason,
                 "usable_vendor_modes": mode_evidence.usable_vendor_modes,
@@ -583,18 +649,34 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
         "storage_mode_control_provenance": (
             {
                 "status": mode_provenance.status,
-                "observed_vendor_mode": mode_provenance.observed_vendor_mode,
-                "observed_at": mode_provenance.observed_at.isoformat(),
+                "observed_vendor_mode": (
+                    None
+                    if active_commitments
+                    else mode_provenance.observed_vendor_mode
+                ),
+                "observed_at": (
+                    None
+                    if active_commitments
+                    else mode_provenance.observed_at.isoformat()
+                ),
                 "last_planner_vendor_mode": (
-                    mode_provenance.last_planner_vendor_mode
+                    None
+                    if active_commitments
+                    else mode_provenance.last_planner_vendor_mode
                 ),
                 "last_planner_application_id": (
-                    mode_provenance.last_planner_application_id
+                    None
+                    if active_commitments
+                    else mode_provenance.last_planner_application_id
                 ),
                 "manual_override_active": (
                     mode_provenance.manual_override_active
                 ),
-                "transition_reason": mode_provenance.transition_reason,
+                "transition_reason": (
+                    None
+                    if active_commitments
+                    else mode_provenance.transition_reason
+                ),
                 "reset_id": mode_provenance.reset_id,
             }
             if (
@@ -605,9 +687,91 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
             is not None
             else None
         ),
+        "active_plan_commitments": [
+            {
+                "execution_scope_id": item.execution_scope_id,
+                "plan_id": item.plan_id,
+                "plan_revision": item.plan_revision,
+                "primitive": item.primitive,
+                "source_policy": item.source_policy,
+                "starts_at": item.starts_at.isoformat(),
+                "ends_at": item.ends_at.isoformat(),
+                "target_energy_wh": item.target_energy_wh,
+            }
+            for item in bundle.snapshot.active_plan_commitments
+        ],
+        "active_commitment_targets_reached": [
+            {
+                "execution_scope_id": commitment.execution_scope_id,
+                "reached": any(
+                    state.execution_scope_id == commitment.execution_scope_id
+                    and state.current_stored_energy_wh + 1e-6
+                    >= commitment.target_energy_wh
+                    for state in bundle.snapshot.current_storage_states
+                ),
+            }
+            for commitment in active_commitments
+        ],
+        "bms_calibration": (
+            {
+                "status": calibration.status,
+                "active": calibration.active,
+            }
+            if (calibration := bundle.snapshot.bms_calibration_evidence)
+            is not None
+            else None
+        ),
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _restore_active_plan_commitments(
+    snapshot: PlanningInputSnapshot,
+    store: ActivePlanCommitmentStore,
+) -> PlanningInputSnapshot:
+    restored = []
+    capabilities = (
+        snapshot.capability_snapshot_set.capabilities
+        if snapshot.capability_snapshot_set is not None
+        else ()
+    )
+    for state in snapshot.current_storage_states:
+        commitment = store.load(state.execution_scope_id)
+        if commitment is None:
+            continue
+        if commitment.ends_at <= snapshot.captured_at:
+            store.clear(commitment.execution_scope_id)
+            store.record_recovery_rejection("expired_at_restart")
+            continue
+        if commitment.starts_at > snapshot.captured_at:
+            store.record_recovery_rejection(
+                "active_commitment_starts_in_future"
+            )
+            continue
+        capability = next(
+            (
+                item
+                for item in capabilities
+                if item.execution_scope_id == commitment.execution_scope_id
+                and item.capability_id == state.capability_id
+            ),
+            None,
+        )
+        if (
+            capability is None
+            or commitment.primitive
+            not in {item.value for item in capability.supported_primitives}
+            or capability.availability.value != "available"
+            or capability.health.value != "healthy"
+        ):
+            store.clear(commitment.execution_scope_id)
+            store.record_recovery_rejection(
+                "capability_invalid_at_restart"
+            )
+            continue
+        restored.append(commitment)
+    return replace(snapshot, active_plan_commitments=tuple(restored))
 
 
 def _should_run_cycle(
@@ -1660,6 +1824,10 @@ def main() -> None:
     storage_mode_transition_history = StorageModeTransitionHistoryStore(
         STORAGE_MODE_TRANSITION_HISTORY_PATH
     )
+    active_plan_commitment_store = ActivePlanCommitmentStore(
+        ACTIVE_PLAN_COMMITMENT_PATH,
+        incident_path=ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
+    )
     live_pv_canary_mode = str(
         options.get("live_pv_canary_mode", "observer")
     )
@@ -1700,7 +1868,8 @@ def main() -> None:
         dispatch=HomeAssistantCanonicalModeAdapter(
             token=token,
             requested_at=lambda: datetime.now(UTC),
-        )
+        ),
+        commitment_store=active_plan_commitment_store,
     )
     planning_fallback_notifier = PlanningFallbackNotifier()
     planning_incident_history = PlanningIncidentHistory(
@@ -1717,6 +1886,8 @@ def main() -> None:
             PV_ATTENUATION_EVIDENCE_PATH,
             STORAGE_MODE_PROVENANCE_PATH,
             STORAGE_MODE_TRANSITION_HISTORY_PATH,
+            ACTIVE_PLAN_COMMITMENT_PATH,
+            ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
         ),
         incident_history_path=PLANNING_INCIDENT_HISTORY_PATH,
     )
@@ -1869,6 +2040,13 @@ def main() -> None:
         bundle = attach_storage_mode_provenance(
             bundle,
             storage_mode_provenance_runtime,
+        )
+        bundle = replace(
+            bundle,
+            snapshot=_restore_active_plan_commitments(
+                bundle.snapshot,
+                active_plan_commitment_store,
+            ),
         )
         if bundle.snapshot.pv_energy_timeline is not None:
             pv_attenuation_learning.capture_forecast_basis(

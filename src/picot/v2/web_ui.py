@@ -2445,7 +2445,12 @@ DASHBOARD_HTML = """<!doctype html>
         ["Regime", strategy.status],
         ["Reden", strategy.reason],
         ["Prioriteitsvolgorde", (strategy.objective_order ?? []).join(" → ")],
-        ["PV-confidence", formatConfidence(strategy.forecast_confidence)],
+        [
+          "PV-confidence",
+          strategy.forecast_confidence_available === false
+            ? "Niet beschikbaar"
+            : formatConfidence(strategy.forecast_confidence),
+        ],
         ["Batterijdoel in gevaar", strategy.storage_target_at_risk],
       ]);
       const decision = status.decision ?? {};
@@ -4181,6 +4186,16 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "forecast_confidence": (
                 regime.forecast_confidence if regime is not None else None
             ),
+            "forecast_confidence_available": (
+                regime.forecast_confidence_available
+                if regime is not None
+                else False
+            ),
+            "forecast_confidence_method_version": (
+                regime.forecast_confidence_method_version
+                if regime is not None
+                else None
+            ),
             "storage_target_at_risk": (
                 regime.storage_target_at_risk if regime is not None else None
             ),
@@ -4354,6 +4369,32 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "requirement_confidence": (
                 requirement.confidence
                 if requirement is not None and not fallback_active
+                else None
+            ),
+            "confidence_assessment": (
+                {
+                    "result": winning_outcome.confidence_assessment.result,
+                    "limiting_component": (
+                        winning_outcome.confidence_assessment.limiting_component
+                    ),
+                    "method_version": (
+                        winning_outcome.confidence_assessment.method_version
+                    ),
+                    "components": [
+                        {
+                            "name": component.name,
+                            "value": component.value,
+                            "method_version": component.method_version,
+                            "evidence_ids": list(component.evidence_ids),
+                        }
+                        for component in (
+                            winning_outcome.confidence_assessment.components
+                        )
+                    ],
+                }
+                if winning_outcome is not None
+                and winning_outcome.confidence_assessment is not None
+                and not fallback_active
                 else None
             ),
             "execution_segments": [

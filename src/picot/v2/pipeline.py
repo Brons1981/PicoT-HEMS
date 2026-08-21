@@ -6,12 +6,15 @@ Canonical v2 pipeline implementation; diagnostic timing is layered around this p
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from hashlib import sha256
 from time import perf_counter
 
-from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.planner.delegated_storage_evaluation_engine import (
+    DelegatedStorageEvaluationEngine,
+)
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
+from picot.v2.active_plan_candidate import construct_active_plan_candidate
 from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
 from picot.v2.contracts import (
     Candidate,
@@ -31,6 +34,7 @@ from picot.v2.contracts import (
     VendorBoundaryResult,
 )
 from picot.v2.delegated_storage_candidates import (
+    complete_storage_path_with_baseline,
     construct_pv_charge_only_candidate,
 )
 from picot.v2.delegated_storage_outcomes import (
@@ -223,6 +227,15 @@ class CanonicalPipeline:
                 balance = balances_by_id.get(requirement.projected_balance_id)
                 if balance is None:
                     continue
+                incumbent = construct_active_plan_candidate(
+                    snapshot,
+                    requirement,
+                )
+                if incumbent is not None:
+                    incumbent_candidate, incumbent_path, incumbent_outcome = incumbent
+                    delegated_candidates.append(incumbent_candidate)
+                    delegated_paths.append(incumbent_path)
+                    delegated_outcomes.append(incumbent_outcome)
                 preferred_price_windows = tuple(
                     (item.starts_at, item.ends_at)
                     for item in sorted(
@@ -278,6 +291,11 @@ class CanonicalPipeline:
                     simulated.outcomes
                 )
 
+        path = complete_storage_path_with_baseline(snapshot, path)
+        delegated_paths = [
+            complete_storage_path_with_baseline(snapshot, item)
+            for item in delegated_paths
+        ]
         candidate_set = CandidateSet(
             run_id=run_id,
             snapshot_id=snapshot_id,
@@ -391,16 +409,31 @@ class CanonicalPipeline:
                 and contribution <= storage.usable_capacity_wh * 0.01 + 1e-6
             )
 
+        delegated_evaluation_engine = DelegatedStorageEvaluationEngine()
+        incumbent_candidate_ids = (
+            delegated_evaluation_engine.incumbent_candidate_ids(
+                snapshot=snapshot,
+                candidate_set=candidate_set,
+                candidate_ids=tuple(
+                    item.candidate_id for item in delegated_outcomes
+                ),
+            )
+        )
         actionable_outcomes = tuple(
             outcome
             for outcome in delegated_outcomes
             if outcome.confidence > 0.0
             and (
+                outcome.candidate_id in incumbent_candidate_ids
+                or
                 outcome.pv_storage_contribution_wh
                 + outcome.grid_storage_contribution_wh
+                > 1e-6
             )
-            > 1e-6
-            and not (is_micro_charge(outcome) and reserve_is_safe(outcome))
+            and (
+                outcome.candidate_id in incumbent_candidate_ids
+                or not (is_micro_charge(outcome) and reserve_is_safe(outcome))
+            )
         )
         has_actionable_alternatives = bool(actionable_outcomes)
         storage_states_by_id = {
@@ -449,41 +482,12 @@ class CanonicalPipeline:
         candidate_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
-        candidate_priority = {
-            item.candidate_id: index
-            for index, item in enumerate(delegated_candidates)
-        }
-        winning_outcome = (
-            min(
-                actionable_outcomes,
-                key=lambda item: (
-                    not item.requirement_satisfied,
-                    item.grid_storage_contribution_wh,
-                    not (
-                        item.charge_window_starts_at
-                        <= snapshot.captured_at
-                        < item.charge_window_ends_at
-                    ),
-                    _average_price_for_window(
-                        snapshot,
-                        item.charge_window_starts_at,
-                        item.charge_window_ends_at,
-                    ),
-                    -(
-                        item.pv_storage_contribution_wh
-                        + item.grid_storage_contribution_wh
-                    ),
-                    candidate_priority[item.candidate_id],
-                    item.conversion_losses_wh,
-                    -item.confidence,
-                    -item.recoverability,
-                    item.charge_window_starts_at,
-                    item.candidate_id,
-                ),
-            )
-            if has_actionable_alternatives
-            else None
+        delegated_evaluation = delegated_evaluation_engine.evaluate(
+            snapshot=snapshot,
+            candidate_set=candidate_set,
+            actionable_outcomes=actionable_outcomes,
         )
+        winning_outcome = delegated_evaluation.winning_outcome
         winning_candidate = (
             next(
                 item
@@ -516,7 +520,9 @@ class CanonicalPipeline:
                 winning_path.path_id
             ),
             reason=(
-                (
+                "active plan commitment retained while storage acquisition continues"
+                if delegated_evaluation.incumbent_retained
+                else (
                     "pv_charge_only satisfies the storage requirement using PV-only energy"
                     if requirement_satisfied
                     else "pv_charge_only maximizes storage progress using PV-only energy"
@@ -543,7 +549,8 @@ class CanonicalPipeline:
                 item.candidate_id for item in candidate_set.candidates
             ),
             decisive_step=(
-                (
+                delegated_evaluation.decisive_step
+                or (
                     "hard_constraint:storage_requirement_satisfied"
                     if requirement_satisfied
                     else "objective:maximize_storage_progress_without_grid"
@@ -574,14 +581,17 @@ class CanonicalPipeline:
             )
             valid_from = min(segment.starts_at for segment in path_segments)
             valid_until = max(segment.ends_at for segment in path_segments)
-            planned_primitives = {
-                segment.primitive for segment in path_segments
-            }
-            planned_primitive = next(iter(planned_primitives))
-            if len(planned_primitives) != 1:
-                raise ValueError(
-                    "observer execution plan must contain one primitive"
-                )
+            applicable_segment = next(
+                (
+                    segment
+                    for segment in path_segments
+                    if segment.starts_at
+                    <= snapshot.captured_at
+                    < segment.ends_at
+                ),
+                path_segments[0],
+            )
+            planned_primitive = applicable_segment.primitive
             mode_evidence = snapshot.storage_mode_capability_evidence
             matching_vendor_modes = (
                 tuple(
@@ -615,6 +625,17 @@ class CanonicalPipeline:
                 "execution-plan",
                 f"{evaluation.evaluation_id}|{winning_path.path_id}|{execution_scope_id}",
             )
+            if delegated_evaluation.incumbent_retained:
+                incumbent = next(
+                    (
+                        item
+                        for item in snapshot.active_plan_commitments
+                        if item.execution_scope_id == execution_scope_id
+                    ),
+                    None,
+                )
+                if incumbent is not None:
+                    plan_id = incumbent.plan_id
             observer_plans.append(
                 ObserverExecutionPlan(
                     plan_id=plan_id,
@@ -649,121 +670,6 @@ class CanonicalPipeline:
                     ),
                 )
             )
-        has_due_storage_segment = any(
-            segment.starts_at <= snapshot.captured_at < segment.ends_at
-            for plan in observer_plans
-            for segment in plan.segments
-        )
-        if not has_due_storage_segment:
-            storage_state = next(iter(snapshot.current_storage_states), None)
-            capability_set = snapshot.capability_snapshot_set
-            baseline_primitive = ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
-            baseline_capability = (
-                next(
-                    (
-                        capability
-                        for capability in capability_set.capabilities
-                        if storage_state is not None
-                        and capability.capability_id == storage_state.capability_id
-                        and capability.execution_scope_id
-                        == storage_state.execution_scope_id
-                        and baseline_primitive in capability.supported_primitives
-                    ),
-                    None,
-                )
-                if capability_set is not None
-                else None
-            )
-            future_start = min(
-                (
-                    segment.starts_at
-                    for plan in observer_plans
-                    for segment in plan.segments
-                    if segment.starts_at > snapshot.captured_at
-                ),
-                default=None,
-            )
-            baseline_until = min(
-                future_start or (snapshot.captured_at + timedelta(minutes=15)),
-                snapshot.captured_at + timedelta(minutes=15),
-            )
-            if (
-                storage_state is not None
-                and baseline_capability is not None
-                and baseline_until > snapshot.captured_at
-                and winning_candidate.candidate_id is not None
-            ):
-                mode_evidence = snapshot.storage_mode_capability_evidence
-                matching_modes = (
-                    tuple(
-                        mapping.vendor_mode
-                        for mapping in mode_evidence.mappings
-                        if baseline_primitive in mapping.primitives
-                    )
-                    if mode_evidence is not None
-                    else ()
-                )
-                plan_vendor_mode = (
-                    matching_modes[0] if len(matching_modes) == 1 else None
-                )
-                plan_id = _id(
-                    "execution-plan",
-                    f"{evaluation.evaluation_id}|{winning_path.path_id}|"
-                    f"{storage_state.execution_scope_id}|baseline-discharge",
-                )
-                segment_id = _id(
-                    "execution-plan-segment",
-                    f"{plan_id}|{snapshot.captured_at.isoformat()}|"
-                    f"{baseline_until.isoformat()}",
-                )
-                observer_plans.append(
-                    ObserverExecutionPlan(
-                        plan_id=plan_id,
-                        evaluation_id=evaluation.evaluation_id,
-                        winning_candidate_id=winning_candidate.candidate_id,
-                        winning_energy_path_id=winning_path.path_id,
-                        execution_scope_id=storage_state.execution_scope_id,
-                        valid_from=snapshot.captured_at,
-                        valid_until=baseline_until,
-                        planned_primitive=baseline_primitive,
-                        planned_vendor_mode=plan_vendor_mode,
-                        lifecycle_status=(
-                            "due"
-                            if control_change_allowed
-                            else "due_observer_only"
-                        ),
-                        observer_only=not control_change_allowed,
-                        segments=(
-                            ObserverExecutionPlanSegment(
-                                segment_id=segment_id,
-                                source_path_segment_id=(
-                                    "canonical-baseline-discharge"
-                                ),
-                                order=1,
-                                starts_at=snapshot.captured_at,
-                                ends_at=baseline_until,
-                                primitive=baseline_primitive,
-                                capability_id=baseline_capability.capability_id,
-                                purpose=(
-                                    "Apply the active household planning regime "
-                                    "outside a selected PV charge window"
-                                ),
-                                evidence_ids=(
-                                    baseline_capability.capability_id,
-                                    *(
-                                        (
-                                            snapshot.household_planning_regime.regime_id,
-                                        )
-                                        if snapshot.household_planning_regime is not None
-                                        else ()
-                                    ),
-                                ),
-                                requested_power_w=None,
-                                charge_source_policy=None,
-                            ),
-                        ),
-                    )
-                )
         execution_plan_set = ExecutionPlanSet(
             run_id=run_id,
             snapshot_id=snapshot_id,

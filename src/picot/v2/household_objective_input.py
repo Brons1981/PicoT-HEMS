@@ -31,6 +31,10 @@ def attach_household_objectives(
     conservative_remaining_pv_surplus_wh: float | None = None,
     remaining_pv_storage_margin_wh: float | None = None,
     storage_target_required_by: str | None = None,
+    forecast_confidence_method_version: str = (
+        "legacy-forecast-confidence:unversioned"
+    ),
+    forecast_confidence_available: bool = True,
 ) -> PlanningInputSnapshot:
     """Return a new snapshot with one evidence-backed strategy regime."""
 
@@ -54,6 +58,10 @@ def attach_household_objectives(
         ),
         remaining_pv_storage_margin_wh=remaining_pv_storage_margin_wh,
         storage_target_required_by=storage_target_required_by,
+        forecast_confidence_method_version=(
+            forecast_confidence_method_version
+        ),
+        forecast_confidence_available=forecast_confidence_available,
     )
     return replace(
         snapshot,

@@ -61,6 +61,7 @@ def _candidate_set(
                 storage_energy_wh=1200.0,
             ),
         ),
+        capability_confidence=0.95,
     )
     candidate = Candidate(
         run_id=RUN_ID,
@@ -88,6 +89,12 @@ def _candidate_set(
                 projected_storage_energy_wh=1600.0,
                 confidence=0.7,
                 evidence_ids=("pv-window-evidence", "load-window-evidence"),
+                storage_confidence=1.0,
+                pv_confidence=0.8,
+                load_confidence=0.7,
+                confidence_method_version=(
+                    "projected-household-interval-required-input-min:v1"
+                ),
             ),
             ProjectedHouseholdEnergyBalanceInterval(
                 starts_at=WINDOW_END,
@@ -102,6 +109,12 @@ def _candidate_set(
                 projected_storage_energy_wh=1400.0,
                 confidence=0.7,
                 evidence_ids=("pv-after-evidence", "load-after-evidence"),
+                storage_confidence=1.0,
+                pv_confidence=None,
+                load_confidence=0.7,
+                confidence_method_version=(
+                    "projected-household-interval-required-input-min:v1"
+                ),
             ),
         ),
     )
@@ -172,7 +185,27 @@ def test_outcome_preserves_confidence_recoverability_and_lineage() -> None:
         CAPABILITY_ID,
         "storage-evidence",
     }
-    assert outcome.method_version == "delegated-storage-outcome:v1"
+    assert outcome.method_version == "delegated-storage-outcome:v2"
+    assert outcome.confidence_assessment is not None
+    assert outcome.confidence_assessment.result == pytest.approx(0.7)
+    assert outcome.confidence_assessment.limiting_component == "charge_window"
+    assert outcome.confidence_assessment.method_version == (
+        "delegated-storage-outcome-confidence:v2"
+    )
+    components = {
+        item.name: item.value
+        for item in outcome.confidence_assessment.components
+    }
+    assert components == pytest.approx(
+        {
+            "requirement": 0.7,
+            "charge_window": 0.7,
+            "capability": 0.95,
+            "storage_state": 1.0,
+            "pv_source": 0.8,
+            "household_load": 0.7,
+        }
+    )
 
 
 def test_outcome_accepts_sub_microwatt_hour_rounding_at_requirement() -> None:

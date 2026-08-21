@@ -3,12 +3,14 @@ from datetime import UTC, datetime, timedelta
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.contracts import (
+    CurrentStorageState,
     PlanningInputSnapshot,
     PriceForecastPoint,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
 from picot.v2.live_runtime import _planning_input_signature, _should_run_cycle
+from picot.v2.plan_commitment_store import ActivePlanCommitment
 from picot.v2.planning_input import CanonicalInputFact, PlanningInputBundle
 
 BASE = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
@@ -96,6 +98,41 @@ def _with_pv_energy(
     )
 
 
+def _with_active_commitment(
+    bundle: PlanningInputBundle,
+    *,
+    current_energy_wh: float,
+) -> PlanningInputBundle:
+    commitment = ActivePlanCommitment(
+        execution_scope_id="home-battery",
+        plan_id="plan-stable",
+        plan_revision=1,
+        primitive="balance_bidirectional",
+        source_policy="pv_only",
+        starts_at=BASE,
+        ends_at=BASE + timedelta(hours=1),
+        target_energy_wh=1000.0,
+    )
+    storage = CurrentStorageState(
+        storage_state_id="storage-home",
+        execution_scope_id="home-battery",
+        capability_id="storage-capability",
+        current_soc=current_energy_wh / 1000.0,
+        usable_capacity_wh=1000.0,
+        measured_at=BASE,
+        confidence=1.0,
+        evidence_ids=("storage-evidence",),
+    )
+    return replace(
+        bundle,
+        snapshot=replace(
+            bundle.snapshot,
+            current_storage_states=(storage,),
+            active_plan_commitments=(commitment,),
+        ),
+    )
+
+
 def test_identical_source_content_has_same_signature_across_fresh_snapshots() -> None:
     first = _bundle(captured_at=BASE)
     second = _bundle(captured_at=BASE + timedelta(minutes=1))
@@ -149,6 +186,62 @@ def test_changed_canonical_fact_changes_signature() -> None:
     second = _bundle(captured_at=BASE + timedelta(minutes=1), grid_power=700.0)
 
     assert _planning_input_signature(first) != _planning_input_signature(second)
+
+
+def test_active_commitment_treats_ordinary_soc_and_power_as_progress() -> None:
+    first = _with_active_commitment(
+        _bundle(captured_at=BASE, grid_power=500.0),
+        current_energy_wh=500.0,
+    )
+    second = _with_active_commitment(
+        _bundle(
+            captured_at=BASE + timedelta(minutes=1),
+            grid_power=900.0,
+        ),
+        current_energy_wh=750.0,
+    )
+
+    assert _planning_input_signature(first) == _planning_input_signature(second)
+
+
+def test_active_commitment_target_completion_is_material() -> None:
+    first = _with_active_commitment(
+        _bundle(captured_at=BASE),
+        current_energy_wh=999.0,
+    )
+    completed = _with_active_commitment(
+        _bundle(captured_at=BASE + timedelta(minutes=1)),
+        current_energy_wh=1000.0,
+    )
+
+    assert _planning_input_signature(first) != _planning_input_signature(completed)
+
+
+def test_incident_replay_soc_progress_and_power_variation_keep_one_plan() -> None:
+    # Regression for the 2026-08-21 sequence that previously alternated NOM
+    # and smart discharge while SOC progressed normally from 88% to 92%.
+    samples = (
+        (0, 88.0, -615.539),
+        (12, 90.0, -45.421),
+        (16, 90.0, -687.607),
+        (22, 90.0, -48.264),
+        (54, 92.0, -41.501),
+        (58, 92.0, -49.526),
+    )
+    signatures = {
+        _planning_input_signature(
+            _with_active_commitment(
+                _bundle(
+                    captured_at=BASE + timedelta(minutes=minute),
+                    grid_power=grid_power,
+                ),
+                current_energy_wh=soc_percent * 10.0,
+            )
+        )
+        for minute, soc_percent, grid_power in samples
+    }
+
+    assert len(signatures) == 1
 
 
 def test_first_cycle_always_runs() -> None:

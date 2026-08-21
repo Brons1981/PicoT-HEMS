@@ -8,13 +8,16 @@ from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.v2.contracts import (
     CandidateOutcomeSet,
     CandidateSet,
+    ConfidenceAssessment,
+    ConfidenceComponent,
     DelegatedStorageCandidateOutcome,
     EnergyPath,
     ProjectedHouseholdEnergyBalance,
     StorageEnergyRequirement,
 )
 
-METHOD_VERSION = "delegated-storage-outcome:v1"
+METHOD_VERSION = "delegated-storage-outcome:v2"
+CONFIDENCE_METHOD_VERSION = "delegated-storage-outcome-confidence:v2"
 
 
 def _stable_id(prefix: str, seed: str) -> str:
@@ -45,16 +48,23 @@ def _simulate_path(
     requirement: StorageEnergyRequirement,
     balance: ProjectedHouseholdEnergyBalance,
 ) -> DelegatedStorageCandidateOutcome:
-    if not path.segments:
-        raise ValueError("delegated storage outcome requires timed segments")
-    if any(
-        segment.charge_source_policy is not ChargeSourcePolicy.PV_ONLY
+    charge_segments = tuple(
+        segment
         for segment in path.segments
-    ):
-        raise ValueError("PV-only delegated storage outcomes require PV_ONLY source policy")
+        if segment.charge_source_policy is ChargeSourcePolicy.PV_ONLY
+    )
+    if not charge_segments:
+        if any(
+            segment.charge_source_policy is not None
+            for segment in path.segments
+        ):
+            raise ValueError(
+                "PV-only delegated storage outcomes require PV_ONLY source policy"
+            )
+        raise ValueError("delegated storage outcome requires timed segments")
 
-    window_start = min(segment.starts_at for segment in path.segments)
-    window_end = max(segment.ends_at for segment in path.segments)
+    window_start = min(segment.starts_at for segment in charge_segments)
+    window_end = max(segment.ends_at for segment in charge_segments)
     window_state = next(
         (state for state in path.projected_states if state.at == window_end),
         None,
@@ -134,8 +144,78 @@ def _simulate_path(
             )
         )
         / sum(confidence_weights)
+        if confidence_weights
+        else requirement.confidence
     )
-    confidence = min(requirement.confidence, interval_confidence)
+    capability_confidence = (
+        path.capability_confidence
+        if path.capability_confidence is not None
+        else 1.0
+    )
+    confidence = min(
+        requirement.confidence,
+        interval_confidence,
+        capability_confidence,
+    )
+    source_components: list[ConfidenceComponent] = [
+        ConfidenceComponent(
+            "requirement",
+            requirement.confidence,
+            requirement.confidence_method_version,
+            requirement.evidence_ids,
+        ),
+        ConfidenceComponent(
+            "charge_window",
+            interval_confidence,
+            "projected-interval-energy-weighted-confidence:v1",
+            tuple(
+                dict.fromkeys(
+                    evidence_id
+                    for interval in relevant_intervals
+                    for evidence_id in interval.evidence_ids
+                )
+            ),
+        ),
+        ConfidenceComponent(
+            "capability",
+            capability_confidence,
+            "capability-snapshot-confidence:v1",
+            tuple(dict.fromkeys(segment.capability_id for segment in charge_segments)),
+        ),
+    ]
+    for name, attribute in (
+        ("storage_state", "storage_confidence"),
+        ("pv_source", "pv_confidence"),
+        ("household_load", "load_confidence"),
+    ):
+        values = tuple(
+            (getattr(interval, attribute), weight)
+            for interval, weight in zip(
+                relevant_intervals,
+                confidence_weights,
+                strict=True,
+            )
+            if getattr(interval, attribute) is not None
+        )
+        if values:
+            source_components.append(
+                ConfidenceComponent(
+                    name,
+                    sum(value * weight for value, weight in values)
+                    / sum(weight for _, weight in values),
+                    "source-component-energy-weighted-confidence:v1",
+                )
+            )
+    limiting_component = min(
+        source_components[:3],
+        key=lambda item: (item.value, item.name),
+    ).name
+    confidence_assessment = ConfidenceAssessment(
+        result=confidence,
+        limiting_component=limiting_component,
+        method_version=CONFIDENCE_METHOD_VERSION,
+        components=tuple(source_components),
+    )
     requirement_satisfied = (
         requirement_state.storage_energy_wh + 1e-6
         >= requirement.required_energy_wh
@@ -145,7 +225,7 @@ def _simulate_path(
             requirement.evidence_ids
             + tuple(
                 evidence_id
-                for segment in path.segments
+                for segment in charge_segments
                 for evidence_id in segment.evidence_ids
             )
             + tuple(
@@ -156,7 +236,7 @@ def _simulate_path(
         )
     )
     capability_ids = tuple(
-        dict.fromkeys(segment.capability_id for segment in path.segments)
+        dict.fromkeys(segment.capability_id for segment in charge_segments)
     )
     return DelegatedStorageCandidateOutcome(
         outcome_id=_stable_id(
@@ -187,6 +267,7 @@ def _simulate_path(
         confidence=confidence,
         evidence_ids=evidence_ids,
         method_version=METHOD_VERSION,
+        confidence_assessment=confidence_assessment,
     )
 
 

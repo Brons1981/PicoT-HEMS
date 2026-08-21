@@ -96,7 +96,16 @@ def test_full_storage_without_charge_action_is_valid_plan() -> None:
     assert run.execution_record.status == "live_plan_ready"
     assert run.execution_plan_set.plans
     baseline = run.execution_plan_set.plans[0]
-    assert baseline.valid_until - baseline.valid_from == timedelta(minutes=15)
+    assert baseline.valid_from == run.planning_input.captured_at
+    assert baseline.valid_until == run.planning_input.horizon_end
+    winning_path = next(
+        path
+        for path in run.candidate_set.energy_paths
+        if path.path_id == run.evaluation.winning_energy_path_id
+    )
+    assert tuple(
+        segment.source_path_segment_id for segment in baseline.segments
+    ) == winning_path.segment_ids
 
     status = build_web_view(run, project(run))["planning_status"]
     assert status["attention"] == {

@@ -11,6 +11,7 @@ from picot.v2.canonical_execution_runtime import (
 from picot.v2.contracts import BMSCalibrationEvidence, CanonicalPipelineRun
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.pipeline import CanonicalPipeline
+from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
 from picot.v2.storage_capability_snapshot import (
     build_storage_capability_snapshot_set,
 )
@@ -271,6 +272,24 @@ def test_canonical_runtime_dispatches_the_exact_approved_mode() -> None:
     assert result.vendor_result.command_id == "ha-command-test"
 
 
+def test_plan_builder_converts_complete_mixed_storage_path_exactly_once() -> None:
+    run = _live_run()
+    winning_path = next(
+        path
+        for path in run.candidate_set.energy_paths
+        if path.path_id == run.evaluation.winning_energy_path_id
+    )
+    plan = run.execution_plan_set.plans[0]
+
+    assert {segment.primitive.value for segment in winning_path.segments} == {
+        "balance_bidirectional",
+        "balance_discharge_only",
+    }
+    assert tuple(
+        segment.source_path_segment_id for segment in plan.segments
+    ) == winning_path.segment_ids
+
+
 def test_canonical_runtime_does_not_repeat_request_before_feedback() -> None:
     calls: list[str] = []
     runtime = CanonicalExecutionRuntime(
@@ -291,18 +310,40 @@ def test_canonical_runtime_does_not_repeat_request_before_feedback() -> None:
     assert duplicate.vendor_result.status == "awaiting_mode_feedback"
 
 
-def test_active_pv_plan_is_not_interrupted_by_a_forecast_replan() -> None:
+def test_active_pv_plan_is_not_interrupted_by_a_forecast_replan(tmp_path) -> None:
     calls: list[str] = []
+    commitment_path = tmp_path / "commitment.json"
     runtime = CanonicalExecutionRuntime(
         dispatch=lambda request, mapping: (
             calls.append(mapping.fixed_value or "")
             or CanonicalDispatchOutcome("dispatched", "ha-command-test")
-        )
+        ),
+        commitment_store=ActivePlanCommitmentStore(commitment_path),
     )
     active = _live_run()
     runtime.apply(active)
 
-    future = _future_pv_run(active)
+    # A fresh runtime instance models an add-on restart. The execution
+    # commitment must come from durable plan context, not process memory.
+    runtime = CanonicalExecutionRuntime(
+        dispatch=lambda request, mapping: (
+            calls.append(mapping.fixed_value or "")
+            or CanonicalDispatchOutcome("dispatched", "ha-command-after-restart")
+        ),
+        commitment_store=ActivePlanCommitmentStore(commitment_path),
+    )
+
+    commitment = ActivePlanCommitmentStore(commitment_path).load("home-battery")
+    assert commitment is not None
+    future = _future_pv_run(
+        replace(
+            active,
+            planning_input=replace(
+                active.planning_input,
+                active_plan_commitments=(commitment,),
+            ),
+        )
+    )
     future = replace(
         future,
         primitive_boundary=replace(
@@ -313,17 +354,20 @@ def test_active_pv_plan_is_not_interrupted_by_a_forecast_replan() -> None:
     held = runtime.apply(future)
 
     assert calls == ["Nul op de meter"]
-    assert held.vendor_result.status == "active_pv_plan_committed"
+    assert held.vendor_result.status == (
+        "active_plan_preserved_after_blocked_replan"
+    )
     assert held.vendor_result.planned_vendor_mode == "Nul op de meter"
 
 
-def test_completed_storage_target_may_end_committed_pv_plan() -> None:
+def test_completed_storage_target_may_end_committed_pv_plan(tmp_path) -> None:
     calls: list[str] = []
     runtime = CanonicalExecutionRuntime(
         dispatch=lambda request, mapping: (
             calls.append(mapping.fixed_value or "")
             or CanonicalDispatchOutcome("dispatched", "ha-command-test")
-        )
+        ),
+        commitment_store=ActivePlanCommitmentStore(tmp_path / "commitment.json"),
     )
     active = _live_run()
     runtime.apply(active)

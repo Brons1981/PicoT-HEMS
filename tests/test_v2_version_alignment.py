@@ -17,7 +17,7 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
 
 
 def test_v2_release_version_is_dev_125() -> None:
-    assert __version__ == "2.0.0-dev.125"
+    assert __version__ == "2.0.0-dev.126"
 
 
 def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:

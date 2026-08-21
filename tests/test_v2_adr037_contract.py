@@ -130,6 +130,49 @@ def test_storage_requirement_derivation_is_deterministic_and_traceable() -> None
         "pv-energy:timeline-1",
     )
     assert first.reserve_contribution_wh == pytest.approx(816.0)
+    assert first.confidence_method_version == (
+        "storage-requirement-energy-weighted-confidence:v1"
+    )
+
+
+def test_negligible_weak_interval_does_not_dominate_requirement_confidence() -> None:
+    intervals = tuple(
+        derive_projected_household_energy_balance_interval(
+            starts_at=BASE + timedelta(hours=index),
+            ends_at=BASE + timedelta(hours=index + 1),
+            current_usable_storage_energy_wh=3200.0,
+            expected_usable_pv_energy_wh=pv_wh,
+            planned_grid_energy_wh=0.0,
+            household_load_forecast_energy_wh=0.0,
+            known_future_demand_energy_wh=0.0,
+            conversion_losses_wh=0.0,
+            other_planned_household_energy_flows_wh=0.0,
+            confidence=confidence,
+            evidence_ids=(f"interval-{index}",),
+        )
+        for index, (pv_wh, confidence) in enumerate(((1.0, 0.10), (1000.0, 0.90)))
+    )
+    balance = ProjectedHouseholdEnergyBalance(
+        "balance-weighted",
+        "run-weighted",
+        "snapshot-weighted",
+        "storage-weighted",
+        intervals,
+    )
+
+    requirement = derive_storage_energy_requirement(
+        balance=balance,
+        target_energy_wh=1000.0,
+        usable_capacity_wh=8160.0,
+        required_by=intervals[-1].ends_at,
+        reason="WEIGHTED_CONFIDENCE",
+        reserve_contribution_wh=0.0,
+    )
+
+    assert requirement.confidence == pytest.approx(
+        (1.0 * 0.10 + 1000.0 * 0.90) / 1001.0
+    )
+    assert requirement.confidence > 0.89
 
 
 @pytest.mark.parametrize(

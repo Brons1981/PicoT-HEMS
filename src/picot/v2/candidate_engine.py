@@ -183,6 +183,16 @@ class CandidateEngine:
                         projected_storage_energy_wh=projected_energy_wh,
                         confidence=confidence,
                         evidence_ids=interval_evidence,
+                        storage_confidence=storage.confidence,
+                        pv_confidence=(
+                            pv_interval.confidence
+                            if pv_energy_wh > 1e-9
+                            else None
+                        ),
+                        load_confidence=load_confidence,
+                        confidence_method_version=(
+                            "projected-household-interval-required-input-min:v1"
+                        ),
                     )
                 )
                 projection_cursor = projection_end
@@ -374,6 +384,9 @@ class CandidateEngine:
                     0.0,
                     required_energy_wh
                     - first_battery_support_interval.current_usable_storage_energy_wh,
+                ),
+                confidence_method_version=(
+                    "storage-requirement-energy-weighted-confidence:v1"
                 ),
             )
             requirements.append(requirement)

@@ -728,3 +728,45 @@ Before implementation:
 - Prevented forecast-driven candidate trimming from alternating NOM and smart discharge during one charge session.
 - Kept explicit completion, fallback, override and dispatch blockers as legitimate interruption paths.
 - Added regressions for plan retention and target-completion release using incident runs from 21 August.
+
+## 2026-08-21 — 2.0.0-dev.126
+
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
+
+- Accepted V2ADR-052 for persistent plan commitment and material replanning.
+- Persisted active delegated storage commitments atomically per execution scope
+  and restored them after restart only when time, capability and execution
+  invariants still validate.
+- Preserved an active plan as an incumbent Candidate and Outcome so Candidate
+  construction, Evaluation and Execution Plan Builder retain their canonical
+  ownership instead of relying on a pipeline shortcut.
+- Completed each storage Energy Path with its normal smart-discharge baseline
+  before Plan Builder conversion and removed downstream baseline invention.
+- Limited active-plan replanning to material completion, BMS calibration,
+  manual-authority and capability changes; ordinary SoC, PV, price and vendor
+  feedback progression no longer replaces the committed plan.
+- Accepted V2ADR-053 and exposed versioned, traceable confidence components for
+  PV, household load, storage state, requirement, charge window and capability.
+- Kept unavailable future confidence explicitly unavailable instead of
+  presenting or using an artificial zero or one hundred percent value.
+- Corrected timed Candidate projection to select the charge segment from a
+  complete Energy Path rather than its preceding discharge baseline.
+- Verified the complete repository test suite: 900 tests passed. Ruff passed
+  for every changed Python file; `git diff --check` and bytecode compilation
+  passed. Mypy passed for all 53 v2 source files after explicit narrowing of
+  persisted commitment, source-policy and decoded JSON types.
+
+Not live verified:
+
+- restart during an active PV-only charge commitment;
+- one complete live charge-window lifecycle followed by smart discharge;
+- live confidence-component presentation with current Home Assistant evidence.
+
+Known release boundary:
+
+- this remains a development release;
+- an explicit grid-charge Candidate and autumn/winter validation remain future
+  work before PicoT can be considered 2.0-ready.
+
+Exact next action after installation: observe one complete live plan lifecycle,
+including commitment recovery across a controlled add-on restart.

@@ -67,7 +67,22 @@ def derive_storage_energy_requirement(
     if target_energy_wh > usable_capacity_wh:
         raise ValueError("target_energy_wh must not exceed usable_capacity_wh")
 
-    confidence = min(interval.confidence for interval in balance.intervals)
+    confidence_weights = tuple(
+        max(
+            interval.expected_usable_pv_energy_wh
+            + interval.household_load_forecast_energy_wh,
+            1.0,
+        )
+        for interval in balance.intervals
+    )
+    confidence = sum(
+        interval.confidence * weight
+        for interval, weight in zip(
+            balance.intervals,
+            confidence_weights,
+            strict=True,
+        )
+    ) / sum(confidence_weights)
     evidence_ids = tuple(
         dict.fromkeys(
             evidence_id
@@ -96,4 +111,7 @@ def derive_storage_energy_requirement(
         confidence=confidence,
         evidence_ids=evidence_ids,
         reserve_contribution_wh=reserve_contribution_wh,
+        confidence_method_version=(
+            "storage-requirement-energy-weighted-confidence:v1"
+        ),
     )

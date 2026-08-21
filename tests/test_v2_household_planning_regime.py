@@ -50,6 +50,26 @@ def test_low_confidence_and_material_pv_underperformance_prioritizes_self_consum
     )
 
 
+def test_unavailable_confidence_is_not_used_as_low_confidence_evidence() -> None:
+    regime = derive_household_planning_regime(
+        profile=_profile(),
+        policy=AdaptiveHouseholdObjectivePolicy(),
+        forecast_confidence=0.0,
+        forecast_confidence_available=False,
+        forecast_confidence_method_version=(
+            "remaining-pv-confidence-unavailable:v1"
+        ),
+        cumulative_forecast_energy_wh=4000.0,
+        cumulative_actual_energy_wh=2000.0,
+        underperformance_duration_seconds=3600,
+        evidence_ids=("future-pv-confidence-unavailable",),
+    )
+
+    assert regime.regime == "cost_optimization_first"
+    assert regime.reason == "adaptive_switch_conditions_not_met"
+    assert regime.forecast_confidence_available is False
+
+
 @pytest.mark.parametrize(
     ("forecast_confidence", "actual_wh", "duration_seconds"),
     (

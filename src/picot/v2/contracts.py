@@ -15,6 +15,7 @@ from picot.v2.household_planning_regime import (
     HouseholdPlanningRegime,
     UserObjectiveProfile,
 )
+from picot.v2.plan_commitment_store import ActivePlanCommitment
 
 if TYPE_CHECKING:
     from picot.v2.storage_mode_provenance import StorageModeControlProvenance
@@ -592,8 +593,24 @@ class PlanningInputSnapshot:
     storage_mode_control_provenance: StorageModeControlProvenance | None = None
     bms_calibration_evidence: BMSCalibrationEvidence | None = None
     capability_snapshot_set: CapabilitySnapshotSet | None = None
+    active_plan_commitments: tuple[ActivePlanCommitment, ...] = ()
 
     def __post_init__(self) -> None:
+        scope_ids = tuple(
+            item.execution_scope_id for item in self.active_plan_commitments
+        )
+        if len(scope_ids) != len(set(scope_ids)):
+            raise ValueError("only one active plan commitment is allowed per scope")
+        if any(
+            item.starts_at > self.captured_at
+            for item in self.active_plan_commitments
+        ):
+            raise ValueError("an active plan commitment may not start in the future")
+        if any(
+            item.ends_at <= self.captured_at
+            for item in self.active_plan_commitments
+        ):
+            raise ValueError("expired plan commitments may not enter Planning Input")
         for state in self.current_storage_states:
             if state.measured_at > self.captured_at:
                 raise ValueError(
@@ -692,6 +709,10 @@ class ProjectedHouseholdEnergyBalanceInterval:
     projected_storage_energy_wh: float
     confidence: float
     evidence_ids: tuple[str, ...]
+    storage_confidence: float | None = None
+    pv_confidence: float | None = None
+    load_confidence: float | None = None
+    confidence_method_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -717,6 +738,9 @@ class StorageEnergyRequirement:
     confidence: float
     evidence_ids: tuple[str, ...]
     reserve_contribution_wh: float
+    confidence_method_version: str = (
+        "legacy-storage-requirement-confidence:unversioned"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -738,6 +762,7 @@ class EnergyPath:
     segment_ids: tuple[str, ...] = ()
     segments: tuple[PathSegment, ...] = ()
     projected_states: tuple[ProjectedEnergyState, ...] = ()
+    capability_confidence: float | None = None
 
     def __post_init__(self) -> None:
         if self.segment_ids != tuple(segment.segment_id for segment in self.segments):
@@ -815,6 +840,39 @@ class CandidateSet:
 
 
 @dataclass(frozen=True, slots=True)
+class ConfidenceComponent:
+    name: str
+    value: float
+    method_version: str
+    evidence_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.name.strip() or not self.method_version.strip():
+            raise ValueError("confidence component identity must be explicit")
+        if not 0.0 <= self.value <= 1.0:
+            raise ValueError("confidence component must be between 0 and 1")
+
+
+@dataclass(frozen=True, slots=True)
+class ConfidenceAssessment:
+    result: float
+    limiting_component: str
+    method_version: str
+    components: tuple[ConfidenceComponent, ...]
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.result <= 1.0:
+            raise ValueError("confidence result must be between 0 and 1")
+        if not self.limiting_component.strip() or not self.method_version.strip():
+            raise ValueError("confidence assessment identity must be explicit")
+        names = tuple(item.name for item in self.components)
+        if self.limiting_component not in names:
+            raise ValueError("limiting confidence component must be present")
+        if len(names) != len(set(names)):
+            raise ValueError("confidence component names must be unique")
+
+
+@dataclass(frozen=True, slots=True)
 class DelegatedStorageCandidateOutcome:
     outcome_id: str
     run_id: str
@@ -836,6 +894,7 @@ class DelegatedStorageCandidateOutcome:
     confidence: float
     evidence_ids: tuple[str, ...]
     method_version: str
+    confidence_assessment: ConfidenceAssessment | None = None
 
     def __post_init__(self) -> None:
         if self.charge_window_starts_at >= self.charge_window_ends_at:

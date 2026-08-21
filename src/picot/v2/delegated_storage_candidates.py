@@ -211,6 +211,110 @@ def _clip_interval_to_snapshot(
     )
 
 
+def complete_storage_path_with_baseline(
+    snapshot: PlanningInputSnapshot,
+    path: EnergyPath,
+) -> EnergyPath:
+    """Add the canonical discharge-only complement in the Candidate layer."""
+    storage = next(iter(snapshot.current_storage_states), None)
+    capabilities = (
+        snapshot.capability_snapshot_set.capabilities
+        if snapshot.capability_snapshot_set is not None
+        else ()
+    )
+    capability = next(
+        (
+            item
+            for item in capabilities
+            if storage is not None
+            and item.execution_scope_id == storage.execution_scope_id
+            and item.capability_id == storage.capability_id
+            and ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+            in item.supported_primitives
+            and item.availability is CapabilityAvailability.AVAILABLE
+            and item.health is CapabilityHealth.HEALTHY
+        ),
+        None,
+    )
+    if storage is None or capability is None or snapshot.horizon_end is None:
+        return path
+
+    horizon_start = snapshot.captured_at
+    horizon_end = snapshot.horizon_end
+    controlled = tuple(
+        sorted(
+            (
+                segment
+                for segment in path.segments
+                if segment.ends_at > horizon_start
+                and segment.starts_at < horizon_end
+            ),
+            key=lambda item: (item.starts_at, item.ends_at),
+        )
+    )
+    baseline: list[PathSegment] = []
+    cursor = horizon_start
+    for segment in controlled:
+        if cursor < segment.starts_at:
+            baseline.append(
+                _baseline_segment(
+                    snapshot,
+                    capability.capability_id,
+                    storage.execution_scope_id,
+                    cursor,
+                    segment.starts_at,
+                )
+            )
+        cursor = max(cursor, segment.ends_at)
+    if cursor < horizon_end:
+        baseline.append(
+            _baseline_segment(
+                snapshot,
+                capability.capability_id,
+                storage.execution_scope_id,
+                cursor,
+                horizon_end,
+            )
+        )
+    segments = tuple(
+        replace(segment, order=index)
+        for index, segment in enumerate(
+            sorted((*controlled, *baseline), key=lambda item: item.starts_at),
+            start=1,
+        )
+    )
+    return replace(
+        path,
+        segment_ids=tuple(item.segment_id for item in segments),
+        segments=segments,
+    )
+
+
+def _baseline_segment(
+    snapshot: PlanningInputSnapshot,
+    capability_id: str,
+    execution_scope_id: str,
+    starts_at: datetime,
+    ends_at: datetime,
+) -> PathSegment:
+    segment_id = _stable_id(
+        "path-segment",
+        f"{snapshot.snapshot_id}|baseline-discharge|"
+        f"{starts_at.isoformat()}|{ends_at.isoformat()}",
+    )
+    return PathSegment(
+        segment_id=segment_id,
+        order=1,
+        execution_scope_id=execution_scope_id,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        primitive=ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+        capability_id=capability_id,
+        purpose="Apply the household baseline outside PV acquisition windows",
+        evidence_ids=(capability_id,),
+    )
+
+
 def construct_pv_charge_only_candidate(
     *,
     snapshot: PlanningInputSnapshot,
@@ -280,11 +384,26 @@ def construct_pv_charge_only_candidate(
         in capability.supported_primitives
         else ExecutionPrimitive.BALANCE_CHARGE_ONLY
     )
+    active_commitment = next(
+        (
+            item
+            for item in snapshot.active_plan_commitments
+            if item.execution_scope_id == storage.execution_scope_id
+            and item.primitive == planned_primitive.value
+            and item.source_policy == ChargeSourcePolicy.PV_ONLY
+        ),
+        None,
+    )
 
+    candidate_deadline = (
+        max(requirement.required_by, active_commitment.ends_at)
+        if active_commitment is not None
+        else requirement.required_by
+    )
     intervals = tuple(
         clipped
         for interval in balance.intervals
-        if interval.ends_at <= requirement.required_by
+        if interval.ends_at <= candidate_deadline
         for clipped in (_clip_interval_to_snapshot(interval, snapshot),)
         if clipped is not None
     )
@@ -298,10 +417,33 @@ def construct_pv_charge_only_candidate(
         requirement.confidence,
         *(interval.confidence for interval in intervals),
     )
-    for window_indexes in _progressive_window_selections(
-        intervals,
-        preferred_price_windows,
-    ):
+    incumbent_indexes = (
+        tuple(
+            index
+            for index, interval in enumerate(intervals)
+            if active_commitment is not None
+            and interval.ends_at > snapshot.captured_at
+            and interval.starts_at < active_commitment.ends_at
+        )
+        if active_commitment is not None
+        else ()
+    )
+    selections = tuple(
+        dict.fromkeys(
+            (
+                *((incumbent_indexes,) if incumbent_indexes else ()),
+                *_progressive_window_selections(
+                    intervals,
+                    preferred_price_windows,
+                ),
+            )
+        )
+    )
+    for window_indexes in selections:
+        is_incumbent = bool(
+            active_commitment is not None
+            and window_indexes == incumbent_indexes
+        )
         selected_indexes = frozenset(window_indexes)
         required_at_end = _required_energy_at_interval_end(
             intervals,
@@ -351,10 +493,16 @@ def construct_pv_charge_only_candidate(
             for index in window_indexes
             if acquired_energy_by_index[index] > 0.0
         )
-        if not acquisition_indexes or total_acquired_wh <= 0.0:
+        if (
+            not is_incumbent
+            and (not acquisition_indexes or total_acquired_wh <= 0.0)
+        ):
             continue
-        first_acquisition_index = acquisition_indexes[0]
-        last_acquisition_index = acquisition_indexes[-1]
+        retained_indexes = (
+            window_indexes if is_incumbent else acquisition_indexes
+        )
+        first_acquisition_index = retained_indexes[0]
+        last_acquisition_index = retained_indexes[-1]
         reserved_indexes = tuple(
             index
             for index in window_indexes
@@ -427,14 +575,21 @@ def construct_pv_charge_only_candidate(
         if segment_window in seen_segment_windows:
             continue
         seen_segment_windows.add(segment_window)
-        if projected_states[-1].at != requirement.required_by:
+        if not any(
+            state.at == requirement.required_by for state in projected_states
+        ):
             projected_states.append(
                 ProjectedEnergyState(
                     at=requirement.required_by,
                     confidence=confidence,
-                    storage_energy_wh=storage_energy_wh,
+                    storage_energy_wh=(
+                        storage_energy_at_interval_start[window_start]
+                        if requirement.required_by <= window_start
+                        else storage_energy_wh
+                    ),
                 )
             )
+            projected_states.sort(key=lambda state: state.at)
         window_start = segments[0].starts_at
         window_end = segments[-1].ends_at
         path_id = _stable_id(
@@ -450,6 +605,7 @@ def construct_pv_charge_only_candidate(
             segment_ids=tuple(segment.segment_id for segment in segments),
             segments=tuple(segments),
             projected_states=tuple(projected_states),
+            capability_confidence=capability.confidence,
         )
         paths.append(path)
         candidates.append(

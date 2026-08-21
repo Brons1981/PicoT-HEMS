@@ -1,6 +1,12 @@
 # V2ADR-051 — Canonical Storage Mode Lifecycle and Plan Continuity
 
-Status: **Accepted for PicoT v2 rebuild**
+Status: **Partially superseded by V2ADR-052**
+
+The plan-continuity, persistence and replanning sections of this decision are
+superseded by V2ADR-052. The normal delegated lifecycle and BMS-calibration
+sections remain accepted where they derive from ADR-001 through ADR-039 and
+accepted V2 ADRs. The former reference to ADR-047 is not architectural
+authority for the v2 rebuild.
 
 ## Context
 
@@ -128,8 +134,8 @@ charge/discharge modes, weather/temperature inputs or a new fiscal objective.
 - ADR-027 remains authoritative once execution has started; this decision adds
   continuity before start.
 - ADR-034 remains authoritative for material-change replanning.
-- ADR-047 remains authoritative for user/manual authority; BMS calibration is
-  a distinct temporary authority source.
+- User/manual authority must be derived from an accepted v2 decision based on
+  ADR-001 through ADR-039; ADR-047 is not authoritative for the v2 rebuild.
 - V2ADR-050 remains authoritative for timed delegated storage candidates and
   adapter separation.
 

@@ -100,7 +100,14 @@ def project(run: CanonicalPipelineRun) -> Projection:
         outcome = detailed_outcomes_by_candidate_id.get(candidate.candidate_id)
         if path is None or not path.segments or outcome is None:
             continue
-        segment = path.segments[0]
+        segment = next(
+            (
+                item
+                for item in path.segments
+                if item.charge_source_policy is not None
+            ),
+            path.segments[0],
+        )
         timed_storage_candidates.append(
             {
                 "candidate_id": candidate.candidate_id,
@@ -130,6 +137,23 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "requirement_satisfied": outcome.requirement_satisfied,
                 "recoverability": outcome.recoverability,
                 "confidence": outcome.confidence,
+                "confidence_assessment": (
+                    {
+                        "result": outcome.confidence_assessment.result,
+                        "limiting_component": (
+                            outcome.confidence_assessment.limiting_component
+                        ),
+                        "method_version": (
+                            outcome.confidence_assessment.method_version
+                        ),
+                        "components": {
+                            item.name: item.value
+                            for item in outcome.confidence_assessment.components
+                        },
+                    }
+                    if outcome.confidence_assessment is not None
+                    else None
+                ),
             }
         )
     winning_candidate = next(
@@ -236,6 +260,16 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 ),
                 "household_regime_forecast_confidence": (
                     p.household_planning_regime.forecast_confidence
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_forecast_confidence_method_version": (
+                    p.household_planning_regime.forecast_confidence_method_version
+                    if p.household_planning_regime is not None
+                    else None
+                ),
+                "household_regime_forecast_confidence_available": (
+                    p.household_planning_regime.forecast_confidence_available
                     if p.household_planning_regime is not None
                     else None
                 ),

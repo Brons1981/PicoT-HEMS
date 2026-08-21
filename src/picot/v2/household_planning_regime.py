@@ -117,6 +117,10 @@ class HouseholdPlanningRegime:
     remaining_pv_storage_margin_wh: float | None = None
     storage_target_at_risk: bool = False
     storage_target_required_by: str | None = None
+    forecast_confidence_method_version: str = (
+        "legacy-forecast-confidence:unversioned"
+    )
+    forecast_confidence_available: bool = True
     method_version: str = METHOD_VERSION
 
     def __post_init__(self) -> None:
@@ -156,6 +160,10 @@ def derive_household_planning_regime(
     conservative_remaining_pv_surplus_wh: float | None = None,
     remaining_pv_storage_margin_wh: float | None = None,
     storage_target_required_by: str | None = None,
+    forecast_confidence_method_version: str = (
+        "legacy-forecast-confidence:unversioned"
+    ),
+    forecast_confidence_available: bool = True,
 ) -> HouseholdPlanningRegime:
     """Apply the user's adaptive preference to canonical PV evidence."""
 
@@ -199,7 +207,10 @@ def derive_household_planning_regime(
         if cumulative_forecast_energy_wh > 0.0
         else None
     )
-    low_confidence = forecast_confidence <= policy.low_pv_confidence_threshold
+    low_confidence = (
+        forecast_confidence_available
+        and forecast_confidence <= policy.low_pv_confidence_threshold
+    )
     material_wh = -deviation_wh >= policy.minimum_underperformance_wh
     material_percent = (
         deviation_percent is not None
@@ -217,7 +228,8 @@ def derive_household_planning_regime(
         and sustained
     )
     recovered = (
-        forecast_confidence >= policy.recovery_confidence_threshold
+        forecast_confidence_available
+        and forecast_confidence >= policy.recovery_confidence_threshold
         and deviation_wh >= -policy.maximum_recovery_deficit_wh
         and (
             deviation_percent is not None
@@ -301,6 +313,8 @@ def derive_household_planning_regime(
             str(conservative_remaining_pv_surplus_wh),
             str(remaining_pv_storage_margin_wh),
             str(storage_target_required_by),
+            forecast_confidence_method_version,
+            str(forecast_confidence_available),
             *unique_evidence_ids,
             METHOD_VERSION,
         )
@@ -326,4 +340,8 @@ def derive_household_planning_regime(
         remaining_pv_storage_margin_wh=remaining_pv_storage_margin_wh,
         storage_target_at_risk=storage_target_at_risk,
         storage_target_required_by=storage_target_required_by,
+        forecast_confidence_method_version=(
+            forecast_confidence_method_version
+        ),
+        forecast_confidence_available=forecast_confidence_available,
     )

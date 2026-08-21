@@ -762,6 +762,15 @@ Not live verified:
 - one complete live charge-window lifecycle followed by smart discharge;
 - live confidence-component presentation with current Home Assistant evidence.
 
+Live installation finding and correction:
+
+- the first dev.126 add-on image stopped at import time because its Dockerfile
+  packaged `picot.v2`, `picot.domain` and `picot.adapters`, but not the canonical
+  `picot.planner` owner of the delegated storage Evaluation Engine;
+- the image now packages `picot.planner` explicitly and the add-on packaging
+  contract test protects that runtime dependency;
+- the corrected image still requires live verification after PR merge/rebuild.
+
 Known release boundary:
 
 - this remains a development release;

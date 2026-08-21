@@ -12,6 +12,9 @@ from picot.domain.capability_snapshot import (
     LogicalCapabilitySnapshot,
 )
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.planner.delegated_storage_evaluation_engine import (
+    DelegatedStorageEvaluationEngine,
+)
 from picot.v2.contracts import (
     CurrentStorageState,
     HouseholdLoadForecast,
@@ -201,6 +204,85 @@ def test_evaluation_selects_requirement_satisfying_path_deterministically() -> N
     assert first.evaluation == second.evaluation
 
 
+def test_feasible_challenger_replaces_infeasible_committed_window() -> None:
+    source = _snapshot()
+    run = CanonicalPipeline().run(planning_input=source)
+    incumbent_candidate = next(
+        item for item in run.candidate_set.candidates if item.family == "pv_charge_only"
+    )
+    incumbent_path = next(
+        item
+        for item in run.candidate_set.energy_paths
+        if item.path_id == incumbent_candidate.energy_path_id
+    )
+    incumbent_outcome = run.outcomes.outcomes[0]
+    segment = incumbent_path.segments[0]
+    snapshot = replace(
+        source,
+        active_plan_commitments=(
+            ActivePlanCommitment(
+                segment.execution_scope_id,
+                "plan-infeasible-late-window",
+                1,
+                segment.primitive.value,
+                "pv_only",
+                segment.starts_at,
+                segment.ends_at,
+                1200.0,
+            ),
+        ),
+    )
+    challenger_path = replace(
+        incumbent_path,
+        path_id=f"{incumbent_path.path_id}-challenger",
+        segments=(
+            replace(
+                segment,
+                segment_id=f"{segment.segment_id}-challenger",
+                starts_at=segment.starts_at + timedelta(minutes=1),
+            ),
+        ),
+        segment_ids=(f"{segment.segment_id}-challenger",),
+    )
+    challenger_candidate = replace(
+        incumbent_candidate,
+        candidate_id=f"{incumbent_candidate.candidate_id}-challenger",
+        energy_path_id=challenger_path.path_id,
+    )
+    challenger_outcome = replace(
+        incumbent_outcome,
+        outcome_id=f"{incumbent_outcome.outcome_id}-challenger",
+        candidate_id=challenger_candidate.candidate_id,
+        energy_path_id=challenger_path.path_id,
+        charge_window_starts_at=segment.starts_at + timedelta(minutes=1),
+        requirement_satisfied=True,
+    )
+    infeasible_incumbent = replace(
+        incumbent_outcome,
+        storage_energy_at_requirement_wh=(
+            incumbent_outcome.required_energy_wh - 1.0
+        ),
+        requirement_satisfied=False,
+        recoverability=0.0,
+    )
+    result = DelegatedStorageEvaluationEngine().evaluate(
+        snapshot=snapshot,
+        candidate_set=replace(
+            run.candidate_set,
+            candidates=(incumbent_candidate, challenger_candidate),
+            energy_paths=(incumbent_path, challenger_path),
+        ),
+        actionable_outcomes=(
+            infeasible_incumbent,
+            challenger_outcome,
+        ),
+    )
+
+    assert result.winning_outcome == challenger_outcome
+    assert result.incumbent_retained is False
+    assert result.decisive_step is None
+
+
 def test_active_commitment_is_retained_with_stable_plan_identity() -> None:
     first = CanonicalPipeline().run(
         planning_input=_snapshot(),
@@ -244,7 +326,7 @@ def test_active_commitment_is_retained_with_stable_plan_identity() -> None:
     assert continued.execution_plan_set.plans[0].plan_id == active_plan.plan_id
 
 
-def test_active_commitment_survives_forecast_with_no_remaining_surplus() -> None:
+def test_infeasible_active_commitment_is_not_retained_by_stability() -> None:
     first = CanonicalPipeline().run(
         planning_input=_snapshot(),
         control_change_allowed=True,
@@ -291,9 +373,9 @@ def test_active_commitment_survives_forecast_with_no_remaining_surplus() -> None
     )
 
     assert continued.evaluation.decisive_step == (
-        "stability:active_plan_commitment_retained"
+        "objective:maximize_storage_progress_without_grid"
     )
-    assert continued.execution_plan_set.plans[0].plan_id == active_plan.plan_id
+    assert continued.execution_plan_set.plans[0].plan_id != active_plan.plan_id
 
 
 def test_scheduled_commitment_uses_projected_household_energy_at_window_start() -> None:
@@ -343,10 +425,11 @@ def test_scheduled_commitment_uses_projected_household_energy_at_window_start() 
     assert winner.projected_storage_use_before_window_wh == pytest.approx(200.0)
     assert winner.required_storage_addition_wh == pytest.approx(400.0)
     assert winner.pv_storage_contribution_wh == pytest.approx(400.0)
+    assert winner.requirement_satisfied is False
     assert run.evaluation.decisive_step == (
-        "stability:scheduled_plan_commitment_retained"
+        "objective:maximize_storage_progress_without_grid"
     )
-    assert run.execution_plan_set.plans[0].plan_id == "plan-future-household"
+    assert run.execution_plan_set.plans[0].plan_id != "plan-future-household"
 
 
 def test_executable_window_uses_duration_weighted_quarter_prices() -> None:

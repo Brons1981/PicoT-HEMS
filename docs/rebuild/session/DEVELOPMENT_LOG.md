@@ -844,3 +844,30 @@ Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
 
 Exact next action: install dev.129, verify the first fresh plan's expected
 storage energy at charge start, then exercise the manual planning reset once.
+
+## 2026-08-22 — 2.0.0-dev.130
+
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
+
+- Reproduced the live dev.129 regression from the 777 MB incident export: a
+  continuous PV-surplus envelope yielded only its full selection, whose
+  backward requirement projection collapsed onto the last possible
+  15:00–18:30 acquisition window.
+- Restored one progressive technical Candidate per possible surplus endpoint,
+  allowing Evaluation to compare rolling minimal charge windows by actual
+  feasibility and duration-weighted average price without moving price policy
+  into Candidate construction.
+- Tightened incumbent identity to both commitment start and end, preventing a
+  challenger sharing only the old end time from receiving stability authority.
+- Made requirement satisfaction a mandatory condition for commitment
+  retention; an infeasible scheduled or active plan can no longer win through
+  a stability step.
+- Verified that the existing incident retention already reduced 73 records
+  older than 36 hours to basic facts. The remaining size belongs to 534 full
+  records inside the explicitly retained diagnostic window, so no recent
+  evidence was silently discarded.
+- Added regressions for progressive endpoint construction and replacement of
+  an infeasible incumbent by a feasible challenger.
+
+Exact next action: install dev.130 and confirm the first plan exposes multiple
+PV Candidates and does not retain any Candidate with `Doel gehaald=false`.

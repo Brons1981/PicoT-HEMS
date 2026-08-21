@@ -121,9 +121,26 @@ def _window_selections(
     windows: tuple[tuple[int, ...], ...],
 ) -> tuple[tuple[int, ...], ...]:
     selections: list[tuple[int, ...]] = []
+    seen: set[tuple[int, ...]] = set()
+
+    def add(indexes: tuple[int, ...]) -> None:
+        if indexes and indexes not in seen:
+            seen.add(indexes)
+            selections.append(indexes)
+
+    # A continuous PV-surplus period is a technical envelope, not one atomic
+    # Candidate. Expose one progressive selection per possible end interval.
+    # The backward storage requirement then derives the latest technically
+    # minimal acquisition window for that endpoint. This provides rolling
+    # alternatives without quadratic duplicate paths or Candidate price policy.
+    for window in windows:
+        for end in range(1, len(window) + 1):
+            add(window[:end])
+
+    # Preserve combined alternatives when the usable surplus is interrupted.
     for width in range(1, len(windows) + 1):
         for start in range(0, len(windows) - width + 1):
-            selections.append(
+            add(
                 tuple(
                     index
                     for window in windows[start : start + width]

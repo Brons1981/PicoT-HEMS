@@ -794,3 +794,27 @@ Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
 
 Exact next action: install dev.127, confirm the live runtime starts, then observe
 one complete plan lifecycle before classifying the ADR restoration live verified.
+
+## 2026-08-22 — 2.0.0-dev.128
+
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
+
+- Removed price-opportunity margin and Candidate generation order as indirect
+  authorities over delegated PV-window selection; Evaluation now compares the
+  real duration-weighted average price of every technically available window.
+- Constructed PV-only acquisition paths from the explicit lower Solcast basis
+  when its validated forecast range is available, so charging duration expands
+  conservatively instead of repeatedly appearing as three optimistic half-hour
+  intervals.
+- Added traceable equal-price ordering by confidence, distance to the
+  PV-energy-weighted centre and finally the earlier window.
+- Persisted a selected future PV plan before its execution phase, restored it
+  after restart and retained it as the incumbent through ordinary progress.
+- Limited commitments to their contiguous acquisition phase and projected the
+  correct Zendure mode per execution segment.
+- All 903 tests passed; Ruff passed for every changed file and Mypy passed for
+  all 68 v2 and planner source files.
+
+Exact next action: install dev.128 and verify that the selected future window,
+its duration and plan identity remain stable through ordinary forecast and SOC
+updates.

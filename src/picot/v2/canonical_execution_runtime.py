@@ -104,7 +104,9 @@ class CanonicalExecutionRuntime:
             else None
         )
         if commitment is not None and now >= commitment.ends_at:
-            self.commitment_store.clear(commitment.execution_scope_id)
+            commitment_store = self.commitment_store
+            if commitment_store is not None:
+                commitment_store.clear(commitment.execution_scope_id)
             commitment = None
         if (
             due is not None
@@ -118,12 +120,14 @@ class CanonicalExecutionRuntime:
             and self.commitment_store is not None
         ):
             plan, segment = due
+            if segment.charge_source_policy is None:
+                raise ValueError("PV commitment requires an explicit source policy")
             commitment = ActivePlanCommitment(
                 execution_scope_id=plan.execution_scope_id,
                 plan_id=plan.plan_id,
                 plan_revision=1,
                 primitive=segment.primitive.value,
-                source_policy=segment.charge_source_policy,
+                source_policy=segment.charge_source_policy.value,
                 starts_at=segment.starts_at,
                 ends_at=_active_phase_end(plan, segment),
                 target_energy_wh=_commitment_target_energy(run),

@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +93,7 @@ class ActivePlanCommitmentStore:
                 raise ValueError("unsupported commitment schema")
             if not isinstance(payload.get("commitments"), dict):
                 raise ValueError("commitments must be an object")
-            return payload
+            return cast(dict[str, Any], payload)
         except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
             self._record_incident("commitment_store_reset_before_write", exc)
             return {"schema_version": 1, "commitments": {}}

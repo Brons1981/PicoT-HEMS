@@ -753,7 +753,8 @@ Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
   complete Energy Path rather than its preceding discharge baseline.
 - Verified the complete repository test suite: 900 tests passed. Ruff passed
   for every changed Python file; `git diff --check` and bytecode compilation
-  passed.
+  passed. Mypy passed for all 53 v2 source files after explicit narrowing of
+  persisted commitment, source-policy and decoded JSON types.
 
 Not live verified:
 

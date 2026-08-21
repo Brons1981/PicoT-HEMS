@@ -626,7 +626,7 @@ class CanonicalPipeline:
                 f"{evaluation.evaluation_id}|{winning_path.path_id}|{execution_scope_id}",
             )
             if delegated_evaluation.incumbent_retained:
-                incumbent = next(
+                active_commitment = next(
                     (
                         item
                         for item in snapshot.active_plan_commitments
@@ -634,8 +634,8 @@ class CanonicalPipeline:
                     ),
                     None,
                 )
-                if incumbent is not None:
-                    plan_id = incumbent.plan_id
+                if active_commitment is not None:
+                    plan_id = active_commitment.plan_id
             observer_plans.append(
                 ObserverExecutionPlan(
                     plan_id=plan_id,

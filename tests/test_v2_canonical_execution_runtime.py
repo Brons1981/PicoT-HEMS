@@ -360,6 +360,47 @@ def test_active_pv_plan_is_not_interrupted_by_a_forecast_replan(tmp_path) -> Non
     assert held.vendor_result.planned_vendor_mode == "Nul op de meter"
 
 
+def test_selected_future_pv_plan_is_persisted_before_window_start(tmp_path) -> None:
+    commitment_path = tmp_path / "commitment.json"
+    runtime = CanonicalExecutionRuntime(
+        dispatch=lambda request, mapping: CanonicalDispatchOutcome(
+            "dispatched", "ha-command-test"
+        ),
+        commitment_store=ActivePlanCommitmentStore(commitment_path),
+    )
+    active = _live_run()
+    shift = timedelta(hours=1)
+    plan = active.execution_plan_set.plans[0]
+    scheduled = replace(
+        active,
+        execution_plan_set=replace(
+            active.execution_plan_set,
+            plans=(
+                replace(
+                    plan,
+                    valid_from=plan.valid_from + shift,
+                    valid_until=plan.valid_until + shift,
+                    segments=tuple(
+                        replace(
+                            segment,
+                            starts_at=segment.starts_at + shift,
+                            ends_at=segment.ends_at + shift,
+                        )
+                        for segment in plan.segments
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    runtime.apply(scheduled)
+
+    commitment = ActivePlanCommitmentStore(commitment_path).load("home-battery")
+    assert commitment is not None
+    assert commitment.starts_at > scheduled.planning_input.captured_at
+    assert commitment.plan_id == scheduled.execution_plan_set.plans[0].plan_id
+
+
 def test_completed_storage_target_may_end_committed_pv_plan(tmp_path) -> None:
     calls: list[str] = []
     runtime = CanonicalExecutionRuntime(

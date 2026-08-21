@@ -104,11 +104,19 @@ def construct_active_plan_candidate(
     )
     confidence = min(storage.confidence, requirement.confidence, capability.confidence)
     state_times = sorted({starts_at, commitment.ends_at, requirement.required_by})
+    projected_target_wh = max(
+        storage.current_stored_energy_wh,
+        commitment.target_energy_wh,
+    )
     states = tuple(
         ProjectedEnergyState(
             at=at,
             confidence=confidence,
-            storage_energy_wh=storage.current_stored_energy_wh,
+            storage_energy_wh=(
+                storage.current_stored_energy_wh
+                if at == starts_at
+                else projected_target_wh
+            ),
         )
         for at in state_times
     )
@@ -129,10 +137,7 @@ def construct_active_plan_candidate(
         energy_path_id=path_id,
         family=path.family,
     )
-    requirement_satisfied = (
-        storage.current_stored_energy_wh + 1e-6
-        >= requirement.required_energy_wh
-    )
+    requirement_satisfied = projected_target_wh + 1e-6 >= requirement.required_energy_wh
     outcome = DelegatedStorageCandidateOutcome(
         outcome_id=_id("candidate-outcome", candidate_id),
         run_id=snapshot.run_id,
@@ -143,10 +148,13 @@ def construct_active_plan_candidate(
         capability_ids=(capability.capability_id,),
         charge_window_starts_at=starts_at,
         charge_window_ends_at=commitment.ends_at,
-        storage_energy_at_window_end_wh=storage.current_stored_energy_wh,
-        storage_energy_at_requirement_wh=storage.current_stored_energy_wh,
+        storage_energy_at_window_end_wh=projected_target_wh,
+        storage_energy_at_requirement_wh=projected_target_wh,
         required_energy_wh=requirement.required_energy_wh,
-        pv_storage_contribution_wh=0.0,
+        pv_storage_contribution_wh=max(
+            0.0,
+            projected_target_wh - storage.current_stored_energy_wh,
+        ),
         grid_storage_contribution_wh=0.0,
         conversion_losses_wh=0.0,
         requirement_satisfied=requirement_satisfied,

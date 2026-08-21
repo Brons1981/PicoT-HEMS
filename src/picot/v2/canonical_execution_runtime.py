@@ -60,6 +60,11 @@ def _active_phase_end(
             continue
         if segment.starts_at > phase_end:
             break
+        if (
+            segment.primitive != due_segment.primitive
+            or segment.charge_source_policy != due_segment.charge_source_policy
+        ):
+            break
         phase_end = max(phase_end, segment.ends_at)
     return phase_end
 
@@ -74,6 +79,7 @@ class CanonicalExecutionRuntime:
 
     def apply(self, run: CanonicalPipelineRun) -> CanonicalPipelineRun:
         """Dispatch one due intent, or preserve the fail-closed result."""
+        self._persist_selected_pv_commitment(run)
         boundary = run.primitive_boundary
         if run.vendor_result.status != "dispatch_ready":
             return run
@@ -231,6 +237,42 @@ class CanonicalExecutionRuntime:
                 command_id=outcome.command_id,
                 status=outcome.status,
             ),
+        )
+
+    def _persist_selected_pv_commitment(self, run: CanonicalPipelineRun) -> None:
+        """Persist the selected future or active PV phase before execution starts."""
+
+        if self.commitment_store is None:
+            return
+        selected = next(
+            (
+                (plan, segment)
+                for plan in run.execution_plan_set.plans
+                for segment in plan.segments
+                if not plan.observer_only
+                and segment.charge_source_policy == "pv_only"
+                and segment.primitive.value
+                in {"balance_charge_only", "balance_bidirectional"}
+                and segment.ends_at > run.planning_input.captured_at
+            ),
+            None,
+        )
+        if selected is None:
+            return
+        plan, segment = selected
+        if self.commitment_store.load(plan.execution_scope_id) is not None:
+            return
+        self.commitment_store.save(
+            ActivePlanCommitment(
+                execution_scope_id=plan.execution_scope_id,
+                plan_id=plan.plan_id,
+                plan_revision=1,
+                primitive=segment.primitive.value,
+                source_policy="pv_only",
+                starts_at=segment.starts_at,
+                ends_at=_active_phase_end(plan, segment),
+                target_energy_wh=_commitment_target_energy(run),
+            )
         )
 
 

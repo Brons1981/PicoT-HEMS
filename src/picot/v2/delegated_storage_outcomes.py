@@ -48,6 +48,11 @@ def _simulate_path(
     requirement: StorageEnergyRequirement,
     balance: ProjectedHouseholdEnergyBalance,
 ) -> DelegatedStorageCandidateOutcome:
+    candidate = next(
+        item
+        for item in candidate_set.candidates
+        if item.candidate_id == candidate_id
+    )
     charge_segments = tuple(
         segment
         for segment in path.segments
@@ -268,6 +273,7 @@ def _simulate_path(
         evidence_ids=evidence_ids,
         method_version=METHOD_VERSION,
         confidence_assessment=confidence_assessment,
+        pv_forecast_basis=candidate.pv_forecast_basis,
     )
 
 

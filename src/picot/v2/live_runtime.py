@@ -744,11 +744,6 @@ def _restore_active_plan_commitments(
             store.clear(commitment.execution_scope_id)
             store.record_recovery_rejection("expired_at_restart")
             continue
-        if commitment.starts_at > snapshot.captured_at:
-            store.record_recovery_rejection(
-                "active_commitment_starts_in_future"
-            )
-            continue
         capability = next(
             (
                 item

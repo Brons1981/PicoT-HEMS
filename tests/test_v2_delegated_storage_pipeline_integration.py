@@ -21,9 +21,14 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
-from picot.v2.pipeline import CanonicalPipeline, _average_price_for_window
+from picot.v2.pipeline import (
+    CanonicalPipeline,
+    _average_price_for_window,
+    _balance_for_pv_forecast_basis,
+)
 from picot.v2.plan_commitment_store import ActivePlanCommitment
 from picot.v2.projection import project
+from picot.v2.pv_forecast_assumptions import derive_pv_forecast_basis_assumptions
 from picot.v2.web_ui import _build_plan_explanation
 
 BASE = datetime(2026, 8, 16, 8, 0, tzinfo=UTC)
@@ -340,6 +345,43 @@ def test_executable_window_requires_complete_price_coverage() -> None:
         BASE,
         BASE + timedelta(minutes=30),
     ) == float("inf")
+
+
+def test_lower_forecast_basis_replaces_central_pv_energy_explicitly() -> None:
+    source = _snapshot()
+    ranged = replace(
+        source,
+        pv_energy_timeline=replace(
+            source.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    interval,
+                    forecast_lower_energy_wh=interval.pv_energy_wh * 0.5,
+                    forecast_central_energy_wh=interval.pv_energy_wh,
+                    forecast_upper_energy_wh=interval.pv_energy_wh * 1.25,
+                    forecast_range_status="available",
+                    forecast_range_source_fields=(
+                        "pv_estimate10",
+                        "pv_estimate",
+                        "pv_estimate90",
+                    ),
+                    forecast_range_method_version="solcast-range:test",
+                )
+                for interval in source.pv_energy_timeline.intervals
+            ),
+        ),
+    )
+    central_run = CanonicalPipeline().run(planning_input=source)
+    central_balance = central_run.candidate_set.projected_balances[0]
+    assumptions = derive_pv_forecast_basis_assumptions(ranged)
+    lower = next(item for item in assumptions.assumptions if item.basis == "lower")
+
+    projected = _balance_for_pv_forecast_basis(central_balance, lower)
+
+    assert [item.expected_usable_pv_energy_wh for item in projected.intervals] == [
+        400.0,
+        0.0,
+    ]
 
 
 def test_winning_delegated_path_becomes_unchanged_observer_plan() -> None:

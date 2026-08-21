@@ -4401,7 +4401,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 {
                     "plan_id": plan.plan_id,
                     "lifecycle_status": plan.lifecycle_status,
-                    "planned_vendor_mode": plan.planned_vendor_mode,
+                    "planned_vendor_mode": segment.planned_vendor_mode,
                     "starts_at": segment.starts_at.isoformat(),
                     "ends_at": segment.ends_at.isoformat(),
                     "primitive": segment.primitive.value,

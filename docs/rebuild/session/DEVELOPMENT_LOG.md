@@ -721,3 +721,10 @@ Before implementation:
 - Bounded dashboard incident reads to the final records instead of loading the complete JSONL history into memory.
 - Rebuilt Home Assistant power history in retryable two-hour chunks so an initial timeout cannot leave graphs permanently incomplete.
 - Added incident-retention, bounded-read and history-bootstrap regression coverage; PR #431.
+
+## 2026-08-21 — 2.0.0-dev.125
+
+- Committed canonical execution to an active PV-only NOM phase until its planned end.
+- Prevented forecast-driven candidate trimming from alternating NOM and smart discharge during one charge session.
+- Kept explicit completion, fallback, override and dispatch blockers as legitimate interruption paths.
+- Added regressions for plan retention and target-completion release using incident runs from 21 August.

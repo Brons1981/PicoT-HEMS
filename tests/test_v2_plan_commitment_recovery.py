@@ -46,6 +46,20 @@ def test_restart_just_before_window_end_restores_commitment(tmp_path) -> None:
     assert restored.active_plan_commitments == (_commitment(),)
 
 
+def test_restart_before_future_window_restores_scheduled_commitment(tmp_path) -> None:
+    store = ActivePlanCommitmentStore(tmp_path / "commitment.json")
+    future = replace(
+        _commitment(),
+        starts_at=BASE + timedelta(hours=1),
+        ends_at=BASE + timedelta(hours=2),
+    )
+    store.save(future)
+
+    restored = _restore_active_plan_commitments(_at(BASE), store)
+
+    assert restored.active_plan_commitments == (future,)
+
+
 def test_expired_commitment_is_cleared_and_reported_at_restart(tmp_path) -> None:
     incidents = tmp_path / "incidents.jsonl"
     store = ActivePlanCommitmentStore(

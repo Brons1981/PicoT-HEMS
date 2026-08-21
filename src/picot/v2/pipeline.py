@@ -5,11 +5,12 @@ Canonical v2 pipeline implementation; diagnostic timing is layered around this p
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from time import perf_counter
 
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.planner.delegated_storage_evaluation_engine import (
     DelegatedStorageEvaluationEngine,
 )
@@ -31,6 +32,8 @@ from picot.v2.contracts import (
     ObserverExecutionPlan,
     ObserverExecutionPlanSegment,
     PlanningInputSnapshot,
+    ProjectedHouseholdEnergyBalance,
+    PVForecastBasisAssumption,
     VendorBoundaryResult,
 )
 from picot.v2.delegated_storage_candidates import (
@@ -40,15 +43,11 @@ from picot.v2.delegated_storage_candidates import (
 from picot.v2.delegated_storage_outcomes import (
     simulate_pv_charge_only_outcomes,
 )
-from picot.v2.opportunity_engine import (
-    LOWEST_PRICE_WINDOW,
-    NEGATIVE_PRICE_WINDOW,
-    OpportunityEngine,
-    PriceOpportunityConfig,
-)
+from picot.v2.opportunity_engine import OpportunityEngine, PriceOpportunityConfig
 from picot.v2.pv_forecast_assumptions import (
     derive_pv_forecast_basis_assumptions,
 )
+from picot.v2.zendure_mode_capabilities import ZendureModeCapabilityEvidence
 
 
 def _id(prefix: str, seed: str) -> str:
@@ -78,6 +77,62 @@ def _average_price_for_window(
     if window_seconds <= 0.0 or priced_seconds + 1e-6 < window_seconds:
         return float("inf")
     return weighted_price / priced_seconds
+
+
+def _vendor_mode_for_primitive(
+    mode_evidence: ZendureModeCapabilityEvidence | None,
+    primitive: ExecutionPrimitive,
+) -> str | None:
+    matches = (
+        tuple(
+            mapping.vendor_mode
+            for mapping in mode_evidence.mappings
+            if primitive in mapping.primitives
+        )
+        if mode_evidence is not None
+        else ()
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+def _balance_for_pv_forecast_basis(
+    balance: ProjectedHouseholdEnergyBalance,
+    assumption: PVForecastBasisAssumption,
+) -> ProjectedHouseholdEnergyBalance:
+    """Project one existing household balance onto an explicit PV basis."""
+
+    if assumption.status != "available":
+        raise ValueError("PV forecast basis must be available")
+    projected = []
+    for interval in balance.intervals:
+        selected_energy_wh = 0.0
+        covered_seconds = 0.0
+        for source in assumption.intervals:
+            overlap_start = max(interval.starts_at, source.starts_at)
+            overlap_end = min(interval.ends_at, source.ends_at)
+            overlap_seconds = max(
+                0.0,
+                (overlap_end - overlap_start).total_seconds(),
+            )
+            if overlap_seconds <= 0.0:
+                continue
+            source_seconds = (source.ends_at - source.starts_at).total_seconds()
+            selected_energy_wh += (
+                source.selected_energy_wh * overlap_seconds / source_seconds
+            )
+            covered_seconds += overlap_seconds
+        interval_seconds = (interval.ends_at - interval.starts_at).total_seconds()
+        projected.append(
+            replace(
+                interval,
+                expected_usable_pv_energy_wh=(
+                    selected_energy_wh
+                    if covered_seconds + 1e-6 >= interval_seconds
+                    else interval.expected_usable_pv_energy_wh
+                ),
+            )
+        )
+    return replace(balance, intervals=tuple(projected))
 
 
 def _bootstrap_snapshot(captured_at: datetime | None = None) -> PlanningInputSnapshot:
@@ -218,6 +273,15 @@ class CanonicalPipeline:
         delegated_candidates: list[Candidate] = []
         delegated_paths: list[EnergyPath] = []
         delegated_outcomes: list[DelegatedStorageCandidateOutcome] = []
+        forecast_assumptions = derive_pv_forecast_basis_assumptions(snapshot)
+        lower_assumption = next(
+            (
+                item
+                for item in forecast_assumptions.assumptions
+                if item.basis == "lower" and item.status == "available"
+            ),
+            None,
+        )
         if candidate_derivation is not None:
             balances_by_id = {
                 balance.balance_id: balance
@@ -236,35 +300,21 @@ class CanonicalPipeline:
                     delegated_candidates.append(incumbent_candidate)
                     delegated_paths.append(incumbent_path)
                     delegated_outcomes.append(incumbent_outcome)
-                preferred_price_windows = tuple(
-                    (item.starts_at, item.ends_at)
-                    for item in sorted(
-                        (
-                            opportunity
-                            for opportunity in opportunities.opportunities
-                            if opportunity.kind
-                            in {
-                                NEGATIVE_PRICE_WINDOW,
-                                LOWEST_PRICE_WINDOW,
-                            }
-                            and opportunity.ends_at > snapshot.captured_at
-                            and opportunity.starts_at < requirement.required_by
-                        ),
-                        key=lambda opportunity: (
-                            0
-                            if opportunity.kind == NEGATIVE_PRICE_WINDOW
-                            else 1,
-                            opportunity.metrics.average_price_eur_per_kwh,
-                            opportunity.starts_at,
-                            opportunity.opportunity_id,
-                        ),
-                    )
+                forecast_basis = "lower" if lower_assumption is not None else "central"
+                candidate_balance = (
+                    _balance_for_pv_forecast_basis(balance, lower_assumption)
+                    if lower_assumption is not None
+                    else balance
                 )
                 delegated_set = construct_pv_charge_only_candidate(
                     snapshot=snapshot,
-                    balance=balance,
+                    balance=candidate_balance,
                     requirement=requirement,
-                    preferred_price_windows=preferred_price_windows,
+                    # Price opportunities remain visible evidence. Candidate
+                    # coverage is complete and Evaluation compares the real
+                    # duration-weighted average price of every feasible window.
+                    preferred_price_windows=(),
+                    pv_forecast_basis=forecast_basis,
                 )
                 if not delegated_set.candidates:
                     continue
@@ -317,9 +367,7 @@ class CanonicalPipeline:
                 if candidate_derivation is not None
                 else ()
             ),
-            pv_forecast_assumption_set=(
-                derive_pv_forecast_basis_assumptions(snapshot)
-            ),
+            pv_forecast_assumption_set=forecast_assumptions,
             derivation_status=derivation_status,
             derivation_reason=derivation_reason,
         )
@@ -665,6 +713,10 @@ class CanonicalPipeline:
                             evidence_ids=segment.evidence_ids,
                             requested_power_w=segment.requested_power_w,
                             charge_source_policy=segment.charge_source_policy,
+                            planned_vendor_mode=_vendor_mode_for_primitive(
+                                mode_evidence,
+                                segment.primitive,
+                            ),
                         )
                         for index, segment in enumerate(path_segments, start=1)
                     ),

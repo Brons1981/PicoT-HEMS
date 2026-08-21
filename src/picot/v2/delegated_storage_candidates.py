@@ -321,8 +321,12 @@ def construct_pv_charge_only_candidate(
     balance: ProjectedHouseholdEnergyBalance,
     requirement: StorageEnergyRequirement,
     preferred_price_windows: tuple[tuple[datetime, datetime], ...] = (),
+    pv_forecast_basis: str = "central",
 ) -> CandidateSet:
     """Construct one timed PV-only delegated Candidate without selecting it."""
+
+    if pv_forecast_basis not in {"lower", "central", "upper"}:
+        raise ValueError("PV forecast basis must be lower, central, or upper")
 
     if (
         balance.run_id != snapshot.run_id
@@ -595,7 +599,8 @@ def construct_pv_charge_only_candidate(
         path_id = _stable_id(
             "energy-path",
             f"{snapshot.snapshot_id}|{requirement.requirement_id}|"
-            f"pv-charge-only|{window_start.isoformat()}|{window_end.isoformat()}",
+            f"pv-charge-only|{pv_forecast_basis}|"
+            f"{window_start.isoformat()}|{window_end.isoformat()}",
         )
         path = EnergyPath(
             run_id=snapshot.run_id,
@@ -615,6 +620,7 @@ def construct_pv_charge_only_candidate(
                 candidate_id=_stable_id("candidate", path_id),
                 energy_path_id=path_id,
                 family=path.family,
+                pv_forecast_basis=pv_forecast_basis,
             )
         )
 

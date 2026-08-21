@@ -602,11 +602,6 @@ class PlanningInputSnapshot:
         if len(scope_ids) != len(set(scope_ids)):
             raise ValueError("only one active plan commitment is allowed per scope")
         if any(
-            item.starts_at > self.captured_at
-            for item in self.active_plan_commitments
-        ):
-            raise ValueError("an active plan commitment may not start in the future")
-        if any(
             item.ends_at <= self.captured_at
             for item in self.active_plan_commitments
         ):
@@ -785,6 +780,7 @@ class Candidate:
     candidate_id: str
     energy_path_id: str
     family: str
+    pv_forecast_basis: str = "central"
 
 
 @dataclass(frozen=True, slots=True)
@@ -895,6 +891,7 @@ class DelegatedStorageCandidateOutcome:
     evidence_ids: tuple[str, ...]
     method_version: str
     confidence_assessment: ConfidenceAssessment | None = None
+    pv_forecast_basis: str = "central"
 
     def __post_init__(self) -> None:
         if self.charge_window_starts_at >= self.charge_window_ends_at:
@@ -975,6 +972,7 @@ class ObserverExecutionPlanSegment:
     evidence_ids: tuple[str, ...]
     requested_power_w: float | None
     charge_source_policy: ChargeSourcePolicy | None
+    planned_vendor_mode: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

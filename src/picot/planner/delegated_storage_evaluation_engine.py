@@ -32,10 +32,6 @@ class DelegatedStorageEvaluationEngine:
         if not actionable_outcomes:
             return DelegatedStorageEvaluationResult(None, False, None)
 
-        candidate_priority = {
-            item.candidate_id: index
-            for index, item in enumerate(candidate_set.candidates)
-        }
         incumbent_ids = self.incumbent_candidate_ids(
             snapshot=snapshot,
             candidate_set=candidate_set,
@@ -53,13 +49,13 @@ class DelegatedStorageEvaluationEngine:
                     < item.charge_window_ends_at
                 ),
                 self._average_price(snapshot, item),
+                -item.confidence,
+                self._distance_from_pv_energy_centre(snapshot, item),
                 -(
                     item.pv_storage_contribution_wh
                     + item.grid_storage_contribution_wh
                 ),
-                candidate_priority[item.candidate_id],
                 item.conversion_losses_wh,
-                -item.confidence,
                 -item.recoverability,
                 item.charge_window_starts_at,
                 item.candidate_id,
@@ -117,8 +113,6 @@ class DelegatedStorageEvaluationEngine:
             )
             if (
                 matching
-                and min(item.starts_at for item in matching)
-                <= snapshot.captured_at
                 and max(item.ends_at for item in matching) == commitment.ends_at
             ):
                 return True
@@ -138,3 +132,35 @@ class DelegatedStorageEvaluationEngine:
             weighted_price += point.value_eur_per_kwh * seconds
             total_seconds += seconds
         return weighted_price / total_seconds if total_seconds > 0.0 else float("inf")
+
+    @staticmethod
+    def _distance_from_pv_energy_centre(
+        snapshot: PlanningInputSnapshot,
+        outcome: DelegatedStorageCandidateOutcome,
+    ) -> float:
+        """Return seconds between a window midpoint and the forecast PV centre."""
+
+        timeline = snapshot.pv_energy_timeline
+        weighted_timestamp = 0.0
+        total_energy_wh = 0.0
+        for interval in (() if timeline is None else timeline.intervals):
+            if interval.ends_at <= snapshot.captured_at:
+                continue
+            energy_wh = (
+                interval.forecast_lower_energy_wh
+                if interval.forecast_range_status == "available"
+                and interval.forecast_lower_energy_wh is not None
+                else interval.pv_energy_wh
+            )
+            if energy_wh <= 0.0:
+                continue
+            midpoint = interval.starts_at + (interval.ends_at - interval.starts_at) / 2
+            weighted_timestamp += midpoint.timestamp() * energy_wh
+            total_energy_wh += energy_wh
+        if total_energy_wh <= 0.0:
+            return 0.0
+        pv_centre = weighted_timestamp / total_energy_wh
+        window_midpoint = outcome.charge_window_starts_at + (
+            outcome.charge_window_ends_at - outcome.charge_window_starts_at
+        ) / 2
+        return abs(window_midpoint.timestamp() - pv_centre)

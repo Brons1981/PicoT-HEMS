@@ -762,6 +762,15 @@ Not live verified:
 - one complete live charge-window lifecycle followed by smart discharge;
 - live confidence-component presentation with current Home Assistant evidence.
 
+Live installation finding and correction:
+
+- the first dev.126 add-on image stopped at import time because its Dockerfile
+  packaged `picot.v2`, `picot.domain` and `picot.adapters`, but not the canonical
+  `picot.planner` owner of the delegated storage Evaluation Engine;
+- the image now packages `picot.planner` explicitly and the add-on packaging
+  contract test protects that runtime dependency;
+- the corrected image still requires live verification after PR merge/rebuild.
+
 Known release boundary:
 
 - this remains a development release;
@@ -770,3 +779,18 @@ Known release boundary:
 
 Exact next action after installation: observe one complete live plan lifecycle,
 including commitment recovery across a controlled add-on restart.
+
+## 2026-08-21 — 2.0.0-dev.127
+
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
+
+- Released the dev.126 add-on packaging correction under a new version so Home
+  Assistant can discover and rebuild the image instead of reusing the broken
+  dev.126 package.
+- Packaged the canonical `picot.planner` layer required by
+  `DelegatedStorageEvaluationEngine`.
+- Added a regression assertion for the exact add-on Docker packaging boundary.
+- Mypy passed for 53 v2 source files, Ruff passed and all 900 tests passed.
+
+Exact next action: install dev.127, confirm the live runtime starts, then observe
+one complete plan lifecycle before classifying the ADR restoration live verified.

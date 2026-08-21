@@ -8,7 +8,7 @@ from picot.v2.canonical_execution_runtime import (
     CanonicalDispatchOutcome,
     CanonicalExecutionRuntime,
 )
-from picot.v2.contracts import BMSCalibrationEvidence
+from picot.v2.contracts import BMSCalibrationEvidence, CanonicalPipelineRun
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.storage_capability_snapshot import (
@@ -35,7 +35,7 @@ def _planner_owned_standby() -> object:
     )
 
 
-def _live_run() -> object:
+def _live_run() -> CanonicalPipelineRun:
     observer = _run(
         current_mode="Standby",
         provenance=_planner_owned_standby(),
@@ -289,3 +289,94 @@ def test_canonical_runtime_does_not_repeat_request_before_feedback() -> None:
 
     assert calls == ["Nul op de meter"]
     assert duplicate.vendor_result.status == "awaiting_mode_feedback"
+
+
+def test_active_pv_plan_is_not_interrupted_by_a_forecast_replan() -> None:
+    calls: list[str] = []
+    runtime = CanonicalExecutionRuntime(
+        dispatch=lambda request, mapping: (
+            calls.append(mapping.fixed_value or "")
+            or CanonicalDispatchOutcome("dispatched", "ha-command-test")
+        )
+    )
+    active = _live_run()
+    runtime.apply(active)
+
+    future = _future_pv_run(active)
+    future = replace(
+        future,
+        primitive_boundary=replace(
+            future.primitive_boundary,
+            current_vendor_mode="Nul op de meter",
+        ),
+    )
+    held = runtime.apply(future)
+
+    assert calls == ["Nul op de meter"]
+    assert held.vendor_result.status == "active_pv_plan_committed"
+    assert held.vendor_result.planned_vendor_mode == "Nul op de meter"
+
+
+def test_completed_storage_target_may_end_committed_pv_plan() -> None:
+    calls: list[str] = []
+    runtime = CanonicalExecutionRuntime(
+        dispatch=lambda request, mapping: (
+            calls.append(mapping.fixed_value or "")
+            or CanonicalDispatchOutcome("dispatched", "ha-command-test")
+        )
+    )
+    active = _live_run()
+    runtime.apply(active)
+    future = _future_pv_run(active)
+    completed = replace(
+        future,
+        evaluation=replace(
+            future.evaluation,
+            decisive_step="hard_constraint:storage_requirement_already_satisfied",
+        ),
+        primitive_boundary=replace(
+            future.primitive_boundary,
+            current_vendor_mode="Nul op de meter",
+        ),
+    )
+
+    result = runtime.apply(completed)
+
+    assert calls == ["Nul op de meter", "Alleen slim ontladen"]
+    assert result.vendor_result.status == "dispatched"
+
+
+def _future_pv_run(active: CanonicalPipelineRun) -> CanonicalPipelineRun:
+    planning_input = active.planning_input
+    assert planning_input.pv_energy_timeline is not None
+    assert planning_input.household_load_forecast is not None
+    shift = timedelta(hours=1)
+    return CanonicalPipeline().run(
+        planning_input=replace(
+            planning_input,
+            horizon_end=planning_input.horizon_end + shift,
+            pv_energy_timeline=replace(
+                planning_input.pv_energy_timeline,
+                intervals=tuple(
+                    replace(
+                        interval,
+                        starts_at=interval.starts_at + shift,
+                        ends_at=interval.ends_at + shift,
+                    )
+                    for interval in planning_input.pv_energy_timeline.intervals
+                ),
+            ),
+            household_load_forecast=replace(
+                planning_input.household_load_forecast,
+                intervals=tuple(
+                    replace(
+                        interval,
+                        starts_at=interval.starts_at + shift,
+                        ends_at=interval.ends_at + shift,
+                    )
+                    for interval in planning_input.household_load_forecast.intervals
+                ),
+            ),
+        ),
+        control_change_allowed=True,
+    )

@@ -892,6 +892,9 @@ class DelegatedStorageCandidateOutcome:
     method_version: str
     confidence_assessment: ConfidenceAssessment | None = None
     pv_forecast_basis: str = "central"
+    storage_energy_at_window_start_wh: float | None = None
+    projected_storage_use_before_window_wh: float | None = None
+    required_storage_addition_wh: float | None = None
 
     def __post_init__(self) -> None:
         if self.charge_window_starts_at >= self.charge_window_ends_at:

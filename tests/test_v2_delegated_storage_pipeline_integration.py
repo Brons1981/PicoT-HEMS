@@ -296,6 +296,59 @@ def test_active_commitment_survives_forecast_with_no_remaining_surplus() -> None
     assert continued.execution_plan_set.plans[0].plan_id == active_plan.plan_id
 
 
+def test_scheduled_commitment_uses_projected_household_energy_at_window_start() -> None:
+    source = _snapshot()
+    assert source.pv_energy_timeline is not None
+    scheduled_start = BASE + timedelta(hours=1)
+    snapshot = replace(
+        source,
+        pv_energy_timeline=replace(
+            source.pv_energy_timeline,
+            intervals=(
+                replace(
+                    source.pv_energy_timeline.intervals[0],
+                    pv_energy_wh=0.0,
+                ),
+                replace(
+                    source.pv_energy_timeline.intervals[1],
+                    pv_energy_wh=800.0,
+                ),
+            ),
+        ),
+        active_plan_commitments=(
+            ActivePlanCommitment(
+                "home-battery",
+                "plan-future-household",
+                1,
+                "balance_charge_only",
+                "pv_only",
+                scheduled_start,
+                HORIZON_END,
+                1200.0,
+            ),
+        ),
+    )
+
+    run = CanonicalPipeline().run(
+        planning_input=snapshot,
+        control_change_allowed=True,
+    )
+    winner = next(
+        item
+        for item in run.outcomes.outcomes
+        if item.candidate_id == run.evaluation.winning_candidate_id
+    )
+
+    assert winner.storage_energy_at_window_start_wh == pytest.approx(800.0)
+    assert winner.projected_storage_use_before_window_wh == pytest.approx(200.0)
+    assert winner.required_storage_addition_wh == pytest.approx(400.0)
+    assert winner.pv_storage_contribution_wh == pytest.approx(400.0)
+    assert run.evaluation.decisive_step == (
+        "stability:scheduled_plan_commitment_retained"
+    )
+    assert run.execution_plan_set.plans[0].plan_id == "plan-future-household"
+
+
 def test_executable_window_uses_duration_weighted_quarter_prices() -> None:
     source = _snapshot()
     quarter = timedelta(minutes=15)

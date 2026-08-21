@@ -37,12 +37,27 @@ class DelegatedStorageEvaluationEngine:
             candidate_set=candidate_set,
             candidate_ids=tuple(item.candidate_id for item in actionable_outcomes),
         )
+        incumbent_outcomes = tuple(
+            item
+            for item in actionable_outcomes
+            if item.candidate_id in incumbent_ids
+        )
+        material_shrink_ids = self._material_shrink_candidate_ids(
+            snapshot,
+            actionable_outcomes,
+            incumbent_outcomes,
+        )
         winner = min(
             actionable_outcomes,
             key=lambda item: (
                 not item.requirement_satisfied,
                 item.grid_storage_contribution_wh,
-                bool(incumbent_ids) and item.candidate_id not in incumbent_ids,
+                (
+                    item.candidate_id not in material_shrink_ids
+                    if material_shrink_ids
+                    else bool(incumbent_ids)
+                    and item.candidate_id not in incumbent_ids
+                ),
                 not (
                     item.charge_window_starts_at
                     <= snapshot.captured_at
@@ -66,11 +81,63 @@ class DelegatedStorageEvaluationEngine:
             winning_outcome=winner,
             incumbent_retained=retained,
             decisive_step=(
-                "stability:active_plan_commitment_retained"
+                (
+                    "stability:scheduled_plan_commitment_retained"
+                    if winner.charge_window_starts_at > snapshot.captured_at
+                    else "stability:active_plan_commitment_retained"
+                )
                 if retained
-                else None
+                else (
+                    "material_change:one_or_more_execution_intervals_removed"
+                    if winner.candidate_id in material_shrink_ids
+                    else None
+                )
             ),
         )
+
+    def _material_shrink_candidate_ids(
+        self,
+        snapshot: PlanningInputSnapshot,
+        outcomes: tuple[DelegatedStorageCandidateOutcome, ...],
+        incumbents: tuple[DelegatedStorageCandidateOutcome, ...],
+    ) -> set[str]:
+        """Return contained challengers that remove a full executable interval."""
+
+        if len(incumbents) != 1:
+            return set()
+        incumbent = incumbents[0]
+        if not incumbent.requirement_satisfied:
+            return set()
+        interval_seconds = min(
+            (
+                (item.ends_at - item.starts_at).total_seconds()
+                for item in (
+                    snapshot.pv_energy_timeline.intervals
+                    if snapshot.pv_energy_timeline is not None
+                    else ()
+                )
+                if item.ends_at > snapshot.captured_at
+            ),
+            default=0.0,
+        )
+        if interval_seconds <= 0.0:
+            return set()
+        incumbent_duration = (
+            incumbent.charge_window_ends_at - incumbent.charge_window_starts_at
+        ).total_seconds()
+        incumbent_price = self._average_price(snapshot, incumbent)
+        return {
+            item.candidate_id
+            for item in outcomes
+            if item.candidate_id != incumbent.candidate_id
+            and item.requirement_satisfied
+            and item.charge_window_starts_at >= incumbent.charge_window_starts_at
+            and item.charge_window_ends_at <= incumbent.charge_window_ends_at
+            and incumbent_duration
+            - (item.charge_window_ends_at - item.charge_window_starts_at).total_seconds()
+            >= interval_seconds
+            and self._average_price(snapshot, item) <= incumbent_price + 1e-12
+        }
 
     def incumbent_candidate_ids(
         self,

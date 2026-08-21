@@ -10,6 +10,9 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
+COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v2"
+LEGACY_COMMITMENT_METHOD_VERSION = "legacy-pre-household-simulation"
+
 
 @dataclass(frozen=True, slots=True)
 class ActivePlanCommitment:
@@ -21,6 +24,7 @@ class ActivePlanCommitment:
     starts_at: datetime
     ends_at: datetime
     target_energy_wh: float
+    selection_method_version: str = COMMITMENT_METHOD_VERSION
 
     def __post_init__(self) -> None:
         if any(
@@ -30,6 +34,7 @@ class ActivePlanCommitment:
                 self.plan_id,
                 self.primitive,
                 self.source_policy,
+                self.selection_method_version,
             )
         ):
             raise ValueError("active plan commitment fields must be explicit")
@@ -75,6 +80,44 @@ class ActivePlanCommitmentStore:
         payload = self._load_payload()
         if payload["commitments"].pop(execution_scope_id, None) is not None:
             self._write(payload)
+
+    def clear_all(self) -> tuple[ActivePlanCommitment, ...]:
+        """Atomically remove all commitments and return the removed records."""
+
+        payload = self._load_payload()
+        removed = tuple(
+            _deserialize(item)
+            for item in payload["commitments"].values()
+        )
+        if removed:
+            payload["commitments"] = {}
+            self._write(payload)
+        return removed
+
+    def record_manual_reset(
+        self,
+        *,
+        reset_id: str,
+        removed: tuple[ActivePlanCommitment, ...],
+    ) -> None:
+        if not reset_id.strip():
+            raise ValueError("reset_id must be explicit")
+        self._record_incident(
+            "manual_planning_reset_requested",
+            ValueError(
+                json.dumps(
+                    {
+                        "reset_id": reset_id,
+                        "removed_plan_ids": [item.plan_id for item in removed],
+                        "removed_scope_ids": [
+                            item.execution_scope_id for item in removed
+                        ],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            ),
+        )
 
     def record_recovery_rejection(self, reason: str) -> None:
         if not reason.strip():
@@ -146,4 +189,10 @@ def _deserialize(payload: dict[str, Any]) -> ActivePlanCommitment:
         starts_at=datetime.fromisoformat(payload["starts_at"]),
         ends_at=datetime.fromisoformat(payload["ends_at"]),
         target_energy_wh=float(payload["target_energy_wh"]),
+        selection_method_version=str(
+            payload.get(
+                "selection_method_version",
+                LEGACY_COMMITMENT_METHOD_VERSION,
+            )
+        ),
     )

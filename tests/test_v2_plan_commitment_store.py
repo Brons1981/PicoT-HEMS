@@ -44,3 +44,33 @@ def test_clearing_one_scope_preserves_another(tmp_path) -> None:
 
     assert store.load("battery-a") is None
     assert store.load("battery-b") == second
+
+
+def test_clear_all_returns_removed_commitments_and_preserves_incident_audit(
+    tmp_path,
+) -> None:
+    path = tmp_path / "commitments.json"
+    incidents = tmp_path / "incidents.jsonl"
+    store = ActivePlanCommitmentStore(path, incident_path=incidents)
+    starts_at = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
+    commitment = ActivePlanCommitment(
+        "battery-a",
+        "plan-a",
+        1,
+        "balance_bidirectional",
+        "pv_only",
+        starts_at,
+        starts_at + timedelta(hours=1),
+        8160.0,
+    )
+    store.save(commitment)
+
+    removed = store.clear_all()
+    store.record_manual_reset(reset_id="planning-reset-1", removed=removed)
+
+    assert removed == (commitment,)
+    assert store.load("battery-a") is None
+    audit = incidents.read_text(encoding="utf-8")
+    assert "manual_planning_reset_requested" in audit
+    assert "planning-reset-1" in audit
+    assert "plan-a" in audit

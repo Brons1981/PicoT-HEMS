@@ -812,6 +812,15 @@ DASHBOARD_HTML = """<!doctype html>
       </button>
     </section>
 
+    <section id="planning-reset" class="status" aria-live="polite">
+      <span id="planning-reset-result">
+        Huidige en toekomstige planning kan handmatig opnieuw worden opgebouwd.
+      </span>
+      <button id="reset-planning" type="button">
+        Planning resetten
+      </button>
+    </section>
+
     <h2>Zendure nu</h2>
     <section id="zendure-now" class="zendure-now" aria-live="polite">
       Nog geen actuele Zendure-status beschikbaar.
@@ -2507,9 +2516,16 @@ DASHBOARD_HTML = """<!doctype html>
         ["Batterijenergie bij vastleggen", formatMeasurement(
           chosenPlan.initial_storage_energy_wh, "Wh"
         )],
-        ["Nog benodigde toevoeging", formatMeasurement(
-          chosenPlan.energy_to_target_wh, "Wh"
+        ["Verwacht accuverbruik tot laadstart", formatMeasurement(
+          chosenPlan.projected_storage_use_before_window_wh, "Wh"
         )],
+        ["Verwachte energie bij laadstart", formatMeasurement(
+          chosenPlan.storage_energy_at_window_start_wh, "Wh"
+        )],
+        ["Benodigde toevoeging bij laadstart", formatMeasurement(
+          chosenPlan.required_storage_addition_wh, "Wh"
+        )],
+        ["Gebruikte PV-forecastbasis", chosenPlan.pv_forecast_basis],
         ["Energie einde laadvenster", formatMeasurement(
           chosenPlan.storage_energy_at_window_end_wh, "Wh"
         )],
@@ -2660,6 +2676,38 @@ DASHBOARD_HTML = """<!doctype html>
       } catch (error) {
         element("storage-mode-override-result").textContent =
           error instanceof Error ? error.message : "Reset mislukt.";
+      } finally {
+        resetButton.disabled = false;
+      }
+    }
+
+    async function resetPlanning() {
+      const resetButton = element("reset-planning");
+      const confirmed = globalThis.confirm(
+        "Alle huidige en toekomstige plannen worden beëindigd. PicoT maakt " +
+        "direct een nieuw plan met actuele gegevens. Historie, leerdata en " +
+        "instellingen blijven behouden. Een actieve laadplanning kan worden " +
+        "afgebroken. Doorgaan?"
+      );
+      if (!confirmed) return;
+      resetButton.disabled = true;
+      try {
+        const response = await fetch("api/planning/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reset_id: storageModeResetId() })
+        });
+        if (!response.ok) {
+          throw new Error(`Planningreset geweigerd (${response.status})`);
+        }
+        const result = await response.json();
+        element("planning-reset-result").textContent =
+          `Reset geaccepteerd; ${result.removed_commitment_count ?? 0} ` +
+          "commitment(s) verwijderd. Nieuwe planning wordt opgebouwd.";
+        await loadView();
+      } catch (error) {
+        element("planning-reset-result").textContent =
+          error instanceof Error ? error.message : "Planningreset mislukt.";
       } finally {
         resetButton.disabled = false;
       }
@@ -3284,6 +3332,7 @@ DASHBOARD_HTML = """<!doctype html>
       "click",
       resetStorageModeOverride
     );
+    element("reset-planning").addEventListener("click", resetPlanning);
     initializeTabs();
     loadView().finally(watchViewUpdates);
     setInterval(loadView, 60000);
@@ -3305,6 +3354,7 @@ class WebViewStore:
         self._reset_storage_mode_override: (
             Callable[[str], dict[str, object]] | None
         ) = None
+        self._reset_planning: Callable[[str], dict[str, object]] | None = None
         self._diagnostic_paths: tuple[Path, ...] = ()
         self._incident_history_path: Path | None = None
 
@@ -3400,6 +3450,19 @@ class WebViewStore:
         with self._lock:
             return self._reset_storage_mode_override
 
+    def set_planning_reset(
+        self,
+        reset: Callable[[str], dict[str, object]],
+    ) -> None:
+        """Register the explicit manual planning-reset authority."""
+
+        with self._lock:
+            self._reset_planning = reset
+
+    def planning_reset(self) -> Callable[[str], dict[str, object]] | None:
+        with self._lock:
+            return self._reset_planning
+
     def set_diagnostic_paths(
         self,
         paths: tuple[Path, ...],
@@ -3428,6 +3491,7 @@ def create_web_server(
     reset_storage_mode_override: (
         Callable[[str], dict[str, object]] | None
     ) = None,
+    reset_planning: Callable[[str], dict[str, object]] | None = None,
 ) -> ThreadingHTTPServer:
     """Create, but do not start, the read-only observer HTTP server."""
 
@@ -3589,11 +3653,16 @@ def create_web_server(
 
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
-            if path != "/api/storage-mode-override/reset":
+            if path not in {
+                "/api/storage-mode-override/reset",
+                "/api/planning/reset",
+            }:
                 self._reject_write()
                 return
             reset = (
-                reset_storage_mode_override
+                reset_planning or store.planning_reset()
+                if path == "/api/planning/reset"
+                else reset_storage_mode_override
                 or store.storage_mode_override_reset()
             )
             if reset is None:
@@ -4325,6 +4394,26 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             ),
             "energy_to_target_wh": (
                 energy_to_target_wh if not fallback_active else None
+            ),
+            "storage_energy_at_window_start_wh": (
+                winning_outcome.storage_energy_at_window_start_wh
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "projected_storage_use_before_window_wh": (
+                winning_outcome.projected_storage_use_before_window_wh
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "required_storage_addition_wh": (
+                winning_outcome.required_storage_addition_wh
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "pv_forecast_basis": (
+                winning_outcome.pv_forecast_basis
+                if winning_outcome is not None and not fallback_active
+                else None
             ),
             "storage_energy_at_window_end_wh": (
                 winning_outcome.storage_energy_at_window_end_wh

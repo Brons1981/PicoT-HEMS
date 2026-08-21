@@ -6,6 +6,7 @@ from test_v2_delegated_storage_pipeline_integration import BASE, _snapshot
 from picot.domain.capability_snapshot import CapabilityAvailability
 from picot.v2.live_runtime import _restore_active_plan_commitments
 from picot.v2.plan_commitment_store import (
+    LEGACY_COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
 )
@@ -58,6 +59,28 @@ def test_restart_before_future_window_restores_scheduled_commitment(tmp_path) ->
     restored = _restore_active_plan_commitments(_at(BASE), store)
 
     assert restored.active_plan_commitments == (future,)
+
+
+def test_legacy_commitment_is_cleared_for_household_replanning(tmp_path) -> None:
+    incidents = tmp_path / "incidents.jsonl"
+    store = ActivePlanCommitmentStore(
+        tmp_path / "commitment.json",
+        incident_path=incidents,
+    )
+    store.save(
+        replace(
+            _commitment(),
+            selection_method_version=LEGACY_COMMITMENT_METHOD_VERSION,
+        )
+    )
+
+    restored = _restore_active_plan_commitments(_at(BASE), store)
+
+    assert restored.active_plan_commitments == ()
+    assert store.load("home-battery") is None
+    assert "legacy_commitment_requires_household_replan" in (
+        incidents.read_text(encoding="utf-8")
+    )
 
 
 def test_expired_commitment_is_cleared_and_reported_at_restart(tmp_path) -> None:

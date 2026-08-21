@@ -233,6 +233,18 @@ def test_pv_surplus_constructs_one_delegated_charge_only_candidate() -> None:
     assert segment.charge_source_policy is ChargeSourcePolicy.PV_ONLY
 
 
+def test_continuous_surplus_exposes_each_progressive_endpoint() -> None:
+    module = import_module("picot.v2.delegated_storage_candidates")
+
+    selections = module._window_selections(((4, 5, 6),))
+
+    assert selections == (
+        (4,),
+        (4, 5),
+        (4, 5, 6),
+    )
+
+
 def test_candidate_projects_window_end_and_later_requirement_energy() -> None:
     candidate_set = _construct(_snapshot(_capability_set()))
 

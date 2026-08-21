@@ -55,7 +55,8 @@ class DelegatedStorageEvaluationEngine:
                 (
                     item.candidate_id not in material_shrink_ids
                     if material_shrink_ids
-                    else bool(incumbent_ids)
+                    else item.requirement_satisfied
+                    and bool(incumbent_ids)
                     and item.candidate_id not in incumbent_ids
                 ),
                 not (
@@ -76,7 +77,10 @@ class DelegatedStorageEvaluationEngine:
                 item.candidate_id,
             ),
         )
-        retained = winner.candidate_id in incumbent_ids
+        retained = (
+            winner.requirement_satisfied
+            and winner.candidate_id in incumbent_ids
+        )
         return DelegatedStorageEvaluationResult(
             winning_outcome=winner,
             incumbent_retained=retained,
@@ -180,6 +184,8 @@ class DelegatedStorageEvaluationEngine:
             )
             if (
                 matching
+                and min(item.starts_at for item in matching)
+                == max(snapshot.captured_at, commitment.starts_at)
                 and max(item.ends_at for item in matching) == commitment.ends_at
             ):
                 return True

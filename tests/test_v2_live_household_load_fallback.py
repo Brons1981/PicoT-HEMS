@@ -5,7 +5,11 @@ import pytest
 
 from picot.v2 import live_runtime, planning_input
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
-from picot.v2.planning_input import HouseholdLoadObservation
+from picot.v2.planning_input import (
+    EnergyContractConfig,
+    HouseholdLoadObservation,
+    StorageConversionConfig,
+)
 
 BASE = datetime(2026, 8, 14, 20, 0, tzinfo=UTC)
 
@@ -55,7 +59,11 @@ def test_live_planning_input_passes_household_load_fallback_to_assembly(
         *,
         household_load_fallback_power_w: float,
         household_load_fallback_confidence: float,
+        energy_contract_config: EnergyContractConfig,
+        storage_conversion_config: StorageConversionConfig,
     ) -> object:
+        assert energy_contract_config.permits_grid_import is True
+        assert storage_conversion_config.charge_efficiency == 0.90
         calls.append(
             (
                 token,
@@ -105,7 +113,11 @@ def test_live_planning_input_loads_persisted_household_history(
             HouseholdLoadObservation,
             ...,
         ],
+        energy_contract_config: EnergyContractConfig,
+        storage_conversion_config: StorageConversionConfig,
     ) -> object:
+        assert energy_contract_config.permits_grid_export is True
+        assert storage_conversion_config.discharge_efficiency == 0.90
         calls.append(
             (
                 token,

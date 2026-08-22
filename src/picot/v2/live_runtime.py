@@ -64,10 +64,12 @@ from picot.v2.plan_commitment_store import (
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import (
+    EnergyContractConfig,
     HomeAssistantStateReader,
     HouseholdLoadObservation,
     PlanningInputBundle,
     SourceBinding,
+    StorageConversionConfig,
     assemble_planning_input,
     load_options,
 )
@@ -1411,11 +1413,34 @@ def _load_live_planning_input(
             "household_load_fallback_confidence must be greater than 0 and at most 1"
         )
 
+    energy_contract_config = EnergyContractConfig(
+        settlement_timezone=str(
+            options.get("pv_local_timezone", "Europe/Amsterdam")
+        ).strip(),
+        permits_grid_import=bool(
+            options.get("energy_contract_permits_grid_import", True)
+        ),
+        permits_grid_export=bool(
+            options.get("energy_contract_permits_grid_export", True)
+        ),
+        permits_battery_export=bool(
+            options.get("energy_contract_permits_battery_export", False)
+        ),
+    )
+    storage_conversion_config = StorageConversionConfig(
+        charge_efficiency=float(options.get("storage_charge_efficiency", 0.90)),
+        discharge_efficiency=float(
+            options.get("storage_discharge_efficiency", 0.90)
+        ),
+    )
+
     if household_load_history is None:
         return assemble_planning_input(
             token,
             household_load_fallback_power_w=fallback_power_w,
             household_load_fallback_confidence=fallback_confidence,
+            energy_contract_config=energy_contract_config,
+            storage_conversion_config=storage_conversion_config,
         )
 
     return assemble_planning_input(
@@ -1423,6 +1448,8 @@ def _load_live_planning_input(
         household_load_fallback_power_w=fallback_power_w,
         household_load_fallback_confidence=fallback_confidence,
         household_load_observations=household_load_history.load(),
+        energy_contract_config=energy_contract_config,
+        storage_conversion_config=storage_conversion_config,
     )
 
 

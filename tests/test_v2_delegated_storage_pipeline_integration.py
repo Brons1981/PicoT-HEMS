@@ -190,7 +190,7 @@ def test_reference_observer_is_blocked_without_required_contract_evidence() -> N
     assert run.evaluation.winning_candidate_id == run.outcomes.outcomes[0].candidate_id
 
 
-def test_reference_observer_simulates_supported_baseline_without_affecting_winner() -> None:
+def test_reference_observer_simulates_baseline_and_delegated_pv_intent() -> None:
     source = _snapshot()
     assert source.horizon_end is not None
     assert source.pv_energy_timeline is not None
@@ -244,8 +244,12 @@ def test_reference_observer_simulates_supported_baseline_without_affecting_winne
     assert baseline.ledger is not None
     assert baseline.reference_grid_import_wh == pytest.approx(200.0)
     assert baseline.reference_grid_export_wh == pytest.approx(600.0)
-    assert delegated.status == "blocked"
-    assert delegated.blockers == ("unsupported_primitive:balance_charge_only",)
+    assert delegated.status == "ready"
+    assert delegated.ledger is not None
+    assert delegated.reference_pv_storage_wh == pytest.approx(200.0)
+    assert delegated.reference_grid_storage_wh == pytest.approx(0.0)
+    assert delegated.reference_conversion_losses_wh == pytest.approx(22.222222)
+    assert delegated.pv_storage_delta_wh == pytest.approx(0.0)
     assert run.evaluation.winning_candidate_id == run.candidate_set.candidates[1].candidate_id
 
 

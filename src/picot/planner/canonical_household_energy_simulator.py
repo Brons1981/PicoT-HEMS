@@ -6,6 +6,11 @@ from datetime import datetime
 
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.current_storage_state import CurrentStorageState
+from picot.domain.delegated_energy_intent import (
+    DelegatedEnergyIntent,
+    DelegatedEnergyIntentKind,
+)
+from picot.domain.discharge_destination_policy import DischargeDestinationPolicy
 from picot.domain.energy_contract import EnergyContractSnapshot, EnergyTariffInterval
 from picot.domain.energy_path import EnergyPath, PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
@@ -16,7 +21,7 @@ from picot.domain.household_energy_ledger import (
 from picot.domain.planning_input_snapshot import PlanningInputSnapshot
 from picot.domain.storage_conversion_model import StorageConversionModel
 
-METHOD_VERSION = "canonical-household-energy-simulator:v1"
+METHOD_VERSION = "canonical-household-energy-simulator:v2"
 CONFIDENCE_METHOD_VERSION = "ledger-required-input-min:v1"
 
 
@@ -34,6 +39,7 @@ class CanonicalHouseholdEnergySimulator:
         conversion_model: StorageConversionModel,
         energy_contract: EnergyContractSnapshot,
         requirement_target_energy_wh: float | None = None,
+        delegated_energy_intents: tuple[DelegatedEnergyIntent, ...] = (),
     ) -> HouseholdEnergyLedger:
         self._validate_inputs(
             run_id=run_id,
@@ -43,6 +49,7 @@ class CanonicalHouseholdEnergySimulator:
             storage_state=storage_state,
             energy_contract=energy_contract,
             requirement_target_energy_wh=requirement_target_energy_wh,
+            delegated_energy_intents=delegated_energy_intents,
         )
         assert snapshot.pv_energy_timeline is not None
         assert snapshot.household_load_forecast is not None
@@ -54,9 +61,11 @@ class CanonicalHouseholdEnergySimulator:
             (item.starts_at, item.ends_at): item for item in energy_contract.intervals
         }
         stored_energy_wh = storage_state.current_stored_energy_wh
+        intents = {item.segment_id: item for item in delegated_energy_intents}
         intervals: list[HouseholdEnergyLedgerInterval] = []
 
         for pv in snapshot.pv_energy_timeline.intervals:
+            storage_energy_at_start_wh = stored_energy_wh
             load = loads.get((pv.starts_at, pv.ends_at))
             if load is None:
                 raise ValueError(
@@ -68,11 +77,23 @@ class CanonicalHouseholdEnergySimulator:
                     "Reference simulation requires exact tariff evidence for every interval."
                 )
             segment = self._active_storage_segment(path, pv.starts_at, pv.ends_at)
-            if segment is not None and segment.primitive is not ExecutionPrimitive.CHARGE_AT_POWER:
+            delegated_intent = intents.get(segment.segment_id) if segment is not None else None
+            if (
+                segment is not None
+                and segment.primitive is not ExecutionPrimitive.CHARGE_AT_POWER
+                and delegated_intent is None
+            ):
                 raise ValueError(
-                    "First reference slice supports only explicit charging segments."
+                    "Delegated balancing requires an explicit physical energy intent."
                 )
             policy = segment.charge_source_policy if segment is not None else None
+            if (
+                delegated_intent is not None
+                and policy is not ChargeSourcePolicy.PV_ONLY
+            ):
+                raise ValueError(
+                    "Delegated PV acquisition intent requires PV-only source policy."
+                )
             if policy is ChargeSourcePolicy.GRID_ALLOWED_FOR_MARKET_ACTION:
                 raise ValueError("Discretionary market-cycle simulation is not implemented.")
             effective_storage_target_wh = storage_state.usable_capacity_wh
@@ -84,8 +105,37 @@ class CanonicalHouseholdEnergySimulator:
             remaining_pv_wh = pv.energy_wh - pv_to_household_wh
             remaining_load_wh = load.expected_energy_wh - pv_to_household_wh
 
+            storage_to_household_wh = 0.0
+            storage_discharge_loss_wh = 0.0
+            if (
+                delegated_intent is not None
+                and delegated_intent.kind
+                is DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT
+            ):
+                assert delegated_intent.minimum_storage_energy_wh is not None
+                available_stored_wh = max(
+                    0.0,
+                    stored_energy_wh - delegated_intent.minimum_storage_energy_wh,
+                )
+                available_output_wh = (
+                    available_stored_wh * conversion_model.discharge_efficiency
+                )
+                storage_to_household_wh = min(
+                    remaining_load_wh,
+                    available_output_wh,
+                )
+                storage_energy_removed_wh = (
+                    storage_to_household_wh / conversion_model.discharge_efficiency
+                )
+                storage_discharge_loss_wh = (
+                    storage_energy_removed_wh - storage_to_household_wh
+                )
+                stored_energy_wh -= storage_energy_removed_wh
+                remaining_load_wh -= storage_to_household_wh
+
             requested_charge_input_wh = self._requested_charge_input_wh(
                 segment=segment,
+                delegated_intent=delegated_intent,
                 interval_starts_at=pv.starts_at,
                 interval_ends_at=pv.ends_at,
                 stored_energy_wh=stored_energy_wh,
@@ -123,6 +173,7 @@ class CanonicalHouseholdEnergySimulator:
             evidence_ids = self._evidence_ids(
                 path=path,
                 segment=segment,
+                delegated_intent=delegated_intent,
                 pv_evidence_ids=pv.evidence_ids,
                 load_forecast_id=snapshot.household_load_forecast.forecast_id,
                 storage_state=storage_state,
@@ -149,15 +200,19 @@ class CanonicalHouseholdEnergySimulator:
                     curtailed_pv_wh=curtailed_pv_wh,
                     grid_to_household_wh=grid_to_household_wh,
                     grid_to_storage_input_wh=grid_to_storage_wh,
-                    storage_to_household_output_wh=0.0,
+                    storage_to_household_output_wh=storage_to_household_wh,
                     storage_to_grid_output_wh=0.0,
                     storage_charge_loss_wh=storage_charge_loss_wh,
-                    storage_discharge_loss_wh=0.0,
+                    storage_discharge_loss_wh=storage_discharge_loss_wh,
                     unserved_household_energy_wh=unserved_household_wh,
-                    storage_energy_at_start_wh=stored_energy_wh,
+                    storage_energy_at_start_wh=storage_energy_at_start_wh,
                     storage_energy_at_end_wh=storage_energy_at_end_wh,
                     charge_source_policy=policy,
-                    discharge_destination_policy=None,
+                    discharge_destination_policy=(
+                        DischargeDestinationPolicy.HOUSEHOLD_ONLY
+                        if storage_to_household_wh > 0.0
+                        else None
+                    ),
                     confidence=confidence,
                     confidence_method_version=CONFIDENCE_METHOD_VERSION,
                     capability_ids=(storage_state.capability_id,),
@@ -188,6 +243,7 @@ class CanonicalHouseholdEnergySimulator:
         storage_state: CurrentStorageState,
         energy_contract: EnergyContractSnapshot,
         requirement_target_energy_wh: float | None,
+        delegated_energy_intents: tuple[DelegatedEnergyIntent, ...],
     ) -> None:
         if not run_id.strip() or not candidate_id.strip():
             raise ValueError("Run and Candidate IDs must not be empty.")
@@ -224,6 +280,16 @@ class CanonicalHouseholdEnergySimulator:
             0.0 <= requirement_target_energy_wh <= storage_state.usable_capacity_wh
         ):
             raise ValueError("Requirement target energy must remain within storage capacity.")
+        intent_segment_ids = tuple(item.segment_id for item in delegated_energy_intents)
+        if len(intent_segment_ids) != len(set(intent_segment_ids)):
+            raise ValueError("Delegated energy intents must reference unique Segments.")
+        segments = {segment.segment_id: segment for segment in path.segments}
+        if any(
+            item.segment_id not in segments
+            or item.primitive is not segments[item.segment_id].primitive
+            for item in delegated_energy_intents
+        ):
+            raise ValueError("Delegated energy intents must match Energy Path Segments.")
 
     @staticmethod
     def _active_storage_segment(
@@ -244,6 +310,7 @@ class CanonicalHouseholdEnergySimulator:
     def _requested_charge_input_wh(
         *,
         segment: PathSegment | None,
+        delegated_intent: DelegatedEnergyIntent | None,
         interval_starts_at: datetime,
         interval_ends_at: datetime,
         stored_energy_wh: float,
@@ -252,10 +319,19 @@ class CanonicalHouseholdEnergySimulator:
     ) -> float:
         if segment is None:
             return 0.0
+        effective_capacity_wh = (
+            delegated_intent.maximum_storage_energy_wh
+            if delegated_intent is not None
+            else capacity_wh
+        )
+        room_input_wh = (
+            max(0.0, effective_capacity_wh - stored_energy_wh) / charge_efficiency
+        )
+        if delegated_intent is not None:
+            return room_input_wh
         assert segment.requested_power_w is not None
         duration_h = (interval_ends_at - interval_starts_at).total_seconds() / 3600.0
         requested_wh = segment.requested_power_w * duration_h
-        room_input_wh = max(0.0, capacity_wh - stored_energy_wh) / charge_efficiency
         return min(requested_wh, room_input_wh)
 
     @staticmethod
@@ -263,6 +339,7 @@ class CanonicalHouseholdEnergySimulator:
         *,
         path: EnergyPath,
         segment: PathSegment | None,
+        delegated_intent: DelegatedEnergyIntent | None,
         pv_evidence_ids: tuple[str, ...],
         load_forecast_id: str,
         storage_state: CurrentStorageState,
@@ -282,6 +359,16 @@ class CanonicalHouseholdEnergySimulator:
                     contract.contract_snapshot_id,
                     *tariff.evidence_ids,
                     *(segment.evidence_ids if segment is not None else ()),
+                    *(
+                        delegated_intent.evidence_ids
+                        if delegated_intent is not None
+                        else ()
+                    ),
+                    *(
+                        (delegated_intent.method_version,)
+                        if delegated_intent is not None
+                        else ()
+                    ),
                 )
             )
         )

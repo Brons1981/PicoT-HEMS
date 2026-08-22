@@ -6,6 +6,10 @@ import pytest
 from picot.domain.candidate import CandidateFamily
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.current_storage_state import CurrentStorageState
+from picot.domain.delegated_energy_intent import (
+    DelegatedEnergyIntent,
+    DelegatedEnergyIntentKind,
+)
 from picot.domain.energy_contract import EnergyContractSnapshot, EnergyTariffInterval
 from picot.domain.energy_path import EnergyPath, PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
@@ -238,6 +242,82 @@ def test_pv_only_charging_applies_loss_once_and_never_imports_for_storage() -> N
     assert interval.storage_charge_loss_wh == pytest.approx(50.0)
     assert interval.storage_energy_at_end_wh == pytest.approx(4450.0)
     assert interval.pv_to_grid_wh == pytest.approx(300.0)
+
+
+def test_delegated_charge_only_acquires_available_pv_without_invented_power() -> None:
+    path = _path(policy=ChargeSourcePolicy.PV_ONLY)
+    segment = replace(
+        path.segments[0],
+        primitive=ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+        requested_power_w=None,
+    )
+    path = replace(path, segments=(segment,))
+    intent = DelegatedEnergyIntent(
+        segment_id=segment.segment_id,
+        primitive=segment.primitive,
+        kind=DelegatedEnergyIntentKind.PV_SURPLUS_ACQUISITION,
+        minimum_storage_energy_wh=None,
+        maximum_storage_energy_wh=8000.0,
+        evidence_ids=("capability:balance-charge-only",),
+        method_version="delegated-intent:test",
+    )
+
+    ledger = CanonicalHouseholdEnergySimulator().simulate(
+        run_id="run-1",
+        candidate_id="candidate-1",
+        path=path,
+        snapshot=_snapshot(pv_wh=1000.0, load_wh=200.0),
+        storage_state=_storage(),
+        conversion_model=StorageConversionModel(
+            "conversion-1", 0.90, 0.90, ("efficiency:1",), "test:v1"
+        ),
+        energy_contract=_contract(),
+        delegated_energy_intents=(intent,),
+    )
+    interval = ledger.intervals[0]
+
+    assert interval.pv_to_storage_input_wh == pytest.approx(800.0)
+    assert interval.grid_to_storage_input_wh == pytest.approx(0.0)
+    assert interval.storage_charge_loss_wh == pytest.approx(80.0)
+    assert interval.storage_energy_at_end_wh == pytest.approx(4720.0)
+
+
+def test_delegated_bidirectional_support_stops_at_explicit_minimum_energy() -> None:
+    path = _path(policy=ChargeSourcePolicy.PV_ONLY)
+    segment = replace(
+        path.segments[0],
+        primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+        requested_power_w=None,
+    )
+    path = replace(path, segments=(segment,))
+    intent = DelegatedEnergyIntent(
+        segment_id=segment.segment_id,
+        primitive=segment.primitive,
+        kind=DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT,
+        minimum_storage_energy_wh=3800.0,
+        maximum_storage_energy_wh=8000.0,
+        evidence_ids=("capability:balance-bidirectional",),
+        method_version="delegated-intent:test",
+    )
+
+    ledger = CanonicalHouseholdEnergySimulator().simulate(
+        run_id="run-1",
+        candidate_id="candidate-1",
+        path=path,
+        snapshot=_snapshot(pv_wh=100.0, load_wh=300.0),
+        storage_state=_storage(),
+        conversion_model=StorageConversionModel(
+            "conversion-1", 0.90, 0.90, ("efficiency:1",), "test:v1"
+        ),
+        energy_contract=_contract(),
+        delegated_energy_intents=(intent,),
+    )
+    interval = ledger.intervals[0]
+
+    assert interval.storage_to_household_output_wh == pytest.approx(180.0)
+    assert interval.storage_discharge_loss_wh == pytest.approx(20.0)
+    assert interval.grid_to_household_wh == pytest.approx(20.0)
+    assert interval.storage_energy_at_end_wh == pytest.approx(3800.0)
 
 
 def test_requirement_grid_charging_uses_pv_surplus_before_grid_energy() -> None:

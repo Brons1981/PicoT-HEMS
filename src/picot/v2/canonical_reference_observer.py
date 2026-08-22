@@ -39,6 +39,9 @@ from picot.domain.pv_energy_timeline import (
 from picot.domain.pv_energy_timeline import (
     PVEnergyTimelineInterval as DomainPVInterval,
 )
+from picot.planner.canonical_financial_settlement import (
+    CanonicalFinancialSettlementProducer,
+)
 from picot.planner.canonical_household_energy_simulator import (
     CanonicalHouseholdEnergySimulator,
 )
@@ -53,7 +56,7 @@ from picot.v2.contracts import (
     ReferenceSimulationSet,
 )
 
-METHOD_VERSION = "v2-canonical-reference-observer:v4"
+METHOD_VERSION = "v2-canonical-reference-observer:v5"
 ADAPTER_METHOD_VERSION = "v2-to-domain-reference-adapter:v4"
 DELEGATED_INTENT_METHOD_VERSION = "v2-delegated-energy-intent:v2"
 
@@ -63,6 +66,7 @@ class CanonicalReferenceObserver:
 
     def __init__(self) -> None:
         self._simulator = CanonicalHouseholdEnergySimulator()
+        self._settlement_producer = CanonicalFinancialSettlementProducer()
 
     def observe(
         self,
@@ -179,6 +183,10 @@ class CanonicalReferenceObserver:
                 requirement_target_energy_wh=requirement_target,
                 delegated_energy_intents=delegated_energy_intents,
             )
+            financial_settlement = self._settlement_producer.settle(
+                ledger=ledger,
+                contract=snapshot.energy_contract_snapshot,
+            )
         except ValueError as exc:
             return self._blocked(
                 candidate.candidate_id,
@@ -208,6 +216,7 @@ class CanonicalReferenceObserver:
             status="ready",
             blockers=(),
             ledger=ledger,
+            financial_settlement=financial_settlement,
             reference_pv_storage_wh=reference_pv,
             reference_grid_storage_wh=reference_grid,
             reference_grid_import_wh=sum(item.grid_import_wh for item in ledger.intervals),

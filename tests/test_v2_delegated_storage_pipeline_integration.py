@@ -18,6 +18,7 @@ from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.delegated_storage_evaluation_engine import (
     DelegatedStorageEvaluationEngine,
 )
+from picot.v2.canonical_reference_observer import CanonicalReferenceObserver
 from picot.v2.contracts import (
     CurrentStorageState,
     HouseholdLoadForecast,
@@ -246,6 +247,82 @@ def test_reference_observer_simulates_supported_baseline_without_affecting_winne
     assert delegated.status == "blocked"
     assert delegated.blockers == ("unsupported_primitive:balance_charge_only",)
     assert run.evaluation.winning_candidate_id == run.candidate_set.candidates[1].candidate_id
+
+
+def test_reference_observer_normalises_coarse_energy_to_tariff_intervals() -> None:
+    source = _snapshot()
+    assert source.horizon_end is not None
+    assert source.pv_energy_timeline is not None
+    tariffs = tuple(
+        EnergyTariffInterval.basic(
+            starts_at=starts_at,
+            ends_at=ends_at,
+            import_eur_per_kwh=0.25,
+            export_eur_per_kwh=0.10,
+            evidence_ids=(f"tariff:{item.interval_id}:{index}",),
+        )
+        for item in source.pv_energy_timeline.intervals
+        for index, (starts_at, ends_at) in enumerate(
+            (
+                (item.starts_at, item.starts_at + (item.ends_at - item.starts_at) / 2),
+                (item.starts_at + (item.ends_at - item.starts_at) / 2, item.ends_at),
+            )
+        )
+    )
+    snapshot = replace(
+        source,
+        energy_contract_snapshot=EnergyContractSnapshot(
+            contract_snapshot_id="contract-snapshot-split",
+            captured_at=BASE,
+            valid_from=BASE,
+            valid_until=source.horizon_end,
+            settlement_timezone="Europe/Amsterdam",
+            settlement_rule_id="split-reference:test",
+            contract_version="contract:v1",
+            permits_grid_import=True,
+            permits_grid_export=True,
+            permits_battery_export=False,
+            intervals=tariffs,
+        ),
+        storage_conversion_model=StorageConversionModel(
+            model_id="conversion-model-1",
+            charge_efficiency=0.90,
+            discharge_efficiency=0.90,
+            evidence_ids=("storage-efficiency:1",),
+            method_version="fixed-directional-efficiency:v1",
+        ),
+    )
+
+    run = CanonicalPipeline().run(planning_input=snapshot)
+    baseline = run.reference_simulations.observations[0]
+
+    assert baseline.status == "ready"
+    assert baseline.ledger is not None
+    assert len(baseline.ledger.intervals) == len(tariffs)
+    assert baseline.reference_grid_import_wh == pytest.approx(200.0)
+    assert baseline.reference_grid_export_wh == pytest.approx(600.0)
+    assert sum(item.usable_pv_wh for item in baseline.ledger.intervals) == pytest.approx(
+        800.0
+    )
+    assert sum(
+        item.household_demand_wh for item in baseline.ledger.intervals
+    ) == pytest.approx(400.0)
+
+
+def test_reference_interval_normalisation_fails_closed_on_evidence_gap() -> None:
+    with pytest.raises(ValueError, match="must fully cover"):
+        CanonicalReferenceObserver._allocate_energy(
+            starts_at=BASE,
+            ends_at=BASE + timedelta(minutes=30),
+            sources=(
+                (
+                    BASE,
+                    BASE + timedelta(minutes=15),
+                    100.0,
+                    0.8,
+                ),
+            ),
+        )
 
 
 def test_reference_observer_failure_cannot_stop_or_change_pipeline(

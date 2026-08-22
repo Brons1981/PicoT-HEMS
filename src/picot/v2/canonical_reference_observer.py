@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from picot.domain.candidate import CandidateFamily
 from picot.domain.current_storage_state import CurrentStorageState as DomainStorageState
+from picot.domain.energy_contract import EnergyTariffInterval
 from picot.domain.energy_path import EnergyPath as DomainEnergyPath
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.forecast import ForecastSet
@@ -45,8 +48,8 @@ from picot.v2.contracts import (
     ReferenceSimulationSet,
 )
 
-METHOD_VERSION = "v2-canonical-reference-observer:v1"
-ADAPTER_METHOD_VERSION = "v2-to-domain-reference-adapter:v1"
+METHOD_VERSION = "v2-canonical-reference-observer:v2"
+ADAPTER_METHOD_VERSION = "v2-to-domain-reference-adapter:v2"
 
 
 class CanonicalReferenceObserver:
@@ -222,6 +225,23 @@ class CanonicalReferenceObserver:
         assert snapshot.horizon_end is not None
         assert snapshot.pv_energy_timeline is not None
         assert snapshot.household_load_forecast is not None
+        assert snapshot.energy_contract_snapshot is not None
+        target_intervals = snapshot.energy_contract_snapshot.intervals
+        if (
+            target_intervals[0].starts_at != snapshot.captured_at
+            or target_intervals[-1].ends_at != snapshot.horizon_end
+            or any(
+                left.ends_at != right.starts_at
+                for left, right in zip(
+                    target_intervals,
+                    target_intervals[1:],
+                    strict=False,
+                )
+            )
+        ):
+            raise ValueError(
+                "Reference tariffs must be contiguous across the planning horizon."
+            )
         storage = snapshot.current_storage_states[0]
         domain_storage = DomainStorageState(
             storage_state_id=storage.storage_state_id,
@@ -238,21 +258,9 @@ class CanonicalReferenceObserver:
             created_at=snapshot.captured_at,
             horizon_start=snapshot.captured_at,
             horizon_end=snapshot.horizon_end,
-            intervals=tuple(
-                DomainPVInterval(
-                    starts_at=item.starts_at,
-                    ends_at=item.ends_at,
-                    energy_wh=item.pv_energy_wh,
-                    evidence_type=PVEnergyEvidenceType(item.evidence_type.lower()),
-                    confidence=item.confidence,
-                    evidence_ids=tuple(
-                        dict.fromkeys(
-                            (*item.actual_evidence_ids, *item.forecast_evidence_ids)
-                        )
-                    ),
-                    method_version=item.conversion_method_version,
-                )
-                for item in snapshot.pv_energy_timeline.intervals
+            intervals=CanonicalReferenceObserver._normalise_pv_intervals(
+                snapshot,
+                target_intervals,
             ),
         )
         domain_load = DomainLoadForecast(
@@ -260,14 +268,9 @@ class CanonicalReferenceObserver:
             created_at=snapshot.captured_at,
             horizon_start=snapshot.captured_at,
             horizon_end=snapshot.horizon_end,
-            intervals=tuple(
-                DomainLoadInterval(
-                    starts_at=item.starts_at,
-                    ends_at=item.ends_at,
-                    expected_energy_wh=item.expected_energy_wh,
-                    confidence=item.confidence,
-                )
-                for item in snapshot.household_load_forecast.intervals
+            intervals=CanonicalReferenceObserver._normalise_load_intervals(
+                snapshot,
+                target_intervals,
             ),
             historical_source_reference=snapshot.household_load_forecast.forecast_id,
             method_version=ADAPTER_METHOD_VERSION,
@@ -336,3 +339,131 @@ class CanonicalReferenceObserver:
             ),
         )
         return domain_snapshot, domain_path, domain_storage
+
+    @staticmethod
+    def _normalise_pv_intervals(
+        snapshot: PlanningInputSnapshot,
+        target_intervals: tuple[EnergyTariffInterval, ...],
+    ) -> tuple[DomainPVInterval, ...]:
+        assert snapshot.pv_energy_timeline is not None
+        result: list[DomainPVInterval] = []
+        for target in target_intervals:
+            starts_at = target.starts_at
+            ends_at = target.ends_at
+            sources = tuple(
+                item
+                for item in snapshot.pv_energy_timeline.intervals
+                if item.starts_at < ends_at and item.ends_at > starts_at
+            )
+            energy_wh, confidence = CanonicalReferenceObserver._allocate_energy(
+                starts_at=starts_at,
+                ends_at=ends_at,
+                sources=tuple(
+                    (
+                        item.starts_at,
+                        item.ends_at,
+                        item.pv_energy_wh,
+                        item.confidence,
+                    )
+                    for item in sources
+                ),
+            )
+            evidence_types = {
+                PVEnergyEvidenceType(item.evidence_type.lower()) for item in sources
+            }
+            evidence_type = (
+                next(iter(evidence_types))
+                if len(evidence_types) == 1
+                else PVEnergyEvidenceType.MIXED
+            )
+            result.append(
+                DomainPVInterval(
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    energy_wh=energy_wh,
+                    evidence_type=evidence_type,
+                    confidence=confidence,
+                    evidence_ids=tuple(
+                        dict.fromkeys(
+                            evidence_id
+                            for item in sources
+                            for evidence_id in (
+                                *item.actual_evidence_ids,
+                                *item.forecast_evidence_ids,
+                            )
+                        )
+                    ),
+                    method_version=ADAPTER_METHOD_VERSION,
+                )
+            )
+        return tuple(result)
+
+    @staticmethod
+    def _normalise_load_intervals(
+        snapshot: PlanningInputSnapshot,
+        target_intervals: tuple[EnergyTariffInterval, ...],
+    ) -> tuple[DomainLoadInterval, ...]:
+        assert snapshot.household_load_forecast is not None
+        result: list[DomainLoadInterval] = []
+        for target in target_intervals:
+            starts_at = target.starts_at
+            ends_at = target.ends_at
+            sources = tuple(
+                item
+                for item in snapshot.household_load_forecast.intervals
+                if item.starts_at < ends_at and item.ends_at > starts_at
+            )
+            energy_wh, confidence = CanonicalReferenceObserver._allocate_energy(
+                starts_at=starts_at,
+                ends_at=ends_at,
+                sources=tuple(
+                    (
+                        item.starts_at,
+                        item.ends_at,
+                        item.expected_energy_wh,
+                        item.confidence,
+                    )
+                    for item in sources
+                ),
+            )
+            result.append(
+                DomainLoadInterval(
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    expected_energy_wh=energy_wh,
+                    confidence=confidence,
+                )
+            )
+        return tuple(result)
+
+    @staticmethod
+    def _allocate_energy(
+        *,
+        starts_at: datetime,
+        ends_at: datetime,
+        sources: tuple[tuple[datetime, datetime, float, float], ...],
+    ) -> tuple[float, float]:
+        target_seconds = (ends_at - starts_at).total_seconds()
+        allocations: list[tuple[tuple[datetime, datetime, float, float], float]] = []
+        for source in sources:
+            source_start, source_end, _, _ = source
+            overlap_seconds = (
+                min(source_end, ends_at)
+                - max(source_start, starts_at)
+            ).total_seconds()
+            allocations.append((source, overlap_seconds))
+        if (
+            not allocations
+            or abs(sum(seconds for _, seconds in allocations) - target_seconds) > 1e-6
+        ):
+            raise ValueError(
+                "Reference PV and load evidence must fully cover every tariff interval."
+            )
+        energy_wh = sum(
+            source[2]
+            * seconds
+            / (source[1] - source[0]).total_seconds()
+            for source, seconds in allocations
+        )
+        confidence = min(source[3] for source, _ in allocations)
+        return energy_wh, confidence

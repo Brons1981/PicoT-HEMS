@@ -1073,6 +1073,13 @@ class ExecutionPrimitiveBoundary:
     planned_vendor_mode: str | None = None
     mapping_method_version: str | None = None
     blockers: tuple[str, ...] = ()
+    charge_source_policy: ChargeSourcePolicy | None = None
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    requested_power_w: float | None = None
+    capability_ids: tuple[str, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
+    delegated_control: bool = False
 
 
 @dataclass(frozen=True, slots=True)

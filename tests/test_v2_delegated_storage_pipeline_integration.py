@@ -47,6 +47,11 @@ from picot.v2.plan_commitment_store import ActivePlanCommitment
 from picot.v2.projection import project
 from picot.v2.pv_forecast_assumptions import derive_pv_forecast_basis_assumptions
 from picot.v2.reference_financial_comparison import ReferenceFinancialComparator
+from picot.v2.storage_mode_provenance import (
+    initial_storage_mode_provenance,
+    observe_storage_mode,
+    record_planner_mode_application,
+)
 from picot.v2.web_ui import _build_plan_explanation
 from picot.v2.zendure_mode_capabilities import (
     derive_zendure_mode_capability_evidence,
@@ -834,9 +839,67 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
     )
     assert feasible_run.execution_record.status == "grid_plan_observer_only"
     assert feasible_run.primitive_boundary.request_id is None
-    assert feasible_run.primitive_boundary.status == "not_emitted"
+    assert feasible_run.primitive_boundary.status == "dry_run_blocked"
+    assert feasible_run.primitive_boundary.blockers == (
+        "manual_override_provenance_unverified",
+        "grid_adapter_translation_embargo",
+    )
     assert feasible_run.adapter_boundary.translation_id is None
     assert feasible_run.vendor_result.command_id is None
+
+    provenance = initial_storage_mode_provenance(
+        observed_vendor_mode="Snel opladen",
+        observed_at=BASE,
+    )
+    provenance = record_planner_mode_application(
+        provenance,
+        vendor_mode="Snel opladen",
+        applied_at=BASE,
+        application_id="application-grid-primitive-monitoring",
+    )
+    provenance = observe_storage_mode(
+        provenance,
+        observed_vendor_mode="Snel opladen",
+        observed_at=BASE,
+    )
+    monitored_run = CanonicalPipeline().run(
+        planning_input=replace(
+            snapshot,
+            storage_mode_capability_evidence=fast_charge_evidence,
+            storage_mode_control_provenance=provenance,
+        )
+    )
+    request = monitored_run.primitive_boundary
+    due_segment = monitored_run.execution_plan_set.plans[0].segments[0]
+    assert request.status == "grid_request_ready"
+    assert request.request_id is not None
+    assert request.planned_primitive is ExecutionPrimitive.BALANCE_CHARGE_ONLY
+    assert request.charge_source_policy is (
+        ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT
+    )
+    assert request.planned_vendor_mode == "Snel opladen"
+    assert request.valid_from == due_segment.starts_at
+    assert request.valid_until == due_segment.ends_at
+    assert request.requested_power_w is None
+    assert request.capability_ids == (due_segment.capability_id,)
+    assert request.evidence_ids == due_segment.evidence_ids
+    assert request.delegated_control is True
+    assert request.blockers == ("grid_adapter_translation_embargo",)
+    assert monitored_run.adapter_boundary.status == "not_invoked"
+    assert monitored_run.vendor_result.status == "not_dispatched"
+    primitive_card = project(monitored_run).cards[6]
+    assert primitive_card.state == "grid_request_ready"
+    assert primitive_card.attributes["charge_source_policy"] == (
+        "grid_allowed_for_requirement"
+    )
+    assert primitive_card.attributes["valid_from"] == due_segment.starts_at.isoformat()
+    assert primitive_card.attributes["valid_until"] == due_segment.ends_at.isoformat()
+    assert primitive_card.attributes["requested_power_w"] is None
+    assert primitive_card.attributes["delegated_control"] is True
+    assert primitive_card.attributes["normal_result"] == (
+        "Het gridlaadverzoek is gereed; Snel opladen en het laadvenster zijn "
+        "vastgelegd, maar de adapter is nog geblokkeerd."
+    )
 
     live_authority_run = CanonicalPipeline().run(
         planning_input=replace(
@@ -854,7 +917,11 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
         "Snel opladen"
     )
     assert live_authority_run.execution_record.status == "grid_plan_ready_embargoed"
-    assert live_authority_run.primitive_boundary.status == "not_emitted"
+    assert live_authority_run.primitive_boundary.status == "dry_run_blocked"
+    assert live_authority_run.primitive_boundary.blockers == (
+        "manual_override_provenance_unverified",
+        "grid_adapter_translation_embargo",
+    )
     assert live_authority_run.adapter_boundary.status == "not_invoked"
     assert live_authority_run.vendor_result.status == "not_dispatched"
 

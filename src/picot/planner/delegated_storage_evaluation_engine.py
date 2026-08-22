@@ -59,11 +59,6 @@ class DelegatedStorageEvaluationEngine:
                     and bool(incumbent_ids)
                     and item.candidate_id not in incumbent_ids
                 ),
-                not (
-                    item.charge_window_starts_at
-                    <= snapshot.captured_at
-                    < item.charge_window_ends_at
-                ),
                 self._average_price(snapshot, item),
                 -item.confidence,
                 (

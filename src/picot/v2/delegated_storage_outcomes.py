@@ -16,7 +16,7 @@ from picot.v2.contracts import (
     StorageEnergyRequirement,
 )
 
-METHOD_VERSION = "delegated-storage-outcome:v4"
+METHOD_VERSION = "delegated-storage-outcome:v3"
 CONFIDENCE_METHOD_VERSION = "delegated-storage-outcome-confidence:v2"
 
 
@@ -48,8 +48,6 @@ def _simulate_path(
     requirement: StorageEnergyRequirement,
     balance: ProjectedHouseholdEnergyBalance,
     minimum_reserve_energy_wh: float | None,
-    source_policy: ChargeSourcePolicy,
-    charge_efficiency: float,
 ) -> DelegatedStorageCandidateOutcome:
     candidate = next(
         item
@@ -59,7 +57,7 @@ def _simulate_path(
     charge_segments = tuple(
         segment
         for segment in path.segments
-        if segment.charge_source_policy is source_policy
+        if segment.charge_source_policy is ChargeSourcePolicy.PV_ONLY
     )
     if not charge_segments:
         if any(
@@ -67,8 +65,7 @@ def _simulate_path(
             for segment in path.segments
         ):
             raise ValueError(
-                "delegated storage outcome requires "
-                f"{source_policy.name} source policy"
+                "PV-only delegated storage outcomes require PV_ONLY source policy"
             )
         raise ValueError("delegated storage outcome requires timed segments")
 
@@ -122,42 +119,12 @@ def _simulate_path(
         )
         for interval in window_intervals
     )
-    projected_increase_wh = max(0.0, window_state.storage_energy_wh - starting_energy_wh)
-    if (
-        source_policy is ChargeSourcePolicy.PV_ONLY
-        and projected_increase_wh > available_surplus_wh + 1e-9
-    ):
+    projected_increase_wh = max(
+        0.0,
+        window_state.storage_energy_wh - starting_energy_wh,
+    )
+    if projected_increase_wh > available_surplus_wh + 1e-9:
         raise ValueError("projected storage contribution exceeds available PV surplus")
-    if source_policy is ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT:
-        storage_without_grid_wh = starting_energy_wh
-        pv_storage_contribution_wh = 0.0
-        for interval in window_intervals:
-            demand_wh = (
-                interval.household_load_forecast_energy_wh
-                + interval.known_future_demand_energy_wh
-                + interval.conversion_losses_wh
-                + interval.other_planned_household_energy_flows_wh
-            )
-            acquired_pv_wh = max(
-                0.0,
-                interval.expected_usable_pv_energy_wh - demand_wh,
-            )
-            storage_without_grid_wh += acquired_pv_wh
-            pv_storage_contribution_wh += acquired_pv_wh
-        grid_storage_contribution_wh = max(
-            0.0,
-            window_state.storage_energy_wh - storage_without_grid_wh,
-        )
-        grid_charge_loss_wh = grid_storage_contribution_wh * (
-            1.0 / charge_efficiency - 1.0
-        )
-    else:
-        pv_storage_contribution_wh = min(
-            projected_increase_wh,
-            available_surplus_wh,
-        )
-        grid_storage_contribution_wh = 0.0
-        grid_charge_loss_wh = 0.0
 
     relevant_intervals = tuple(
         interval
@@ -302,12 +269,14 @@ def _simulate_path(
         storage_energy_at_window_end_wh=window_state.storage_energy_wh,
         storage_energy_at_requirement_wh=requirement_state.storage_energy_wh,
         required_energy_wh=requirement.required_energy_wh,
-        pv_storage_contribution_wh=pv_storage_contribution_wh,
-        grid_storage_contribution_wh=grid_storage_contribution_wh,
+        pv_storage_contribution_wh=min(
+            projected_increase_wh,
+            available_surplus_wh,
+        ),
+        grid_storage_contribution_wh=0.0,
         conversion_losses_wh=sum(
             interval.conversion_losses_wh for interval in relevant_intervals
-        )
-        + grid_charge_loss_wh,
+        ),
         requirement_satisfied=requirement_satisfied,
         recoverability=confidence if requirement_satisfied else 0.0,
         confidence=confidence,
@@ -348,8 +317,6 @@ def simulate_pv_charge_only_outcomes(
             requirement,
             balance,
             minimum_reserve_energy_wh,
-            ChargeSourcePolicy.PV_ONLY,
-            1.0,
         )
         for candidate in candidate_set.candidates
         if candidate.family == "pv_charge_only"
@@ -361,45 +328,6 @@ def simulate_pv_charge_only_outcomes(
         outcome_set_id=_stable_id(
             "candidate-outcome-set",
             f"{candidate_set.candidate_set_id}|{METHOD_VERSION}",
-        ),
-        candidate_ids=tuple(outcome.candidate_id for outcome in outcomes),
-        outcomes=outcomes,
-    )
-
-
-def simulate_grid_requirement_outcomes(
-    candidate_set: CandidateSet,
-    *,
-    charge_efficiency: float,
-    minimum_reserve_energy_wh: float | None = None,
-) -> CandidateOutcomeSet:
-    """Simulate observer-only necessary grid-acquisition outcomes."""
-
-    if not 0.0 < charge_efficiency <= 1.0:
-        raise ValueError("charge efficiency must be between zero and one")
-    requirement, balance = _single_requirement_and_balance(candidate_set)
-    paths = {path.path_id: path for path in candidate_set.energy_paths}
-    outcomes = tuple(
-        _simulate_path(
-            candidate_set,
-            paths[candidate.energy_path_id],
-            candidate.candidate_id,
-            requirement,
-            balance,
-            minimum_reserve_energy_wh,
-            ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT,
-            charge_efficiency,
-        )
-        for candidate in candidate_set.candidates
-        if candidate.family == "grid_requirement"
-    )
-    return CandidateOutcomeSet(
-        run_id=candidate_set.run_id,
-        snapshot_id=candidate_set.snapshot_id,
-        candidate_set_id=candidate_set.candidate_set_id,
-        outcome_set_id=_stable_id(
-            "candidate-outcome-set",
-            f"{candidate_set.candidate_set_id}|{METHOD_VERSION}|grid-requirement",
         ),
         candidate_ids=tuple(outcome.candidate_id for outcome in outcomes),
         outcomes=outcomes,

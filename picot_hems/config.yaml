@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.139"
+version: "2.0.0-dev.140"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -28,11 +28,6 @@ options:
   storage_capability_id: "storage-capability-home-battery"
   storage_usable_capacity_wh: 8160.0
   storage_minimum_soc_percent: 10.0
-  storage_charge_efficiency: 0.90
-  storage_discharge_efficiency: 0.90
-  energy_contract_permits_grid_import: true
-  energy_contract_permits_grid_export: true
-  energy_contract_permits_battery_export: false
   household_load_fallback_power_w: 500.0
   household_load_fallback_confidence: 0.50
   solcast_forecast_entity: "sensor.solcast_pv_forecast_voorspelling_vandaag"
@@ -79,11 +74,6 @@ schema:
   storage_capability_id: str
   storage_usable_capacity_wh: float(0,)
   storage_minimum_soc_percent: float(0,100)
-  storage_charge_efficiency: float(0,1)
-  storage_discharge_efficiency: float(0,1)
-  energy_contract_permits_grid_import: bool
-  energy_contract_permits_grid_export: bool
-  energy_contract_permits_battery_export: bool
   household_load_fallback_power_w: float(0,)
   household_load_fallback_confidence: float(0,1)
   solcast_forecast_entity: str

@@ -19,7 +19,6 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from time import perf_counter
 from typing import Any
-from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
@@ -65,12 +64,10 @@ from picot.v2.plan_commitment_store import (
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import (
-    EnergyContractConfig,
     HomeAssistantStateReader,
     HouseholdLoadObservation,
     PlanningInputBundle,
     SourceBinding,
-    StorageConversionConfig,
     assemble_planning_input,
     load_options,
 )
@@ -1414,34 +1411,11 @@ def _load_live_planning_input(
             "household_load_fallback_confidence must be greater than 0 and at most 1"
         )
 
-    energy_contract_config = EnergyContractConfig(
-        settlement_timezone=str(
-            options.get("pv_local_timezone", "Europe/Amsterdam")
-        ).strip(),
-        permits_grid_import=bool(
-            options.get("energy_contract_permits_grid_import", True)
-        ),
-        permits_grid_export=bool(
-            options.get("energy_contract_permits_grid_export", True)
-        ),
-        permits_battery_export=bool(
-            options.get("energy_contract_permits_battery_export", False)
-        ),
-    )
-    storage_conversion_config = StorageConversionConfig(
-        charge_efficiency=float(options.get("storage_charge_efficiency", 0.90)),
-        discharge_efficiency=float(
-            options.get("storage_discharge_efficiency", 0.90)
-        ),
-    )
-
     if household_load_history is None:
         return assemble_planning_input(
             token,
             household_load_fallback_power_w=fallback_power_w,
             household_load_fallback_confidence=fallback_confidence,
-            energy_contract_config=energy_contract_config,
-            storage_conversion_config=storage_conversion_config,
         )
 
     return assemble_planning_input(
@@ -1449,8 +1423,6 @@ def _load_live_planning_input(
         household_load_fallback_power_w=fallback_power_w,
         household_load_fallback_confidence=fallback_confidence,
         household_load_observations=household_load_history.load(),
-        energy_contract_config=energy_contract_config,
-        storage_conversion_config=storage_conversion_config,
     )
 
 
@@ -1819,17 +1791,15 @@ def _execute_planning_bundle(
 
     sink = HomeAssistantProjectionSink(token)
     publish_started = perf_counter()
-    ha_publish_status = "ready"
-    try:
-        for card in projection.cards:
-            sink.publish(card)
-        publish_ms = round((perf_counter() - publish_started) * 1000.0, 3)
+    for card in projection.cards:
+        sink.publish(card)
+    publish_ms = round((perf_counter() - publish_started) * 1000.0, 3)
 
-        sink.publish(
-            Card(
-                "sensor.picot_v2_diagnostic_performance",
-                "ready",
-                {
+    sink.publish(
+        Card(
+            "sensor.picot_v2_diagnostic_performance",
+            "ready",
+            {
                 "picot_version": run.planning_input.picot_version,
                 "run_id": run.planning_input.run_id,
                 "pipeline_total_ms": pipeline_total_ms,
@@ -1858,24 +1828,9 @@ def _execute_planning_bundle(
                     fact.availability == "available" for fact in bundle.facts
                 ),
                 "observer_only": True,
-                },
-            )
+            },
         )
-    except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        publish_ms = round((perf_counter() - publish_started) * 1000.0, 3)
-        ha_publish_status = "retry_next_poll"
-        print(
-            json.dumps(
-                {
-                    "event": "picot_v2_ha_projection_publish_error",
-                    "run_id": run.planning_input.run_id,
-                    "error": str(exc) or exc.__class__.__name__,
-                    "retry": "next_poll",
-                },
-                separators=(",", ":"),
-            ),
-            flush=True,
-        )
+    )
 
     print(
         json.dumps(
@@ -1896,7 +1851,6 @@ def _execute_planning_bundle(
                 "web_view_build_ms": web_view_build_ms,
                 "web_view_publish_ms": web_view_publish_ms,
                 "ha_publish_ms": publish_ms,
-                "ha_publish_status": ha_publish_status,
                 "cards": len(projection.cards),
             },
             separators=(",", ":"),

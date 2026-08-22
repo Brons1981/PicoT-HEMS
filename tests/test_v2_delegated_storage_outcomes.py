@@ -1,4 +1,3 @@
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 
@@ -193,7 +192,7 @@ def test_outcome_preserves_confidence_recoverability_and_lineage() -> None:
         CAPABILITY_ID,
         "storage-evidence",
     }
-    assert outcome.method_version == "delegated-storage-outcome:v4"
+    assert outcome.method_version == "delegated-storage-outcome:v3"
     assert outcome.confidence_assessment is not None
     assert outcome.confidence_assessment.result == pytest.approx(0.7)
     assert outcome.confidence_assessment.limiting_component == "charge_window"
@@ -248,43 +247,3 @@ def test_pv_only_simulation_rejects_grid_supported_source_policy() -> None:
                 source_policy=ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED,
             )
         )
-
-
-def test_grid_requirement_outcome_separates_pv_grid_and_charge_loss() -> None:
-    module = import_module("picot.v2.delegated_storage_outcomes")
-    source = _candidate_set(required_energy_wh=1600.0)
-    source_path = source.energy_paths[0]
-    grid_path = replace(
-        source_path,
-        family="grid_requirement",
-        segments=(
-            replace(
-                source_path.segments[0],
-                charge_source_policy=ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT,
-            ),
-        ),
-        projected_states=(
-            replace(source_path.projected_states[0], storage_energy_wh=1800.0),
-            replace(source_path.projected_states[1], storage_energy_wh=1600.0),
-        ),
-    )
-    grid_candidate = replace(
-        source.candidates[0],
-        family="grid_requirement",
-        energy_path_id=grid_path.path_id,
-    )
-    candidate_set = replace(
-        source,
-        candidates=(grid_candidate,),
-        energy_paths=(grid_path,),
-    )
-
-    outcome = module.simulate_grid_requirement_outcomes(
-        candidate_set,
-        charge_efficiency=0.80,
-    ).outcomes[0]
-
-    assert outcome.requirement_satisfied is True
-    assert outcome.pv_storage_contribution_wh == pytest.approx(600.0)
-    assert outcome.grid_storage_contribution_wh == pytest.approx(200.0)
-    assert outcome.conversion_losses_wh == pytest.approx(50.0)

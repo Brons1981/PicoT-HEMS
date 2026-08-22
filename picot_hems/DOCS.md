@@ -34,20 +34,3 @@ interval_seconds: 60
 ```
 
 De Home Assistant Supervisor-token wordt tijdens runtime geleverd en wordt niet opgeslagen in de repository of add-onconfiguratie.
-
-## Observer-only energiecontract
-
-V2ADR-054 gebruikt de bestaande dynamische prijsintervallen alleen als volledig
-prijsbewijs voor het canonieke interval beschikbaar is. De volgende opties leggen
-de contractrechten en directionele opslagverliezen expliciet vast:
-
-```yaml
-storage_charge_efficiency: 0.90
-storage_discharge_efficiency: 0.90
-energy_contract_permits_grid_import: true
-energy_contract_permits_grid_export: true
-energy_contract_permits_battery_export: false
-```
-
-Deze waarden voeden uitsluitend de passieve referentiesimulator. Ze wijzigen geen
-kandidaatselectie, commitment, Zendure-modus of live uitvoering.

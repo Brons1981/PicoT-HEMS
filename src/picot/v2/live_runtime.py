@@ -19,6 +19,7 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from time import perf_counter
 from typing import Any
+from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
@@ -1818,15 +1819,17 @@ def _execute_planning_bundle(
 
     sink = HomeAssistantProjectionSink(token)
     publish_started = perf_counter()
-    for card in projection.cards:
-        sink.publish(card)
-    publish_ms = round((perf_counter() - publish_started) * 1000.0, 3)
+    ha_publish_status = "ready"
+    try:
+        for card in projection.cards:
+            sink.publish(card)
+        publish_ms = round((perf_counter() - publish_started) * 1000.0, 3)
 
-    sink.publish(
-        Card(
-            "sensor.picot_v2_diagnostic_performance",
-            "ready",
-            {
+        sink.publish(
+            Card(
+                "sensor.picot_v2_diagnostic_performance",
+                "ready",
+                {
                 "picot_version": run.planning_input.picot_version,
                 "run_id": run.planning_input.run_id,
                 "pipeline_total_ms": pipeline_total_ms,
@@ -1855,9 +1858,24 @@ def _execute_planning_bundle(
                     fact.availability == "available" for fact in bundle.facts
                 ),
                 "observer_only": True,
-            },
+                },
+            )
         )
-    )
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        publish_ms = round((perf_counter() - publish_started) * 1000.0, 3)
+        ha_publish_status = "retry_next_poll"
+        print(
+            json.dumps(
+                {
+                    "event": "picot_v2_ha_projection_publish_error",
+                    "run_id": run.planning_input.run_id,
+                    "error": str(exc) or exc.__class__.__name__,
+                    "retry": "next_poll",
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
 
     print(
         json.dumps(
@@ -1878,6 +1896,7 @@ def _execute_planning_bundle(
                 "web_view_build_ms": web_view_build_ms,
                 "web_view_publish_ms": web_view_publish_ms,
                 "ha_publish_ms": publish_ms,
+                "ha_publish_status": ha_publish_status,
                 "cards": len(projection.cards),
             },
             separators=(",", ":"),

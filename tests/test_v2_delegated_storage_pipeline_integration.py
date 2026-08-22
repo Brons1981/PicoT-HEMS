@@ -24,6 +24,11 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
+from picot.v2.household_planning_regime import (
+    AdaptiveHouseholdObjectivePolicy,
+    UserObjectiveProfile,
+    derive_household_planning_regime,
+)
 from picot.v2.pipeline import (
     CanonicalPipeline,
     _average_price_for_window,
@@ -264,6 +269,7 @@ def test_feasible_challenger_replaces_infeasible_committed_window() -> None:
         ),
         requirement_satisfied=False,
         recoverability=0.0,
+        reserve_satisfied=False,
     )
     result = DelegatedStorageEvaluationEngine().evaluate(
         snapshot=snapshot,
@@ -481,6 +487,114 @@ def test_executable_window_requires_complete_price_coverage() -> None:
         BASE,
         BASE + timedelta(minutes=30),
     ) == float("inf")
+
+
+def test_equal_price_prefers_earlier_window_unless_pv_timing_is_confident() -> None:
+    source = _snapshot()
+    half_hour = timedelta(minutes=30)
+    split_at = BASE + half_hour
+    later_start = WINDOW_END
+    profile = UserObjectiveProfile(
+        profile_id="profile:test",
+        version=1,
+        cost_optimization_weight=80,
+        self_consumption_weight=70,
+        reserve_availability_weight=60,
+        trading_enabled=False,
+        adaptive_priority_enabled=True,
+    )
+
+    def snapshot_with_confidence(confidence: float) -> PlanningInputSnapshot:
+        regime = derive_household_planning_regime(
+            profile=profile,
+            policy=AdaptiveHouseholdObjectivePolicy(
+                recovery_confidence_threshold=0.60,
+            ),
+            forecast_confidence=confidence,
+            cumulative_forecast_energy_wh=1000.0,
+            cumulative_actual_energy_wh=1000.0,
+            underperformance_duration_seconds=0,
+            evidence_ids=("pv-confidence",),
+        )
+        return replace(
+            source,
+            household_planning_regime=regime,
+            price_points=(
+                PriceForecastPoint(
+                    "price-equal-1",
+                    split_at,
+                    later_start,
+                    0.20,
+                    1.0,
+                    "price-evidence",
+                ),
+                PriceForecastPoint(
+                    "price-equal-2",
+                    later_start,
+                    HORIZON_END,
+                    0.20,
+                    1.0,
+                    "price-evidence",
+                ),
+            ),
+            pv_energy_timeline=replace(
+                source.pv_energy_timeline,
+                intervals=(
+                    replace(
+                        source.pv_energy_timeline.intervals[0],
+                        interval_id="pv-earlier",
+                        starts_at=split_at,
+                        ends_at=later_start,
+                        pv_energy_wh=200.0,
+                    ),
+                    replace(
+                        source.pv_energy_timeline.intervals[1],
+                        interval_id="pv-later",
+                        starts_at=later_start,
+                        pv_energy_wh=1000.0,
+                    ),
+                ),
+            ),
+        )
+
+    baseline = CanonicalPipeline().run(planning_input=source)
+    outcome = baseline.outcomes.outcomes[0]
+    earlier = replace(
+        outcome,
+        outcome_id="outcome-earlier",
+        candidate_id="candidate-earlier",
+        charge_window_starts_at=split_at,
+        charge_window_ends_at=later_start,
+    )
+    later = replace(
+        outcome,
+        outcome_id="outcome-later",
+        candidate_id="candidate-later",
+        charge_window_starts_at=later_start,
+        charge_window_ends_at=HORIZON_END,
+    )
+    engine = DelegatedStorageEvaluationEngine()
+    low_snapshot = snapshot_with_confidence(0.36)
+    high_snapshot = snapshot_with_confidence(0.80)
+    low_winner = engine.evaluate(
+        snapshot=low_snapshot,
+        candidate_set=baseline.candidate_set,
+        actionable_outcomes=(later, earlier),
+    ).winning_outcome
+    high_winner = engine.evaluate(
+        snapshot=high_snapshot,
+        candidate_set=baseline.candidate_set,
+        actionable_outcomes=(later, earlier),
+    ).winning_outcome
+
+    assert low_snapshot.household_planning_regime is not None
+    assert low_snapshot.household_planning_regime.pv_timing_confident is False
+    assert low_winner is not None
+    assert low_winner.charge_window_starts_at == split_at
+    assert high_snapshot.household_planning_regime is not None
+    assert high_snapshot.household_planning_regime.pv_timing_confident is True
+    assert high_winner is not None
+    assert high_winner.charge_window_starts_at == later_start
 
 
 def test_lower_forecast_basis_replaces_central_pv_energy_explicitly() -> None:

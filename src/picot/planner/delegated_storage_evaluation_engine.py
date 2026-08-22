@@ -66,7 +66,12 @@ class DelegatedStorageEvaluationEngine:
                 ),
                 self._average_price(snapshot, item),
                 -item.confidence,
-                self._distance_from_pv_energy_centre(snapshot, item),
+                (
+                    self._distance_from_pv_energy_centre(snapshot, item)
+                    if snapshot.household_planning_regime is not None
+                    and snapshot.household_planning_regime.pv_timing_confident
+                    else 0.0
+                ),
                 -(
                     item.pv_storage_contribution_wh
                     + item.grid_storage_contribution_wh

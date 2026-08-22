@@ -308,7 +308,38 @@ class CanonicalPipeline:
                 )
                 if not delegated_set.candidates:
                     continue
-                simulated = simulate_pv_charge_only_outcomes(delegated_set)
+                storage = next(
+                    (
+                        item
+                        for item in snapshot.current_storage_states
+                        if item.storage_state_id == requirement.storage_state_id
+                    ),
+                    None,
+                )
+                capability = next(
+                    (
+                        item
+                        for item in (
+                            snapshot.capability_snapshot_set.capabilities
+                            if snapshot.capability_snapshot_set is not None
+                            else ()
+                        )
+                        if storage is not None
+                        and item.capability_id == storage.capability_id
+                    ),
+                    None,
+                )
+                minimum_reserve_energy_wh = (
+                    capability.minimum_soc * storage.usable_capacity_wh
+                    if storage is not None
+                    and capability is not None
+                    and capability.minimum_soc is not None
+                    else None
+                )
+                simulated = simulate_pv_charge_only_outcomes(
+                    delegated_set,
+                    minimum_reserve_energy_wh=minimum_reserve_energy_wh,
+                )
                 delegated_candidates.extend(
                     item
                     for item in delegated_set.candidates

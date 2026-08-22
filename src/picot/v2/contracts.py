@@ -895,6 +895,9 @@ class DelegatedStorageCandidateOutcome:
     storage_energy_at_window_start_wh: float | None = None
     projected_storage_use_before_window_wh: float | None = None
     required_storage_addition_wh: float | None = None
+    charge_target_satisfied: bool | None = None
+    reserve_satisfied: bool | None = None
+    reserve_energy_required_wh: float | None = None
 
     def __post_init__(self) -> None:
         if self.charge_window_starts_at >= self.charge_window_ends_at:
@@ -915,11 +918,35 @@ class DelegatedStorageCandidateOutcome:
         ):
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"Candidate Outcome {label} must be between 0 and 1")
-        if self.requirement_satisfied != (
+        legacy_requirement_satisfied = (
             self.storage_energy_at_requirement_wh + 1e-6
             >= self.required_energy_wh
-        ):
+        )
+        separated_requirement_satisfied = (
+            self.charge_target_satisfied is True
+            and self.reserve_satisfied is True
+        )
+        expected_requirement_satisfied = (
+            separated_requirement_satisfied
+            if self.charge_target_satisfied is not None
+            and self.reserve_satisfied is not None
+            else legacy_requirement_satisfied
+        )
+        if self.requirement_satisfied != expected_requirement_satisfied:
             raise ValueError("requirement satisfaction must match projected storage energy")
+        if self.charge_target_satisfied is not None and (
+            self.charge_target_satisfied
+            != (self.storage_energy_at_window_end_wh + 1e-6 >= self.required_energy_wh)
+        ):
+            raise ValueError("charge target satisfaction must match window-end energy")
+        if self.reserve_satisfied is not None:
+            if self.reserve_energy_required_wh is None:
+                raise ValueError("reserve requirement must be explicit")
+            if self.reserve_satisfied != (
+                self.storage_energy_at_requirement_wh + 1e-6
+                >= self.reserve_energy_required_wh
+            ):
+                raise ValueError("reserve satisfaction must match requirement-time energy")
         for values, label in (
             (self.capability_ids, "capability"),
             (self.evidence_ids, "evidence"),

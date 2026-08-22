@@ -543,7 +543,7 @@ def test_executable_window_requires_complete_price_coverage() -> None:
     ) == float("inf")
 
 
-def test_equal_price_prefers_earlier_window_unless_pv_timing_is_confident() -> None:
+def test_equal_price_low_confidence_prefers_pv_availability_centre() -> None:
     source = _snapshot()
     half_hour = timedelta(minutes=30)
     split_at = BASE + half_hour
@@ -644,7 +644,7 @@ def test_equal_price_prefers_earlier_window_unless_pv_timing_is_confident() -> N
     assert low_snapshot.household_planning_regime is not None
     assert low_snapshot.household_planning_regime.pv_timing_confident is False
     assert low_winner is not None
-    assert low_winner.charge_window_starts_at == split_at
+    assert low_winner.charge_window_starts_at == later_start
     assert high_snapshot.household_planning_regime is not None
     assert high_snapshot.household_planning_regime.pv_timing_confident is True
     assert high_winner is not None

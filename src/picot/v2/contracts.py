@@ -1449,6 +1449,80 @@ class GridRequirementShadowEvaluation:
 
 
 @dataclass(frozen=True, slots=True)
+class GridRequirementShadowExecutionFeasibility:
+    """Passive proof of whether a projected grid winner can become a plan."""
+
+    status: str
+    candidate_set_id: str
+    candidate_id: str | None
+    energy_path_id: str | None
+    planned_primitive: ExecutionPrimitive | None
+    charge_source_policy: ChargeSourcePolicy | None
+    valid_from: datetime | None
+    valid_until: datetime | None
+    bounded_grid_storage_energy_wh: float | None
+    requested_power_w: float | None
+    capability_ids: tuple[str, ...]
+    planned_vendor_mode: str | None
+    vendor_mapping_status: str
+    blockers: tuple[str, ...]
+    observer_only: bool
+    influences_live_execution: bool
+    adapter_translation_attempted: bool
+    dispatch_attempted: bool
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if self.status not in {"feasible", "blocked", "not_applicable"}:
+            raise ValueError("Grid shadow execution feasibility status is invalid")
+        if (
+            not self.observer_only
+            or self.influences_live_execution
+            or self.adapter_translation_attempted
+            or self.dispatch_attempted
+        ):
+            raise ValueError("Grid shadow feasibility must remain passive")
+        if not self.candidate_set_id.strip() or not self.method_version.strip():
+            raise ValueError("Grid shadow feasibility identity must be explicit")
+        if self.requested_power_w is not None:
+            raise ValueError("Grid shadow feasibility may not invent direct power")
+        if self.vendor_mapping_status not in {
+            "not_assessed",
+            "missing",
+            "unavailable",
+            "primitive_only",
+            "validated",
+        }:
+            raise ValueError("Grid shadow vendor mapping status is invalid")
+        candidate_fields = (self.candidate_id, self.energy_path_id)
+        if self.status == "not_applicable":
+            if any(item is not None for item in candidate_fields) or self.blockers:
+                raise ValueError("Non-applicable grid shadow feasibility must be empty")
+        elif self.status == "feasible" and any(item is None for item in candidate_fields):
+            raise ValueError("Feasible grid shadow execution requires Candidate lineage")
+        elif (self.candidate_id is None) != (self.energy_path_id is None):
+            raise ValueError("Grid shadow feasibility Candidate lineage must be complete")
+        if self.status == "feasible":
+            if self.blockers or self.vendor_mapping_status != "validated":
+                raise ValueError("Feasible grid shadow execution requires validated mapping")
+        elif self.status == "blocked" and not self.blockers:
+            raise ValueError("Blocked grid shadow execution requires blockers")
+        if self.bounded_grid_storage_energy_wh is not None and (
+            not isfinite(self.bounded_grid_storage_energy_wh)
+            or self.bounded_grid_storage_energy_wh <= 0.0
+        ):
+            raise ValueError("Grid shadow energy must be finite and positive")
+        if (self.valid_from is None) != (self.valid_until is None):
+            raise ValueError("Grid shadow execution window must be complete")
+        if (
+            self.valid_from is not None
+            and self.valid_until is not None
+            and self.valid_from >= self.valid_until
+        ):
+            raise ValueError("Grid shadow execution window must be ordered")
+
+
+@dataclass(frozen=True, slots=True)
 class ReferenceSimulationSet:
     """Passive comparison output that never enters Candidate Evaluation."""
 
@@ -1462,6 +1536,9 @@ class ReferenceSimulationSet:
     grid_requirement_admission: GridRequirementAdmissionSet | None = None
     grid_requirement_decision: GridRequirementObserverDecision | None = None
     grid_requirement_shadow_evaluation: GridRequirementShadowEvaluation | None = None
+    grid_requirement_shadow_execution_feasibility: (
+        GridRequirementShadowExecutionFeasibility | None
+    ) = None
 
     def __post_init__(self) -> None:
         if not self.method_version.strip():

@@ -63,6 +63,9 @@ from picot.v2.grid_requirement_observer_decision import (
 from picot.v2.grid_requirement_shadow_evaluation import (
     GridRequirementShadowEvaluationProducer,
 )
+from picot.v2.grid_requirement_shadow_execution import (
+    GridRequirementShadowExecutionFeasibilityProducer,
+)
 from picot.v2.reference_financial_comparison import ReferenceFinancialComparator
 
 METHOD_VERSION = "v2-canonical-reference-observer:v6"
@@ -140,6 +143,16 @@ class CanonicalReferenceObserver:
             grid_requirement_admission=grid_admission,
             grid_requirement_decision=grid_decision,
             grid_requirement_shadow_evaluation=shadow_evaluation,
+            grid_requirement_shadow_execution_feasibility=(
+                GridRequirementShadowExecutionFeasibilityProducer().assess(
+                    snapshot=snapshot,
+                    candidate_set=candidate_set,
+                    outcomes=outcomes,
+                    shadow=shadow_evaluation,
+                )
+                if shadow_evaluation is not None
+                else None
+            ),
         )
 
     def _observe_candidate(

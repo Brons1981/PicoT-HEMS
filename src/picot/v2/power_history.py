@@ -184,6 +184,34 @@ class PowerHistoryCache:
         starts_at: datetime,
         ends_at: datetime,
     ) -> PowerHistorySnapshot:
+        """Fill the bounded requested window now, retaining chunk retry safety."""
+
+        result = self._update_chunk(
+            reader,
+            specs=specs,
+            starts_at=starts_at,
+            ends_at=ends_at,
+        )
+        while result.status != "unavailable" and result.ends_at < ends_at:
+            previous_end = result.ends_at
+            result = self._update_chunk(
+                reader,
+                specs=specs,
+                starts_at=starts_at,
+                ends_at=ends_at,
+            )
+            if result.ends_at <= previous_end or result.error is not None:
+                break
+        return result
+
+    def _update_chunk(
+        self,
+        reader: HomeAssistantPowerHistoryReader,
+        *,
+        specs: tuple[PowerSeriesSpec, ...],
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> PowerHistorySnapshot:
         previous = self._snapshot
         same_window = previous is not None and previous.starts_at == starts_at
         read_starts_at = (

@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from hashlib import sha256
 from http.server import ThreadingHTTPServer
 from math import isfinite
@@ -2307,8 +2308,9 @@ def main() -> None:
             planning_reset_requested.clear()
             previous_signature = None
         previous_signature = planning_reset_barrier.run_cycle(
-            lambda signature=previous_signature: _poll_live_cycle(
-                previous_signature=signature,
+            partial(
+                _poll_live_cycle,
+                previous_signature=previous_signature,
                 load_bundle=load_bundle,
                 prepare_bundle=prepare_bundle,
                 execute=execute,

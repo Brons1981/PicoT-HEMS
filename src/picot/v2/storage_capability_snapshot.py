@@ -44,6 +44,7 @@ def build_storage_capability_snapshot_set(
     evidence: ZendureModeCapabilityEvidence,
     *,
     snapshot_id: str,
+    minimum_soc: float | None = None,
 ) -> CapabilitySnapshotSet:
     """Project adapter-bound evidence into one immutable logical capability."""
 
@@ -86,6 +87,7 @@ def build_storage_capability_snapshot_set(
         adapter_contract_version=ADAPTER_CONTRACT_VERSION,
         role=CapabilityRole.ENERGY_STORAGE,
         flow_directions=flow_directions,
+        minimum_soc=minimum_soc,
     )
     return CapabilitySnapshotSet(
         snapshot_id=snapshot_id,

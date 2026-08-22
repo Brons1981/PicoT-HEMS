@@ -678,6 +678,7 @@ class CanonicalPipeline:
                 snapshot=snapshot,
                 candidate_set=candidate_set,
                 outcomes=outcomes,
+                evaluation=evaluation,
             )
         except Exception as exc:  # observer failure may never affect live planning
             reference_simulations = ReferenceSimulationSet(

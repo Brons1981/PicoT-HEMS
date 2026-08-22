@@ -1376,6 +1376,79 @@ class GridRequirementObserverDecision:
 
 
 @dataclass(frozen=True, slots=True)
+class GridRequirementShadowCandidateEvaluation:
+    """One Candidate considered by the observer-only shadow Evaluation."""
+
+    candidate_id: str
+    energy_path_id: str
+    candidate_family: str
+    validity: str
+    requirement_satisfied: bool
+    net_financial_result_eur: float
+    relative_to_baseline: str
+    physical_admission: str
+    exclusion_reasons: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.validity not in {"valid", "excluded"}:
+            raise ValueError("Shadow Candidate validity must be valid or excluded")
+        if self.relative_to_baseline not in {"better", "equal", "worse"}:
+            raise ValueError("Shadow Candidate financial relation is invalid")
+        if self.physical_admission not in {"current_winner", "admissible", "blocked"}:
+            raise ValueError("Shadow Candidate physical admission is invalid")
+        if not isfinite(self.net_financial_result_eur):
+            raise ValueError("Shadow Candidate financial result must be finite")
+        if (self.validity == "valid") == bool(self.exclusion_reasons):
+            raise ValueError("Shadow Candidate exclusions must match validity")
+
+
+@dataclass(frozen=True, slots=True)
+class GridRequirementShadowEvaluation:
+    """Passive projection that cannot alter canonical Evaluation or execution."""
+
+    status: str
+    candidate_set_id: str
+    actual_winning_candidate_id: str | None
+    projected_winning_candidate_id: str | None
+    candidates: tuple[GridRequirementShadowCandidateEvaluation, ...]
+    objective_order: tuple[str, ...]
+    decisive_step: str | None
+    differs_from_actual_winner: bool
+    blockers: tuple[str, ...]
+    observer_only: bool
+    influences_live_selection: bool
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if self.status not in {"winner_projected", "tie", "blocked", "not_applicable"}:
+            raise ValueError("Grid shadow Evaluation status is invalid")
+        if not self.observer_only or self.influences_live_selection:
+            raise ValueError("Grid shadow Evaluation may not influence live selection")
+        if not self.candidate_set_id.strip() or not self.method_version.strip():
+            raise ValueError("Grid shadow Evaluation identity must be explicit")
+        ids = tuple(item.candidate_id for item in self.candidates)
+        if len(ids) != len(set(ids)):
+            raise ValueError("Grid shadow Evaluation Candidate IDs must be unique")
+        valid_ids = {item.candidate_id for item in self.candidates if item.validity == "valid"}
+        if self.status == "winner_projected":
+            if self.blockers or self.projected_winning_candidate_id not in valid_ids:
+                raise ValueError("Projected shadow winner must be uniquely valid")
+        elif self.status == "tie":
+            if self.blockers or self.projected_winning_candidate_id is not None:
+                raise ValueError("Shadow ties may not select a hidden winner")
+        elif self.status == "blocked":
+            if not self.blockers or self.projected_winning_candidate_id is not None:
+                raise ValueError("Blocked shadow Evaluation requires blockers only")
+        elif self.candidates or self.blockers or self.projected_winning_candidate_id is not None:
+            raise ValueError("Non-applicable shadow Evaluation must be empty")
+        if self.differs_from_actual_winner != (
+            self.projected_winning_candidate_id is not None
+            and self.projected_winning_candidate_id != self.actual_winning_candidate_id
+        ):
+            raise ValueError("Shadow winner difference must match projected Evaluation")
+
+
+@dataclass(frozen=True, slots=True)
 class ReferenceSimulationSet:
     """Passive comparison output that never enters Candidate Evaluation."""
 
@@ -1388,6 +1461,7 @@ class ReferenceSimulationSet:
     financial_comparison: ReferenceFinancialComparisonSet | None = None
     grid_requirement_admission: GridRequirementAdmissionSet | None = None
     grid_requirement_decision: GridRequirementObserverDecision | None = None
+    grid_requirement_shadow_evaluation: GridRequirementShadowEvaluation | None = None
 
     def __post_init__(self) -> None:
         if not self.method_version.strip():

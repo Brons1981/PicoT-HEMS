@@ -30,6 +30,9 @@ from picot.v2.contracts import (
     PVEnergyTimelineInterval,
 )
 from picot.v2.grid_requirement_admission import GridRequirementAdmissionProducer
+from picot.v2.grid_requirement_shadow_evaluation import (
+    GridRequirementShadowEvaluationProducer,
+)
 from picot.v2.household_planning_regime import (
     AdaptiveHouseholdObjectivePolicy,
     UserObjectiveProfile,
@@ -192,6 +195,11 @@ def test_reference_observer_is_blocked_without_required_contract_evidence() -> N
     )
     assert run.reference_simulations.financial_comparison is not None
     assert run.reference_simulations.financial_comparison.status == "blocked"
+    assert run.reference_simulations.grid_requirement_shadow_evaluation is not None
+    assert (
+        run.reference_simulations.grid_requirement_shadow_evaluation.status
+        == "not_applicable"
+    )
     assert all(
         item.startswith("financial_settlement_unavailable:")
         for item in run.reference_simulations.financial_comparison.blockers
@@ -697,6 +705,96 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
     assert run.evaluation.winning_candidate_id not in {
         item.candidate_id for item in decision.candidates
     }
+    shadow = run.reference_simulations.grid_requirement_shadow_evaluation
+    assert shadow is not None
+    assert shadow.status == "winner_projected"
+    assert shadow.observer_only is True
+    assert shadow.influences_live_selection is False
+    assert shadow.actual_winning_candidate_id == run.evaluation.winning_candidate_id
+    assert shadow.projected_winning_candidate_id in {
+        item.candidate_id for item in grid_candidates
+    }
+    assert shadow.projected_winning_candidate_id != run.evaluation.winning_candidate_id
+    assert run.evaluation.winning_candidate_id not in {
+        item.candidate_id
+        for item in run.reference_simulations.grid_requirement_decision.candidates
+    }
+
+    excluded_decision = replace(
+        decision,
+        candidates=tuple(
+            replace(
+                item,
+                physically_admissible=False,
+                admission_blockers=("test_hard_condition_failed",),
+                eligible_for_future_evaluation=False,
+            )
+            for item in decision.candidates
+        ),
+        preferred_for_future_evaluation_candidate_id=None,
+    )
+    excluded_shadow = GridRequirementShadowEvaluationProducer().evaluate(
+        candidate_set=run.candidate_set,
+        outcomes=run.outcomes,
+        financial=comparison,
+        decision=excluded_decision,
+        actual_evaluation=run.evaluation,
+    )
+    assert excluded_shadow.projected_winning_candidate_id == run.evaluation.winning_candidate_id
+    assert all(
+        item.validity == "excluded"
+        for item in excluded_shadow.candidates
+        if item.candidate_family == "grid_requirement"
+    )
+
+    actual_result = next(
+        item.net_financial_result_eur
+        for item in comparison.comparisons
+        if item.candidate_id == run.evaluation.winning_candidate_id
+    )
+    tied_financial = replace(
+        comparison,
+        comparisons=tuple(
+            replace(
+                item,
+                net_financial_result_eur=actual_result,
+                difference_from_baseline_eur=0.0,
+                relative_to_baseline="equal",
+            )
+            if item.candidate_family == "grid_requirement"
+            else item
+            for item in comparison.comparisons
+        ),
+        best_candidate_ids=tuple(item.candidate_id for item in comparison.comparisons),
+        financially_preferred_candidate_id=None,
+    )
+    grid_ids = {item.candidate_id for item in grid_candidates}
+    unsatisfied_outcomes = replace(
+        run.outcomes,
+        outcomes=tuple(
+            replace(
+                item,
+                storage_energy_at_window_end_wh=item.required_energy_wh - 1.0,
+                storage_energy_at_requirement_wh=item.required_energy_wh - 1.0,
+                requirement_satisfied=False,
+                charge_target_satisfied=False,
+                reserve_satisfied=True,
+            )
+            if item.candidate_id in grid_ids
+            else item
+            for item in run.outcomes.outcomes
+        ),
+    )
+    tied_shadow = GridRequirementShadowEvaluationProducer().evaluate(
+        candidate_set=run.candidate_set,
+        outcomes=unsatisfied_outcomes,
+        financial=tied_financial,
+        decision=decision,
+        actual_evaluation=run.evaluation,
+    )
+    assert tied_shadow.status == "tie"
+    assert tied_shadow.projected_winning_candidate_id is None
+    assert tied_shadow.differs_from_actual_winner is False
 
     without_connection_limit = replace(
         snapshot,

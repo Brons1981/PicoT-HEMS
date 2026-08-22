@@ -51,6 +51,7 @@ from picot.v2.contracts import (
     CandidateSet,
     DelegatedStorageCandidateOutcome,
     EnergyPath,
+    EvaluationRecord,
     PlanningInputSnapshot,
     ReferenceCandidateSimulation,
     ReferenceSimulationSet,
@@ -58,6 +59,9 @@ from picot.v2.contracts import (
 from picot.v2.grid_requirement_admission import GridRequirementAdmissionProducer
 from picot.v2.grid_requirement_observer_decision import (
     GridRequirementObserverDecisionProducer,
+)
+from picot.v2.grid_requirement_shadow_evaluation import (
+    GridRequirementShadowEvaluationProducer,
 )
 from picot.v2.reference_financial_comparison import ReferenceFinancialComparator
 
@@ -79,6 +83,7 @@ class CanonicalReferenceObserver:
         snapshot: PlanningInputSnapshot,
         candidate_set: CandidateSet,
         outcomes: CandidateOutcomeSet,
+        evaluation: EvaluationRecord | None = None,
     ) -> ReferenceSimulationSet:
         observations = tuple(
             self._observe_candidate(
@@ -110,6 +115,21 @@ class CanonicalReferenceObserver:
             outcomes=outcomes,
             observations=observations,
         )
+        grid_decision = GridRequirementObserverDecisionProducer().decide(
+            admission=grid_admission,
+            financial=financial_comparison,
+        )
+        shadow_evaluation = (
+            GridRequirementShadowEvaluationProducer().evaluate(
+                candidate_set=candidate_set,
+                outcomes=outcomes,
+                financial=financial_comparison,
+                decision=grid_decision,
+                actual_evaluation=evaluation,
+            )
+            if evaluation is not None
+            else None
+        )
         return ReferenceSimulationSet(
             run_id=snapshot.run_id,
             snapshot_id=snapshot.snapshot_id,
@@ -118,10 +138,8 @@ class CanonicalReferenceObserver:
             method_version=METHOD_VERSION,
             financial_comparison=financial_comparison,
             grid_requirement_admission=grid_admission,
-            grid_requirement_decision=GridRequirementObserverDecisionProducer().decide(
-                admission=grid_admission,
-                financial=financial_comparison,
-            ),
+            grid_requirement_decision=grid_decision,
+            grid_requirement_shadow_evaluation=shadow_evaluation,
         )
 
     def _observe_candidate(

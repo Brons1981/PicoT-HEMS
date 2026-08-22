@@ -10,17 +10,12 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from time import perf_counter
 
-from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.planner.delegated_storage_evaluation_engine import (
     DelegatedStorageEvaluationEngine,
 )
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
-from picot.v2.canonical_reference_observer import (
-    METHOD_VERSION as REFERENCE_OBSERVER_METHOD_VERSION,
-)
-from picot.v2.canonical_reference_observer import CanonicalReferenceObserver
 from picot.v2.contracts import (
     Candidate,
     CandidateOutcomeSet,
@@ -38,16 +33,13 @@ from picot.v2.contracts import (
     PlanningInputSnapshot,
     ProjectedHouseholdEnergyBalance,
     PVForecastBasisAssumption,
-    ReferenceSimulationSet,
     VendorBoundaryResult,
 )
 from picot.v2.delegated_storage_candidates import (
     complete_storage_path_with_baseline,
-    construct_grid_requirement_candidates,
     construct_pv_charge_only_candidate,
 )
 from picot.v2.delegated_storage_outcomes import (
-    simulate_grid_requirement_outcomes,
     simulate_pv_charge_only_outcomes,
 )
 from picot.v2.opportunity_engine import OpportunityEngine, PriceOpportunityConfig
@@ -100,73 +92,6 @@ def _vendor_mode_for_primitive(
         else ()
     )
     return matches[0] if len(matches) == 1 else None
-
-
-def _vendor_mode_for_segment(
-    mode_evidence: ZendureModeCapabilityEvidence | None,
-    primitive: ExecutionPrimitive,
-    source_policy: ChargeSourcePolicy | None,
-) -> str | None:
-    """Resolve source-aware plan evidence without emitting an adapter request."""
-
-    if mode_evidence is None:
-        return None
-    if source_policy is not None and source_policy.permits_grid_import:
-        grid_matches = tuple(
-            mapping.vendor_mode
-            for mapping in mode_evidence.mappings
-            if mapping.charge_source_semantics == "pv_and_grid"
-            and mapping.control_semantics == "delegated"
-            and not mapping.requires_proven_power_limits
-        )
-        return grid_matches[0] if len(grid_matches) == 1 else None
-    return _vendor_mode_for_primitive(mode_evidence, primitive)
-
-
-def _promotable_grid_candidate_id(
-    reference: ReferenceSimulationSet,
-) -> str | None:
-    """Return the uniquely proven grid Candidate; never select on partial evidence."""
-
-    admission = reference.grid_requirement_admission
-    decision = reference.grid_requirement_decision
-    shadow = reference.grid_requirement_shadow_evaluation
-    feasibility = reference.grid_requirement_shadow_execution_feasibility
-    financial = reference.financial_comparison
-    if (
-        admission is None
-        or admission.status != "ready"
-        or decision is None
-        or decision.status != "ready"
-        or shadow is None
-        or shadow.status != "winner_projected"
-        or feasibility is None
-        or feasibility.status != "feasible"
-        or financial is None
-        or financial.status != "ready"
-    ):
-        return None
-    candidate_id = feasibility.candidate_id
-    if (
-        candidate_id is None
-        or candidate_id != shadow.projected_winning_candidate_id
-        or not any(
-            item.candidate_id == candidate_id and item.status == "admissible"
-            for item in admission.assessments
-        )
-        or not any(
-            item.candidate_id == candidate_id
-            and item.eligible_for_future_evaluation
-            for item in decision.candidates
-        )
-        or not any(
-            item.candidate_id == candidate_id
-            and item.candidate_family == "grid_requirement"
-            for item in financial.comparisons
-        )
-    ):
-        return None
-    return candidate_id
 
 
 def _balance_for_pv_forecast_basis(
@@ -346,9 +271,7 @@ class CanonicalPipeline:
         )
         delegated_candidates: list[Candidate] = []
         delegated_paths: list[EnergyPath] = []
-        observer_only_paths: list[EnergyPath] = []
         delegated_outcomes: list[DelegatedStorageCandidateOutcome] = []
-        observer_only_outcomes: list[DelegatedStorageCandidateOutcome] = []
         forecast_assumptions = derive_pv_forecast_basis_assumptions(snapshot)
         lower_assumption = next(
             (
@@ -383,6 +306,8 @@ class CanonicalPipeline:
                     preferred_price_windows=(),
                     pv_forecast_basis=forecast_basis,
                 )
+                if not delegated_set.candidates:
+                    continue
                 storage = next(
                     (
                         item
@@ -411,51 +336,31 @@ class CanonicalPipeline:
                     and capability.minimum_soc is not None
                     else None
                 )
-                simulated_outcomes: tuple[DelegatedStorageCandidateOutcome, ...] = ()
-                if delegated_set.candidates:
-                    simulated = simulate_pv_charge_only_outcomes(
-                        delegated_set,
-                        minimum_reserve_energy_wh=minimum_reserve_energy_wh,
-                    )
-                    simulated_outcomes = simulated.outcomes
-                    accepted_candidate_ids = {
-                        outcome.candidate_id for outcome in simulated_outcomes
+                simulated = simulate_pv_charge_only_outcomes(
+                    delegated_set,
+                    minimum_reserve_energy_wh=minimum_reserve_energy_wh,
+                )
+                delegated_candidates.extend(
+                    item
+                    for item in delegated_set.candidates
+                    if item.candidate_id
+                    in {
+                        outcome.candidate_id
+                        for outcome in simulated.outcomes
                     }
-                    accepted_candidates = tuple(
-                        item
-                        for item in delegated_set.candidates
-                        if item.candidate_id in accepted_candidate_ids
-                    )
-                    accepted_path_ids = {
-                        item.energy_path_id for item in accepted_candidates
-                    }
-                    delegated_candidates.extend(accepted_candidates)
-                    delegated_paths.extend(
-                        item
-                        for item in delegated_set.energy_paths
-                        if item.path_id in accepted_path_ids
-                    )
-                    delegated_outcomes.extend(simulated_outcomes)
-                if (
-                    not any(item.requirement_satisfied for item in simulated_outcomes)
-                    and snapshot.storage_conversion_model is not None
-                ):
-                    grid_set = construct_grid_requirement_candidates(
-                        snapshot=snapshot,
-                        balance=candidate_balance,
-                        requirement=requirement,
-                    )
-                    if grid_set.candidates:
-                        grid_simulated = simulate_grid_requirement_outcomes(
-                            grid_set,
-                            charge_efficiency=(
-                                snapshot.storage_conversion_model.charge_efficiency
-                            ),
-                            minimum_reserve_energy_wh=minimum_reserve_energy_wh,
-                        )
-                        delegated_candidates.extend(grid_set.candidates)
-                        observer_only_paths.extend(grid_set.energy_paths)
-                        observer_only_outcomes.extend(grid_simulated.outcomes)
+                )
+                accepted_path_ids = {
+                    item.energy_path_id
+                    for item in delegated_candidates
+                }
+                delegated_paths.extend(
+                    item
+                    for item in delegated_set.energy_paths
+                    if item.path_id in accepted_path_ids
+                )
+                delegated_outcomes.extend(
+                    simulated.outcomes
+                )
 
         path = complete_storage_path_with_baseline(snapshot, path)
         delegated_paths = [
@@ -467,7 +372,7 @@ class CanonicalPipeline:
             snapshot_id=snapshot_id,
             candidate_set_id=_id("candidate-set", opportunities.opportunity_set_id),
             candidates=(candidate, *delegated_candidates),
-            energy_paths=(path, *delegated_paths, *observer_only_paths),
+            energy_paths=(path, *delegated_paths),
             projected_balances=(
                 candidate_derivation.balances
                 if candidate_derivation is not None
@@ -487,8 +392,7 @@ class CanonicalPipeline:
             derivation_status=derivation_status,
             derivation_reason=derivation_reason,
         )
-        reference_outcomes = tuple((*delegated_outcomes, *observer_only_outcomes))
-        has_evaluated_alternatives = bool(reference_outcomes)
+        has_evaluated_alternatives = bool(delegated_outcomes)
         storage_capabilities_by_id = {
             capability.capability_id: capability
             for capability in (
@@ -638,11 +542,11 @@ class CanonicalPipeline:
             candidate_set_id=candidate_set.candidate_set_id,
             outcome_set_id=_id("outcome-set", candidate_set.candidate_set_id),
             candidate_ids=(
-                tuple(item.candidate_id for item in reference_outcomes)
+                tuple(item.candidate_id for item in delegated_outcomes)
                 if has_evaluated_alternatives
                 else (candidate.candidate_id,)
             ),
-            outcomes=reference_outcomes,
+            outcomes=tuple(delegated_outcomes),
         )
         candidate_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
@@ -741,101 +645,10 @@ class CanonicalPipeline:
         )
         evaluation_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
-        try:
-            reference_simulations = CanonicalReferenceObserver().observe(
-                snapshot=snapshot,
-                candidate_set=candidate_set,
-                outcomes=outcomes,
-                evaluation=evaluation,
-            )
-        except Exception as exc:  # observer failure may never affect live planning
-            reference_simulations = ReferenceSimulationSet(
-                run_id=run_id,
-                snapshot_id=snapshot_id,
-                candidate_set_id=candidate_set.candidate_set_id,
-                observations=(),
-                method_version=REFERENCE_OBSERVER_METHOD_VERSION,
-                global_blockers=(f"observer_failure:{type(exc).__name__}",),
-            )
-
-        grid_execution_embargo = False
-        promotion_candidate_id = _promotable_grid_candidate_id(reference_simulations)
-        promoted_outcome = next(
-            (
-                item
-                for item in observer_only_outcomes
-                if item.candidate_id == promotion_candidate_id
-                and item.confidence > 0.0
-            ),
-            None,
-        )
-        if promoted_outcome is not None:
-            promoted_evaluation = delegated_evaluation_engine.evaluate(
-                snapshot=snapshot,
-                candidate_set=candidate_set,
-                actionable_outcomes=(*actionable_outcomes, promoted_outcome),
-            )
-            if promoted_evaluation.winning_outcome is not None:
-                winning_outcome = promoted_evaluation.winning_outcome
-                winning_candidate = next(
-                    item
-                    for item in candidate_set.candidates
-                    if item.candidate_id == winning_outcome.candidate_id
-                )
-                winning_path = next(
-                    item
-                    for item in candidate_set.energy_paths
-                    if item.path_id == winning_candidate.energy_path_id
-                )
-                grid_execution_embargo = winning_candidate.family == "grid_requirement"
-                has_valid_plan = True
-                evaluation = EvaluationRecord(
-                    run_id=run_id,
-                    snapshot_id=snapshot_id,
-                    evaluation_id=_id("evaluation", outcomes.outcome_set_id),
-                    candidate_set_id=candidate_set.candidate_set_id,
-                    winning_candidate_id=winning_candidate.candidate_id,
-                    winning_energy_path_id=winning_path.path_id,
-                    reason=(
-                        "grid_requirement is physically admitted, financially preferred "
-                        "and execution-feasible; execution remains embargoed"
-                        if grid_execution_embargo
-                        else "canonical Evaluation retained the non-grid Candidate"
-                    ),
-                    status="winner_selected",
-                    evaluated_candidate_ids=tuple(
-                        item.candidate_id for item in candidate_set.candidates
-                    ),
-                    decisive_step=(
-                        "promotion:grid_requirement_admissible_and_execution_feasible"
-                        if grid_execution_embargo
-                        else promoted_evaluation.decisive_step
-                    ),
-                )
-                try:
-                    reference_simulations = CanonicalReferenceObserver().observe(
-                        snapshot=snapshot,
-                        candidate_set=candidate_set,
-                        outcomes=outcomes,
-                        evaluation=evaluation,
-                    )
-                except Exception as exc:
-                    reference_simulations = ReferenceSimulationSet(
-                        run_id=run_id,
-                        snapshot_id=snapshot_id,
-                        candidate_set_id=candidate_set.candidate_set_id,
-                        observations=(),
-                        method_version=REFERENCE_OBSERVER_METHOD_VERSION,
-                        global_blockers=(f"observer_failure:{type(exc).__name__}",),
-                    )
-
         stage_started = perf_counter()
         observer_plans: list[ObserverExecutionPlan] = []
         for execution_scope_id in sorted(
-            {
-                segment.execution_scope_id
-                for segment in winning_path.segments
-            }
+            {segment.execution_scope_id for segment in winning_path.segments}
         ):
             path_segments = tuple(
                 segment
@@ -856,10 +669,19 @@ class CanonicalPipeline:
             )
             planned_primitive = applicable_segment.primitive
             mode_evidence = snapshot.storage_mode_capability_evidence
-            plan_vendor_mode = _vendor_mode_for_segment(
-                mode_evidence,
-                planned_primitive,
-                applicable_segment.charge_source_policy,
+            matching_vendor_modes = (
+                tuple(
+                    mapping.vendor_mode
+                    for mapping in mode_evidence.mappings
+                    if planned_primitive in mapping.primitives
+                )
+                if mode_evidence is not None
+                else ()
+            )
+            plan_vendor_mode = (
+                matching_vendor_modes[0]
+                if len(matching_vendor_modes) == 1
+                else None
             )
             lifecycle_base = (
                 "scheduled"
@@ -919,10 +741,9 @@ class CanonicalPipeline:
                             evidence_ids=segment.evidence_ids,
                             requested_power_w=segment.requested_power_w,
                             charge_source_policy=segment.charge_source_policy,
-                            planned_vendor_mode=_vendor_mode_for_segment(
+                            planned_vendor_mode=_vendor_mode_for_primitive(
                                 mode_evidence,
                                 segment.primitive,
-                                segment.charge_source_policy,
                             ),
                         )
                         for index, segment in enumerate(path_segments, start=1)
@@ -947,13 +768,7 @@ class CanonicalPipeline:
             execution_record_id=_id("execution", execution_plan_set.plan_set_id),
             plan_set_id=execution_plan_set.plan_set_id,
             status=(
-                (
-                    "grid_plan_ready_embargoed"
-                    if control_change_allowed
-                    else "grid_plan_observer_only"
-                )
-                if grid_execution_embargo
-                else "fallback_active"
+                "fallback_active"
                 if not has_valid_plan and observer_plans
                 else (
                     "live_plan_ready"
@@ -964,9 +779,7 @@ class CanonicalPipeline:
                 else "no_due_segment"
             ),
             reason=(
-                "grid plan prepared; primitive emission and dispatch remain embargoed"
-                if grid_execution_embargo
-                else "safe baseline mode active without an actionable calculated plan"
+                "safe baseline mode active without an actionable calculated plan"
                 if not has_valid_plan and observer_plans
                 else (
                     "winning path approved for live execution"
@@ -995,25 +808,17 @@ class CanonicalPipeline:
         mapping_status = "not_assessed"
         blockers: list[str] = []
         if due_segment is not None and mode_evidence is not None:
-            if grid_execution_embargo:
-                planned_vendor_mode = due_segment.planned_vendor_mode
-                if planned_vendor_mode == "Snel opladen":
-                    mapping_status = "validated"
-                else:
-                    mapping_status = "unavailable"
-                    blockers.append("grid_source_vendor_mapping_unproven")
+            matching_modes = tuple(
+                mapping.vendor_mode
+                for mapping in mode_evidence.mappings
+                if due_segment.primitive in mapping.primitives
+            )
+            if len(matching_modes) == 1:
+                planned_vendor_mode = matching_modes[0]
+                mapping_status = "validated"
             else:
-                matching_modes = tuple(
-                    mapping.vendor_mode
-                    for mapping in mode_evidence.mappings
-                    if due_segment.primitive in mapping.primitives
-                )
-                if len(matching_modes) == 1:
-                    planned_vendor_mode = matching_modes[0]
-                    mapping_status = "validated"
-                else:
-                    mapping_status = "unavailable"
-                    blockers.append("primitive_vendor_mapping_unavailable")
+                mapping_status = "unavailable"
+                blockers.append("primitive_vendor_mapping_unavailable")
             if (
                 mode_evidence.current_vendor_mode
                 in mode_evidence.excluded_dynamic_vendor_modes
@@ -1029,17 +834,9 @@ class CanonicalPipeline:
                 blockers.append("manual_override_provenance_unverified")
             elif mode_provenance.manual_override_active:
                 blockers.append("manual_override_active")
-            if grid_execution_embargo:
-                blockers.append("grid_adapter_translation_embargo")
-            elif not control_change_allowed:
+            if not control_change_allowed:
                 blockers.append("observer_only_authority")
-        grid_request_ready = (
-            grid_execution_embargo
-            and due_segment is not None
-            and mapping_status == "validated"
-            and blockers == ["grid_adapter_translation_embargo"]
-        )
-        request_ready = grid_request_ready or (
+        request_ready = (
             due_segment is not None
             and mapping_status == "validated"
             and blockers in (["observer_only_authority"], [])
@@ -1061,9 +858,7 @@ class CanonicalPipeline:
             request_id=primitive_request_id,
             execution_record_id=execution_record.execution_record_id,
             status=(
-                "grid_request_ready"
-                if grid_request_ready
-                else (
+                (
                     "request_ready"
                     if control_change_allowed
                     else "observer_request_ready"
@@ -1096,21 +891,6 @@ class CanonicalPipeline:
                 else None
             ),
             blockers=tuple(blockers),
-            charge_source_policy=(
-                due_segment.charge_source_policy if due_segment is not None else None
-            ),
-            valid_from=(due_segment.starts_at if due_segment is not None else None),
-            valid_until=(due_segment.ends_at if due_segment is not None else None),
-            requested_power_w=(
-                due_segment.requested_power_w if due_segment is not None else None
-            ),
-            capability_ids=(
-                (due_segment.capability_id,) if due_segment is not None else ()
-            ),
-            evidence_ids=(due_segment.evidence_ids if due_segment is not None else ()),
-            delegated_control=(
-                grid_execution_embargo and due_segment is not None
-            ),
         )
         execution_primitive_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
@@ -1221,7 +1001,6 @@ class CanonicalPipeline:
             primitive_boundary=primitive_boundary,
             adapter_boundary=adapter_boundary,
             vendor_result=vendor_result,
-            reference_simulations=reference_simulations,
         )
         timings = PipelineStageTimings(
             opportunity_engine_ms=opportunity_engine_ms,

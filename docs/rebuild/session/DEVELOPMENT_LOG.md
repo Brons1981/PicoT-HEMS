@@ -1097,23 +1097,3 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 
 Exact next action: publish dev.138, reset the dev.137 commitment once and
 verify that the fresh plan selects the equal-price window nearest local midday.
-
-## 2026-08-23 — 2.0.0-dev.139
-
-Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
-
-- Packages the merged V2ADR-054 grid-requirement chain through PR #465.
-- Exposes the source-aware `grid_request_ready` primitive status, delegated
-  `Snel opladen` mode and bounded charge window on the Dutch dashboard.
-- Persists the same primitive details and material status transitions in the
-  downloadable planning history.
-- Prevents a temporary Home Assistant API failure, including the observed
-  `HTTP Error 502: Bad Gateway` during an HA restart/update, from terminating
-  PicoT. Projection publishing stops for that cycle, records a structured
-  error and retries on the next planner poll.
-- Preserves the grid execution embargo: adapter translation remains
-  `not_invoked`, Zendure dispatch remains `not_dispatched` and no live grid
-  charging is enabled by this release.
-
-Exact next action: install dev.139 and observe the grid plan, primitive status,
-adapter embargo and persisted planning-history record in Home Assistant.

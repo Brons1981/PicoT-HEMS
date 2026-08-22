@@ -712,26 +712,7 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "planned_vendor_mode": pb.planned_vendor_mode,
                 "mapping_method_version": pb.mapping_method_version,
                 "blockers": list(pb.blockers),
-                "charge_source_policy": (
-                    pb.charge_source_policy.value
-                    if pb.charge_source_policy is not None
-                    else None
-                ),
-                "valid_from": (
-                    pb.valid_from.isoformat() if pb.valid_from is not None else None
-                ),
-                "valid_until": (
-                    pb.valid_until.isoformat() if pb.valid_until is not None else None
-                ),
-                "requested_power_w": pb.requested_power_w,
-                "capability_ids": list(pb.capability_ids),
-                "evidence_ids": list(pb.evidence_ids),
-                "delegated_control": pb.delegated_control,
                 "normal_result": (
-                    "Het gridlaadverzoek is gereed; Snel opladen en het "
-                    "laadvenster zijn vastgelegd, maar de adapter is nog geblokkeerd."
-                    if pb.status == "grid_request_ready"
-                    else (
                     "De uitvoerbare opdracht is voorbereid; PicoT kijkt "
                     "nog mee en stuurt niets naar Zendure."
                     if pb.status == "observer_request_ready"
@@ -750,7 +731,6 @@ def project(run: CanonicalPipelineRun) -> Projection:
                             else None
                         )
                         )
-                    )
                     )
                 ),
                 "mode_provenance_status": (

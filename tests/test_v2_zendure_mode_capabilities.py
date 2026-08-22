@@ -43,7 +43,7 @@ def test_v2adr050_preserves_seven_normal_modes_and_excludes_four_dynamic_modes()
     assert evidence.status == "available"
     assert evidence.usable_vendor_modes == NORMAL_MODES
     assert evidence.excluded_dynamic_vendor_modes == DYNAMIC_MODES
-    assert evidence.method_version == "zendure-mode-capability-evidence:v2"
+    assert evidence.method_version == "zendure-mode-capability-evidence:v1"
 
 
 def test_v2adr050_maps_normal_modes_without_delegating_price_decisions() -> None:
@@ -61,20 +61,12 @@ def test_v2adr050_maps_normal_modes_without_delegating_price_decisions() -> None
         ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
     )
     assert mappings["Alleen slim opladen"].primitives == (ExecutionPrimitive.BALANCE_CHARGE_ONLY,)
-    assert mappings["Alleen slim opladen"].charge_source_semantics == "surplus_only"
-    assert mappings["Alleen slim opladen"].control_semantics == "delegated"
     assert mappings["Handmatig"].primitives == (
         ExecutionPrimitive.CHARGE_AT_POWER,
         ExecutionPrimitive.DISCHARGE_AT_POWER,
     )
     assert mappings["Handmatig"].power_semantics == "explicit_signed_power"
-    assert mappings["Handmatig"].charge_source_semantics == "pv_and_grid"
-    assert mappings["Handmatig"].control_semantics == "explicit_power_required"
-    assert mappings["Handmatig"].requires_proven_power_limits is True
     assert mappings["Snel opladen"].power_semantics == "integration_configured_maximum"
-    assert mappings["Snel opladen"].charge_source_semantics == "pv_and_grid"
-    assert mappings["Snel opladen"].control_semantics == "delegated"
-    assert mappings["Snel opladen"].requires_proven_power_limits is False
     assert mappings["Snel ontladen"].power_semantics == "integration_configured_maximum"
     assert not any(mode in mappings for mode in DYNAMIC_MODES)
 

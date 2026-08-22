@@ -426,6 +426,113 @@ def test_reference_observer_keeps_delegated_grid_closed_without_charge_power() -
     )
 
 
+def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() -> None:
+    source = _snapshot()
+    assert source.horizon_end is not None
+    assert source.pv_energy_timeline is not None
+    assert source.capability_snapshot_set is not None
+    low_pv_intervals = tuple(
+        replace(item, pv_energy_wh=pv_wh)
+        for item, pv_wh in zip(
+            source.pv_energy_timeline.intervals,
+            (200.0, 0.0),
+            strict=True,
+        )
+    )
+    tariffs = tuple(
+        EnergyTariffInterval.basic(
+            starts_at=item.starts_at,
+            ends_at=item.ends_at,
+            import_eur_per_kwh=price,
+            export_eur_per_kwh=0.05,
+            evidence_ids=(f"grid-tariff:{item.interval_id}",),
+        )
+        for item, price in zip(low_pv_intervals, (0.30, 0.10), strict=True)
+    )
+    snapshot = replace(
+        source,
+        pv_energy_timeline=replace(
+            source.pv_energy_timeline,
+            intervals=low_pv_intervals,
+        ),
+        price_points=tuple(
+            PriceForecastPoint(
+                point_id=f"grid-price:{index}",
+                starts_at=tariff.starts_at,
+                ends_at=tariff.ends_at,
+                value_eur_per_kwh=tariff.commodity_import_eur_per_kwh,
+                confidence=1.0,
+                evidence_id=tariff.evidence_ids[0],
+            )
+            for index, tariff in enumerate(tariffs)
+        ),
+        capability_snapshot_set=replace(
+            source.capability_snapshot_set,
+            capabilities=(
+                replace(
+                    source.capability_snapshot_set.capabilities[0],
+                    supported_primitives=(
+                        ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+                        ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+                    ),
+                    flow_directions=(
+                        EnergyFlowDirection.CHARGE,
+                        EnergyFlowDirection.DISCHARGE,
+                    ),
+                    maximum_power_w=400.0,
+                ),
+            ),
+        ),
+        energy_contract_snapshot=EnergyContractSnapshot(
+            contract_snapshot_id="contract-grid-pipeline",
+            captured_at=BASE,
+            valid_from=BASE,
+            valid_until=source.horizon_end,
+            settlement_timezone="Europe/Amsterdam",
+            settlement_rule_id="dynamic:test",
+            contract_version="contract:test",
+            permits_grid_import=True,
+            permits_grid_export=True,
+            permits_battery_export=False,
+            intervals=tariffs,
+        ),
+        storage_conversion_model=StorageConversionModel(
+            model_id="conversion-grid-pipeline",
+            charge_efficiency=0.90,
+            discharge_efficiency=0.90,
+            evidence_ids=("efficiency:grid-pipeline",),
+            method_version="fixed:test",
+        ),
+    )
+
+    run = CanonicalPipeline().run(planning_input=snapshot)
+    grid_candidates = tuple(
+        item for item in run.candidate_set.candidates if item.family == "grid_requirement"
+    )
+    grid_outcomes = tuple(
+        item
+        for item in run.outcomes.outcomes
+        if item.candidate_id in {candidate.candidate_id for candidate in grid_candidates}
+    )
+
+    assert grid_candidates
+    assert grid_outcomes
+    assert all(item.grid_storage_contribution_wh > 0.0 for item in grid_outcomes)
+    assert all(item.requirement_satisfied for item in grid_outcomes)
+    assert run.evaluation.winning_candidate_id not in {
+        item.candidate_id for item in grid_candidates
+    }
+    assert all(
+        next(
+            item
+            for item in run.reference_simulations.observations
+            if item.candidate_id == candidate.candidate_id
+        ).status
+        == "ready"
+        for candidate in grid_candidates
+    )
+
+
 def test_reference_observer_normalises_coarse_energy_to_tariff_intervals() -> None:
     source = _snapshot()
     assert source.horizon_end is not None

@@ -85,6 +85,18 @@ def test_available_mode_evidence_becomes_vendor_independent_capability() -> None
     assert "Nul op de meter" not in repr(capability)
 
 
+def test_explicit_minimum_soc_is_projected_into_storage_capability() -> None:
+    module = import_module("picot.v2.storage_capability_snapshot")
+
+    snapshot_set = module.build_storage_capability_snapshot_set(
+        _evidence(available=True),
+        snapshot_id=SNAPSHOT_ID,
+        minimum_soc=0.10,
+    )
+
+    assert snapshot_set.capabilities[0].minimum_soc == 0.10
+
+
 def test_unavailable_mode_evidence_becomes_explicit_unavailable_capability() -> None:
     snapshot_set = _build(_evidence(available=False))
 

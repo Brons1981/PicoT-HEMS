@@ -116,6 +116,7 @@ def test_storage_state_config_is_loaded_from_explicit_options(
                 "storage_execution_scope_id": "home-battery",
                 "storage_capability_id": "storage-capability-home-battery",
                 "storage_usable_capacity_wh": 8160.0,
+                "storage_minimum_soc_percent": 10.0,
             }
         ),
         encoding="utf-8",
@@ -125,6 +126,7 @@ def test_storage_state_config_is_loaded_from_explicit_options(
         execution_scope_id="home-battery",
         capability_id="storage-capability-home-battery",
         usable_capacity_wh=8160.0,
+        minimum_soc=0.10,
     )
 
 

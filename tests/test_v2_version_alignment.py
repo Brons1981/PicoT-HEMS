@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_134() -> None:
-    assert __version__ == "2.0.0-dev.134"
+def test_v2_release_version_is_dev_135() -> None:
+    assert __version__ == "2.0.0-dev.135"
 
 
 def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:
@@ -64,6 +64,16 @@ def test_v2_addon_exposes_validated_storage_power_sources() -> None:
     assert "  zendure_signed_power_entity: str" in schema_lines
     assert "  zendure_power_to_house_entity: str" in schema_lines
     assert "  zendure_power_from_house_entity: str" in schema_lines
+
+
+def test_v2_addon_exposes_explicit_storage_minimum_soc() -> None:
+    config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
+    lines = config_path.read_text(encoding="utf-8").splitlines()
+    option_lines = lines[lines.index("options:") + 1 : lines.index("schema:")]
+    schema_lines = lines[lines.index("schema:") + 1 :]
+
+    assert "  storage_minimum_soc_percent: 10.0" in option_lines
+    assert "  storage_minimum_soc_percent: float(0,100)" in schema_lines
 
 
 def test_v2_addon_exposes_pipeline_dashboard_via_ingress() -> None:

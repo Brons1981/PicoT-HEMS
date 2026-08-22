@@ -111,6 +111,12 @@ def test_mode_capability_evidence_is_atomic_planning_input(monkeypatch: object) 
         "token",
         bindings=(),
         captured_at=CAPTURED_AT,
+        storage_state_config=planning_input.StorageStateConfig(
+            execution_scope_id="home-battery",
+            capability_id="storage-capability-home-battery",
+            usable_capacity_wh=8160.0,
+            minimum_soc=0.10,
+        ),
         storage_mode_capability_config=config,
     )
 
@@ -121,3 +127,4 @@ def test_mode_capability_evidence_is_atomic_planning_input(monkeypatch: object) 
     assert bundle.snapshot.capability_snapshot_set is not None
     assert bundle.snapshot.capability_snapshot_set.snapshot_id == bundle.snapshot.snapshot_id
     assert bundle.snapshot.capability_snapshot_set.captured_at == bundle.snapshot.captured_at
+    assert bundle.snapshot.capability_snapshot_set.capabilities[0].minimum_soc == 0.10

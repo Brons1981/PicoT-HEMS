@@ -997,3 +997,32 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 
 Exact next action: publish dev.134 and verify that PicoT applies smart discharge
 before 13:00 while retaining the 13:00–15:30 PV-only commitment.
+
+Live verification, 2026-08-22:
+
+- Dev.134 restored smart discharge before the selected future PV window.
+- Candidate inspection showed repeated window drift despite identical storage
+  results. Every Candidate still reported `requirement_satisfied=false` because
+  the deadline reserve remained the full 8.16 kWh rather than 10% / 816 Wh.
+
+## 2026-08-22 — 2.0.0-dev.135
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+- Traced the false reserve result to the exact live ingestion seam: canonical
+  mode capability construction received supported primitives but not the
+  commissioned minimum SoC. Pipeline therefore correctly used its fail-closed
+  full-target fallback.
+- Added the explicit add-on option `storage_minimum_soc_percent`, default 10.0,
+  and validates/converts it from percent to the canonical 0.0–1.0 fraction.
+- Projects that minimum only when storage state and mode capability identifiers
+  match, preserving fail-closed behavior for absent, invalid or mismatched
+  configuration.
+- The 8.16 kWh installation now exposes a canonical 816 Wh minimum reserve.
+  A Candidate reaching 8.16 kWh at charge-window end and 8.10 kWh at deadline
+  can therefore be requirement-satisfying and eligible for commitment
+  stability instead of drifting between equivalent windows.
+- Added ingestion, capability-projection and add-on-contract regressions.
+
+Exact next action: publish dev.135 and confirm the chosen Candidate reports
+`Reserve bij deadline gehaald=true`, `Doel gehaald=true` and remains committed.

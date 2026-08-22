@@ -7,7 +7,7 @@ created once at the ingestion boundary and then carried by one immutable snapsho
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from math import isfinite
@@ -17,10 +17,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from picot.domain.energy_contract import EnergyContractSnapshot, EnergyTariffInterval
+from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.contracts import (
     BMSCalibrationEvidence,
     CurrentStorageState,
+    HouseholdLoadForecastInterval,
     PlanningInputSnapshot,
     PriceForecastPoint,
     PVEnergyTimeline,
@@ -57,6 +60,31 @@ class StorageStateConfig:
     def __post_init__(self) -> None:
         if self.minimum_soc is not None and not 0.0 <= self.minimum_soc <= 1.0:
             raise ValueError("minimum_soc must be between 0.0 and 1.0")
+
+
+@dataclass(frozen=True, slots=True)
+class EnergyContractConfig:
+    settlement_timezone: str
+    permits_grid_import: bool
+    permits_grid_export: bool
+    permits_battery_export: bool
+    contract_version: str = "configured-combined-dynamic-price:v1"
+    settlement_rule_id: str = "weighted-canonical-interval:v1"
+
+
+@dataclass(frozen=True, slots=True)
+class StorageConversionConfig:
+    charge_efficiency: float
+    discharge_efficiency: float
+    method_version: str = "configured-directional-efficiency:v1"
+
+    def __post_init__(self) -> None:
+        for value, label in (
+            (self.charge_efficiency, "charge_efficiency"),
+            (self.discharge_efficiency, "discharge_efficiency"),
+        ):
+            if not isfinite(value) or not 0.0 < value <= 1.0:
+                raise ValueError(f"{label} must be greater than 0 and at most 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -502,6 +530,87 @@ def _price_points_from_attributes(
     return tuple(sorted(result, key=lambda point: (point.starts_at, point.ends_at)))
 
 
+def _energy_contract_from_price_points(
+    *,
+    snapshot_id: str,
+    captured_at: datetime,
+    price_points: tuple[PriceForecastPoint, ...],
+    settlement_intervals: tuple[HouseholdLoadForecastInterval, ...],
+    config: EnergyContractConfig | None,
+) -> EnergyContractSnapshot | None:
+    """Build exact tariffs only when evidence fully covers every interval."""
+    if config is None or not price_points or not settlement_intervals:
+        return None
+    tariffs: list[EnergyTariffInterval] = []
+    for interval in settlement_intervals:
+        overlaps = tuple(
+            point
+            for point in price_points
+            if point.starts_at < interval.ends_at and point.ends_at > interval.starts_at
+        )
+        overlap_seconds = tuple(
+            (
+                min(point.ends_at, interval.ends_at)
+                - max(point.starts_at, interval.starts_at)
+            ).total_seconds()
+            for point in overlaps
+        )
+        interval_seconds = (interval.ends_at - interval.starts_at).total_seconds()
+        if not overlaps or abs(sum(overlap_seconds) - interval_seconds) > 1e-6:
+            return None
+        weighted_price = sum(
+            point.value_eur_per_kwh * seconds
+            for point, seconds in zip(overlaps, overlap_seconds, strict=True)
+        ) / interval_seconds
+        evidence_ids = tuple(dict.fromkeys(point.evidence_id for point in overlaps))
+        tariff = EnergyTariffInterval.basic(
+            starts_at=interval.starts_at,
+            ends_at=interval.ends_at,
+            import_eur_per_kwh=weighted_price,
+            export_eur_per_kwh=weighted_price,
+            evidence_ids=evidence_ids,
+        )
+        tariffs.append(
+            replace(tariff, confidence=min(point.confidence for point in overlaps))
+        )
+    return EnergyContractSnapshot(
+        contract_snapshot_id=_stable_id(
+            "energy-contract",
+            f"{snapshot_id}|{config.contract_version}|{config.settlement_rule_id}",
+        ),
+        captured_at=captured_at,
+        valid_from=settlement_intervals[0].starts_at,
+        valid_until=settlement_intervals[-1].ends_at,
+        settlement_timezone=config.settlement_timezone,
+        settlement_rule_id=config.settlement_rule_id,
+        contract_version=config.contract_version,
+        permits_grid_import=config.permits_grid_import,
+        permits_grid_export=config.permits_grid_export,
+        permits_battery_export=config.permits_battery_export,
+        intervals=tuple(tariffs),
+    )
+
+
+def _storage_conversion_model_from_config(
+    config: StorageConversionConfig | None,
+) -> StorageConversionModel | None:
+    if config is None:
+        return None
+    return StorageConversionModel(
+        model_id=_stable_id(
+            "storage-conversion-model",
+            f"{config.charge_efficiency:.6f}|{config.discharge_efficiency:.6f}|{config.method_version}",
+        ),
+        charge_efficiency=config.charge_efficiency,
+        discharge_efficiency=config.discharge_efficiency,
+        evidence_ids=(
+            f"configuration:storage_charge_efficiency={config.charge_efficiency:.6f}",
+            f"configuration:storage_discharge_efficiency={config.discharge_efficiency:.6f}",
+        ),
+        method_version=config.method_version,
+    )
+
+
 def load_options(options_path: str = "/data/options.json") -> dict[str, Any]:
     path = Path(options_path)
     if not path.exists():
@@ -687,6 +796,8 @@ def assemble_planning_input(
         HouseholdLoadObservation,
         ...,
     ] = (),
+    energy_contract_config: EnergyContractConfig | None = None,
+    storage_conversion_config: StorageConversionConfig | None = None,
 ) -> PlanningInputBundle:
     started = datetime.now(UTC)
     reader = HomeAssistantStateReader(token)
@@ -882,6 +993,21 @@ def assemble_planning_input(
             )
         )
 
+    energy_contract_snapshot = _energy_contract_from_price_points(
+        snapshot_id=snapshot_id,
+        captured_at=capture,
+        price_points=price_points,
+        settlement_intervals=(
+            household_load_forecast.intervals
+            if household_load_forecast is not None
+            else ()
+        ),
+        config=energy_contract_config,
+    )
+    storage_conversion_model = _storage_conversion_model_from_config(
+        storage_conversion_config
+    )
+
     snapshot = PlanningInputSnapshot(
         run_id=run_id,
         snapshot_id=snapshot_id,
@@ -897,6 +1023,8 @@ def assemble_planning_input(
         household_load_forecast=household_load_forecast,
         storage_mode_capability_evidence=storage_mode_capability_evidence,
         bms_calibration_evidence=bms_calibration_evidence,
+        energy_contract_snapshot=energy_contract_snapshot,
+        storage_conversion_model=storage_conversion_model,
         capability_snapshot_set=(
             build_storage_capability_snapshot_set(
                 storage_mode_capability_evidence,

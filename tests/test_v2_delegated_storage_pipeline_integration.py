@@ -29,6 +29,7 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
+from picot.v2.grid_requirement_admission import GridRequirementAdmissionProducer
 from picot.v2.household_planning_regime import (
     AdaptiveHouseholdObjectivePolicy,
     UserObjectiveProfile,
@@ -282,6 +283,10 @@ def test_reference_observer_simulates_baseline_and_delegated_pv_intent() -> None
     assert baseline_comparison.difference_from_baseline_eur == pytest.approx(0.0)
     assert baseline_comparison.relative_to_baseline == "equal"
     assert comparison.financially_preferred_candidate_id == baseline.candidate_id
+    admission = run.reference_simulations.grid_requirement_admission
+    assert admission is not None
+    assert admission.status == "not_applicable"
+    assert admission.assessments == ()
     assert run.evaluation.winning_candidate_id == run.candidate_set.candidates[1].candidate_id
 
 
@@ -587,6 +592,21 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
                     ),
                     maximum_power_w=400.0,
                     minimum_soc=0.10,
+                    maximum_soc=1.0,
+                ),
+                LogicalCapabilitySnapshot(
+                    capability_id="grid-connection-home",
+                    execution_scope_id="household-grid",
+                    supported_primitives=(),
+                    availability=CapabilityAvailability.AVAILABLE,
+                    health=CapabilityHealth.HEALTHY,
+                    fresh_at=BASE,
+                    confidence=1.0,
+                    source_mapping_id="grid-connection-limit:test",
+                    adapter_contract_version="1",
+                    role=CapabilityRole.GRID_INTERFACE,
+                    flow_directions=(EnergyFlowDirection.CONSUME,),
+                    maximum_power_w=5000.0,
                 ),
             ),
         ),
@@ -646,6 +666,46 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
         for item in comparison.comparisons
         if item.candidate_family == "grid_requirement"
     } == {item.candidate_id for item in grid_candidates}
+    admission = run.reference_simulations.grid_requirement_admission
+    assert admission is not None
+    assert admission.observer_only is True
+    assert admission.influences_live_selection is False
+    assert admission.status == "ready"
+    assert {item.candidate_id for item in admission.assessments} == {
+        item.candidate_id for item in grid_candidates
+    }
+    assert all(item.status == "admissible" for item in admission.assessments), tuple(
+        item.blockers for item in admission.assessments
+    )
+    assert all(
+        all(condition.satisfied for condition in item.conditions)
+        for item in admission.assessments
+    )
+    assert run.evaluation.winning_candidate_id not in {
+        item.candidate_id for item in admission.assessments
+    }
+
+    without_connection_limit = replace(
+        snapshot,
+        capability_snapshot_set=replace(
+            snapshot.capability_snapshot_set,
+            capabilities=(snapshot.capability_snapshot_set.capabilities[0],),
+        ),
+    )
+    blocked = GridRequirementAdmissionProducer().assess(
+        snapshot=without_connection_limit,
+        candidate_set=run.candidate_set,
+        outcomes=run.outcomes,
+        observations=run.reference_simulations.observations,
+    )
+    assert all(item.status == "blocked" for item in blocked.assessments)
+    assert all(
+        "connection_limit_missing_or_exceeded" in item.blockers
+        for item in blocked.assessments
+    )
+    assert run.evaluation.winning_candidate_id not in {
+        item.candidate_id for item in blocked.assessments
+    }
 
 
 def test_reference_observer_normalises_coarse_energy_to_tariff_intervals() -> None:

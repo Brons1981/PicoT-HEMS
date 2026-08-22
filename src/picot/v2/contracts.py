@@ -1236,6 +1236,83 @@ class ReferenceFinancialComparisonSet:
 
 
 @dataclass(frozen=True, slots=True)
+class GridRequirementAdmissionCondition:
+    """One explicit hard condition for necessary grid-supported acquisition."""
+
+    condition: str
+    satisfied: bool
+    evidence_ids: tuple[str, ...]
+    blocker: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.condition.strip():
+            raise ValueError("Admission condition identity must be explicit")
+        if self.satisfied == (self.blocker is not None):
+            raise ValueError("Admission blocker must match failed condition")
+        if self.satisfied and not self.evidence_ids:
+            raise ValueError("Satisfied admission condition requires evidence")
+
+
+@dataclass(frozen=True, slots=True)
+class GridRequirementCandidateAdmission:
+    """Observer-only hard admission result for one grid-requirement Candidate."""
+
+    candidate_id: str
+    energy_path_id: str
+    storage_requirement_id: str
+    status: str
+    conditions: tuple[GridRequirementAdmissionCondition, ...]
+    blockers: tuple[str, ...]
+    observer_only: bool
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if self.status not in {"admissible", "blocked"}:
+            raise ValueError("Grid admission status must be admissible or blocked")
+        if not self.observer_only or not self.method_version.strip():
+            raise ValueError("Grid admission must remain explicit and observer-only")
+        names = tuple(item.condition for item in self.conditions)
+        if not self.conditions or len(names) != len(set(names)):
+            raise ValueError("Grid admission conditions must be present and unique")
+        expected_blockers = tuple(
+            item.blocker
+            for item in self.conditions
+            if not item.satisfied and item.blocker is not None
+        )
+        if self.blockers != expected_blockers:
+            raise ValueError("Grid admission blockers must match failed conditions")
+        if (self.status == "admissible") != all(
+            item.satisfied for item in self.conditions
+        ):
+            raise ValueError("Grid admission status must match its conditions")
+
+
+@dataclass(frozen=True, slots=True)
+class GridRequirementAdmissionSet:
+    """Passive admission output that cannot affect canonical Evaluation."""
+
+    candidate_set_id: str
+    status: str
+    assessments: tuple[GridRequirementCandidateAdmission, ...]
+    observer_only: bool
+    influences_live_selection: bool
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if self.status not in {"ready", "not_applicable"}:
+            raise ValueError("Grid admission set status must be ready or not_applicable")
+        if not self.observer_only or self.influences_live_selection:
+            raise ValueError("Grid admission set may not influence live selection")
+        if not self.candidate_set_id.strip() or not self.method_version.strip():
+            raise ValueError("Grid admission set identity must be explicit")
+        ids = tuple(item.candidate_id for item in self.assessments)
+        if len(ids) != len(set(ids)):
+            raise ValueError("Grid admission Candidate IDs must be unique")
+        if (self.status == "not_applicable") != (not self.assessments):
+            raise ValueError("Grid admission applicability must match assessments")
+
+
+@dataclass(frozen=True, slots=True)
 class ReferenceSimulationSet:
     """Passive comparison output that never enters Candidate Evaluation."""
 
@@ -1246,6 +1323,7 @@ class ReferenceSimulationSet:
     method_version: str
     global_blockers: tuple[str, ...] = ()
     financial_comparison: ReferenceFinancialComparisonSet | None = None
+    grid_requirement_admission: GridRequirementAdmissionSet | None = None
 
     def __post_init__(self) -> None:
         if not self.method_version.strip():

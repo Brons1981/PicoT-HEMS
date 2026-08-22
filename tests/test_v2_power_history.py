@@ -354,6 +354,61 @@ def test_cache_retries_failed_initial_bootstrap_without_skipping_history() -> No
 
     chunk_end = START + timedelta(hours=2)
     assert first.status == "unavailable"
-    assert reader.windows == [(START, chunk_end), (START, chunk_end)]
+    assert reader.windows == [
+        (START, chunk_end),
+        (START, chunk_end),
+        (chunk_end, START + timedelta(hours=4)),
+        (START + timedelta(hours=4), START + timedelta(hours=6)),
+        (START + timedelta(hours=6), requested_end),
+    ]
     assert second.status == "empty"
-    assert second.ends_at == chunk_end
+    assert second.ends_at == requested_end
+
+
+def test_cache_bootstraps_complete_requested_history_in_one_update() -> None:
+    requested_end = START + timedelta(hours=7, minutes=30)
+
+    class FakeReader:
+        def __init__(self) -> None:
+            self.windows: list[tuple[datetime, datetime]] = []
+
+        def read(
+            self,
+            *,
+            specs: tuple[PowerSeriesSpec, ...],
+            starts_at: datetime,
+            ends_at: datetime,
+        ) -> PowerHistorySnapshot:
+            self.windows.append((starts_at, ends_at))
+            return PowerHistorySnapshot(
+                starts_at=starts_at,
+                ends_at=ends_at,
+                status="empty",
+                error=None,
+                series=tuple(
+                    PowerHistorySeries(
+                        series_id=spec.series_id,
+                        role=spec.role,
+                        source_entity_id=spec.entity_id,
+                        transform=spec.transform,
+                        points=(),
+                    )
+                    for spec in specs
+                ),
+            )
+
+    reader = FakeReader()
+    result = PowerHistoryCache().update(  # type: ignore[arg-type]
+        reader,
+        specs=(PowerSeriesSpec("pv", "pv_generation", PV),),
+        starts_at=START,
+        ends_at=requested_end,
+    )
+
+    assert reader.windows == [
+        (START, START + timedelta(hours=2)),
+        (START + timedelta(hours=2), START + timedelta(hours=4)),
+        (START + timedelta(hours=4), START + timedelta(hours=6)),
+        (START + timedelta(hours=6), requested_end),
+    ]
+    assert result.ends_at == requested_end

@@ -52,6 +52,11 @@ class StorageStateConfig:
     execution_scope_id: str
     capability_id: str
     usable_capacity_wh: float
+    minimum_soc: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.minimum_soc is not None and not 0.0 <= self.minimum_soc <= 1.0:
+            raise ValueError("minimum_soc must be between 0.0 and 1.0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -512,6 +517,7 @@ def load_storage_state_config(
     execution_scope_id = options.get("storage_execution_scope_id")
     capability_id = options.get("storage_capability_id")
     raw_capacity = options.get("storage_usable_capacity_wh")
+    raw_minimum_soc_percent = options.get("storage_minimum_soc_percent")
 
     if (
         not isinstance(execution_scope_id, str)
@@ -527,10 +533,19 @@ def load_storage_state_config(
     if usable_capacity_wh <= 0.0:
         return None
 
+    minimum_soc = None
+    if (
+        not isinstance(raw_minimum_soc_percent, bool)
+        and isinstance(raw_minimum_soc_percent, (int, float))
+        and 0.0 <= float(raw_minimum_soc_percent) <= 100.0
+    ):
+        minimum_soc = float(raw_minimum_soc_percent) / 100.0
+
     return StorageStateConfig(
         execution_scope_id=execution_scope_id.strip(),
         capability_id=capability_id.strip(),
         usable_capacity_wh=usable_capacity_wh,
+        minimum_soc=minimum_soc,
     )
 
 
@@ -886,6 +901,15 @@ def assemble_planning_input(
             build_storage_capability_snapshot_set(
                 storage_mode_capability_evidence,
                 snapshot_id=snapshot_id,
+                minimum_soc=(
+                    selected_storage_config.minimum_soc
+                    if selected_storage_config is not None
+                    and selected_storage_config.capability_id
+                    == storage_mode_capability_evidence.capability_id
+                    and selected_storage_config.execution_scope_id
+                    == storage_mode_capability_evidence.execution_scope_id
+                    else None
+                ),
             )
             if storage_mode_capability_evidence is not None
             else None

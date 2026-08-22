@@ -1139,6 +1139,103 @@ class ReferenceCandidateSimulation:
 
 
 @dataclass(frozen=True, slots=True)
+class ReferenceFinancialCandidateComparison:
+    """Financial relation of one Candidate to the immutable physical baseline."""
+
+    candidate_id: str
+    energy_path_id: str
+    candidate_family: str
+    settlement_id: str
+    net_financial_result_eur: float
+    difference_from_baseline_eur: float
+    relative_to_baseline: str
+    confidence: float
+    evidence_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for value, label in (
+            (self.candidate_id, "Candidate ID"),
+            (self.energy_path_id, "Energy Path ID"),
+            (self.candidate_family, "Candidate family"),
+            (self.settlement_id, "Settlement ID"),
+        ):
+            if not value.strip():
+                raise ValueError(f"Financial comparison {label} must be explicit")
+        if self.relative_to_baseline not in {"better", "equal", "worse"}:
+            raise ValueError("Financial comparison relation must be better, equal or worse")
+        if not isfinite(self.net_financial_result_eur) or not isfinite(
+            self.difference_from_baseline_eur
+        ):
+            raise ValueError("Financial comparison values must be finite")
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("Financial comparison confidence must be between 0 and 1")
+        if not self.evidence_ids or any(not item.strip() for item in self.evidence_ids):
+            raise ValueError("Financial comparison evidence must be explicit")
+        if len(self.evidence_ids) != len(set(self.evidence_ids)):
+            raise ValueError("Financial comparison evidence must be unique")
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceFinancialComparisonSet:
+    """Passive V2ADR-054 financial comparison that cannot select a live plan."""
+
+    status: str
+    candidate_set_id: str
+    baseline_candidate_id: str | None
+    comparisons: tuple[ReferenceFinancialCandidateComparison, ...]
+    best_candidate_ids: tuple[str, ...]
+    financially_preferred_candidate_id: str | None
+    direction: str
+    unit: str
+    comparison_scope: str
+    hard_constraints_assessed: bool
+    observer_only: bool
+    method_version: str
+    blockers: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.status not in {"ready", "blocked"}:
+            raise ValueError("Financial comparison status must be ready or blocked")
+        if not self.candidate_set_id.strip() or not self.method_version.strip():
+            raise ValueError("Financial comparison identity must be explicit")
+        if self.direction != "higher_is_better" or self.unit != "EUR":
+            raise ValueError("Financial comparison must use higher-is-better EUR")
+        if self.comparison_scope != "financial_result_only":
+            raise ValueError("Reference comparison scope must remain financial-result-only")
+        if self.hard_constraints_assessed:
+            raise ValueError("Reference financial comparison may not claim eligibility")
+        if not self.observer_only:
+            raise ValueError("Reference financial comparison must remain observer-only")
+        comparison_ids = tuple(item.candidate_id for item in self.comparisons)
+        if len(comparison_ids) != len(set(comparison_ids)):
+            raise ValueError("Financial comparison Candidate IDs must be unique")
+        if self.status == "ready":
+            if self.blockers or self.baseline_candidate_id is None or not self.comparisons:
+                raise ValueError("Ready financial comparison requires complete results")
+            if self.baseline_candidate_id not in comparison_ids:
+                raise ValueError("Financial baseline Candidate must be compared")
+            if not self.best_candidate_ids:
+                raise ValueError("Ready financial comparison requires a best result")
+            if len(self.best_candidate_ids) != len(set(self.best_candidate_ids)):
+                raise ValueError("Best financial Candidate IDs must be unique")
+            if set(self.best_candidate_ids) - set(comparison_ids):
+                raise ValueError("Best financial Candidate IDs must be compared")
+            expected_preferred = (
+                self.best_candidate_ids[0] if len(self.best_candidate_ids) == 1 else None
+            )
+            if self.financially_preferred_candidate_id != expected_preferred:
+                raise ValueError("Financial preference may only identify a unique best result")
+        elif (
+            not self.blockers
+            or self.baseline_candidate_id is not None
+            or self.comparisons
+            or self.best_candidate_ids
+            or self.financially_preferred_candidate_id is not None
+        ):
+            raise ValueError("Blocked financial comparison requires only blockers")
+
+
+@dataclass(frozen=True, slots=True)
 class ReferenceSimulationSet:
     """Passive comparison output that never enters Candidate Evaluation."""
 
@@ -1148,6 +1245,7 @@ class ReferenceSimulationSet:
     observations: tuple[ReferenceCandidateSimulation, ...]
     method_version: str
     global_blockers: tuple[str, ...] = ()
+    financial_comparison: ReferenceFinancialComparisonSet | None = None
 
     def __post_init__(self) -> None:
         if not self.method_version.strip():

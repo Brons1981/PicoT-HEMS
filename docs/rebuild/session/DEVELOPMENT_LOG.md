@@ -1073,3 +1073,27 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 Exact next action: publish dev.137, perform one planning reset and verify that
 the replacement window is selected from current price/PV evidence and that the
 current-day graphs are complete immediately after startup.
+
+## 2026-08-22 — 2.0.0-dev.138
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+- Replaced the low-confidence equal-price PV-availability-centre tie-break
+  introduced in dev.136. A long positive but uncertain evening PV tail could
+  move its centre into the late afternoon and recreate the previously visible
+  late-window selection failure.
+- Equal average-price Candidates with low PV timing confidence now compare
+  their midpoint with 12:00 in the explicit Dutch market timezone. Price and
+  technical feasibility remain higher-priority selection criteria.
+- Preserved the V2ADR-048 high-confidence behavior: sufficiently trustworthy
+  interval timing continues to use the energy-weighted PV centre and may move
+  an otherwise equal-price window earlier or later.
+- Preserved the canonical whole-household Energy Path simulation. Expected
+  battery use before a future charge window remains the forecast household
+  deficit after direct PV consumption, without a hidden load multiplier.
+- Added a regression reproducing an equal-price plateau with a positive PV
+  tail through 21:00: low confidence selects 12:30–14:30 while high confidence
+  may select the later energy-weighted window.
+
+Exact next action: publish dev.138, reset the dev.137 commitment once and
+verify that the fresh plan selects the equal-price window nearest local midday.

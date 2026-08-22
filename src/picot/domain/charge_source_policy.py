@@ -19,15 +19,26 @@ class ChargeSourcePolicy(StrEnum):
 
     PV_ONLY = "pv_only"
     PV_PREFERRED_GRID_ALLOWED = "pv_preferred_grid_allowed"
+    GRID_ALLOWED_FOR_REQUIREMENT = "grid_allowed_for_requirement"
+    GRID_ALLOWED_FOR_MARKET_ACTION = "grid_allowed_for_market_action"
 
     @property
     def permits_grid_import(self) -> bool:
         """Return whether this policy explicitly permits grid supplementation."""
 
-        return self is ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
+        return self is not ChargeSourcePolicy.PV_ONLY
 
     @property
     def requires_pv_preference(self) -> bool:
-        """All currently supported policies preserve PV as the preferred source."""
+        """Return whether available PV must be allocated before grid energy."""
 
-        return True
+        return self in {
+            ChargeSourcePolicy.PV_ONLY,
+            ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED,
+        }
+
+    @property
+    def is_market_action(self) -> bool:
+        """Return whether grid charging belongs to a discretionary market cycle."""
+
+        return self is ChargeSourcePolicy.GRID_ALLOWED_FOR_MARKET_ACTION

@@ -685,6 +685,42 @@ def test_web_view_store_atomically_replaces_latest_serialized_view() -> None:
     }
 
 
+def test_web_view_store_refreshes_history_without_replacing_planner_run() -> None:
+    store = WebViewStore()
+    starts_at = datetime(2026, 8, 22, 0, 0, tzinfo=UTC)
+    ends_at = starts_at + timedelta(hours=3)
+    store.publish({
+        "run_id": "run-02-04",
+        "power_history": {"ends_at": starts_at.isoformat()},
+        "self_consumption_history": {"ends_at": starts_at.isoformat()},
+    })
+    history = PowerHistorySnapshot(
+        starts_at=starts_at,
+        ends_at=ends_at,
+        status="available",
+        error=None,
+        series=(PowerHistorySeries(
+            series_id="pv",
+            role="pv_generation",
+            source_entity_id="sensor.pv",
+            transform="identity",
+            points=(PowerHistoryPoint(
+                sampled_at=ends_at,
+                power_w=250.0,
+                evidence_id="evidence-pv-latest",
+            ),),
+        ),),
+    )
+
+    store.publish_power_history(history)
+
+    latest_json = store.latest_json()
+    assert latest_json is not None
+    latest = json.loads(latest_json)
+    assert latest["run_id"] == "run-02-04"
+    assert latest["power_history"]["ends_at"] == ends_at.isoformat()
+
+
 def test_dashboard_exposes_plain_language_storage_source_need() -> None:
     assert "Energieplan batterij" in DASHBOARD_HTML
     assert 'id="storage-energy-source-needs"' in DASHBOARD_HTML

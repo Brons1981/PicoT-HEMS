@@ -241,6 +241,78 @@ def _self_consumption_history_view(
     }
 
 
+def _power_history_view(
+    power_history: PowerHistorySnapshot | None,
+) -> dict[str, object]:
+    """Serialize canonical power history independently from a Planner Run."""
+
+    starts_at = power_history.starts_at if power_history is not None else None
+    ends_at = power_history.ends_at if power_history is not None else None
+    return {
+        "available": power_history is not None
+        and power_history.status == "available",
+        "status": power_history.status if power_history is not None else "unavailable",
+        "error": power_history.error if power_history is not None else None,
+        "starts_at": starts_at.isoformat() if starts_at is not None else None,
+        "ends_at": ends_at.isoformat() if ends_at is not None else None,
+        "method_version": (
+            power_history.method_version if power_history is not None else None
+        ),
+        "display_aggregation": "five_minute_average",
+        "display_interval_seconds": int(
+            POWER_HISTORY_DISPLAY_INTERVAL.total_seconds()
+        ),
+        "display_curve": "linear_between_bucket_averages",
+        "pv_actual_display_interval_seconds": int(
+            PV_ACTUAL_DISPLAY_INTERVAL.total_seconds()
+        ),
+        "pv_actual_display_points": next((
+            _power_history_display_points(
+                series,
+                starts_at=starts_at,
+                ends_at=ends_at,
+                interval=PV_ACTUAL_DISPLAY_INTERVAL,
+            )
+            for series in power_history.series
+            if series.role == "pv_generation"
+        ), [])
+        if power_history is not None
+        and starts_at is not None
+        and ends_at is not None
+        else [],
+        "series": [
+            {
+                "series_id": series.series_id,
+                "role": series.role,
+                "source_entity_id": series.source_entity_id,
+                "transform": series.transform,
+                "history_semantics": series.history_semantics,
+                "display_method": (
+                    "time_weighted_average"
+                    if series.history_semantics == "state_hold"
+                    else "sample_average"
+                ),
+                "display_points": _power_history_display_points(
+                    series,
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                )
+                if starts_at is not None and ends_at is not None
+                else [],
+                "points": [
+                    {
+                        "sampled_at": point.sampled_at.isoformat(),
+                        "power_w": point.power_w,
+                        "evidence_id": point.evidence_id,
+                    }
+                    for point in series.points
+                ],
+            }
+            for series in (power_history.series if power_history is not None else ())
+        ],
+    }
+
+
 DASHBOARD_HTML = """<!doctype html>
 <html lang="nl">
 <head>
@@ -3422,6 +3494,24 @@ class WebViewStore:
                 raise TypeError("latest web view must be an object")
             self._replace_latest_locked(latest)
 
+    def publish_power_history(
+        self,
+        power_history: PowerHistorySnapshot,
+    ) -> None:
+        """Refresh observer charts without running or replacing the Planner."""
+
+        history_view = _power_history_view(power_history)
+        self_consumption_view = _self_consumption_history_view(power_history)
+        with self._condition:
+            if self._latest_json is None:
+                return
+            latest: object = json.loads(self._latest_json)
+            if not isinstance(latest, dict):
+                raise TypeError("latest web view must be an object")
+            latest["power_history"] = history_view
+            latest["self_consumption_history"] = self_consumption_view
+            self._replace_latest_locked(latest)
+
     def latest_json(self) -> str | None:
         """Return the latest immutable JSON snapshot, when available."""
         with self._lock:
@@ -4829,79 +4919,7 @@ def build_web_view(
         ],
     }
 
-    power_history_starts_at = (
-        power_history.starts_at if power_history is not None else None
-    )
-    power_history_ends_at = (
-        power_history.ends_at if power_history is not None else None
-    )
-    power_history_view: dict[str, object] = {
-        "available": power_history is not None and power_history.status == "available",
-        "status": power_history.status if power_history is not None else "unavailable",
-        "error": power_history.error if power_history is not None else None,
-        "starts_at": (
-            power_history.starts_at.isoformat() if power_history is not None else None
-        ),
-        "ends_at": (
-            power_history.ends_at.isoformat() if power_history is not None else None
-        ),
-        "method_version": (
-            power_history.method_version if power_history is not None else None
-        ),
-        "display_aggregation": "five_minute_average",
-        "display_interval_seconds": int(
-            POWER_HISTORY_DISPLAY_INTERVAL.total_seconds()
-        ),
-        "display_curve": "linear_between_bucket_averages",
-        "pv_actual_display_interval_seconds": int(
-            PV_ACTUAL_DISPLAY_INTERVAL.total_seconds()
-        ),
-        "pv_actual_display_points": next((
-            _power_history_display_points(
-                series,
-                starts_at=power_history_starts_at,
-                ends_at=power_history_ends_at,
-                interval=PV_ACTUAL_DISPLAY_INTERVAL,
-            )
-            for series in power_history.series
-            if series.role == "pv_generation"
-        ), [])
-        if power_history is not None
-        and power_history_starts_at is not None
-        and power_history_ends_at is not None
-        else [],
-        "series": [
-            {
-                "series_id": series.series_id,
-                "role": series.role,
-                "source_entity_id": series.source_entity_id,
-                "transform": series.transform,
-                "history_semantics": series.history_semantics,
-                "display_method": (
-                    "time_weighted_average"
-                    if series.history_semantics == "state_hold"
-                    else "sample_average"
-                ),
-                "display_points": _power_history_display_points(
-                    series,
-                    starts_at=power_history_starts_at,
-                    ends_at=power_history_ends_at,
-                )
-                if power_history_starts_at is not None
-                and power_history_ends_at is not None
-                else [],
-                "points": [
-                    {
-                        "sampled_at": point.sampled_at.isoformat(),
-                        "power_w": point.power_w,
-                        "evidence_id": point.evidence_id,
-                    }
-                    for point in series.points
-                ],
-            }
-            for series in (power_history.series if power_history is not None else ())
-        ],
-    }
+    power_history_view = _power_history_view(power_history)
 
     return {
         "schema_version": 1,

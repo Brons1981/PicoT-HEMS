@@ -96,15 +96,20 @@ def test_poll_cycle_always_loads_fresh_input_but_skips_identical_execution() -> 
     second = _bundle(captured_at=BASE + timedelta(minutes=1), price=0.20)
     loaded = [second]
     calls: list[str] = []
+    refreshed: list[str] = []
 
     result = _poll_live_cycle(
         previous_signature=_planning_input_signature(first),
         load_bundle=lambda: loaded.pop(0),
         execute=lambda bundle: calls.append(bundle.snapshot.run_id),
+        refresh_unchanged=lambda bundle: refreshed.append(
+            bundle.snapshot.run_id
+        ),
     )
 
     assert loaded == []
     assert calls == []
+    assert refreshed == [second.snapshot.run_id]
     assert result == _planning_input_signature(first)
 
 
@@ -247,4 +252,3 @@ def test_grid_power_observation_interval_is_independent_from_planner_poll() -> N
         live_runtime._grid_power_observation_interval_seconds(options)
         == 1.0
     )
-

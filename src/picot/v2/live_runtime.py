@@ -700,6 +700,11 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
                 "starts_at": item.starts_at.isoformat(),
                 "ends_at": item.ends_at.isoformat(),
                 "target_energy_wh": item.target_energy_wh,
+                "execution_phase": (
+                    "scheduled"
+                    if bundle.snapshot.captured_at < item.starts_at
+                    else "active"
+                ),
             }
             for item in bundle.snapshot.active_plan_commitments
         ],
@@ -793,10 +798,13 @@ def _run_live_cycle(
     previous_signature: str | None,
     bundle: PlanningInputBundle,
     execute: Any,
+    refresh_unchanged: Any = None,
 ) -> str:
     """Execute one changed-input cycle and return the committed input signature."""
     if not _should_run_cycle(previous_signature, bundle):
         assert previous_signature is not None
+        if refresh_unchanged is not None:
+            refresh_unchanged(bundle)
         return previous_signature
 
     execute(bundle)
@@ -818,6 +826,7 @@ def _poll_live_cycle(
     persist_observation: (
         Callable[[HouseholdLoadObservation], None] | None
     ) = None,
+    refresh_unchanged: Callable[[PlanningInputBundle], None] | None = None,
 ) -> str:
     """Load fresh Planning Input and execute only when decision input changed."""
     bundle = load_bundle()
@@ -855,12 +864,14 @@ def _poll_live_cycle(
             previous_signature=previous_signature,
             bundle=bundle,
             execute=execute_prepared,
+            refresh_unchanged=refresh_unchanged,
         )
 
     return _run_live_cycle(
         previous_signature=previous_signature,
         bundle=bundle,
         execute=execute,
+        refresh_unchanged=refresh_unchanged,
     )
 
 
@@ -2143,10 +2154,9 @@ def main() -> None:
         previous_household_regime = current_regime
         return prepared_bundle, diagnostics
 
-    def execute(
+    def read_power_history(
         bundle: PlanningInputBundle,
-        pv_actual_diagnostics: LivePVActualDiagnostics,
-    ) -> None:
+    ) -> tuple[PowerHistorySnapshot, float]:
         captured_at = bundle.snapshot.captured_at
         history_starts_at = captured_at.astimezone(
             pv_sunset_timezone
@@ -2166,6 +2176,17 @@ def main() -> None:
             (perf_counter() - power_history_started) * 1000.0,
             3,
         )
+        return power_history, power_history_read_ms
+
+    def refresh_unchanged(bundle: PlanningInputBundle) -> None:
+        power_history, _ = read_power_history(bundle)
+        web_view_store.publish_power_history(power_history)
+
+    def execute(
+        bundle: PlanningInputBundle,
+        pv_actual_diagnostics: LivePVActualDiagnostics,
+    ) -> None:
+        power_history, power_history_read_ms = read_power_history(bundle)
         timeline = bundle.snapshot.pv_energy_timeline
         pv_sunset_source = pv_sunset_reader.read(
             local_timezone=pv_sunset_timezone
@@ -2254,6 +2275,7 @@ def main() -> None:
             prepare_bundle=prepare_bundle,
             execute=execute,
             persist_observation=household_load_history.append,
+            refresh_unchanged=refresh_unchanged,
         )
         _wait_for_poll_or_reset(
             planning_reset_requested,

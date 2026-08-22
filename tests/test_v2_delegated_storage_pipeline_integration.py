@@ -775,6 +775,76 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
     )
     assert mapped_run.adapter_boundary.translation_id is None
     assert mapped_run.vendor_result.command_id is None
+
+    fast_charge_evidence = derive_zendure_mode_capability_evidence(
+        {
+            "state": "Standby",
+            "attributes": {
+                "options": [
+                    "Standby",
+                    "Handmatig",
+                    "Alleen slim opladen",
+                    "Snel opladen",
+                ]
+            },
+        },
+        captured_at=BASE,
+        source_entity_id="input_select.zendure_mode",
+        capability_id=CAPABILITY_ID,
+        execution_scope_id="home-battery",
+    )
+    feasible_run = CanonicalPipeline().run(
+        planning_input=replace(
+            snapshot,
+            storage_mode_capability_evidence=fast_charge_evidence,
+        )
+    )
+    feasible = (
+        feasible_run.reference_simulations.grid_requirement_shadow_execution_feasibility
+    )
+    assert feasible is not None
+    assert feasible.status == "feasible"
+    assert feasible.vendor_mapping_status == "validated"
+    assert feasible.planned_vendor_mode == "Snel opladen"
+    assert feasible.requested_power_w is None
+    assert feasible.blockers == ()
+    assert feasible_run.evaluation == run.evaluation
+    assert (
+        feasible_run.execution_plan_set.winning_energy_path_id
+        == run.execution_plan_set.winning_energy_path_id
+    )
+    assert feasible_run.adapter_boundary.translation_id is None
+    assert feasible_run.vendor_result.command_id is None
+
+    manual_only_evidence = derive_zendure_mode_capability_evidence(
+        {
+            "state": "Standby",
+            "attributes": {"options": ["Standby", "Handmatig"]},
+        },
+        captured_at=BASE,
+        source_entity_id="input_select.zendure_mode",
+        capability_id=CAPABILITY_ID,
+        execution_scope_id="home-battery",
+    )
+    manual_only_run = CanonicalPipeline().run(
+        planning_input=replace(
+            snapshot,
+            storage_mode_capability_evidence=manual_only_evidence,
+        )
+    )
+    manual_only = (
+        manual_only_run.reference_simulations.grid_requirement_shadow_execution_feasibility
+    )
+    assert manual_only is not None
+    assert manual_only.status == "blocked"
+    assert manual_only.vendor_mapping_status == "unavailable"
+    assert manual_only.planned_vendor_mode is None
+    assert manual_only.blockers == (
+        "grid_shadow_primitive_vendor_mapping_unavailable",
+    )
+    assert manual_only_run.evaluation == run.evaluation
+    assert manual_only_run.adapter_boundary.translation_id is None
+    assert manual_only_run.vendor_result.command_id is None
     assert run.evaluation.winning_candidate_id not in {
         item.candidate_id
         for item in run.reference_simulations.grid_requirement_decision.candidates

@@ -59,7 +59,7 @@ def test_due_plan_validates_unique_mapping_but_stays_blocked() -> None:
     assert assessment.current_vendor_mode == "Standby"
     assert assessment.planned_vendor_mode == "Alleen slim opladen"
     assert assessment.mapping_method_version == (
-        "zendure-mode-capability-evidence:v1"
+        "zendure-mode-capability-evidence:v2"
     )
     assert assessment.blockers == (
         "manual_override_provenance_unverified",

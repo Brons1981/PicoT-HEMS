@@ -16,7 +16,7 @@ from picot.v2.contracts import (
     StorageEnergyRequirement,
 )
 
-METHOD_VERSION = "delegated-storage-outcome:v2"
+METHOD_VERSION = "delegated-storage-outcome:v3"
 CONFIDENCE_METHOD_VERSION = "delegated-storage-outcome-confidence:v2"
 
 
@@ -47,6 +47,7 @@ def _simulate_path(
     candidate_id: str,
     requirement: StorageEnergyRequirement,
     balance: ProjectedHouseholdEnergyBalance,
+    minimum_reserve_energy_wh: float | None,
 ) -> DelegatedStorageCandidateOutcome:
     candidate = next(
         item
@@ -221,10 +222,19 @@ def _simulate_path(
         method_version=CONFIDENCE_METHOD_VERSION,
         components=tuple(source_components),
     )
-    requirement_satisfied = (
-        requirement_state.storage_energy_wh + 1e-6
-        >= requirement.required_energy_wh
+    charge_target_satisfied = (
+        window_state.storage_energy_wh + 1e-6 >= requirement.required_energy_wh
     )
+    reserve_energy_required_wh = (
+        minimum_reserve_energy_wh
+        if minimum_reserve_energy_wh is not None
+        else requirement.required_energy_wh
+    )
+    reserve_satisfied = (
+        requirement_state.storage_energy_wh + 1e-6
+        >= reserve_energy_required_wh
+    )
+    requirement_satisfied = charge_target_satisfied and reserve_satisfied
     evidence_ids = tuple(
         dict.fromkeys(
             requirement.evidence_ids
@@ -284,11 +294,16 @@ def _simulate_path(
             0.0,
             requirement.required_energy_wh - starting_energy_wh,
         ),
+        charge_target_satisfied=charge_target_satisfied,
+        reserve_satisfied=reserve_satisfied,
+        reserve_energy_required_wh=reserve_energy_required_wh,
     )
 
 
 def simulate_pv_charge_only_outcomes(
     candidate_set: CandidateSet,
+    *,
+    minimum_reserve_energy_wh: float | None = None,
 ) -> CandidateOutcomeSet:
     """Simulate detailed outcomes without selecting or executing a Candidate."""
 
@@ -301,6 +316,7 @@ def simulate_pv_charge_only_outcomes(
             candidate.candidate_id,
             requirement,
             balance,
+            minimum_reserve_energy_wh,
         )
         for candidate in candidate_set.candidates
         if candidate.family == "pv_charge_only"

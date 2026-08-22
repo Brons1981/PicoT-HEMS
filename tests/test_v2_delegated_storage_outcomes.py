@@ -145,9 +145,16 @@ def _candidate_set(
     )
 
 
-def _simulate(candidate_set: CandidateSet) -> object:
+def _simulate(
+    candidate_set: CandidateSet,
+    *,
+    minimum_reserve_energy_wh: float | None = None,
+) -> object:
     module = import_module("picot.v2.delegated_storage_outcomes")
-    return module.simulate_pv_charge_only_outcomes(candidate_set)
+    return module.simulate_pv_charge_only_outcomes(
+        candidate_set,
+        minimum_reserve_energy_wh=minimum_reserve_energy_wh,
+    )
 
 
 def test_outcome_records_bounded_pv_and_zero_grid_contribution() -> None:
@@ -185,7 +192,7 @@ def test_outcome_preserves_confidence_recoverability_and_lineage() -> None:
         CAPABILITY_ID,
         "storage-evidence",
     }
-    assert outcome.method_version == "delegated-storage-outcome:v2"
+    assert outcome.method_version == "delegated-storage-outcome:v3"
     assert outcome.confidence_assessment is not None
     assert outcome.confidence_assessment.result == pytest.approx(0.7)
     assert outcome.confidence_assessment.limiting_component == "charge_window"
@@ -206,6 +213,20 @@ def test_outcome_preserves_confidence_recoverability_and_lineage() -> None:
             "household_load": 0.7,
         }
     )
+
+
+def test_full_charge_target_and_later_minimum_reserve_are_separate() -> None:
+    outcome = _simulate(
+        _candidate_set(required_energy_wh=1400.0),
+        minimum_reserve_energy_wh=1000.0,
+    ).outcomes[0]
+
+    assert outcome.storage_energy_at_window_end_wh == pytest.approx(1400.0)
+    assert outcome.storage_energy_at_requirement_wh == pytest.approx(1200.0)
+    assert outcome.charge_target_satisfied is True
+    assert outcome.reserve_satisfied is True
+    assert outcome.reserve_energy_required_wh == pytest.approx(1000.0)
+    assert outcome.requirement_satisfied is True
 
 
 def test_outcome_accepts_sub_microwatt_hour_rounding_at_requirement() -> None:

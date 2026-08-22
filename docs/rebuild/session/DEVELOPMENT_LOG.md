@@ -871,3 +871,31 @@ Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
 
 Exact next action: install dev.130 and confirm the first plan exposes multiple
 PV Candidates and does not retain any Candidate with `Doel gehaald=false`.
+
+## 2026-08-22 — 2.0.0-dev.131
+
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
+
+- Separated the full charge-window target from the later reserve requirement:
+  a PV Candidate must reach 100% at the end of its acquisition window and must
+  still retain the storage capability's configured minimum SoC at the planning
+  deadline. Normal post-charge household support no longer makes an otherwise
+  valid full-charge plan appear infeasible merely because energy is below 100%
+  at 20:00.
+- Kept compatibility fail-closed when no explicit capability minimum SoC is
+  available: the existing full deadline target remains authoritative instead
+  of inventing a reserve value.
+- Made the existing household confidence policy explicit for PV timing. When
+  forecast confidence is below its established recovery threshold, equal-price
+  and otherwise equivalent windows prefer the earlier feasible start. Only a
+  confident PV forecast may use distance to the PV-energy centre as tie-break.
+- Kept duration-weighted average price ahead of the timing tie-break. No price
+  margin, confidence uplift or synthetic score was added.
+- Exposed separate `Laaddoel 100% gehaald`, `Reserve bij deadline gehaald` and
+  minimum-reserve evidence in the chosen-plan dashboard and JSON contract.
+- Added focused regressions for both the separated energy requirements and the
+  low-/high-confidence equal-price selection behavior.
+
+Exact next action: install dev.131 and confirm an equal-price live plan chooses
+the earlier feasible window at the current low PV confidence, while showing
+both charge-target and deadline-reserve results separately.

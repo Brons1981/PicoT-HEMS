@@ -121,6 +121,7 @@ class HouseholdPlanningRegime:
         "legacy-forecast-confidence:unversioned"
     )
     forecast_confidence_available: bool = True
+    pv_timing_confident: bool = False
     method_version: str = METHOD_VERSION
 
     def __post_init__(self) -> None:
@@ -315,6 +316,10 @@ def derive_household_planning_regime(
             str(storage_target_required_by),
             forecast_confidence_method_version,
             str(forecast_confidence_available),
+            str(
+                forecast_confidence_available
+                and forecast_confidence >= policy.recovery_confidence_threshold
+            ),
             *unique_evidence_ids,
             METHOD_VERSION,
         )
@@ -344,4 +349,8 @@ def derive_household_planning_regime(
             forecast_confidence_method_version
         ),
         forecast_confidence_available=forecast_confidence_available,
+        pv_timing_confident=(
+            forecast_confidence_available
+            and forecast_confidence >= policy.recovery_confidence_threshold
+        ),
     )

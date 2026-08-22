@@ -2532,6 +2532,11 @@ DASHBOARD_HTML = """<!doctype html>
         ["Energie bij deadline", formatMeasurement(
           chosenPlan.storage_energy_at_requirement_wh, "Wh"
         )],
+        ["Laaddoel 100% gehaald", chosenPlan.charge_target_satisfied],
+        ["Reserve bij deadline gehaald", chosenPlan.reserve_satisfied],
+        ["Minimaal benodigde reserve", formatMeasurement(
+          chosenPlan.reserve_energy_required_wh, "Wh"
+        )],
         ["Bijdrage PV", formatMeasurement(chosenPlan.pv_contribution_wh, "Wh")],
         ["Bijdrage net", formatMeasurement(chosenPlan.grid_contribution_wh, "Wh")],
         ["Conversieverlies", formatMeasurement(chosenPlan.conversion_losses_wh, "Wh")],
@@ -4425,6 +4430,21 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 if winning_outcome is not None and not fallback_active
                 else None
             ),
+            "charge_target_satisfied": (
+                winning_outcome.charge_target_satisfied
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "reserve_satisfied": (
+                winning_outcome.reserve_satisfied
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
+            "reserve_energy_required_wh": (
+                winning_outcome.reserve_energy_required_wh
+                if winning_outcome is not None and not fallback_active
+                else None
+            ),
             "pv_contribution_wh": (
                 winning_outcome.pv_storage_contribution_wh
                 if winning_outcome is not None and not fallback_active
@@ -4538,6 +4558,16 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 ),
                 "requirement_satisfied": (
                     outcome.requirement_satisfied
+                    if outcome is not None
+                    else None
+                ),
+                "charge_target_satisfied": (
+                    outcome.charge_target_satisfied
+                    if outcome is not None
+                    else None
+                ),
+                "reserve_satisfied": (
+                    outcome.reserve_satisfied
                     if outcome is not None
                     else None
                 ),

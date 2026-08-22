@@ -264,6 +264,16 @@ class PlanningIncidentHistory:
                 }
                 for plan in run.execution_plan_set.plans
             ],
+            "primitive": {
+                "status": run.primitive_boundary.status,
+                "request_id": run.primitive_boundary.request_id,
+                "planned_primitive": run.primitive_boundary.planned_primitive,
+                "charge_source_policy": run.primitive_boundary.charge_source_policy,
+                "planned_vendor_mode": run.primitive_boundary.planned_vendor_mode,
+                "valid_from": run.primitive_boundary.valid_from,
+                "valid_until": run.primitive_boundary.valid_until,
+                "blockers": run.primitive_boundary.blockers,
+            },
         }
         return json.dumps(
             value,

@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from test_v2_delegated_storage_pipeline_integration import _snapshot
 from test_v2_planning_fallback import _missing_forecast_fallback_run
 
+from picot.domain.charge_source_policy import ChargeSourcePolicy
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import PlanningInputBundle, SourceEvidence
@@ -125,6 +127,56 @@ def test_normal_plan_outcome_changes_are_persisted(tmp_path) -> None:
     assert plan_records[1]["poll"]["evaluation"]["reason"] == (
         "same winner with materially changed plan evidence"
     )
+
+
+def test_grid_primitive_readiness_is_persisted_as_a_monitorable_change(
+    tmp_path,
+) -> None:
+    path = tmp_path / "planning-incidents.jsonl"
+    history = PlanningIncidentHistory(path)
+    source = _snapshot()
+    first = CanonicalPipeline().run(planning_input=source)
+    history.record(bundle=_bundle(source, state="100"), run=first)
+
+    ready = replace(
+        first,
+        primitive_boundary=replace(
+            first.primitive_boundary,
+            request_id="primitive-request-grid-test",
+            status="grid_request_ready",
+            planned_primitive=ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+            planned_vendor_mode="Snel opladen",
+            charge_source_policy=(
+                ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT
+            ),
+            valid_from=source.captured_at,
+            valid_until=source.captured_at + timedelta(hours=1),
+            requested_power_w=None,
+            capability_ids=("storage-capability-home-battery",),
+            evidence_ids=("grid-window:test",),
+            delegated_control=True,
+            blockers=("grid_adapter_translation_embargo",),
+        ),
+    )
+    history.record(bundle=_bundle(source, state="101"), run=ready)
+
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [record["event"] for record in records] == [
+        "planning_outcome_changed",
+        "planning_outcome_changed",
+    ]
+    primitive = records[-1]["poll"]["primitive_boundary"]
+    assert primitive["status"] == "grid_request_ready"
+    assert primitive["request_id"] == "primitive-request-grid-test"
+    assert primitive["planned_vendor_mode"] == "Snel opladen"
+    assert primitive["charge_source_policy"] == "grid_allowed_for_requirement"
+    assert primitive["valid_from"] == source.captured_at.isoformat()
+    assert primitive["valid_until"] == (
+        source.captured_at + timedelta(hours=1)
+    ).isoformat()
+    assert primitive["requested_power_w"] is None
+    assert primitive["delegated_control"] is True
+    assert primitive["blockers"] == ["grid_adapter_translation_embargo"]
 
 
 def test_household_fallback_transition_is_persisted(tmp_path) -> None:

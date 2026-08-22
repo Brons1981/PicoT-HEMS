@@ -980,18 +980,14 @@ class CanonicalPipeline:
         execution_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
-        due_segment = (
-            None
-            if grid_execution_embargo
-            else next(
-                (
-                    segment
-                    for plan in execution_plan_set.plans
-                    for segment in plan.segments
-                    if segment.starts_at <= snapshot.captured_at < segment.ends_at
-                ),
-                None,
-            )
+        due_segment = next(
+            (
+                segment
+                for plan in execution_plan_set.plans
+                for segment in plan.segments
+                if segment.starts_at <= snapshot.captured_at < segment.ends_at
+            ),
+            None,
         )
         mode_evidence = snapshot.storage_mode_capability_evidence
         mode_provenance = snapshot.storage_mode_control_provenance
@@ -999,17 +995,25 @@ class CanonicalPipeline:
         mapping_status = "not_assessed"
         blockers: list[str] = []
         if due_segment is not None and mode_evidence is not None:
-            matching_modes = tuple(
-                mapping.vendor_mode
-                for mapping in mode_evidence.mappings
-                if due_segment.primitive in mapping.primitives
-            )
-            if len(matching_modes) == 1:
-                planned_vendor_mode = matching_modes[0]
-                mapping_status = "validated"
+            if grid_execution_embargo:
+                planned_vendor_mode = due_segment.planned_vendor_mode
+                if planned_vendor_mode == "Snel opladen":
+                    mapping_status = "validated"
+                else:
+                    mapping_status = "unavailable"
+                    blockers.append("grid_source_vendor_mapping_unproven")
             else:
-                mapping_status = "unavailable"
-                blockers.append("primitive_vendor_mapping_unavailable")
+                matching_modes = tuple(
+                    mapping.vendor_mode
+                    for mapping in mode_evidence.mappings
+                    if due_segment.primitive in mapping.primitives
+                )
+                if len(matching_modes) == 1:
+                    planned_vendor_mode = matching_modes[0]
+                    mapping_status = "validated"
+                else:
+                    mapping_status = "unavailable"
+                    blockers.append("primitive_vendor_mapping_unavailable")
             if (
                 mode_evidence.current_vendor_mode
                 in mode_evidence.excluded_dynamic_vendor_modes
@@ -1025,9 +1029,17 @@ class CanonicalPipeline:
                 blockers.append("manual_override_provenance_unverified")
             elif mode_provenance.manual_override_active:
                 blockers.append("manual_override_active")
-            if not control_change_allowed:
+            if grid_execution_embargo:
+                blockers.append("grid_adapter_translation_embargo")
+            elif not control_change_allowed:
                 blockers.append("observer_only_authority")
-        request_ready = (
+        grid_request_ready = (
+            grid_execution_embargo
+            and due_segment is not None
+            and mapping_status == "validated"
+            and blockers == ["grid_adapter_translation_embargo"]
+        )
+        request_ready = grid_request_ready or (
             due_segment is not None
             and mapping_status == "validated"
             and blockers in (["observer_only_authority"], [])
@@ -1049,7 +1061,9 @@ class CanonicalPipeline:
             request_id=primitive_request_id,
             execution_record_id=execution_record.execution_record_id,
             status=(
-                (
+                "grid_request_ready"
+                if grid_request_ready
+                else (
                     "request_ready"
                     if control_change_allowed
                     else "observer_request_ready"
@@ -1082,6 +1096,21 @@ class CanonicalPipeline:
                 else None
             ),
             blockers=tuple(blockers),
+            charge_source_policy=(
+                due_segment.charge_source_policy if due_segment is not None else None
+            ),
+            valid_from=(due_segment.starts_at if due_segment is not None else None),
+            valid_until=(due_segment.ends_at if due_segment is not None else None),
+            requested_power_w=(
+                due_segment.requested_power_w if due_segment is not None else None
+            ),
+            capability_ids=(
+                (due_segment.capability_id,) if due_segment is not None else ()
+            ),
+            evidence_ids=(due_segment.evidence_ids if due_segment is not None else ()),
+            delegated_control=(
+                grid_execution_embargo and due_segment is not None
+            ),
         )
         execution_primitive_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 

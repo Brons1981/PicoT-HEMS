@@ -21,7 +21,7 @@ from picot.domain.household_energy_ledger import (
 from picot.domain.planning_input_snapshot import PlanningInputSnapshot
 from picot.domain.storage_conversion_model import StorageConversionModel
 
-METHOD_VERSION = "canonical-household-energy-simulator:v2"
+METHOD_VERSION = "canonical-household-energy-simulator:v3"
 CONFIDENCE_METHOD_VERSION = "ledger-required-input-min:v1"
 
 
@@ -62,6 +62,10 @@ class CanonicalHouseholdEnergySimulator:
         }
         stored_energy_wh = storage_state.current_stored_energy_wh
         intents = {item.segment_id: item for item in delegated_energy_intents}
+        remaining_grid_input_wh = {
+            item.segment_id: item.maximum_grid_input_energy_wh
+            for item in delegated_energy_intents
+        }
         intervals: list[HouseholdEnergyLedgerInterval] = []
 
         for pv in snapshot.pv_energy_timeline.intervals:
@@ -87,13 +91,17 @@ class CanonicalHouseholdEnergySimulator:
                     "Delegated balancing requires an explicit physical energy intent."
                 )
             policy = segment.charge_source_policy if segment is not None else None
-            if (
-                delegated_intent is not None
-                and policy is not ChargeSourcePolicy.PV_ONLY
-            ):
-                raise ValueError(
-                    "Delegated PV acquisition intent requires PV-only source policy."
+            if delegated_intent is not None:
+                expected_policy = (
+                    ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT
+                    if delegated_intent.kind
+                    is DelegatedEnergyIntentKind.GRID_REQUIREMENT_ACQUISITION
+                    else ChargeSourcePolicy.PV_ONLY
                 )
+                if policy is not expected_policy:
+                    raise ValueError(
+                        "Delegated energy intent must match its charge-source policy."
+                    )
             if policy is ChargeSourcePolicy.GRID_ALLOWED_FOR_MARKET_ACTION:
                 raise ValueError("Discretionary market-cycle simulation is not implemented.")
             effective_storage_target_wh = storage_state.usable_capacity_wh
@@ -146,6 +154,12 @@ class CanonicalHouseholdEnergySimulator:
             remaining_pv_wh -= pv_to_storage_wh
             grid_to_storage_wh = requested_charge_input_wh - pv_to_storage_wh
 
+            if delegated_intent is not None:
+                grid_to_storage_wh = min(
+                    grid_to_storage_wh,
+                    remaining_grid_input_wh[delegated_intent.segment_id],
+                )
+
             if grid_to_storage_wh > 0.0:
                 assert policy is not None
                 if not policy.permits_grid_import:
@@ -156,6 +170,10 @@ class CanonicalHouseholdEnergySimulator:
                             "Energy contract does not permit required grid charging."
                         )
                     raise ValueError("Energy contract does not permit grid charging.")
+            if delegated_intent is not None:
+                remaining_grid_input_wh[delegated_intent.segment_id] -= (
+                    grid_to_storage_wh
+                )
 
             storage_charge_input_wh = pv_to_storage_wh + grid_to_storage_wh
             storage_charge_loss_wh = storage_charge_input_wh * (
@@ -320,7 +338,7 @@ class CanonicalHouseholdEnergySimulator:
         if segment is None:
             return 0.0
         effective_capacity_wh = (
-            delegated_intent.maximum_storage_energy_wh
+            min(delegated_intent.maximum_storage_energy_wh, capacity_wh)
             if delegated_intent is not None
             else capacity_wh
         )
@@ -328,7 +346,15 @@ class CanonicalHouseholdEnergySimulator:
             max(0.0, effective_capacity_wh - stored_energy_wh) / charge_efficiency
         )
         if delegated_intent is not None:
-            return room_input_wh
+            if delegated_intent.maximum_charge_input_power_w is None:
+                return room_input_wh
+            duration_h = (
+                interval_ends_at - interval_starts_at
+            ).total_seconds() / 3600.0
+            return min(
+                room_input_wh,
+                delegated_intent.maximum_charge_input_power_w * duration_h,
+            )
         assert segment.requested_power_w is not None
         duration_h = (interval_ends_at - interval_starts_at).total_seconds() / 3600.0
         requested_wh = segment.requested_power_w * duration_h

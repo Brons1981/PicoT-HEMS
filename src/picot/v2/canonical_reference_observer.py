@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from picot.domain.candidate import CandidateFamily
+from picot.domain.capability_snapshot import EnergyFlowDirection
 from picot.domain.current_storage_state import CurrentStorageState as DomainStorageState
 from picot.domain.delegated_energy_intent import (
     DelegatedEnergyIntent,
@@ -52,9 +53,9 @@ from picot.v2.contracts import (
     ReferenceSimulationSet,
 )
 
-METHOD_VERSION = "v2-canonical-reference-observer:v3"
-ADAPTER_METHOD_VERSION = "v2-to-domain-reference-adapter:v3"
-DELEGATED_INTENT_METHOD_VERSION = "v2-delegated-energy-intent:v1"
+METHOD_VERSION = "v2-canonical-reference-observer:v4"
+ADAPTER_METHOD_VERSION = "v2-to-domain-reference-adapter:v4"
+DELEGATED_INTENT_METHOD_VERSION = "v2-delegated-energy-intent:v2"
 
 
 class CanonicalReferenceObserver:
@@ -117,28 +118,9 @@ class CanonicalReferenceObserver:
             ExecutionPrimitive.BALANCE_CHARGE_ONLY,
             ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
         }
-        unsupported = tuple(
-            dict.fromkeys(
-                (
-                    f"unsupported_primitive:{segment.primitive.value}"
-                    if segment.primitive not in delegated_primitives
-                    else (
-                        "unsupported_delegated_source_policy:"
-                        f"{segment.charge_source_policy.value}"
-                        if segment.charge_source_policy is not None
-                        else "unsupported_delegated_source_policy:missing"
-                    )
-                )
-                for segment in path.segments
-                if (
-                    segment.primitive is not ExecutionPrimitive.CHARGE_AT_POWER
-                    and (
-                        segment.primitive not in delegated_primitives
-                        or segment.charge_source_policy is None
-                        or segment.charge_source_policy.value != "pv_only"
-                    )
-                )
-            )
+        unsupported = self._unsupported_delegated_segments(
+            path=path,
+            delegated_primitives=delegated_primitives,
         )
         if unsupported:
             return self._blocked(candidate.candidate_id, path.path_id, unsupported)
@@ -168,11 +150,6 @@ class CanonicalReferenceObserver:
                 candidate_family=candidate.family,
                 path=path,
             )
-            delegated_energy_intents = self._delegated_energy_intents(
-                snapshot=snapshot,
-                path=path,
-                storage=domain_storage,
-            )
             requirement_target = (
                 legacy_outcome.required_energy_wh
                 if legacy_outcome is not None
@@ -183,6 +160,13 @@ class CanonicalReferenceObserver:
                     for segment in path.segments
                 )
                 else None
+            )
+            delegated_energy_intents = self._delegated_energy_intents(
+                snapshot=snapshot,
+                path=path,
+                storage=domain_storage,
+                legacy_outcome=legacy_outcome,
+                requirement_target_energy_wh=requirement_target,
             )
             ledger = self._simulator.simulate(
                 run_id=snapshot.run_id,
@@ -253,6 +237,34 @@ class CanonicalReferenceObserver:
             status="blocked",
             blockers=blockers,
         )
+
+    @staticmethod
+    def _unsupported_delegated_segments(
+        *,
+        path: EnergyPath,
+        delegated_primitives: set[ExecutionPrimitive],
+    ) -> tuple[str, ...]:
+        blockers: list[str] = []
+        for segment in path.segments:
+            if segment.primitive is ExecutionPrimitive.CHARGE_AT_POWER:
+                continue
+            if segment.primitive not in delegated_primitives:
+                blockers.append(f"unsupported_primitive:{segment.primitive.value}")
+                continue
+            policy = segment.charge_source_policy
+            supported = policy is not None and (
+                policy.value == "pv_only"
+                or (
+                    segment.primitive is ExecutionPrimitive.BALANCE_CHARGE_ONLY
+                    and policy.value == "grid_allowed_for_requirement"
+                )
+            )
+            if not supported:
+                blockers.append(
+                    "unsupported_delegated_source_policy:"
+                    f"{policy.value if policy is not None else 'missing'}"
+                )
+        return tuple(dict.fromkeys(blockers))
 
     @staticmethod
     def _adapt(
@@ -385,6 +397,8 @@ class CanonicalReferenceObserver:
         snapshot: PlanningInputSnapshot,
         path: EnergyPath,
         storage: DomainStorageState,
+        legacy_outcome: DelegatedStorageCandidateOutcome | None,
+        requirement_target_energy_wh: float | None,
     ) -> tuple[DelegatedEnergyIntent, ...]:
         delegated_primitives = {
             ExecutionPrimitive.BALANCE_CHARGE_ONLY,
@@ -424,15 +438,55 @@ class CanonicalReferenceObserver:
                 if capability.maximum_soc is not None
                 else storage.usable_capacity_wh
             )
+            is_grid_requirement = (
+                segment.charge_source_policy is not None
+                and segment.charge_source_policy.value
+                == "grid_allowed_for_requirement"
+            )
+            storage_requirement_id: str | None = None
+            maximum_grid_input_energy_wh = 0.0
+            maximum_charge_input_power_w: float | None = None
+            if is_grid_requirement:
+                if legacy_outcome is None or requirement_target_energy_wh is None:
+                    raise ValueError(
+                        "Delegated grid acquisition requires named requirement evidence."
+                    )
+                if requirement_target_energy_wh > maximum_storage_energy_wh:
+                    raise ValueError(
+                        "Storage requirement exceeds capability maximum energy."
+                    )
+                if (
+                    capability.maximum_power_w is None
+                    or EnergyFlowDirection.CHARGE not in capability.flow_directions
+                ):
+                    raise ValueError(
+                        "Delegated grid acquisition requires directional charge-power evidence."
+                    )
+                assert snapshot.storage_conversion_model is not None
+                maximum_grid_input_energy_wh = (
+                    legacy_outcome.grid_storage_contribution_wh
+                    / snapshot.storage_conversion_model.charge_efficiency
+                )
+                if maximum_grid_input_energy_wh <= 0.0:
+                    raise ValueError(
+                        "Delegated grid acquisition requires explicit positive grid contribution."
+                    )
+                maximum_storage_energy_wh = requirement_target_energy_wh
+                maximum_charge_input_power_w = capability.maximum_power_w
+                storage_requirement_id = legacy_outcome.storage_requirement_id
             result.append(
                 DelegatedEnergyIntent(
                     segment_id=segment.segment_id,
                     primitive=segment.primitive,
                     kind=(
-                        DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT
-                        if segment.primitive
-                        is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
-                        else DelegatedEnergyIntentKind.PV_SURPLUS_ACQUISITION
+                        DelegatedEnergyIntentKind.GRID_REQUIREMENT_ACQUISITION
+                        if is_grid_requirement
+                        else (
+                            DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT
+                            if segment.primitive
+                            is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                            else DelegatedEnergyIntentKind.PV_SURPLUS_ACQUISITION
+                        )
                     ),
                     minimum_storage_energy_wh=minimum_storage_energy_wh,
                     maximum_storage_energy_wh=maximum_storage_energy_wh,
@@ -444,10 +498,19 @@ class CanonicalReferenceObserver:
                                 capability.source_mapping_id,
                                 capability.adapter_contract_version,
                                 *segment.evidence_ids,
+                                *(
+                                    legacy_outcome.evidence_ids
+                                    if is_grid_requirement
+                                    and legacy_outcome is not None
+                                    else ()
+                                ),
                             )
                         )
                     ),
                     method_version=DELEGATED_INTENT_METHOD_VERSION,
+                    storage_requirement_id=storage_requirement_id,
+                    maximum_grid_input_energy_wh=maximum_grid_input_energy_wh,
+                    maximum_charge_input_power_w=maximum_charge_input_power_w,
                 )
             )
         return tuple(result)

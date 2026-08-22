@@ -282,6 +282,65 @@ def test_delegated_charge_only_acquires_available_pv_without_invented_power() ->
     assert interval.storage_energy_at_end_wh == pytest.approx(4720.0)
 
 
+def test_delegated_requirement_grid_acquisition_is_energy_and_power_bounded() -> None:
+    path = _path(policy=ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT)
+    segment = replace(
+        path.segments[0],
+        primitive=ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+        requested_power_w=None,
+    )
+    path = replace(path, segments=(segment,))
+    intent = DelegatedEnergyIntent(
+        segment_id=segment.segment_id,
+        primitive=segment.primitive,
+        kind=DelegatedEnergyIntentKind.GRID_REQUIREMENT_ACQUISITION,
+        minimum_storage_energy_wh=None,
+        maximum_storage_energy_wh=4450.0,
+        evidence_ids=("capability:balance-charge-only", "requirement:1"),
+        method_version="delegated-grid-intent:test",
+        storage_requirement_id="requirement:1",
+        maximum_grid_input_energy_wh=20.0,
+        maximum_charge_input_power_w=400.0,
+    )
+
+    ledger = CanonicalHouseholdEnergySimulator().simulate(
+        run_id="run-1",
+        candidate_id="candidate-1",
+        path=path,
+        snapshot=_snapshot(pv_wh=250.0, load_wh=200.0),
+        storage_state=_storage(),
+        conversion_model=StorageConversionModel(
+            "conversion-1", 0.90, 0.90, ("efficiency:1",), "test:v1"
+        ),
+        energy_contract=_contract(),
+        requirement_target_energy_wh=4450.0,
+        delegated_energy_intents=(intent,),
+    )
+    interval = ledger.intervals[0]
+
+    # The 15-minute capability ceiling is 100 Wh. PV remains first and the
+    # explicit 20 Wh grid budget is not silently expanded to fill the battery.
+    assert interval.pv_to_storage_input_wh == pytest.approx(50.0)
+    assert interval.grid_to_storage_input_wh == pytest.approx(20.0)
+    assert interval.storage_charge_input_wh == pytest.approx(70.0)
+    assert interval.storage_energy_at_end_wh == pytest.approx(4063.0)
+
+
+def test_delegated_grid_acquisition_requires_named_bounded_requirement() -> None:
+    with pytest.raises(ValueError, match="named storage requirement"):
+        DelegatedEnergyIntent(
+            segment_id="charge-segment-1",
+            primitive=ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+            kind=DelegatedEnergyIntentKind.GRID_REQUIREMENT_ACQUISITION,
+            minimum_storage_energy_wh=None,
+            maximum_storage_energy_wh=4450.0,
+            evidence_ids=("capability:balance-charge-only",),
+            method_version="delegated-grid-intent:test",
+            maximum_grid_input_energy_wh=500.0,
+            maximum_charge_input_power_w=400.0,
+        )
+
+
 def test_delegated_bidirectional_support_stops_at_explicit_minimum_energy() -> None:
     path = _path(policy=ChargeSourcePolicy.PV_ONLY)
     segment = replace(

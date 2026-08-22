@@ -12,6 +12,7 @@ from picot.domain.capability_snapshot import (
     EnergyFlowDirection,
     LogicalCapabilitySnapshot,
 )
+from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_contract import EnergyContractSnapshot, EnergyTariffInterval
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.storage_conversion_model import StorageConversionModel
@@ -251,6 +252,178 @@ def test_reference_observer_simulates_baseline_and_delegated_pv_intent() -> None
     assert delegated.reference_conversion_losses_wh == pytest.approx(22.222222)
     assert delegated.pv_storage_delta_wh == pytest.approx(0.0)
     assert run.evaluation.winning_candidate_id == run.candidate_set.candidates[1].candidate_id
+
+
+def test_reference_observer_models_bounded_delegated_requirement_grid_energy() -> None:
+    source = _snapshot()
+    initial = CanonicalPipeline().run(planning_input=source)
+    assert source.horizon_end is not None
+    assert source.pv_energy_timeline is not None
+    assert source.capability_snapshot_set is not None
+    grid_path = replace(
+        initial.candidate_set.energy_paths[1],
+        segments=(
+            replace(
+                initial.candidate_set.energy_paths[1].segments[0],
+                charge_source_policy=ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT,
+            ),
+        ),
+    )
+    candidate_set = replace(
+        initial.candidate_set,
+        energy_paths=(initial.candidate_set.energy_paths[0], grid_path),
+    )
+    low_pv = replace(
+        source.pv_energy_timeline.intervals[0],
+        pv_energy_wh=200.0,
+    )
+    tariffs = tuple(
+        EnergyTariffInterval.basic(
+            starts_at=item.starts_at,
+            ends_at=item.ends_at,
+            import_eur_per_kwh=0.25,
+            export_eur_per_kwh=0.10,
+            evidence_ids=(f"tariff:{item.interval_id}",),
+        )
+        for item in source.pv_energy_timeline.intervals
+    )
+    capability = replace(
+        source.capability_snapshot_set.capabilities[0],
+        maximum_power_w=400.0,
+    )
+    snapshot = replace(
+        source,
+        pv_energy_timeline=replace(
+            source.pv_energy_timeline,
+            intervals=(low_pv, source.pv_energy_timeline.intervals[1]),
+        ),
+        capability_snapshot_set=replace(
+            source.capability_snapshot_set,
+            capabilities=(capability,),
+        ),
+        energy_contract_snapshot=EnergyContractSnapshot(
+            contract_snapshot_id="contract-grid-requirement",
+            captured_at=BASE,
+            valid_from=BASE,
+            valid_until=source.horizon_end,
+            settlement_timezone="Europe/Amsterdam",
+            settlement_rule_id="dynamic-quarter-hour:v1",
+            contract_version="contract:v1",
+            permits_grid_import=True,
+            permits_grid_export=True,
+            permits_battery_export=False,
+            intervals=tariffs,
+        ),
+        storage_conversion_model=StorageConversionModel(
+            model_id="conversion-model-grid",
+            charge_efficiency=0.90,
+            discharge_efficiency=0.90,
+            evidence_ids=("storage-efficiency:grid",),
+            method_version="fixed-directional-efficiency:v1",
+        ),
+    )
+
+    observations = CanonicalReferenceObserver().observe(
+        snapshot=snapshot,
+        candidate_set=candidate_set,
+        outcomes=replace(
+            initial.outcomes,
+            outcomes=(
+                replace(
+                    initial.outcomes.outcomes[0],
+                    pv_storage_contribution_wh=0.0,
+                    grid_storage_contribution_wh=200.0,
+                ),
+            ),
+        ),
+    )
+    grid = observations.observations[1]
+
+    assert grid.status == "ready"
+    assert grid.ledger is not None
+    assert grid.reference_pv_storage_wh == pytest.approx(0.0)
+    assert grid.reference_grid_storage_wh == pytest.approx(200.0)
+    assert sum(
+        item.grid_to_storage_input_wh for item in grid.ledger.intervals
+    ) == pytest.approx(200.0 / 0.90)
+    assert any(
+        initial.outcomes.outcomes[0].storage_requirement_id in item.evidence_ids
+        for item in grid.ledger.intervals
+    )
+
+
+def test_reference_observer_keeps_delegated_grid_closed_without_charge_power() -> None:
+    source = _snapshot()
+    initial = CanonicalPipeline().run(planning_input=source)
+    grid_path = replace(
+        initial.candidate_set.energy_paths[1],
+        segments=(
+            replace(
+                initial.candidate_set.energy_paths[1].segments[0],
+                charge_source_policy=ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT,
+            ),
+        ),
+    )
+    candidate_set = replace(
+        initial.candidate_set,
+        energy_paths=(initial.candidate_set.energy_paths[0], grid_path),
+    )
+    assert source.horizon_end is not None
+    assert source.pv_energy_timeline is not None
+    tariffs = tuple(
+        EnergyTariffInterval.basic(
+            starts_at=item.starts_at,
+            ends_at=item.ends_at,
+            import_eur_per_kwh=0.25,
+            export_eur_per_kwh=0.10,
+            evidence_ids=(f"tariff:{item.interval_id}",),
+        )
+        for item in source.pv_energy_timeline.intervals
+    )
+    snapshot = replace(
+        source,
+        energy_contract_snapshot=EnergyContractSnapshot(
+            contract_snapshot_id="contract-grid-requirement",
+            captured_at=BASE,
+            valid_from=BASE,
+            valid_until=source.horizon_end,
+            settlement_timezone="Europe/Amsterdam",
+            settlement_rule_id="dynamic-quarter-hour:v1",
+            contract_version="contract:v1",
+            permits_grid_import=True,
+            permits_grid_export=True,
+            permits_battery_export=False,
+            intervals=tariffs,
+        ),
+        storage_conversion_model=StorageConversionModel(
+            model_id="conversion-model-grid",
+            charge_efficiency=0.90,
+            discharge_efficiency=0.90,
+            evidence_ids=("storage-efficiency:grid",),
+            method_version="fixed-directional-efficiency:v1",
+        ),
+    )
+
+    grid = CanonicalReferenceObserver().observe(
+        snapshot=snapshot,
+        candidate_set=candidate_set,
+        outcomes=replace(
+            initial.outcomes,
+            outcomes=(
+                replace(
+                    initial.outcomes.outcomes[0],
+                    pv_storage_contribution_wh=0.0,
+                    grid_storage_contribution_wh=200.0,
+                ),
+            ),
+        ),
+    ).observations[1]
+
+    assert grid.status == "blocked"
+    assert grid.blockers == (
+        "simulation_blocked:Delegated grid acquisition requires directional "
+        "charge-power evidence.",
+    )
 
 
 def test_reference_observer_normalises_coarse_energy_to_tariff_intervals() -> None:

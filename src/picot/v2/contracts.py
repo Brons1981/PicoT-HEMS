@@ -1313,6 +1313,69 @@ class GridRequirementAdmissionSet:
 
 
 @dataclass(frozen=True, slots=True)
+class GridRequirementObserverDecisionCandidate:
+    """Joined physical and financial observer result for one grid Candidate."""
+
+    candidate_id: str
+    energy_path_id: str
+    physically_admissible: bool
+    net_financial_result_eur: float
+    difference_from_baseline_eur: float
+    relative_to_baseline: str
+    admission_blockers: tuple[str, ...]
+    eligible_for_future_evaluation: bool
+
+    def __post_init__(self) -> None:
+        if self.relative_to_baseline not in {"better", "equal", "worse"}:
+            raise ValueError("Observer decision financial relation is invalid")
+        if self.physically_admissible == bool(self.admission_blockers):
+            raise ValueError("Observer decision admission blockers are inconsistent")
+        if self.eligible_for_future_evaluation != self.physically_admissible:
+            raise ValueError("Only physically admissible Candidates may be future-eligible")
+
+
+@dataclass(frozen=True, slots=True)
+class GridRequirementObserverDecision:
+    """Observer-only join that cannot enter canonical Evaluation."""
+
+    candidate_set_id: str
+    status: str
+    candidates: tuple[GridRequirementObserverDecisionCandidate, ...]
+    preferred_for_future_evaluation_candidate_id: str | None
+    blockers: tuple[str, ...]
+    observer_only: bool
+    influences_live_selection: bool
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if self.status not in {"ready", "blocked", "not_applicable"}:
+            raise ValueError("Observer grid decision status is invalid")
+        if not self.observer_only or self.influences_live_selection:
+            raise ValueError("Observer grid decision may not influence live selection")
+        if not self.candidate_set_id.strip() or not self.method_version.strip():
+            raise ValueError("Observer grid decision identity must be explicit")
+        ids = tuple(item.candidate_id for item in self.candidates)
+        if len(ids) != len(set(ids)):
+            raise ValueError("Observer grid decision Candidate IDs must be unique")
+        eligible_ids = tuple(
+            item.candidate_id
+            for item in self.candidates
+            if item.eligible_for_future_evaluation
+        )
+        if self.preferred_for_future_evaluation_candidate_id not in {
+            None,
+            *eligible_ids,
+        }:
+            raise ValueError("Observer preference must identify an eligible Candidate")
+        if self.status == "ready" and (not self.candidates or self.blockers):
+            raise ValueError("Ready observer grid decision requires Candidates only")
+        if self.status == "blocked" and (self.candidates or not self.blockers):
+            raise ValueError("Blocked observer grid decision requires blockers only")
+        if self.status == "not_applicable" and (self.candidates or self.blockers):
+            raise ValueError("Non-applicable observer grid decision must be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class ReferenceSimulationSet:
     """Passive comparison output that never enters Candidate Evaluation."""
 
@@ -1324,6 +1387,7 @@ class ReferenceSimulationSet:
     global_blockers: tuple[str, ...] = ()
     financial_comparison: ReferenceFinancialComparisonSet | None = None
     grid_requirement_admission: GridRequirementAdmissionSet | None = None
+    grid_requirement_decision: GridRequirementObserverDecision | None = None
 
     def __post_init__(self) -> None:
         if not self.method_version.strip():

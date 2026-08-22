@@ -684,6 +684,19 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
     assert run.evaluation.winning_candidate_id not in {
         item.candidate_id for item in admission.assessments
     }
+    decision = run.reference_simulations.grid_requirement_decision
+    assert decision is not None
+    assert decision.status == "ready"
+    assert decision.observer_only is True
+    assert decision.influences_live_selection is False
+    assert {item.candidate_id for item in decision.candidates} == {
+        item.candidate_id for item in grid_candidates
+    }
+    assert all(item.physically_admissible for item in decision.candidates)
+    assert all(item.eligible_for_future_evaluation for item in decision.candidates)
+    assert run.evaluation.winning_candidate_id not in {
+        item.candidate_id for item in decision.candidates
+    }
 
     without_connection_limit = replace(
         snapshot,

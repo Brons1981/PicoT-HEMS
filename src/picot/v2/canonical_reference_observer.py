@@ -56,6 +56,9 @@ from picot.v2.contracts import (
     ReferenceSimulationSet,
 )
 from picot.v2.grid_requirement_admission import GridRequirementAdmissionProducer
+from picot.v2.grid_requirement_observer_decision import (
+    GridRequirementObserverDecisionProducer,
+)
 from picot.v2.reference_financial_comparison import ReferenceFinancialComparator
 
 METHOD_VERSION = "v2-canonical-reference-observer:v6"
@@ -97,21 +100,27 @@ class CanonicalReferenceObserver:
             )
             for candidate in candidate_set.candidates
         )
+        financial_comparison = ReferenceFinancialComparator().compare(
+            candidate_set=candidate_set,
+            observations=observations,
+        )
+        grid_admission = GridRequirementAdmissionProducer().assess(
+            snapshot=snapshot,
+            candidate_set=candidate_set,
+            outcomes=outcomes,
+            observations=observations,
+        )
         return ReferenceSimulationSet(
             run_id=snapshot.run_id,
             snapshot_id=snapshot.snapshot_id,
             candidate_set_id=candidate_set.candidate_set_id,
             observations=observations,
             method_version=METHOD_VERSION,
-            financial_comparison=ReferenceFinancialComparator().compare(
-                candidate_set=candidate_set,
-                observations=observations,
-            ),
-            grid_requirement_admission=GridRequirementAdmissionProducer().assess(
-                snapshot=snapshot,
-                candidate_set=candidate_set,
-                outcomes=outcomes,
-                observations=observations,
+            financial_comparison=financial_comparison,
+            grid_requirement_admission=grid_admission,
+            grid_requirement_decision=GridRequirementObserverDecisionProducer().decide(
+                admission=grid_admission,
+                financial=financial_comparison,
             ),
         )
 

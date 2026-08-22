@@ -209,6 +209,60 @@ def test_evaluation_selects_requirement_satisfying_path_deterministically() -> N
     assert first.evaluation == second.evaluation
 
 
+def test_uncommitted_active_window_does_not_outrank_cheaper_future_window() -> None:
+    """Being executable now is not an Evaluation objective by itself."""
+
+    source = _snapshot()
+    current_end = BASE + timedelta(minutes=30)
+    future_start = BASE + timedelta(minutes=30)
+    future_end = BASE + timedelta(hours=1)
+    priced = replace(
+        source,
+        price_points=(
+            PriceForecastPoint(
+                point_id="price-current",
+                starts_at=BASE,
+                ends_at=current_end,
+                value_eur_per_kwh=0.40,
+                confidence=1.0,
+                evidence_id="price-current-evidence",
+            ),
+            PriceForecastPoint(
+                point_id="price-future",
+                starts_at=future_start,
+                ends_at=future_end,
+                value_eur_per_kwh=0.10,
+                confidence=1.0,
+                evidence_id="price-future-evidence",
+            ),
+        ),
+    )
+    baseline = CanonicalPipeline().run(planning_input=source)
+    outcome = baseline.outcomes.outcomes[0]
+    current = replace(
+        outcome,
+        outcome_id="outcome-current",
+        candidate_id="candidate-current",
+        charge_window_starts_at=BASE,
+        charge_window_ends_at=current_end,
+    )
+    future = replace(
+        outcome,
+        outcome_id="outcome-future",
+        candidate_id="candidate-future",
+        charge_window_starts_at=future_start,
+        charge_window_ends_at=future_end,
+    )
+
+    winner = DelegatedStorageEvaluationEngine().evaluate(
+        snapshot=priced,
+        candidate_set=baseline.candidate_set,
+        actionable_outcomes=(current, future),
+    ).winning_outcome
+
+    assert winner == future
+
+
 def test_feasible_challenger_replaces_infeasible_committed_window() -> None:
     source = _snapshot()
     run = CanonicalPipeline().run(planning_input=source)

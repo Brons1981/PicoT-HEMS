@@ -48,6 +48,9 @@ from picot.v2.projection import project
 from picot.v2.pv_forecast_assumptions import derive_pv_forecast_basis_assumptions
 from picot.v2.reference_financial_comparison import ReferenceFinancialComparator
 from picot.v2.web_ui import _build_plan_explanation
+from picot.v2.zendure_mode_capabilities import (
+    derive_zendure_mode_capability_evidence,
+)
 
 BASE = datetime(2026, 8, 16, 8, 0, tzinfo=UTC)
 WINDOW_END = BASE + timedelta(hours=1)
@@ -198,6 +201,14 @@ def test_reference_observer_is_blocked_without_required_contract_evidence() -> N
     assert run.reference_simulations.grid_requirement_shadow_evaluation is not None
     assert (
         run.reference_simulations.grid_requirement_shadow_evaluation.status
+        == "not_applicable"
+    )
+    assert (
+        run.reference_simulations.grid_requirement_shadow_execution_feasibility
+        is not None
+    )
+    assert (
+        run.reference_simulations.grid_requirement_shadow_execution_feasibility.status
         == "not_applicable"
     )
     assert all(
@@ -715,6 +726,55 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
         item.candidate_id for item in grid_candidates
     }
     assert shadow.projected_winning_candidate_id != run.evaluation.winning_candidate_id
+    feasibility = run.reference_simulations.grid_requirement_shadow_execution_feasibility
+    assert feasibility is not None
+    assert feasibility.status == "blocked"
+    assert feasibility.candidate_id == shadow.projected_winning_candidate_id
+    assert feasibility.observer_only is True
+    assert feasibility.influences_live_execution is False
+    assert feasibility.adapter_translation_attempted is False
+    assert feasibility.dispatch_attempted is False
+    assert feasibility.requested_power_w is None
+    assert feasibility.blockers == ("storage_mode_capability_evidence_missing",)
+
+    mode_evidence = derive_zendure_mode_capability_evidence(
+        {
+            "state": "Standby",
+            "attributes": {
+                "options": [
+                    "Standby",
+                    "Nul op de meter",
+                    "Alleen slim ontladen",
+                    "Alleen slim opladen",
+                ]
+            },
+        },
+        captured_at=BASE,
+        source_entity_id="input_select.zendure_mode",
+        capability_id=CAPABILITY_ID,
+        execution_scope_id="home-battery",
+    )
+    mapped_run = CanonicalPipeline().run(
+        planning_input=replace(
+            snapshot,
+            storage_mode_capability_evidence=mode_evidence,
+        )
+    )
+    mapped = mapped_run.reference_simulations.grid_requirement_shadow_execution_feasibility
+    assert mapped is not None
+    assert mapped.status == "blocked"
+    assert mapped.vendor_mapping_status == "primitive_only"
+    assert mapped.planned_primitive is ExecutionPrimitive.BALANCE_CHARGE_ONLY
+    assert mapped.charge_source_policy is ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT
+    assert mapped.planned_vendor_mode == "Alleen slim opladen"
+    assert mapped.blockers == ("grid_source_vendor_mapping_unproven",)
+    assert mapped_run.evaluation == run.evaluation
+    assert (
+        mapped_run.execution_plan_set.winning_energy_path_id
+        == run.execution_plan_set.winning_energy_path_id
+    )
+    assert mapped_run.adapter_boundary.translation_id is None
+    assert mapped_run.vendor_result.command_id is None
     assert run.evaluation.winning_candidate_id not in {
         item.candidate_id
         for item in run.reference_simulations.grid_requirement_decision.candidates

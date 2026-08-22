@@ -899,3 +899,25 @@ Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.131 and confirm an equal-price live plan chooses
 the earlier feasible window at the current low PV confidence, while showing
 both charge-target and deadline-reserve results separately.
+
+Live verification, 2026-08-22:
+
+- PicoT selected 12:30–16:00 from the equal-price period, confirming that the
+  low-confidence earlier-window rule works live as intended.
+- The plan projected 5.89 kWh at charge start, 2.27 kWh required addition and
+  8.16 kWh at the end of the PV-only acquisition window; the separate 100%
+  charge-window target was therefore correctly reported as satisfied.
+- The later energy projection was 8.10 kWh, but the dashboard exposed a minimum
+  reserve of 8.16 kWh instead of the configured 10% / 816 Wh. Consequently the
+  reserve result and combined target result were incorrectly false.
+- This proves that the accepted fail-closed compatibility path is active in the
+  live runtime because `minimum_soc` is not reaching the canonical storage
+  capability. The defect is not in average-price selection or household energy
+  simulation.
+
+First action next session: trace the configured Zendure minimum SoC through
+adapter mapping and `LogicalCapabilitySnapshot`, then supply the real 10%
+minimum to delegated storage simulation. Preserve the fail-closed fallback for
+genuinely unavailable capability evidence and add an end-to-end regression that
+8.10 kWh satisfies an explicit 816 Wh deadline reserve after reaching 8.16 kWh
+at the charge-window end.

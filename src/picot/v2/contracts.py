@@ -9,8 +9,11 @@ from typing import TYPE_CHECKING
 
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
 from picot.domain.charge_source_policy import ChargeSourcePolicy
+from picot.domain.energy_contract import EnergyContractSnapshot
 from picot.domain.energy_path import PathSegment, ProjectedEnergyState
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.household_energy_ledger import HouseholdEnergyLedger
+from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.v2.household_planning_regime import (
     HouseholdPlanningRegime,
     UserObjectiveProfile,
@@ -594,6 +597,8 @@ class PlanningInputSnapshot:
     bms_calibration_evidence: BMSCalibrationEvidence | None = None
     capability_snapshot_set: CapabilitySnapshotSet | None = None
     active_plan_commitments: tuple[ActivePlanCommitment, ...] = ()
+    energy_contract_snapshot: EnergyContractSnapshot | None = None
+    storage_conversion_model: StorageConversionModel | None = None
 
     def __post_init__(self) -> None:
         scope_ids = tuple(
@@ -644,6 +649,13 @@ class PlanningInputSnapshot:
         ):
             raise ValueError(
                 "capability snapshot set lineage must match planning input"
+            )
+        if (
+            self.energy_contract_snapshot is not None
+            and self.energy_contract_snapshot.captured_at != self.captured_at
+        ):
+            raise ValueError(
+                "energy contract snapshot must share planning input capture time"
             )
 
 
@@ -1085,6 +1097,55 @@ class VendorBoundaryResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ReferenceCandidateSimulation:
+    """Non-authoritative V2ADR-054 comparison for one existing Candidate."""
+
+    candidate_id: str
+    energy_path_id: str
+    status: str
+    blockers: tuple[str, ...]
+    ledger: HouseholdEnergyLedger | None = None
+    reference_pv_storage_wh: float | None = None
+    reference_grid_storage_wh: float | None = None
+    reference_grid_import_wh: float | None = None
+    reference_grid_export_wh: float | None = None
+    reference_conversion_losses_wh: float | None = None
+    legacy_pv_storage_wh: float | None = None
+    legacy_grid_storage_wh: float | None = None
+    legacy_conversion_losses_wh: float | None = None
+    pv_storage_delta_wh: float | None = None
+    grid_storage_delta_wh: float | None = None
+    conversion_losses_delta_wh: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.status not in {"ready", "blocked"}:
+            raise ValueError("reference simulation status must be ready or blocked")
+        if self.status == "ready" and (self.blockers or self.ledger is None):
+            raise ValueError("ready reference simulation requires only a ledger")
+        if self.status == "blocked" and (not self.blockers or self.ledger is not None):
+            raise ValueError("blocked reference simulation requires only blockers")
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceSimulationSet:
+    """Passive comparison output that never enters Candidate Evaluation."""
+
+    run_id: str
+    snapshot_id: str
+    candidate_set_id: str
+    observations: tuple[ReferenceCandidateSimulation, ...]
+    method_version: str
+    global_blockers: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.method_version.strip():
+            raise ValueError("reference simulation method version must be explicit")
+        candidate_ids = tuple(item.candidate_id for item in self.observations)
+        if len(candidate_ids) != len(set(candidate_ids)):
+            raise ValueError("reference simulation Candidate IDs must be unique")
+
+
+@dataclass(frozen=True, slots=True)
 class CanonicalPipelineRun:
     planning_input: PlanningInputSnapshot
     opportunities: OpportunitySet
@@ -1096,3 +1157,4 @@ class CanonicalPipelineRun:
     primitive_boundary: ExecutionPrimitiveBoundary
     adapter_boundary: DeviceAdapterBoundary
     vendor_result: VendorBoundaryResult
+    reference_simulations: ReferenceSimulationSet

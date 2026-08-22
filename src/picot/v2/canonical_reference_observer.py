@@ -360,6 +360,7 @@ class CanonicalReferenceObserver:
             "reserve_first": CandidateFamily.RESERVE_FIRST,
             "pv_charge_only": CandidateFamily.PV_FIRST,
             "cost_first": CandidateFamily.COST_FIRST,
+            "grid_requirement": CandidateFamily.COST_FIRST,
         }.get(candidate_family)
         if family is None:
             raise ValueError(f"unsupported Candidate family {candidate_family}")

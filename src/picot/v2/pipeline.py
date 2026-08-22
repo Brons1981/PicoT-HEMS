@@ -42,9 +42,11 @@ from picot.v2.contracts import (
 )
 from picot.v2.delegated_storage_candidates import (
     complete_storage_path_with_baseline,
+    construct_grid_requirement_candidates,
     construct_pv_charge_only_candidate,
 )
 from picot.v2.delegated_storage_outcomes import (
+    simulate_grid_requirement_outcomes,
     simulate_pv_charge_only_outcomes,
 )
 from picot.v2.opportunity_engine import OpportunityEngine, PriceOpportunityConfig
@@ -276,7 +278,9 @@ class CanonicalPipeline:
         )
         delegated_candidates: list[Candidate] = []
         delegated_paths: list[EnergyPath] = []
+        observer_only_paths: list[EnergyPath] = []
         delegated_outcomes: list[DelegatedStorageCandidateOutcome] = []
+        observer_only_outcomes: list[DelegatedStorageCandidateOutcome] = []
         forecast_assumptions = derive_pv_forecast_basis_assumptions(snapshot)
         lower_assumption = next(
             (
@@ -311,8 +315,6 @@ class CanonicalPipeline:
                     preferred_price_windows=(),
                     pv_forecast_basis=forecast_basis,
                 )
-                if not delegated_set.candidates:
-                    continue
                 storage = next(
                     (
                         item
@@ -341,31 +343,51 @@ class CanonicalPipeline:
                     and capability.minimum_soc is not None
                     else None
                 )
-                simulated = simulate_pv_charge_only_outcomes(
-                    delegated_set,
-                    minimum_reserve_energy_wh=minimum_reserve_energy_wh,
-                )
-                delegated_candidates.extend(
-                    item
-                    for item in delegated_set.candidates
-                    if item.candidate_id
-                    in {
-                        outcome.candidate_id
-                        for outcome in simulated.outcomes
+                simulated_outcomes: tuple[DelegatedStorageCandidateOutcome, ...] = ()
+                if delegated_set.candidates:
+                    simulated = simulate_pv_charge_only_outcomes(
+                        delegated_set,
+                        minimum_reserve_energy_wh=minimum_reserve_energy_wh,
+                    )
+                    simulated_outcomes = simulated.outcomes
+                    accepted_candidate_ids = {
+                        outcome.candidate_id for outcome in simulated_outcomes
                     }
-                )
-                accepted_path_ids = {
-                    item.energy_path_id
-                    for item in delegated_candidates
-                }
-                delegated_paths.extend(
-                    item
-                    for item in delegated_set.energy_paths
-                    if item.path_id in accepted_path_ids
-                )
-                delegated_outcomes.extend(
-                    simulated.outcomes
-                )
+                    accepted_candidates = tuple(
+                        item
+                        for item in delegated_set.candidates
+                        if item.candidate_id in accepted_candidate_ids
+                    )
+                    accepted_path_ids = {
+                        item.energy_path_id for item in accepted_candidates
+                    }
+                    delegated_candidates.extend(accepted_candidates)
+                    delegated_paths.extend(
+                        item
+                        for item in delegated_set.energy_paths
+                        if item.path_id in accepted_path_ids
+                    )
+                    delegated_outcomes.extend(simulated_outcomes)
+                if (
+                    not any(item.requirement_satisfied for item in simulated_outcomes)
+                    and snapshot.storage_conversion_model is not None
+                ):
+                    grid_set = construct_grid_requirement_candidates(
+                        snapshot=snapshot,
+                        balance=candidate_balance,
+                        requirement=requirement,
+                    )
+                    if grid_set.candidates:
+                        grid_simulated = simulate_grid_requirement_outcomes(
+                            grid_set,
+                            charge_efficiency=(
+                                snapshot.storage_conversion_model.charge_efficiency
+                            ),
+                            minimum_reserve_energy_wh=minimum_reserve_energy_wh,
+                        )
+                        delegated_candidates.extend(grid_set.candidates)
+                        observer_only_paths.extend(grid_set.energy_paths)
+                        observer_only_outcomes.extend(grid_simulated.outcomes)
 
         path = complete_storage_path_with_baseline(snapshot, path)
         delegated_paths = [
@@ -377,7 +399,7 @@ class CanonicalPipeline:
             snapshot_id=snapshot_id,
             candidate_set_id=_id("candidate-set", opportunities.opportunity_set_id),
             candidates=(candidate, *delegated_candidates),
-            energy_paths=(path, *delegated_paths),
+            energy_paths=(path, *delegated_paths, *observer_only_paths),
             projected_balances=(
                 candidate_derivation.balances
                 if candidate_derivation is not None
@@ -397,7 +419,8 @@ class CanonicalPipeline:
             derivation_status=derivation_status,
             derivation_reason=derivation_reason,
         )
-        has_evaluated_alternatives = bool(delegated_outcomes)
+        reference_outcomes = tuple((*delegated_outcomes, *observer_only_outcomes))
+        has_evaluated_alternatives = bool(reference_outcomes)
         storage_capabilities_by_id = {
             capability.capability_id: capability
             for capability in (
@@ -547,11 +570,11 @@ class CanonicalPipeline:
             candidate_set_id=candidate_set.candidate_set_id,
             outcome_set_id=_id("outcome-set", candidate_set.candidate_set_id),
             candidate_ids=(
-                tuple(item.candidate_id for item in delegated_outcomes)
+                tuple(item.candidate_id for item in reference_outcomes)
                 if has_evaluated_alternatives
                 else (candidate.candidate_id,)
             ),
-            outcomes=tuple(delegated_outcomes),
+            outcomes=reference_outcomes,
         )
         candidate_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 

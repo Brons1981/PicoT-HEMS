@@ -13,12 +13,15 @@ from picot.domain.capability_snapshot import (
     LogicalCapabilitySnapshot,
 )
 from picot.domain.charge_source_policy import ChargeSourcePolicy
+from picot.domain.energy_contract import EnergyContractSnapshot, EnergyTariffInterval
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.v2.contracts import (
     CurrentStorageState,
     HouseholdLoadForecast,
     HouseholdLoadForecastInterval,
     PlanningInputSnapshot,
+    PriceForecastPoint,
     ProjectedHouseholdEnergyBalance,
     ProjectedHouseholdEnergyBalanceInterval,
     PVEnergyTimeline,
@@ -39,6 +42,7 @@ def _capability_set(
     *,
     primitive: ExecutionPrimitive = ExecutionPrimitive.BALANCE_CHARGE_ONLY,
     available: bool = True,
+    maximum_power_w: float | None = None,
 ) -> CapabilitySnapshotSet:
     capability = LogicalCapabilitySnapshot(
         capability_id=CAPABILITY_ID,
@@ -56,6 +60,7 @@ def _capability_set(
         adapter_contract_version="1",
         role=CapabilityRole.ENERGY_STORAGE,
         flow_directions=(EnergyFlowDirection.CHARGE,) if available else (),
+        maximum_power_w=maximum_power_w,
     )
     return CapabilitySnapshotSet(
         snapshot_id=SNAPSHOT_ID,
@@ -334,3 +339,175 @@ def test_preferred_window_executes_only_between_first_and_last_acquisition() -> 
         segment.charge_source_policy is ChargeSourcePolicy.PV_ONLY
         for segment in path.segments
     )
+
+
+def test_grid_requirement_candidate_uses_complete_bounded_price_window() -> None:
+    module = import_module("picot.v2.delegated_storage_candidates")
+    capability_set = _capability_set(maximum_power_w=400.0)
+    snapshot = _snapshot(capability_set)
+    tariffs = tuple(
+        EnergyTariffInterval.basic(
+            starts_at=start,
+            ends_at=end,
+            import_eur_per_kwh=price,
+            export_eur_per_kwh=0.05,
+            evidence_ids=(f"tariff-{index}",),
+        )
+        for index, (start, end, price) in enumerate(
+            (
+                (BASE, WINDOW_END, 0.30),
+                (WINDOW_END, REQUIRED_BY, 0.10),
+            )
+        )
+    )
+    snapshot = replace(
+        snapshot,
+        price_points=tuple(
+            PriceForecastPoint(
+                point_id=f"price-{index}",
+                starts_at=tariff.starts_at,
+                ends_at=tariff.ends_at,
+                value_eur_per_kwh=tariff.commodity_import_eur_per_kwh,
+                confidence=1.0,
+                evidence_id=tariff.evidence_ids[0],
+            )
+            for index, tariff in enumerate(tariffs)
+        ),
+        energy_contract_snapshot=EnergyContractSnapshot(
+            contract_snapshot_id="contract-grid-test",
+            captured_at=BASE,
+            valid_from=BASE,
+            valid_until=REQUIRED_BY,
+            settlement_timezone="Europe/Amsterdam",
+            settlement_rule_id="dynamic:test",
+            contract_version="contract:test",
+            permits_grid_import=True,
+            permits_grid_export=True,
+            permits_battery_export=False,
+            intervals=tariffs,
+        ),
+        storage_conversion_model=StorageConversionModel(
+            model_id="conversion-grid-test",
+            charge_efficiency=0.80,
+            discharge_efficiency=0.90,
+            evidence_ids=("efficiency-grid-test",),
+            method_version="fixed:test",
+        ),
+    )
+    balance = replace(
+        _balance(),
+        intervals=(
+            replace(
+                _balance().intervals[0],
+                expected_usable_pv_energy_wh=0.0,
+                projected_storage_energy_wh=800.0,
+            ),
+            replace(
+                _balance().intervals[1],
+                current_usable_storage_energy_wh=800.0,
+                projected_storage_energy_wh=600.0,
+            ),
+        ),
+    )
+
+    candidate_set = module.construct_grid_requirement_candidates(
+        snapshot=snapshot,
+        balance=balance,
+        requirement=_requirement(),
+    )
+
+    assert candidate_set.derivation_status == "constructed"
+    assert len(candidate_set.candidates) == 1
+    candidate = candidate_set.candidates[0]
+    path = candidate_set.energy_paths[0]
+    assert candidate.family == "grid_requirement"
+    assert path.family == "grid_requirement"
+    assert len(path.segments) == 1
+    segment = path.segments[0]
+    assert (segment.starts_at, segment.ends_at) == (BASE, REQUIRED_BY)
+    assert segment.primitive is ExecutionPrimitive.BALANCE_CHARGE_ONLY
+    assert segment.charge_source_policy is (
+        ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT
+    )
+    assert path.projected_states[-1].storage_energy_wh == pytest.approx(1200.0)
+
+
+def test_grid_requirement_candidates_preserve_cheapest_and_earliest_windows() -> None:
+    module = import_module("picot.v2.delegated_storage_candidates")
+    capability_set = _capability_set(maximum_power_w=600.0)
+    snapshot = _snapshot(capability_set)
+    tariffs = tuple(
+        EnergyTariffInterval.basic(
+            starts_at=start,
+            ends_at=end,
+            import_eur_per_kwh=price,
+            export_eur_per_kwh=0.05,
+            evidence_ids=(f"tariff-choice-{index}",),
+        )
+        for index, (start, end, price) in enumerate(
+            (
+                (BASE, WINDOW_END, 0.30),
+                (WINDOW_END, REQUIRED_BY, 0.10),
+            )
+        )
+    )
+    snapshot = replace(
+        snapshot,
+        price_points=tuple(
+            PriceForecastPoint(
+                point_id=f"price-choice-{index}",
+                starts_at=tariff.starts_at,
+                ends_at=tariff.ends_at,
+                value_eur_per_kwh=tariff.commodity_import_eur_per_kwh,
+                confidence=1.0,
+                evidence_id=tariff.evidence_ids[0],
+            )
+            for index, tariff in enumerate(tariffs)
+        ),
+        energy_contract_snapshot=EnergyContractSnapshot(
+            "contract-grid-choice",
+            BASE,
+            BASE,
+            REQUIRED_BY,
+            "Europe/Amsterdam",
+            "dynamic:test",
+            "contract:test",
+            True,
+            True,
+            False,
+            tariffs,
+        ),
+        storage_conversion_model=StorageConversionModel(
+            "conversion-grid-choice",
+            0.80,
+            0.90,
+            ("efficiency-grid-choice",),
+            "fixed:test",
+        ),
+    )
+    balance = replace(
+        _balance(),
+        intervals=tuple(
+            replace(
+                interval,
+                expected_usable_pv_energy_wh=0.0,
+                current_usable_storage_energy_wh=(1000.0 if index == 0 else 800.0),
+                projected_storage_energy_wh=(800.0 if index == 0 else 600.0),
+            )
+            for index, interval in enumerate(_balance().intervals)
+        ),
+    )
+
+    candidate_set = module.construct_grid_requirement_candidates(
+        snapshot=snapshot,
+        balance=balance,
+        requirement=_requirement(),
+    )
+
+    assert [
+        (path.segments[0].starts_at, path.segments[0].ends_at)
+        for path in candidate_set.energy_paths
+    ] == [
+        (WINDOW_END, REQUIRED_BY),
+        (BASE, WINDOW_END),
+    ]

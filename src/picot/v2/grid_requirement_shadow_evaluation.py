@@ -70,6 +70,8 @@ class GridRequirementShadowEvaluationProducer:
             )
         ]
         for item in decision.candidates:
+            if item.candidate_id == actual_id:
+                continue
             candidate = candidate_by_id.get(item.candidate_id)
             comparison = finance_by_id.get(item.candidate_id)
             outcome = outcome_by_id.get(item.candidate_id)

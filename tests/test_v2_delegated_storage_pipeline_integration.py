@@ -808,13 +808,41 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
     assert feasible.planned_vendor_mode == "Snel opladen"
     assert feasible.requested_power_w is None
     assert feasible.blockers == ()
-    assert feasible_run.evaluation == run.evaluation
-    assert (
-        feasible_run.execution_plan_set.winning_energy_path_id
-        == run.execution_plan_set.winning_energy_path_id
+    assert feasible_run.evaluation.winning_candidate_id == feasible.candidate_id
+    promoted_winner = next(
+        item
+        for item in feasible_run.candidate_set.candidates
+        if item.candidate_id == feasible_run.evaluation.winning_candidate_id
     )
+    assert promoted_winner.family == "grid_requirement"
+    assert feasible_run.evaluation.status == "winner_selected"
+    assert feasible_run.evaluation.decisive_step == (
+        "promotion:grid_requirement_admissible_and_execution_feasible"
+    )
+    assert feasible_run.execution_plan_set.plans == ()
+    assert feasible_run.execution_plan_set.plan_ids == ()
+    assert feasible_run.execution_record.status == "execution_embargoed"
+    assert feasible_run.primitive_boundary.request_id is None
+    assert feasible_run.primitive_boundary.status == "not_emitted"
     assert feasible_run.adapter_boundary.translation_id is None
     assert feasible_run.vendor_result.command_id is None
+
+    live_authority_run = CanonicalPipeline().run(
+        planning_input=replace(
+            snapshot,
+            storage_mode_capability_evidence=fast_charge_evidence,
+        ),
+        control_change_allowed=True,
+    )
+    assert (
+        live_authority_run.evaluation.winning_candidate_id
+        == feasible_run.evaluation.winning_candidate_id
+    )
+    assert live_authority_run.execution_plan_set.plans == ()
+    assert live_authority_run.execution_record.status == "execution_embargoed"
+    assert live_authority_run.primitive_boundary.status == "not_emitted"
+    assert live_authority_run.adapter_boundary.status == "not_invoked"
+    assert live_authority_run.vendor_result.status == "not_dispatched"
 
     manual_only_evidence = derive_zendure_mode_capability_evidence(
         {

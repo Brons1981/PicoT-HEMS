@@ -101,6 +101,52 @@ def _vendor_mode_for_primitive(
     return matches[0] if len(matches) == 1 else None
 
 
+def _promotable_grid_candidate_id(
+    reference: ReferenceSimulationSet,
+) -> str | None:
+    """Return the uniquely proven grid Candidate; never select on partial evidence."""
+
+    admission = reference.grid_requirement_admission
+    decision = reference.grid_requirement_decision
+    shadow = reference.grid_requirement_shadow_evaluation
+    feasibility = reference.grid_requirement_shadow_execution_feasibility
+    financial = reference.financial_comparison
+    if (
+        admission is None
+        or admission.status != "ready"
+        or decision is None
+        or decision.status != "ready"
+        or shadow is None
+        or shadow.status != "winner_projected"
+        or feasibility is None
+        or feasibility.status != "feasible"
+        or financial is None
+        or financial.status != "ready"
+    ):
+        return None
+    candidate_id = feasibility.candidate_id
+    if (
+        candidate_id is None
+        or candidate_id != shadow.projected_winning_candidate_id
+        or not any(
+            item.candidate_id == candidate_id and item.status == "admissible"
+            for item in admission.assessments
+        )
+        or not any(
+            item.candidate_id == candidate_id
+            and item.eligible_for_future_evaluation
+            for item in decision.candidates
+        )
+        or not any(
+            item.candidate_id == candidate_id
+            and item.candidate_family == "grid_requirement"
+            for item in financial.comparisons
+        )
+    ):
+        return None
+    return candidate_id
+
+
 def _balance_for_pv_forecast_basis(
     balance: ProjectedHouseholdEnergyBalance,
     assumption: PVForecastBasisAssumption,
@@ -690,10 +736,86 @@ class CanonicalPipeline:
                 global_blockers=(f"observer_failure:{type(exc).__name__}",),
             )
 
+        grid_execution_embargo = False
+        promotion_candidate_id = _promotable_grid_candidate_id(reference_simulations)
+        promoted_outcome = next(
+            (
+                item
+                for item in observer_only_outcomes
+                if item.candidate_id == promotion_candidate_id
+                and item.confidence > 0.0
+            ),
+            None,
+        )
+        if promoted_outcome is not None:
+            promoted_evaluation = delegated_evaluation_engine.evaluate(
+                snapshot=snapshot,
+                candidate_set=candidate_set,
+                actionable_outcomes=(*actionable_outcomes, promoted_outcome),
+            )
+            if promoted_evaluation.winning_outcome is not None:
+                winning_outcome = promoted_evaluation.winning_outcome
+                winning_candidate = next(
+                    item
+                    for item in candidate_set.candidates
+                    if item.candidate_id == winning_outcome.candidate_id
+                )
+                winning_path = next(
+                    item
+                    for item in candidate_set.energy_paths
+                    if item.path_id == winning_candidate.energy_path_id
+                )
+                grid_execution_embargo = winning_candidate.family == "grid_requirement"
+                has_valid_plan = True
+                evaluation = EvaluationRecord(
+                    run_id=run_id,
+                    snapshot_id=snapshot_id,
+                    evaluation_id=_id("evaluation", outcomes.outcome_set_id),
+                    candidate_set_id=candidate_set.candidate_set_id,
+                    winning_candidate_id=winning_candidate.candidate_id,
+                    winning_energy_path_id=winning_path.path_id,
+                    reason=(
+                        "grid_requirement is physically admitted, financially preferred "
+                        "and execution-feasible; execution remains embargoed"
+                        if grid_execution_embargo
+                        else "canonical Evaluation retained the non-grid Candidate"
+                    ),
+                    status="winner_selected",
+                    evaluated_candidate_ids=tuple(
+                        item.candidate_id for item in candidate_set.candidates
+                    ),
+                    decisive_step=(
+                        "promotion:grid_requirement_admissible_and_execution_feasible"
+                        if grid_execution_embargo
+                        else promoted_evaluation.decisive_step
+                    ),
+                )
+                try:
+                    reference_simulations = CanonicalReferenceObserver().observe(
+                        snapshot=snapshot,
+                        candidate_set=candidate_set,
+                        outcomes=outcomes,
+                        evaluation=evaluation,
+                    )
+                except Exception as exc:
+                    reference_simulations = ReferenceSimulationSet(
+                        run_id=run_id,
+                        snapshot_id=snapshot_id,
+                        candidate_set_id=candidate_set.candidate_set_id,
+                        observations=(),
+                        method_version=REFERENCE_OBSERVER_METHOD_VERSION,
+                        global_blockers=(f"observer_failure:{type(exc).__name__}",),
+                    )
+
         stage_started = perf_counter()
         observer_plans: list[ObserverExecutionPlan] = []
         for execution_scope_id in sorted(
-            {segment.execution_scope_id for segment in winning_path.segments}
+            set()
+            if grid_execution_embargo
+            else {
+                segment.execution_scope_id
+                for segment in winning_path.segments
+            }
         ):
             path_segments = tuple(
                 segment
@@ -813,7 +935,9 @@ class CanonicalPipeline:
             execution_record_id=_id("execution", execution_plan_set.plan_set_id),
             plan_set_id=execution_plan_set.plan_set_id,
             status=(
-                "fallback_active"
+                "execution_embargoed"
+                if grid_execution_embargo
+                else "fallback_active"
                 if not has_valid_plan and observer_plans
                 else (
                     "live_plan_ready"
@@ -824,7 +948,9 @@ class CanonicalPipeline:
                 else "no_due_segment"
             ),
             reason=(
-                "safe baseline mode active without an actionable calculated plan"
+                "grid winner selected; execution remains blocked before plan creation"
+                if grid_execution_embargo
+                else "safe baseline mode active without an actionable calculated plan"
                 if not has_valid_plan and observer_plans
                 else (
                     "winning path approved for live execution"

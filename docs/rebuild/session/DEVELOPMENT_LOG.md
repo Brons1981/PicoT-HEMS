@@ -1026,3 +1026,31 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 
 Exact next action: publish dev.135 and confirm the chosen Candidate reports
 `Reserve bij deadline gehaald=true`, `Doel gehaald=true` and remains committed.
+
+Live verification, 2026-08-22:
+
+- Dev.135 correctly exposed the 816 Wh reserve, reported both charge target and
+  deadline reserve satisfied and retained the selected commitment.
+- The newly eligible plan started at the current morning instant. This exposed
+  a conflicting dev.131 low-confidence tie-break that explicitly preferred the
+  earliest equal-price feasible window.
+
+## 2026-08-22 — 2.0.0-dev.136
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+- Removed the low-confidence `earliest start` tie-break that conflicted with
+  the agreed equal-price midday behavior.
+- For equal average price and low PV timing confidence, Evaluation now compares
+  Candidate midpoints with the temporal centre of the remaining positive-PV
+  availability period. This is a robust day-shape centre and does not pretend
+  that uncertain interval energy magnitudes are precise.
+- For high PV timing confidence, the existing energy-weighted PV centre remains
+  authoritative and may deliberately move the window earlier or later.
+- Duration-weighted average price remains ahead of both timing rules; valid
+  incumbent commitments remain ahead of price.
+- Added a regression proving low-confidence equal-price selection prefers the
+  PV availability centre rather than the earliest executable Candidate.
+
+Exact next action: publish dev.136, reset the dev.135 morning commitment once,
+and verify the replacement equal-price window is centred on the PV period.

@@ -55,6 +55,7 @@ from picot.v2.contracts import (
     ReferenceCandidateSimulation,
     ReferenceSimulationSet,
 )
+from picot.v2.grid_requirement_admission import GridRequirementAdmissionProducer
 from picot.v2.reference_financial_comparison import ReferenceFinancialComparator
 
 METHOD_VERSION = "v2-canonical-reference-observer:v6"
@@ -104,6 +105,12 @@ class CanonicalReferenceObserver:
             method_version=METHOD_VERSION,
             financial_comparison=ReferenceFinancialComparator().compare(
                 candidate_set=candidate_set,
+                observations=observations,
+            ),
+            grid_requirement_admission=GridRequirementAdmissionProducer().assess(
+                snapshot=snapshot,
+                candidate_set=candidate_set,
+                outcomes=outcomes,
                 observations=observations,
             ),
         )

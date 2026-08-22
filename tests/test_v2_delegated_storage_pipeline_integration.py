@@ -42,6 +42,7 @@ from picot.v2.pipeline import (
 from picot.v2.plan_commitment_store import ActivePlanCommitment
 from picot.v2.projection import project
 from picot.v2.pv_forecast_assumptions import derive_pv_forecast_basis_assumptions
+from picot.v2.reference_financial_comparison import ReferenceFinancialComparator
 from picot.v2.web_ui import _build_plan_explanation
 
 BASE = datetime(2026, 8, 16, 8, 0, tzinfo=UTC)
@@ -188,6 +189,12 @@ def test_reference_observer_is_blocked_without_required_contract_evidence() -> N
         )
         for item in run.reference_simulations.observations
     )
+    assert run.reference_simulations.financial_comparison is not None
+    assert run.reference_simulations.financial_comparison.status == "blocked"
+    assert all(
+        item.startswith("financial_settlement_unavailable:")
+        for item in run.reference_simulations.financial_comparison.blockers
+    )
     assert run.evaluation.winning_candidate_id == run.outcomes.outcomes[0].candidate_id
 
 
@@ -255,7 +262,102 @@ def test_reference_observer_simulates_baseline_and_delegated_pv_intent() -> None
     assert delegated.reference_grid_storage_wh == pytest.approx(0.0)
     assert delegated.reference_conversion_losses_wh == pytest.approx(22.222222)
     assert delegated.pv_storage_delta_wh == pytest.approx(0.0)
+    comparison = run.reference_simulations.financial_comparison
+    assert comparison is not None
+    assert comparison.status == "ready"
+    assert comparison.observer_only is True
+    assert comparison.direction == "higher_is_better"
+    assert comparison.unit == "EUR"
+    assert comparison.comparison_scope == "financial_result_only"
+    assert comparison.hard_constraints_assessed is False
+    assert comparison.baseline_candidate_id == baseline.candidate_id
+    assert tuple(item.candidate_id for item in comparison.comparisons) == tuple(
+        item.candidate_id for item in run.candidate_set.candidates
+    )
+    baseline_comparison = next(
+        item
+        for item in comparison.comparisons
+        if item.candidate_id == baseline.candidate_id
+    )
+    assert baseline_comparison.difference_from_baseline_eur == pytest.approx(0.0)
+    assert baseline_comparison.relative_to_baseline == "equal"
+    assert comparison.financially_preferred_candidate_id == baseline.candidate_id
     assert run.evaluation.winning_candidate_id == run.candidate_set.candidates[1].candidate_id
+
+
+def test_reference_financial_comparison_preserves_exact_tie_without_preference() -> None:
+    source = _snapshot()
+    assert source.horizon_end is not None
+    assert source.pv_energy_timeline is not None
+    tariffs = tuple(
+        EnergyTariffInterval.basic(
+            starts_at=item.starts_at,
+            ends_at=item.ends_at,
+            import_eur_per_kwh=0.25,
+            export_eur_per_kwh=0.10,
+            evidence_ids=(f"tie-tariff:{item.interval_id}",),
+        )
+        for item in source.pv_energy_timeline.intervals
+    )
+    snapshot = replace(
+        source,
+        energy_contract_snapshot=EnergyContractSnapshot(
+            contract_snapshot_id="contract-tie",
+            captured_at=BASE,
+            valid_from=BASE,
+            valid_until=source.horizon_end,
+            settlement_timezone="Europe/Amsterdam",
+            settlement_rule_id="dynamic-quarter-hour:v1",
+            contract_version="contract:v1",
+            permits_grid_import=True,
+            permits_grid_export=True,
+            permits_battery_export=False,
+            intervals=tariffs,
+        ),
+        storage_conversion_model=StorageConversionModel(
+            model_id="conversion-tie",
+            charge_efficiency=0.90,
+            discharge_efficiency=0.90,
+            evidence_ids=("storage-efficiency:tie",),
+            method_version="fixed-directional-efficiency:v1",
+        ),
+    )
+    run = CanonicalPipeline().run(planning_input=snapshot)
+    observations = list(run.reference_simulations.observations)
+    baseline = observations[0]
+    alternative = observations[1]
+    assert baseline.financial_settlement is not None
+    assert alternative.financial_settlement is not None
+    tied_settlement = replace(
+        alternative.financial_settlement,
+        grid_import_energy_wh=baseline.financial_settlement.grid_import_energy_wh,
+        grid_export_energy_wh=baseline.financial_settlement.grid_export_energy_wh,
+        grid_import_cost_eur=baseline.financial_settlement.grid_import_cost_eur,
+        grid_export_value_eur=baseline.financial_settlement.grid_export_value_eur,
+        avoided_import_value_eur=baseline.financial_settlement.avoided_import_value_eur,
+        variable_charges_eur=baseline.financial_settlement.variable_charges_eur,
+        storage_conversion_loss_cost_eur=(
+            baseline.financial_settlement.storage_conversion_loss_cost_eur
+        ),
+        battery_use_cost_eur=baseline.financial_settlement.battery_use_cost_eur,
+        net_financial_result_eur=baseline.financial_settlement.net_financial_result_eur,
+        foregone_export_result_eur=(
+            baseline.financial_settlement.foregone_export_result_eur
+        ),
+        intervals=(),
+    )
+    observations[1] = replace(alternative, financial_settlement=tied_settlement)
+
+    comparison = ReferenceFinancialComparator().compare(
+        candidate_set=run.candidate_set,
+        observations=tuple(observations),
+    )
+
+    assert comparison.status == "ready"
+    assert comparison.best_candidate_ids == tuple(
+        item.candidate_id for item in run.candidate_set.candidates
+    )
+    assert comparison.financially_preferred_candidate_id is None
 
 
 def test_reference_observer_models_bounded_delegated_requirement_grid_energy() -> None:
@@ -484,6 +586,7 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
                         EnergyFlowDirection.DISCHARGE,
                     ),
                     maximum_power_w=400.0,
+                    minimum_soc=0.10,
                 ),
             ),
         ),
@@ -535,6 +638,14 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
         == "ready"
         for candidate in grid_candidates
     )
+    comparison = run.reference_simulations.financial_comparison
+    assert comparison is not None
+    assert comparison.status == "ready"
+    assert {
+        item.candidate_id
+        for item in comparison.comparisons
+        if item.candidate_family == "grid_requirement"
+    } == {item.candidate_id for item in grid_candidates}
 
 
 def test_reference_observer_normalises_coarse_energy_to_tariff_intervals() -> None:

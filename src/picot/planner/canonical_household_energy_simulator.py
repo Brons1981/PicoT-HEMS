@@ -92,12 +92,18 @@ class CanonicalHouseholdEnergySimulator:
                 )
             policy = segment.charge_source_policy if segment is not None else None
             if delegated_intent is not None:
-                expected_policy = (
-                    ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT
-                    if delegated_intent.kind
-                    is DelegatedEnergyIntentKind.GRID_REQUIREMENT_ACQUISITION
-                    else ChargeSourcePolicy.PV_ONLY
-                )
+                expected_policy = {
+                    DelegatedEnergyIntentKind.GRID_REQUIREMENT_ACQUISITION: (
+                        ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT
+                    ),
+                    DelegatedEnergyIntentKind.PV_SURPLUS_ACQUISITION: (
+                        ChargeSourcePolicy.PV_ONLY
+                    ),
+                    DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT: (
+                        ChargeSourcePolicy.PV_ONLY
+                    ),
+                    DelegatedEnergyIntentKind.HOUSEHOLD_SUPPORT_ONLY: None,
+                }[delegated_intent.kind]
                 if policy is not expected_policy:
                     raise ValueError(
                         "Delegated energy intent must match its charge-source policy."
@@ -118,7 +124,10 @@ class CanonicalHouseholdEnergySimulator:
             if (
                 delegated_intent is not None
                 and delegated_intent.kind
-                is DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT
+                in {
+                    DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT,
+                    DelegatedEnergyIntentKind.HOUSEHOLD_SUPPORT_ONLY,
+                }
             ):
                 assert delegated_intent.minimum_storage_energy_wh is not None
                 available_stored_wh = max(
@@ -336,6 +345,12 @@ class CanonicalHouseholdEnergySimulator:
         charge_efficiency: float,
     ) -> float:
         if segment is None:
+            return 0.0
+        if (
+            delegated_intent is not None
+            and delegated_intent.kind
+            is DelegatedEnergyIntentKind.HOUSEHOLD_SUPPORT_ONLY
+        ):
             return 0.0
         effective_capacity_wh = (
             min(delegated_intent.maximum_storage_energy_wh, capacity_wh)

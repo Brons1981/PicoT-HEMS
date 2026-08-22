@@ -11,6 +11,7 @@ from picot.domain.execution_primitive import ExecutionPrimitive
 class DelegatedEnergyIntentKind(StrEnum):
     PV_SURPLUS_ACQUISITION = "pv_surplus_acquisition"
     PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT = "pv_surplus_with_household_support"
+    HOUSEHOLD_SUPPORT_ONLY = "household_support_only"
     GRID_REQUIREMENT_ACQUISITION = "grid_requirement_acquisition"
 
 
@@ -35,16 +36,21 @@ class DelegatedEnergyIntent:
         if self.primitive not in {
             ExecutionPrimitive.BALANCE_CHARGE_ONLY,
             ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+            ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
         }:
             raise ValueError("Delegated intent requires a balancing primitive.")
-        permitted_kinds = (
-            {DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT}
-            if self.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
-            else {
+        permitted_kinds = {
+            ExecutionPrimitive.BALANCE_BIDIRECTIONAL: {
+                DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT,
+            },
+            ExecutionPrimitive.BALANCE_DISCHARGE_ONLY: {
+                DelegatedEnergyIntentKind.HOUSEHOLD_SUPPORT_ONLY,
+            },
+            ExecutionPrimitive.BALANCE_CHARGE_ONLY: {
                 DelegatedEnergyIntentKind.PV_SURPLUS_ACQUISITION,
                 DelegatedEnergyIntentKind.GRID_REQUIREMENT_ACQUISITION,
-            }
-        )
+            },
+        }[self.primitive]
         if self.kind not in permitted_kinds:
             raise ValueError("Delegated intent kind must match its primitive.")
         if self.maximum_storage_energy_wh <= 0.0:
@@ -55,7 +61,10 @@ class DelegatedEnergyIntent:
             raise ValueError("Minimum storage energy must remain within its maximum.")
         if (
             self.kind
-            is DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT
+            in {
+                DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT,
+                DelegatedEnergyIntentKind.HOUSEHOLD_SUPPORT_ONLY,
+            }
             and self.minimum_storage_energy_wh is None
         ):
             raise ValueError("Household support requires explicit minimum storage energy.")
@@ -74,7 +83,7 @@ class DelegatedEnergyIntent:
             or self.maximum_grid_input_energy_wh != 0.0
             or self.maximum_charge_input_power_w is not None
         ):
-            raise ValueError("PV delegated intents may not carry grid-acquisition bounds.")
+            raise ValueError("Non-grid delegated intents may not carry grid bounds.")
         if not self.evidence_ids or any(not item.strip() for item in self.evidence_ids):
             raise ValueError("Delegated intent evidence must be explicit.")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):

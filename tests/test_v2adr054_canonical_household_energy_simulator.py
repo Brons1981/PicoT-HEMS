@@ -379,6 +379,47 @@ def test_delegated_bidirectional_support_stops_at_explicit_minimum_energy() -> N
     assert interval.storage_energy_at_end_wh == pytest.approx(3800.0)
 
 
+def test_delegated_discharge_only_supports_household_without_charging() -> None:
+    path = _path(policy=ChargeSourcePolicy.PV_ONLY)
+    segment = replace(
+        path.segments[0],
+        primitive=ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+        requested_power_w=None,
+        charge_source_policy=None,
+    )
+    path = replace(path, segments=(segment,))
+    intent = DelegatedEnergyIntent(
+        segment_id=segment.segment_id,
+        primitive=segment.primitive,
+        kind=DelegatedEnergyIntentKind.HOUSEHOLD_SUPPORT_ONLY,
+        minimum_storage_energy_wh=3800.0,
+        maximum_storage_energy_wh=8000.0,
+        evidence_ids=("capability:balance-discharge-only",),
+        method_version="delegated-intent:test",
+    )
+
+    ledger = CanonicalHouseholdEnergySimulator().simulate(
+        run_id="run-1",
+        candidate_id="candidate-1",
+        path=path,
+        snapshot=_snapshot(pv_wh=500.0, load_wh=700.0),
+        storage_state=_storage(),
+        conversion_model=StorageConversionModel(
+            "conversion-1", 0.90, 0.90, ("efficiency:1",), "test:v1"
+        ),
+        energy_contract=_contract(),
+        delegated_energy_intents=(intent,),
+    )
+    interval = ledger.intervals[0]
+
+    assert interval.storage_to_household_output_wh == pytest.approx(180.0)
+    assert interval.grid_to_household_wh == pytest.approx(20.0)
+    assert interval.pv_to_storage_input_wh == pytest.approx(0.0)
+    assert interval.grid_to_storage_input_wh == pytest.approx(0.0)
+    assert interval.storage_charge_loss_wh == pytest.approx(0.0)
+    assert interval.storage_energy_at_end_wh == pytest.approx(3800.0)
+
+
 def test_requirement_grid_charging_uses_pv_surplus_before_grid_energy() -> None:
     ledger = _simulate(
         pv_wh=300.0,

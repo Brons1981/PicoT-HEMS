@@ -55,8 +55,9 @@ from picot.v2.contracts import (
     ReferenceCandidateSimulation,
     ReferenceSimulationSet,
 )
+from picot.v2.reference_financial_comparison import ReferenceFinancialComparator
 
-METHOD_VERSION = "v2-canonical-reference-observer:v5"
+METHOD_VERSION = "v2-canonical-reference-observer:v6"
 ADAPTER_METHOD_VERSION = "v2-to-domain-reference-adapter:v4"
 DELEGATED_INTENT_METHOD_VERSION = "v2-delegated-energy-intent:v2"
 
@@ -101,6 +102,10 @@ class CanonicalReferenceObserver:
             candidate_set_id=candidate_set.candidate_set_id,
             observations=observations,
             method_version=METHOD_VERSION,
+            financial_comparison=ReferenceFinancialComparator().compare(
+                candidate_set=candidate_set,
+                observations=observations,
+            ),
         )
 
     def _observe_candidate(
@@ -121,6 +126,7 @@ class CanonicalReferenceObserver:
         delegated_primitives = {
             ExecutionPrimitive.BALANCE_CHARGE_ONLY,
             ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+            ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
         }
         unsupported = self._unsupported_delegated_segments(
             path=path,
@@ -261,11 +267,17 @@ class CanonicalReferenceObserver:
                 blockers.append(f"unsupported_primitive:{segment.primitive.value}")
                 continue
             policy = segment.charge_source_policy
-            supported = policy is not None and (
-                policy.value == "pv_only"
-                or (
+            supported = (
+                segment.primitive is ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+                and policy is None
+            ) or (
+                policy is not None
+                and (
+                    policy.value == "pv_only"
+                    or (
                     segment.primitive is ExecutionPrimitive.BALANCE_CHARGE_ONLY
                     and policy.value == "grid_allowed_for_requirement"
+                    )
                 )
             )
             if not supported:
@@ -413,6 +425,7 @@ class CanonicalReferenceObserver:
         delegated_primitives = {
             ExecutionPrimitive.BALANCE_CHARGE_ONLY,
             ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+            ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
         }
         if not any(
             segment.primitive in delegated_primitives for segment in path.segments
@@ -437,7 +450,11 @@ class CanonicalReferenceObserver:
                 else None
             )
             if (
-                segment.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                segment.primitive
+                in {
+                    ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                    ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+                }
                 and minimum_storage_energy_wh is None
             ):
                 raise ValueError(
@@ -492,10 +509,15 @@ class CanonicalReferenceObserver:
                         DelegatedEnergyIntentKind.GRID_REQUIREMENT_ACQUISITION
                         if is_grid_requirement
                         else (
-                            DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT
+                            DelegatedEnergyIntentKind.HOUSEHOLD_SUPPORT_ONLY
                             if segment.primitive
-                            is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
-                            else DelegatedEnergyIntentKind.PV_SURPLUS_ACQUISITION
+                            is ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+                            else (
+                                DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT
+                                if segment.primitive
+                                is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                                else DelegatedEnergyIntentKind.PV_SURPLUS_ACQUISITION
+                            )
                         )
                     ),
                     minimum_storage_energy_wh=minimum_storage_energy_wh,

@@ -16,6 +16,9 @@ from picot.planner.delegated_storage_evaluation_engine import (
 )
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
+from picot.v2.canonical_reference_observer import (
+    METHOD_VERSION as REFERENCE_OBSERVER_METHOD_VERSION,
+)
 from picot.v2.canonical_reference_observer import CanonicalReferenceObserver
 from picot.v2.contracts import (
     Candidate,
@@ -659,7 +662,7 @@ class CanonicalPipeline:
                 snapshot_id=snapshot_id,
                 candidate_set_id=candidate_set.candidate_set_id,
                 observations=(),
-                method_version="v2-canonical-reference-observer:v1",
+                method_version=REFERENCE_OBSERVER_METHOD_VERSION,
                 global_blockers=(f"observer_failure:{type(exc).__name__}",),
             )
 

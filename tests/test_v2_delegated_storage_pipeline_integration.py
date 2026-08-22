@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -543,11 +544,14 @@ def test_executable_window_requires_complete_price_coverage() -> None:
     ) == float("inf")
 
 
-def test_equal_price_low_confidence_prefers_pv_availability_centre() -> None:
+def test_equal_price_low_confidence_prefers_local_midday() -> None:
     source = _snapshot()
-    half_hour = timedelta(minutes=30)
-    split_at = BASE + half_hour
-    later_start = WINDOW_END
+    local_timezone = ZoneInfo("Europe/Amsterdam")
+    local_day = datetime(2026, 8, 22, tzinfo=local_timezone)
+    earlier_start = local_day.replace(hour=12, minute=30)
+    earlier_end = local_day.replace(hour=14, minute=30)
+    later_start = local_day.replace(hour=14, minute=30)
+    later_end = local_day.replace(hour=16, minute=30)
     profile = UserObjectiveProfile(
         profile_id="profile:test",
         version=1,
@@ -575,17 +579,9 @@ def test_equal_price_low_confidence_prefers_pv_availability_centre() -> None:
             household_planning_regime=regime,
             price_points=(
                 PriceForecastPoint(
-                    "price-equal-1",
-                    split_at,
-                    later_start,
-                    0.20,
-                    1.0,
-                    "price-evidence",
-                ),
-                PriceForecastPoint(
-                    "price-equal-2",
-                    later_start,
-                    HORIZON_END,
+                    "price-equal",
+                    earlier_start,
+                    later_end,
                     0.20,
                     1.0,
                     "price-evidence",
@@ -596,15 +592,16 @@ def test_equal_price_low_confidence_prefers_pv_availability_centre() -> None:
                 intervals=(
                     replace(
                         source.pv_energy_timeline.intervals[0],
-                        interval_id="pv-earlier",
-                        starts_at=split_at,
-                        ends_at=later_start,
+                        interval_id="pv-day",
+                        starts_at=local_day.replace(hour=9, minute=30),
+                        ends_at=local_day.replace(hour=15),
                         pv_energy_wh=200.0,
                     ),
                     replace(
                         source.pv_energy_timeline.intervals[1],
-                        interval_id="pv-later",
-                        starts_at=later_start,
+                        interval_id="pv-evening-tail",
+                        starts_at=local_day.replace(hour=15),
+                        ends_at=local_day.replace(hour=21),
                         pv_energy_wh=1000.0,
                     ),
                 ),
@@ -617,15 +614,15 @@ def test_equal_price_low_confidence_prefers_pv_availability_centre() -> None:
         outcome,
         outcome_id="outcome-earlier",
         candidate_id="candidate-earlier",
-        charge_window_starts_at=split_at,
-        charge_window_ends_at=later_start,
+        charge_window_starts_at=earlier_start,
+        charge_window_ends_at=earlier_end,
     )
     later = replace(
         outcome,
         outcome_id="outcome-later",
         candidate_id="candidate-later",
         charge_window_starts_at=later_start,
-        charge_window_ends_at=HORIZON_END,
+        charge_window_ends_at=later_end,
     )
     engine = DelegatedStorageEvaluationEngine()
     low_snapshot = snapshot_with_confidence(0.36)
@@ -644,7 +641,7 @@ def test_equal_price_low_confidence_prefers_pv_availability_centre() -> None:
     assert low_snapshot.household_planning_regime is not None
     assert low_snapshot.household_planning_regime.pv_timing_confident is False
     assert low_winner is not None
-    assert low_winner.charge_window_starts_at == later_start
+    assert low_winner.charge_window_starts_at == earlier_start
     assert high_snapshot.household_planning_regime is not None
     assert high_snapshot.household_planning_regime.pv_timing_confident is True
     assert high_winner is not None

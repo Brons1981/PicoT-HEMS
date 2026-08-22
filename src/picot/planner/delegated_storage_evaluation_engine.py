@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import time
+from zoneinfo import ZoneInfo
 
 from picot.v2.contracts import (
     Candidate,
@@ -65,7 +67,7 @@ class DelegatedStorageEvaluationEngine:
                     self._distance_from_pv_energy_centre(snapshot, item)
                     if snapshot.household_planning_regime is not None
                     and snapshot.household_planning_regime.pv_timing_confident
-                    else self._distance_from_pv_availability_centre(
+                    else self._distance_from_local_midday(
                         snapshot,
                         item,
                     )
@@ -242,32 +244,27 @@ class DelegatedStorageEvaluationEngine:
         return abs(window_midpoint.timestamp() - pv_centre)
 
     @staticmethod
-    def _distance_from_pv_availability_centre(
+    def _distance_from_local_midday(
         snapshot: PlanningInputSnapshot,
         outcome: DelegatedStorageCandidateOutcome,
     ) -> float:
-        """Return distance to the robust centre of the available PV period."""
+        """Return distance to local noon when PV timing is not trustworthy.
 
-        timeline = snapshot.pv_energy_timeline
-        available = tuple(
-            interval
-            for interval in (() if timeline is None else timeline.intervals)
-            if interval.ends_at > snapshot.captured_at
-            and (
-                interval.forecast_lower_energy_wh
-                if interval.forecast_range_status == "available"
-                and interval.forecast_lower_energy_wh is not None
-                else interval.pv_energy_wh
-            )
-            > 0.0
-        )
-        if not available:
-            return 0.0
-        pv_centre = min(item.starts_at for item in available) + (
-            max(item.ends_at for item in available)
-            - min(item.starts_at for item in available)
-        ) / 2
+        The Dutch market timezone is explicit throughout the v2 price and UI
+        contracts.  A low-confidence forecast may establish feasibility, but
+        its long low-energy tail must not move an otherwise equal-price window.
+        """
+
+        del snapshot
+        market_timezone = ZoneInfo("Europe/Amsterdam")
         window_midpoint = outcome.charge_window_starts_at + (
             outcome.charge_window_ends_at - outcome.charge_window_starts_at
         ) / 2
-        return abs((window_midpoint - pv_centre).total_seconds())
+        local_midpoint = window_midpoint.astimezone(market_timezone)
+        local_midday = local_midpoint.replace(
+            hour=time(12, 0).hour,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        return abs((local_midpoint - local_midday).total_seconds())

@@ -192,7 +192,11 @@ class PowerHistoryCache:
             starts_at=starts_at,
             ends_at=ends_at,
         )
-        while result.status != "unavailable" and result.ends_at < ends_at:
+        while (
+            result.status != "unavailable"
+            and result.error is None
+            and result.ends_at < ends_at
+        ):
             previous_end = result.ends_at
             result = self._update_chunk(
                 reader,

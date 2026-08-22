@@ -2307,8 +2307,8 @@ def main() -> None:
             planning_reset_requested.clear()
             previous_signature = None
         previous_signature = planning_reset_barrier.run_cycle(
-            lambda: _poll_live_cycle(
-                previous_signature=previous_signature,
+            lambda signature=previous_signature: _poll_live_cycle(
+                previous_signature=signature,
                 load_bundle=load_bundle,
                 prepare_bundle=prepare_bundle,
                 execute=execute,

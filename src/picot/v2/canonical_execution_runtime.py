@@ -155,7 +155,7 @@ class CanonicalExecutionRuntime:
             boundary.current_vendor_mode == NOM_VENDOR_MODE
             and boundary.planned_vendor_mode == SMART_DISCHARGE_VENDOR_MODE
             and commitment is not None
-            and now < commitment.ends_at
+            and commitment.starts_at <= now < commitment.ends_at
         ):
             self._pending_vendor_mode = None
             return replace(

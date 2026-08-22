@@ -401,6 +401,64 @@ def test_selected_future_pv_plan_is_persisted_before_window_start(tmp_path) -> N
     assert commitment.plan_id == scheduled.execution_plan_set.plans[0].plan_id
 
 
+def test_future_commitment_does_not_preserve_nom_before_window_start(
+    tmp_path,
+) -> None:
+    calls: list[str] = []
+    runtime = CanonicalExecutionRuntime(
+        dispatch=lambda request, mapping: (
+            calls.append(mapping.fixed_value or "")
+            or CanonicalDispatchOutcome("dispatched", "ha-command-test")
+        ),
+        commitment_store=ActivePlanCommitmentStore(tmp_path / "commitment.json"),
+    )
+    active = _live_run()
+    plan = active.execution_plan_set.plans[0]
+    pv_segment = next(
+        item for item in plan.segments if item.charge_source_policy == "pv_only"
+    )
+    baseline_segment = next(
+        item for item in plan.segments if item.charge_source_policy is None
+    )
+    future = _future_pv_run(active)
+    future = replace(
+        future,
+        execution_plan_set=replace(
+            active.execution_plan_set,
+            plans=(
+                replace(
+                    plan,
+                    segments=(
+                        replace(
+                            baseline_segment,
+                            starts_at=active.planning_input.captured_at,
+                            ends_at=pv_segment.ends_at,
+                        ),
+                        replace(
+                            pv_segment,
+                            starts_at=pv_segment.ends_at,
+                            ends_at=baseline_segment.ends_at,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        primitive_boundary=replace(
+            future.primitive_boundary,
+            current_vendor_mode="Nul op de meter",
+        ),
+    )
+    assert future.primitive_boundary.planned_vendor_mode == "Alleen slim ontladen"
+
+    result = runtime.apply(future)
+
+    commitment = runtime.commitment_store.load("home-battery")
+    assert commitment is not None
+    assert future.planning_input.captured_at < commitment.starts_at
+    assert calls == ["Alleen slim ontladen"]
+    assert result.vendor_result.status == "dispatched"
+
+
 def test_completed_storage_target_may_end_committed_pv_plan(tmp_path) -> None:
     calls: list[str] = []
     runtime = CanonicalExecutionRuntime(

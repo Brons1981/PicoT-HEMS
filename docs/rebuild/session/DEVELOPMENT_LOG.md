@@ -973,3 +973,27 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 
 Exact next action: publish dev.133 and confirm PicoT remains in smart discharge
 until the selected favourable PV-only acquisition window actually starts.
+
+Live verification, 2026-08-22:
+
+- Dev.133 correctly moved the selected PV-only window to 13:00–15:30 and the
+  canonical plan correctly exposed smart discharge before that window.
+- The vendor mode nevertheless remained NOM. This isolated the remaining fault
+  to execution rather than selection or plan construction.
+
+## 2026-08-22 — 2.0.0-dev.134
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+- Corrected the V2ADR-052 execution guard so NOM is protected only while the
+  committed PV acquisition phase is actually active: `start <= now < end`.
+- A future commitment remains durably persisted, but no longer blocks the due
+  household baseline segment from dispatching smart discharge before its
+  scheduled start.
+- Preserved the existing protection against forecast-driven interruption once
+  the PV phase has genuinely started.
+- Added a runtime regression matching the live state: current vendor mode NOM,
+  a persisted future PV commitment and a due smart-discharge baseline segment.
+
+Exact next action: publish dev.134 and verify that PicoT applies smart discharge
+before 13:00 while retaining the 13:00–15:30 PV-only commitment.

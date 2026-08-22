@@ -16,6 +16,7 @@ from picot.planner.delegated_storage_evaluation_engine import (
 )
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
+from picot.v2.canonical_reference_observer import CanonicalReferenceObserver
 from picot.v2.contracts import (
     Candidate,
     CandidateOutcomeSet,
@@ -33,6 +34,7 @@ from picot.v2.contracts import (
     PlanningInputSnapshot,
     ProjectedHouseholdEnergyBalance,
     PVForecastBasisAssumption,
+    ReferenceSimulationSet,
     VendorBoundaryResult,
 )
 from picot.v2.delegated_storage_candidates import (
@@ -645,6 +647,22 @@ class CanonicalPipeline:
         )
         evaluation_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
+        try:
+            reference_simulations = CanonicalReferenceObserver().observe(
+                snapshot=snapshot,
+                candidate_set=candidate_set,
+                outcomes=outcomes,
+            )
+        except Exception as exc:  # observer failure may never affect live planning
+            reference_simulations = ReferenceSimulationSet(
+                run_id=run_id,
+                snapshot_id=snapshot_id,
+                candidate_set_id=candidate_set.candidate_set_id,
+                observations=(),
+                method_version="v2-canonical-reference-observer:v1",
+                global_blockers=(f"observer_failure:{type(exc).__name__}",),
+            )
+
         stage_started = perf_counter()
         observer_plans: list[ObserverExecutionPlan] = []
         for execution_scope_id in sorted(
@@ -1001,6 +1019,7 @@ class CanonicalPipeline:
             primitive_boundary=primitive_boundary,
             adapter_boundary=adapter_boundary,
             vendor_result=vendor_result,
+            reference_simulations=reference_simulations,
         )
         timings = PipelineStageTimings(
             opportunity_engine_ms=opportunity_engine_ms,

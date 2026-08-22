@@ -12,7 +12,9 @@ from picot.domain.capability_snapshot import (
     EnergyFlowDirection,
     LogicalCapabilitySnapshot,
 )
+from picot.domain.energy_contract import EnergyContractSnapshot, EnergyTariffInterval
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.delegated_storage_evaluation_engine import (
     DelegatedStorageEvaluationEngine,
 )
@@ -167,6 +169,107 @@ def test_canonical_pipeline_exposes_baseline_timed_candidate_and_outcome() -> No
     assert outcome.storage_energy_at_window_end_wh == pytest.approx(1200.0)
     assert outcome.storage_energy_at_requirement_wh == pytest.approx(1200.0)
     assert outcome.requirement_satisfied is True
+
+
+def test_reference_observer_is_blocked_without_required_contract_evidence() -> None:
+    run = CanonicalPipeline().run(planning_input=_snapshot())
+
+    assert run.reference_simulations.candidate_set_id == run.candidate_set.candidate_set_id
+    assert tuple(
+        item.candidate_id for item in run.reference_simulations.observations
+    ) == tuple(item.candidate_id for item in run.candidate_set.candidates)
+    assert all(
+        item.status == "blocked"
+        and item.blockers == (
+            "energy_contract_snapshot_missing",
+            "storage_conversion_model_missing",
+        )
+        for item in run.reference_simulations.observations
+    )
+    assert run.evaluation.winning_candidate_id == run.outcomes.outcomes[0].candidate_id
+
+
+def test_reference_observer_simulates_supported_baseline_without_affecting_winner() -> None:
+    source = _snapshot()
+    assert source.horizon_end is not None
+    assert source.pv_energy_timeline is not None
+    tariffs = tuple(
+        EnergyTariffInterval.basic(
+            starts_at=item.starts_at,
+            ends_at=item.ends_at,
+            import_eur_per_kwh=0.25,
+            export_eur_per_kwh=0.10,
+            evidence_ids=(f"tariff:{item.interval_id}",),
+        )
+        for item in source.pv_energy_timeline.intervals
+    )
+    snapshot = replace(
+        source,
+        energy_contract_snapshot=EnergyContractSnapshot(
+            contract_snapshot_id="contract-snapshot-1",
+            captured_at=BASE,
+            valid_from=BASE,
+            valid_until=source.horizon_end,
+            settlement_timezone="Europe/Amsterdam",
+            settlement_rule_id="dynamic-quarter-hour:v1",
+            contract_version="contract:v1",
+            permits_grid_import=True,
+            permits_grid_export=True,
+            permits_battery_export=False,
+            intervals=tariffs,
+        ),
+        storage_conversion_model=StorageConversionModel(
+            model_id="conversion-model-1",
+            charge_efficiency=0.90,
+            discharge_efficiency=0.90,
+            evidence_ids=("storage-efficiency:1",),
+            method_version="fixed-directional-efficiency:v1",
+        ),
+    )
+
+    run = CanonicalPipeline().run(planning_input=snapshot)
+    baseline = next(
+        item
+        for item in run.reference_simulations.observations
+        if item.candidate_id == run.candidate_set.candidates[0].candidate_id
+    )
+    delegated = next(
+        item
+        for item in run.reference_simulations.observations
+        if item.candidate_id == run.candidate_set.candidates[1].candidate_id
+    )
+
+    assert baseline.status == "ready"
+    assert baseline.ledger is not None
+    assert baseline.reference_grid_import_wh == pytest.approx(200.0)
+    assert baseline.reference_grid_export_wh == pytest.approx(600.0)
+    assert delegated.status == "blocked"
+    assert delegated.blockers == ("unsupported_primitive:balance_charge_only",)
+    assert run.evaluation.winning_candidate_id == run.candidate_set.candidates[1].candidate_id
+
+
+def test_reference_observer_failure_cannot_stop_or_change_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingObserver:
+        def observe(self, **_: object) -> None:
+            raise RuntimeError("observer must remain isolated")
+
+    monkeypatch.setattr(
+        "picot.v2.pipeline.CanonicalReferenceObserver",
+        FailingObserver,
+    )
+
+    run = CanonicalPipeline().run(planning_input=_snapshot())
+
+    assert run.reference_simulations.observations == ()
+    assert run.reference_simulations.global_blockers == (
+        "observer_failure:RuntimeError",
+    )
+    assert run.evaluation.winning_candidate_id == run.candidate_set.candidates[1].candidate_id
+    assert run.execution_plan_set.winning_energy_path_id == (
+        run.evaluation.winning_energy_path_id
+    )
 
 
 def test_projection_exposes_timed_candidate_window() -> None:

@@ -951,3 +951,25 @@ Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.132 and verify that graph data progresses beyond
 the initial two-hour bootstrap while the plan identity remains stable, then
 confirm NOM is applied at the committed charge-window start.
+
+## 2026-08-22 — 2.0.0-dev.133
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+- Live dev.132 selected a new PV-only window starting exactly at its 08:48:56
+  capture time and immediately requested NOM, despite the intended favourable
+  window being later in the day.
+- Traced this to an Evaluation tie-break that ranked any uncommitted Candidate
+  containing the current instant ahead of duration-weighted average price.
+  That made “can start now” an undocumented optimization objective and allowed
+  it to override the established cost-first ordering.
+- Removed only that active-now preference. Hard feasibility, grid contribution
+  and valid incumbent commitment retention remain ahead of price; average
+  price, explicit PV-timing confidence and deterministic timing tie-breaks keep
+  their existing order.
+- Added a regression proving that an uncommitted, more expensive window active
+  now cannot outrank an otherwise equivalent cheaper future window.
+- Ruff and Mypy passed; all 914 tests passed.
+
+Exact next action: publish dev.133 and confirm PicoT remains in smart discharge
+until the selected favourable PV-only acquisition window actually starts.

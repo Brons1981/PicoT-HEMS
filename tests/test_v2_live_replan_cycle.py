@@ -217,6 +217,44 @@ def test_active_commitment_target_completion_is_material() -> None:
     assert _planning_input_signature(first) != _planning_input_signature(completed)
 
 
+def test_scheduled_commitment_start_is_a_material_execution_boundary() -> None:
+    scheduled_start = BASE + timedelta(minutes=30)
+    first = _with_active_commitment(
+        _bundle(captured_at=BASE),
+        current_energy_wh=500.0,
+    )
+    at_start = _with_active_commitment(
+        _bundle(captured_at=scheduled_start),
+        current_energy_wh=500.0,
+    )
+    first_commitment = replace(
+        first.snapshot.active_plan_commitments[0],
+        starts_at=scheduled_start,
+        ends_at=scheduled_start + timedelta(hours=1),
+    )
+    second_commitment = replace(
+        at_start.snapshot.active_plan_commitments[0],
+        starts_at=scheduled_start,
+        ends_at=scheduled_start + timedelta(hours=1),
+    )
+    first = replace(
+        first,
+        snapshot=replace(
+            first.snapshot,
+            active_plan_commitments=(first_commitment,),
+        ),
+    )
+    at_start = replace(
+        at_start,
+        snapshot=replace(
+            at_start.snapshot,
+            active_plan_commitments=(second_commitment,),
+        ),
+    )
+
+    assert _planning_input_signature(first) != _planning_input_signature(at_start)
+
+
 def test_incident_replay_soc_progress_and_power_variation_keep_one_plan() -> None:
     # Regression for the 2026-08-21 sequence that previously alternated NOM
     # and smart discharge while SOC progressed normally from 88% to 92%.

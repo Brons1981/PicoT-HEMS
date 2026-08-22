@@ -899,3 +899,55 @@ Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.131 and confirm an equal-price live plan chooses
 the earlier feasible window at the current low PV confidence, while showing
 both charge-target and deadline-reserve results separately.
+
+Live verification, 2026-08-22:
+
+- PicoT selected 12:30–16:00 from the equal-price period, confirming that the
+  low-confidence earlier-window rule works live as intended.
+- The plan projected 5.89 kWh at charge start, 2.27 kWh required addition and
+  8.16 kWh at the end of the PV-only acquisition window; the separate 100%
+  charge-window target was therefore correctly reported as satisfied.
+- The later energy projection was 8.10 kWh, but the dashboard exposed a minimum
+  reserve of 8.16 kWh instead of the configured 10% / 816 Wh. Consequently the
+  reserve result and combined target result were incorrectly false.
+- This proves that the accepted fail-closed compatibility path is active in the
+  live runtime because `minimum_soc` is not reaching the canonical storage
+  capability. The defect is not in average-price selection or household energy
+  simulation.
+
+First action next session: trace the configured Zendure minimum SoC through
+adapter mapping and `LogicalCapabilitySnapshot`, then supply the real 10%
+minimum to delegated storage simulation. Preserve the fail-closed fallback for
+genuinely unavailable capability evidence and add an end-to-end regression that
+8.10 kWh satisfies an explicit 816 Wh deadline reserve after reaching 8.16 kWh
+at the charge-window end.
+
+## 2026-08-22 — 2.0.0-dev.132
+
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
+
+- Confirmed from the live add-on log and 765 MB incident export that dev.131
+  completed exactly one canonical run at 02:04 and did not crash afterwards.
+  The active commitment deliberately stabilized its planning signature, but
+  the same skip path also prevented power-history and dashboard refreshes.
+- Confirmed that there was one execution plan, not two overlapping plans. Its
+  23-8 14:04 timestamp was the 36-hour plan horizon; the actual local segments
+  were smart discharge until 12:30, PV-only NOM from 12:30 to 16:00 and smart
+  discharge afterwards.
+- Decoupled observer chart refresh from Planner execution. Every unchanged
+  poll now advances canonical Home Assistant power history and atomically
+  overlays both power-history and self-consumption views while retaining the
+  existing Planner Run and commitment.
+- Added the scheduled/active commitment phase to decision-input identity. The
+  exact acquisition start therefore triggers canonical execution even when
+  ordinary SoC, power and forecast progress remains intentionally suppressed;
+  commitment removal at its end already triggers the return to baseline.
+- Preserved the V2ADR-052 stability invariant: ordinary commitment progress
+  does not become authority for selecting a new plan.
+- Added regressions for observer refresh without replanning, immutable Planner
+  identity during that refresh, and a material scheduled-to-active boundary.
+- Ruff and Mypy passed; all 913 tests passed.
+
+Exact next action: install dev.132 and verify that graph data progresses beyond
+the initial two-hour bootstrap while the plan identity remains stable, then
+confirm NOM is applied at the committed charge-window start.

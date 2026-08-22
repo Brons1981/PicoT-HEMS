@@ -14,7 +14,7 @@ from picot.v2.contracts import (
     PlanningInputSnapshot,
 )
 
-METHOD_VERSION = "v2-grid-requirement-shadow-execution-feasibility:v1"
+METHOD_VERSION = "v2-grid-requirement-shadow-execution-feasibility:v2"
 
 
 class GridRequirementShadowExecutionFeasibilityProducer:
@@ -103,16 +103,26 @@ class GridRequirementShadowExecutionFeasibilityProducer:
             mapping_status = "unavailable"
             blockers.append("grid_shadow_primitive_vendor_mapping_unavailable")
         else:
-            matches = tuple(
+            primitive_matches = tuple(
                 item
                 for item in evidence.mappings
                 if planned_primitive in item.primitives
             )
-            if len(matches) != 1:
+            grid_matches = tuple(
+                item
+                for item in evidence.mappings
+                if item.charge_source_semantics == "pv_and_grid"
+                and item.control_semantics == "delegated"
+                and not item.requires_proven_power_limits
+            )
+            if len(grid_matches) == 1:
+                planned_vendor_mode = grid_matches[0].vendor_mode
+                mapping_status = "validated"
+            elif len(grid_matches) > 1 or not primitive_matches:
                 mapping_status = "unavailable"
                 blockers.append("grid_shadow_primitive_vendor_mapping_unavailable")
             else:
-                planned_vendor_mode = matches[0].vendor_mode
+                planned_vendor_mode = primitive_matches[0].vendor_mode
                 mapping_status = "primitive_only"
                 blockers.append("grid_source_vendor_mapping_unproven")
 

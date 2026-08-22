@@ -11,24 +11,62 @@ from urllib.request import Request, urlopen
 
 from picot.domain.execution_primitive import ExecutionPrimitive
 
-METHOD_VERSION: Final = "zendure-mode-capability-evidence:v1"
+METHOD_VERSION: Final = "zendure-mode-capability-evidence:v2"
 
-_MODE_DEFINITIONS: Final[dict[str, tuple[tuple[ExecutionPrimitive, ...], str | None]]] = {
-    "Standby": ((ExecutionPrimitive.STANDBY,), None),
+_MODE_DEFINITIONS: Final[
+    dict[
+        str,
+        tuple[
+            tuple[ExecutionPrimitive, ...],
+            str | None,
+            str,
+            str,
+            bool,
+        ],
+    ]
+] = {
+    "Standby": ((ExecutionPrimitive.STANDBY,), None, "none", "delegated", False),
     "Handmatig": (
         (ExecutionPrimitive.CHARGE_AT_POWER, ExecutionPrimitive.DISCHARGE_AT_POWER),
         "explicit_signed_power",
+        "pv_and_grid",
+        "explicit_power_required",
+        True,
     ),
-    "Nul op de meter": ((ExecutionPrimitive.BALANCE_BIDIRECTIONAL,), None),
-    "Alleen slim ontladen": ((ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,), None),
-    "Alleen slim opladen": ((ExecutionPrimitive.BALANCE_CHARGE_ONLY,), None),
+    "Nul op de meter": (
+        (ExecutionPrimitive.BALANCE_BIDIRECTIONAL,),
+        None,
+        "surplus_only",
+        "delegated",
+        False,
+    ),
+    "Alleen slim ontladen": (
+        (ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,),
+        None,
+        "none",
+        "delegated",
+        False,
+    ),
+    "Alleen slim opladen": (
+        (ExecutionPrimitive.BALANCE_CHARGE_ONLY,),
+        None,
+        "surplus_only",
+        "delegated",
+        False,
+    ),
     "Snel opladen": (
         (ExecutionPrimitive.CHARGE_AT_POWER,),
         "integration_configured_maximum",
+        "pv_and_grid",
+        "delegated",
+        False,
     ),
     "Snel ontladen": (
         (ExecutionPrimitive.DISCHARGE_AT_POWER,),
         "integration_configured_maximum",
+        "none",
+        "delegated",
+        False,
     ),
 }
 
@@ -49,6 +87,9 @@ class ZendureModeMapping:
     vendor_mode: str
     primitives: tuple[ExecutionPrimitive, ...]
     power_semantics: str | None = None
+    charge_source_semantics: str = "none"
+    control_semantics: str = "delegated"
+    requires_proven_power_limits: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +228,9 @@ def derive_zendure_mode_capability_evidence(
             vendor_mode=mode,
             primitives=_MODE_DEFINITIONS[mode][0],
             power_semantics=_MODE_DEFINITIONS[mode][1],
+            charge_source_semantics=_MODE_DEFINITIONS[mode][2],
+            control_semantics=_MODE_DEFINITIONS[mode][3],
+            requires_proven_power_limits=_MODE_DEFINITIONS[mode][4],
         )
         for mode in usable_modes
     )

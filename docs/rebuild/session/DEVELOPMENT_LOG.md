@@ -1054,3 +1054,22 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 
 Exact next action: publish dev.136, reset the dev.135 morning commitment once,
 and verify the replacement equal-price window is centred on the PV period.
+
+## 2026-08-22 — 2.0.0-dev.137
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+- Serialized the explicit planning reset with canonical Planner Runs. The
+  reset now clears state only after any older run is complete and exposes a
+  monotonic reset generation, preventing that older run from restoring the
+  commitment after reset acknowledgement.
+- Preserved V2ADR-052 commitment stability outside the explicit reset path;
+  price ranking and incumbent-selection priority are unchanged.
+- Completed the bounded Home Assistant power-history bootstrap within one
+  dashboard refresh by reading consecutive two-hour chunks. A failed chunk
+  retains proven history and resumes from the missing tail on the next poll.
+- Added concurrency and complete-bootstrap regressions.
+
+Exact next action: publish dev.137, perform one planning reset and verify that
+the replacement window is selected from current price/PV evidence and that the
+current-day graphs are complete immediately after startup.

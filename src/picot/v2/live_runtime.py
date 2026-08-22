@@ -11,11 +11,12 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from hashlib import sha256
 from http.server import ThreadingHTTPServer
 from math import isfinite
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import perf_counter
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -57,6 +58,7 @@ from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
+    ActivePlanCommitment,
     ActivePlanCommitmentStore,
 )
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
@@ -887,6 +889,33 @@ def _wait_for_poll_or_reset(
         if remaining <= 0.0:
             return
         time.sleep(min(0.25, remaining))
+
+
+class PlanningResetBarrier:
+    """Serialize reset with a Planner Run and expose its reset generation."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._generation = 0
+
+    @property
+    def generation(self) -> int:
+        with self._lock:
+            return self._generation
+
+    def run_cycle(self, cycle: Callable[[], Any]) -> Any:
+        """Prevent a reset from acknowledging halfway through this cycle."""
+
+        with self._lock:
+            return cycle()
+
+    def reset(self, clear_state: Callable[[], Any]) -> tuple[int, Any]:
+        """Clear state after any older cycle and advance the durable boundary."""
+
+        with self._lock:
+            result = clear_state()
+            self._generation += 1
+            return self._generation, result
 
 
 def _project_cumulative_pv_evidence(
@@ -1841,6 +1870,7 @@ def main() -> None:
     adaptive_household_policy = _adaptive_household_policy(options)
     web_view_store = WebViewStore()
     planning_reset_requested = Event()
+    planning_reset_barrier = PlanningResetBarrier()
     household_load_history = HouseholdLoadHistoryStore(
         HOUSEHOLD_LOAD_HISTORY_PATH
     )
@@ -1944,16 +1974,24 @@ def main() -> None:
     def reset_planning(reset_id: str) -> dict[str, object]:
         if not reset_id.strip():
             raise ValueError("reset_id must be explicit")
-        removed = active_plan_commitment_store.clear_all()
-        active_plan_commitment_store.record_manual_reset(
-            reset_id=reset_id,
-            removed=removed,
+
+        def clear_planning_state() -> tuple[ActivePlanCommitment, ...]:
+            removed = active_plan_commitment_store.clear_all()
+            active_plan_commitment_store.record_manual_reset(
+                reset_id=reset_id,
+                removed=removed,
+            )
+            canonical_execution_runtime.reset_pending_state()
+            return removed
+
+        reset_generation, removed = planning_reset_barrier.reset(
+            clear_planning_state
         )
-        canonical_execution_runtime.reset_pending_state()
         planning_reset_requested.set()
         return {
             "status": "manual_planning_reset_requested",
             "reset_id": reset_id,
+            "reset_generation": reset_generation,
             "removed_commitment_count": len(removed),
             "removed_plan_ids": [item.plan_id for item in removed],
             "history_preserved": True,
@@ -2269,13 +2307,16 @@ def main() -> None:
         if planning_reset_requested.is_set():
             planning_reset_requested.clear()
             previous_signature = None
-        previous_signature = _poll_live_cycle(
-            previous_signature=previous_signature,
-            load_bundle=load_bundle,
-            prepare_bundle=prepare_bundle,
-            execute=execute,
-            persist_observation=household_load_history.append,
-            refresh_unchanged=refresh_unchanged,
+        previous_signature = planning_reset_barrier.run_cycle(
+            partial(
+                _poll_live_cycle,
+                previous_signature=previous_signature,
+                load_bundle=load_bundle,
+                prepare_bundle=prepare_bundle,
+                execute=execute,
+                persist_observation=household_load_history.append,
+                refresh_unchanged=refresh_unchanged,
+            )
         )
         _wait_for_poll_or_reset(
             planning_reset_requested,

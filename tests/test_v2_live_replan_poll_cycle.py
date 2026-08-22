@@ -1,10 +1,15 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event, Thread
 
 import picot.v2.live_runtime as live_runtime
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
-from picot.v2.live_runtime import _planning_input_signature, _poll_live_cycle
+from picot.v2.live_runtime import (
+    PlanningResetBarrier,
+    _planning_input_signature,
+    _poll_live_cycle,
+)
 from picot.v2.planning_input import (
     CanonicalInputFact,
     HouseholdLoadObservation,
@@ -126,6 +131,41 @@ def test_poll_cycle_executes_when_fresh_input_changed() -> None:
 
     assert calls == [changed.snapshot.run_id]
     assert result == _planning_input_signature(changed)
+
+
+def test_planning_reset_waits_for_older_cycle_before_clearing_state() -> None:
+    barrier = PlanningResetBarrier()
+    cycle_started = Event()
+    release_cycle = Event()
+    reset_finished = Event()
+    events: list[str] = []
+
+    def cycle() -> None:
+        events.append("cycle_started")
+        cycle_started.set()
+        assert release_cycle.wait(timeout=2)
+        events.append("cycle_finished")
+
+    def reset() -> None:
+        generation, _ = barrier.reset(
+            lambda: events.append("state_cleared")
+        )
+        assert generation == 1
+        reset_finished.set()
+
+    cycle_thread = Thread(target=lambda: barrier.run_cycle(cycle))
+    reset_thread = Thread(target=reset)
+    cycle_thread.start()
+    assert cycle_started.wait(timeout=2)
+    reset_thread.start()
+
+    assert not reset_finished.wait(timeout=0.05)
+    release_cycle.set()
+    cycle_thread.join(timeout=2)
+    reset_thread.join(timeout=2)
+
+    assert events == ["cycle_started", "cycle_finished", "state_cleared"]
+    assert barrier.generation == 1
 
 
 def test_poll_cycle_executes_when_only_storage_mode_changed() -> None:

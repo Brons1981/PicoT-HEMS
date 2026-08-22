@@ -243,10 +243,14 @@ def test_reference_observer_simulates_baseline_and_delegated_pv_intent() -> None
 
     assert baseline.status == "ready"
     assert baseline.ledger is not None
+    assert baseline.financial_settlement is not None
     assert baseline.reference_grid_import_wh == pytest.approx(200.0)
     assert baseline.reference_grid_export_wh == pytest.approx(600.0)
+    assert baseline.financial_settlement.grid_import_cost_eur == pytest.approx(0.05)
+    assert baseline.financial_settlement.grid_export_value_eur == pytest.approx(0.06)
     assert delegated.status == "ready"
     assert delegated.ledger is not None
+    assert delegated.financial_settlement is not None
     assert delegated.reference_pv_storage_wh == pytest.approx(200.0)
     assert delegated.reference_grid_storage_wh == pytest.approx(0.0)
     assert delegated.reference_conversion_losses_wh == pytest.approx(22.222222)

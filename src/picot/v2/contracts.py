@@ -12,6 +12,7 @@ from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_contract import EnergyContractSnapshot
 from picot.domain.energy_path import PathSegment, ProjectedEnergyState
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.financial_settlement import FinancialSettlementOutcome
 from picot.domain.household_energy_ledger import HouseholdEnergyLedger
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.v2.household_planning_regime import (
@@ -1105,6 +1106,7 @@ class ReferenceCandidateSimulation:
     status: str
     blockers: tuple[str, ...]
     ledger: HouseholdEnergyLedger | None = None
+    financial_settlement: FinancialSettlementOutcome | None = None
     reference_pv_storage_wh: float | None = None
     reference_grid_storage_wh: float | None = None
     reference_grid_import_wh: float | None = None
@@ -1120,9 +1122,19 @@ class ReferenceCandidateSimulation:
     def __post_init__(self) -> None:
         if self.status not in {"ready", "blocked"}:
             raise ValueError("reference simulation status must be ready or blocked")
-        if self.status == "ready" and (self.blockers or self.ledger is None):
-            raise ValueError("ready reference simulation requires only a ledger")
-        if self.status == "blocked" and (not self.blockers or self.ledger is not None):
+        if self.status == "ready" and (
+            self.blockers
+            or self.ledger is None
+            or self.financial_settlement is None
+        ):
+            raise ValueError(
+                "ready reference simulation requires a ledger and financial settlement"
+            )
+        if self.status == "blocked" and (
+            not self.blockers
+            or self.ledger is not None
+            or self.financial_settlement is not None
+        ):
             raise ValueError("blocked reference simulation requires only blockers")
 
 

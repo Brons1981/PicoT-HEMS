@@ -9,6 +9,7 @@ from hashlib import sha256
 from picot.domain.capability_snapshot import (
     CapabilityAvailability,
     CapabilityHealth,
+    EnergyFlowDirection,
 )
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import PathSegment, ProjectedEnergyState
@@ -660,6 +661,298 @@ def construct_pv_charge_only_candidate(
         candidates=tuple(candidates),
         energy_paths=tuple(paths),
         projected_balances=(candidate_balance,),
+        storage_requirements=(requirement,),
+        derivation_status="constructed",
+        derivation_reason=None,
+    )
+
+
+def construct_grid_requirement_candidates(
+    *,
+    snapshot: PlanningInputSnapshot,
+    balance: ProjectedHouseholdEnergyBalance,
+    requirement: StorageEnergyRequirement,
+    maximum_candidates: int = 8,
+) -> CandidateSet:
+    """Construct bounded observer-only grid alternatives for one requirement."""
+
+    if maximum_candidates < 1:
+        raise ValueError("maximum grid Candidate count must be positive")
+    if (
+        balance.run_id != snapshot.run_id
+        or balance.snapshot_id != snapshot.snapshot_id
+        or requirement.run_id != snapshot.run_id
+        or requirement.snapshot_id != snapshot.snapshot_id
+        or requirement.projected_balance_id != balance.balance_id
+    ):
+        raise ValueError("storage Candidate lineage must match Planning Input")
+    storage = next(
+        (
+            item
+            for item in snapshot.current_storage_states
+            if item.storage_state_id == requirement.storage_state_id
+        ),
+        None,
+    )
+    capability_set = snapshot.capability_snapshot_set
+    contract = snapshot.energy_contract_snapshot
+    conversion = snapshot.storage_conversion_model
+    if (
+        storage is None
+        or capability_set is None
+        or contract is None
+        or conversion is None
+        or not contract.permits_grid_import
+    ):
+        return _not_available(
+            snapshot,
+            balance,
+            requirement,
+            "grid_requirement_contract_or_conversion_unavailable",
+        )
+    capability = next(
+        (
+            item
+            for item in capability_set.capabilities
+            if item.capability_id == storage.capability_id
+            and item.execution_scope_id == storage.execution_scope_id
+            and item.availability is CapabilityAvailability.AVAILABLE
+            and item.health is CapabilityHealth.HEALTHY
+            and ExecutionPrimitive.BALANCE_CHARGE_ONLY in item.supported_primitives
+            and EnergyFlowDirection.CHARGE in item.flow_directions
+            and item.maximum_power_w is not None
+        ),
+        None,
+    )
+    if capability is None or capability.maximum_power_w is None:
+        return _not_available(
+            snapshot,
+            balance,
+            requirement,
+            "grid_requirement_directional_charge_capability_unavailable",
+        )
+    intervals = tuple(
+        clipped
+        for interval in balance.intervals
+        if interval.ends_at <= requirement.required_by
+        for clipped in (_clip_interval_to_snapshot(interval, snapshot),)
+        if clipped is not None
+    )
+    if not intervals:
+        return _not_available(
+            snapshot,
+            balance,
+            requirement,
+            "grid_requirement_interval_unavailable",
+        )
+    prices = {
+        (item.starts_at, item.ends_at): item for item in snapshot.price_points
+    }
+    if any((item.starts_at, item.ends_at) not in prices for item in intervals):
+        return _not_available(
+            snapshot,
+            balance,
+            requirement,
+            "grid_requirement_price_evidence_unavailable",
+        )
+    feasible: list[tuple[float, datetime, tuple[int, ...]]] = []
+    projections: dict[tuple[int, ...], tuple[float, float, float]] = {}
+    for start in range(len(intervals)):
+        capacity_wh = 0.0
+        weighted_price = 0.0
+        duration_seconds = 0.0
+        for end in range(start, len(intervals)):
+            interval = intervals[end]
+            seconds = (interval.ends_at - interval.starts_at).total_seconds()
+            capacity_wh += capability.maximum_power_w * seconds / 3600.0
+            point = prices[(interval.starts_at, interval.ends_at)]
+            weighted_price += point.value_eur_per_kwh * seconds
+            duration_seconds += seconds
+            indexes = tuple(range(start, end + 1))
+            selected_indexes = frozenset(indexes)
+            storage_energy_wh = storage.current_stored_energy_wh
+            storage_without_grid_at_window_end_wh = storage_energy_wh
+            pv_storage_wh = 0.0
+            for index, projected_interval in enumerate(intervals):
+                demand_wh = (
+                    projected_interval.household_load_forecast_energy_wh
+                    + projected_interval.known_future_demand_energy_wh
+                    + projected_interval.conversion_losses_wh
+                    + projected_interval.other_planned_household_energy_flows_wh
+                )
+                surplus_wh = max(
+                    0.0,
+                    projected_interval.expected_usable_pv_energy_wh - demand_wh,
+                )
+                deficit_wh = max(
+                    0.0,
+                    demand_wh - projected_interval.expected_usable_pv_energy_wh,
+                )
+                if index in selected_indexes:
+                    acquired_pv_wh = min(
+                        surplus_wh,
+                        max(0.0, storage.usable_capacity_wh - storage_energy_wh),
+                    )
+                    storage_energy_wh += acquired_pv_wh
+                    pv_storage_wh += acquired_pv_wh
+                    if index == end:
+                        storage_without_grid_at_window_end_wh = storage_energy_wh
+                else:
+                    storage_energy_wh = max(0.0, storage_energy_wh - deficit_wh)
+            required_grid_storage_wh = max(
+                0.0,
+                requirement.required_energy_wh - storage_energy_wh,
+            )
+            required_grid_input_wh = (
+                required_grid_storage_wh / conversion.charge_efficiency
+            )
+            if (
+                required_grid_storage_wh > 0.0
+                and capacity_wh + 1e-9 >= required_grid_input_wh
+            ):
+                projections[indexes] = (
+                    required_grid_storage_wh,
+                    storage_without_grid_at_window_end_wh,
+                    pv_storage_wh,
+                )
+                feasible.append(
+                    (
+                        weighted_price / duration_seconds,
+                        interval.starts_at,
+                        indexes,
+                    )
+                )
+                break
+    if not feasible:
+        return _not_available(
+            snapshot,
+            balance,
+            requirement,
+            "grid_requirement_not_recoverable_before_deadline",
+        )
+    ranked = sorted(feasible, key=lambda item: (item[0], item[1], item[2]))
+    earliest = min(feasible, key=lambda item: (item[1], item[2]))
+    selected = tuple(
+        dict.fromkeys(
+            item[2] for item in (*ranked[:maximum_candidates], earliest)
+        )
+    )
+    candidates: list[Candidate] = []
+    paths: list[EnergyPath] = []
+    confidence = min(
+        storage.confidence,
+        capability.confidence,
+        requirement.confidence,
+        *(interval.confidence for interval in intervals),
+        *(prices[(item.starts_at, item.ends_at)].confidence for item in intervals),
+    )
+    for indexes in selected:
+        first = intervals[indexes[0]]
+        last = intervals[indexes[-1]]
+        (
+            required_grid_storage_wh,
+            storage_without_grid_at_window_end_wh,
+            _,
+        ) = projections[indexes]
+        segment_id = _stable_id(
+            "path-segment",
+            f"{snapshot.snapshot_id}|{requirement.requirement_id}|grid-requirement|"
+            f"{first.starts_at.isoformat()}|{last.ends_at.isoformat()}",
+        )
+        evidence_ids = tuple(
+            dict.fromkeys(
+                (
+                    requirement.requirement_id,
+                    capability.capability_id,
+                    contract.contract_snapshot_id,
+                    conversion.model_id,
+                    *(
+                        evidence_id
+                        for index in indexes
+                        for evidence_id in intervals[index].evidence_ids
+                    ),
+                    *(
+                        prices[
+                            (intervals[index].starts_at, intervals[index].ends_at)
+                        ].evidence_id
+                        for index in indexes
+                    ),
+                )
+            )
+        )
+        segment = PathSegment(
+            segment_id=segment_id,
+            order=1,
+            execution_scope_id=storage.execution_scope_id,
+            starts_at=first.starts_at,
+            ends_at=last.ends_at,
+            primitive=ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+            capability_id=capability.capability_id,
+            purpose="Acquire the named storage requirement with bounded grid energy",
+            evidence_ids=evidence_ids,
+            requested_power_w=None,
+            charge_source_policy=ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT,
+        )
+        window_end_energy_wh = min(
+            storage.usable_capacity_wh,
+            storage_without_grid_at_window_end_wh + required_grid_storage_wh,
+        )
+        states = [
+            ProjectedEnergyState(
+                at=first.starts_at,
+                confidence=confidence,
+                storage_energy_wh=first.current_usable_storage_energy_wh,
+            ),
+            ProjectedEnergyState(
+                at=last.ends_at,
+                confidence=confidence,
+                storage_energy_wh=window_end_energy_wh,
+            ),
+        ]
+        if last.ends_at < requirement.required_by:
+            states.append(
+                ProjectedEnergyState(
+                    at=requirement.required_by,
+                    confidence=confidence,
+                    storage_energy_wh=requirement.required_energy_wh,
+                )
+            )
+        path_id = _stable_id(
+            "energy-path",
+            f"{snapshot.snapshot_id}|{requirement.requirement_id}|grid-requirement|"
+            f"{first.starts_at.isoformat()}|{last.ends_at.isoformat()}",
+        )
+        path = EnergyPath(
+            run_id=snapshot.run_id,
+            snapshot_id=snapshot.snapshot_id,
+            path_id=path_id,
+            family="grid_requirement",
+            segment_ids=(segment.segment_id,),
+            segments=(segment,),
+            projected_states=tuple(states),
+            capability_confidence=capability.confidence,
+        )
+        paths.append(path)
+        candidates.append(
+            Candidate(
+                run_id=snapshot.run_id,
+                snapshot_id=snapshot.snapshot_id,
+                candidate_id=_stable_id("candidate", path_id),
+                energy_path_id=path_id,
+                family=path.family,
+                pv_forecast_basis="lower",
+            )
+        )
+    return CandidateSet(
+        run_id=snapshot.run_id,
+        snapshot_id=snapshot.snapshot_id,
+        candidate_set_id=_stable_id(
+            "candidate-set",
+            f"{snapshot.snapshot_id}|{requirement.requirement_id}|grid-requirement",
+        ),
+        candidates=tuple(candidates),
+        energy_paths=tuple(paths),
+        projected_balances=(replace(balance, intervals=intervals),),
         storage_requirements=(requirement,),
         derivation_status="constructed",
         derivation_reason=None,

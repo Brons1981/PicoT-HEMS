@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from time import perf_counter
 
+from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.planner.delegated_storage_evaluation_engine import (
     DelegatedStorageEvaluationEngine,
@@ -99,6 +100,27 @@ def _vendor_mode_for_primitive(
         else ()
     )
     return matches[0] if len(matches) == 1 else None
+
+
+def _vendor_mode_for_segment(
+    mode_evidence: ZendureModeCapabilityEvidence | None,
+    primitive: ExecutionPrimitive,
+    source_policy: ChargeSourcePolicy | None,
+) -> str | None:
+    """Resolve source-aware plan evidence without emitting an adapter request."""
+
+    if mode_evidence is None:
+        return None
+    if source_policy is not None and source_policy.permits_grid_import:
+        grid_matches = tuple(
+            mapping.vendor_mode
+            for mapping in mode_evidence.mappings
+            if mapping.charge_source_semantics == "pv_and_grid"
+            and mapping.control_semantics == "delegated"
+            and not mapping.requires_proven_power_limits
+        )
+        return grid_matches[0] if len(grid_matches) == 1 else None
+    return _vendor_mode_for_primitive(mode_evidence, primitive)
 
 
 def _promotable_grid_candidate_id(
@@ -810,9 +832,7 @@ class CanonicalPipeline:
         stage_started = perf_counter()
         observer_plans: list[ObserverExecutionPlan] = []
         for execution_scope_id in sorted(
-            set()
-            if grid_execution_embargo
-            else {
+            {
                 segment.execution_scope_id
                 for segment in winning_path.segments
             }
@@ -836,19 +856,10 @@ class CanonicalPipeline:
             )
             planned_primitive = applicable_segment.primitive
             mode_evidence = snapshot.storage_mode_capability_evidence
-            matching_vendor_modes = (
-                tuple(
-                    mapping.vendor_mode
-                    for mapping in mode_evidence.mappings
-                    if planned_primitive in mapping.primitives
-                )
-                if mode_evidence is not None
-                else ()
-            )
-            plan_vendor_mode = (
-                matching_vendor_modes[0]
-                if len(matching_vendor_modes) == 1
-                else None
+            plan_vendor_mode = _vendor_mode_for_segment(
+                mode_evidence,
+                planned_primitive,
+                applicable_segment.charge_source_policy,
             )
             lifecycle_base = (
                 "scheduled"
@@ -908,9 +919,10 @@ class CanonicalPipeline:
                             evidence_ids=segment.evidence_ids,
                             requested_power_w=segment.requested_power_w,
                             charge_source_policy=segment.charge_source_policy,
-                            planned_vendor_mode=_vendor_mode_for_primitive(
+                            planned_vendor_mode=_vendor_mode_for_segment(
                                 mode_evidence,
                                 segment.primitive,
+                                segment.charge_source_policy,
                             ),
                         )
                         for index, segment in enumerate(path_segments, start=1)
@@ -935,7 +947,11 @@ class CanonicalPipeline:
             execution_record_id=_id("execution", execution_plan_set.plan_set_id),
             plan_set_id=execution_plan_set.plan_set_id,
             status=(
-                "execution_embargoed"
+                (
+                    "grid_plan_ready_embargoed"
+                    if control_change_allowed
+                    else "grid_plan_observer_only"
+                )
                 if grid_execution_embargo
                 else "fallback_active"
                 if not has_valid_plan and observer_plans
@@ -948,7 +964,7 @@ class CanonicalPipeline:
                 else "no_due_segment"
             ),
             reason=(
-                "grid winner selected; execution remains blocked before plan creation"
+                "grid plan prepared; primitive emission and dispatch remain embargoed"
                 if grid_execution_embargo
                 else "safe baseline mode active without an actionable calculated plan"
                 if not has_valid_plan and observer_plans
@@ -964,14 +980,18 @@ class CanonicalPipeline:
         execution_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
         stage_started = perf_counter()
-        due_segment = next(
-            (
-                segment
-                for plan in execution_plan_set.plans
-                for segment in plan.segments
-                if segment.starts_at <= snapshot.captured_at < segment.ends_at
-            ),
-            None,
+        due_segment = (
+            None
+            if grid_execution_embargo
+            else next(
+                (
+                    segment
+                    for plan in execution_plan_set.plans
+                    for segment in plan.segments
+                    if segment.starts_at <= snapshot.captured_at < segment.ends_at
+                ),
+                None,
+            )
         )
         mode_evidence = snapshot.storage_mode_capability_evidence
         mode_provenance = snapshot.storage_mode_control_provenance

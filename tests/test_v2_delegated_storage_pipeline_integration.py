@@ -819,9 +819,20 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
     assert feasible_run.evaluation.decisive_step == (
         "promotion:grid_requirement_admissible_and_execution_feasible"
     )
-    assert feasible_run.execution_plan_set.plans == ()
-    assert feasible_run.execution_plan_set.plan_ids == ()
-    assert feasible_run.execution_record.status == "execution_embargoed"
+    assert len(feasible_run.execution_plan_set.plans) == 1
+    grid_plan = feasible_run.execution_plan_set.plans[0]
+    assert grid_plan.winning_candidate_id == feasible.candidate_id
+    assert grid_plan.planned_vendor_mode == "Snel opladen"
+    assert grid_plan.observer_only is True
+    assert grid_plan.segments
+    assert all(
+        segment.planned_vendor_mode == "Snel opladen"
+        and segment.charge_source_policy
+        is ChargeSourcePolicy.GRID_ALLOWED_FOR_REQUIREMENT
+        and segment.requested_power_w is None
+        for segment in grid_plan.segments
+    )
+    assert feasible_run.execution_record.status == "grid_plan_observer_only"
     assert feasible_run.primitive_boundary.request_id is None
     assert feasible_run.primitive_boundary.status == "not_emitted"
     assert feasible_run.adapter_boundary.translation_id is None
@@ -838,8 +849,11 @@ def test_pipeline_exposes_grid_requirement_candidate_without_live_selection() ->
         live_authority_run.evaluation.winning_candidate_id
         == feasible_run.evaluation.winning_candidate_id
     )
-    assert live_authority_run.execution_plan_set.plans == ()
-    assert live_authority_run.execution_record.status == "execution_embargoed"
+    assert len(live_authority_run.execution_plan_set.plans) == 1
+    assert live_authority_run.execution_plan_set.plans[0].planned_vendor_mode == (
+        "Snel opladen"
+    )
+    assert live_authority_run.execution_record.status == "grid_plan_ready_embargoed"
     assert live_authority_run.primitive_boundary.status == "not_emitted"
     assert live_authority_run.adapter_boundary.status == "not_invoked"
     assert live_authority_run.vendor_result.status == "not_dispatched"

@@ -6,6 +6,10 @@ from datetime import datetime
 
 from picot.domain.candidate import CandidateFamily
 from picot.domain.current_storage_state import CurrentStorageState as DomainStorageState
+from picot.domain.delegated_energy_intent import (
+    DelegatedEnergyIntent,
+    DelegatedEnergyIntentKind,
+)
 from picot.domain.energy_contract import EnergyTariffInterval
 from picot.domain.energy_path import EnergyPath as DomainEnergyPath
 from picot.domain.execution_primitive import ExecutionPrimitive
@@ -48,8 +52,9 @@ from picot.v2.contracts import (
     ReferenceSimulationSet,
 )
 
-METHOD_VERSION = "v2-canonical-reference-observer:v2"
-ADAPTER_METHOD_VERSION = "v2-to-domain-reference-adapter:v2"
+METHOD_VERSION = "v2-canonical-reference-observer:v3"
+ADAPTER_METHOD_VERSION = "v2-to-domain-reference-adapter:v3"
+DELEGATED_INTENT_METHOD_VERSION = "v2-delegated-energy-intent:v1"
 
 
 class CanonicalReferenceObserver:
@@ -108,11 +113,31 @@ class CanonicalReferenceObserver:
             missing.append("storage_conversion_model_missing")
         if missing:
             return self._blocked(candidate.candidate_id, path.path_id, tuple(missing))
+        delegated_primitives = {
+            ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+            ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+        }
         unsupported = tuple(
             dict.fromkeys(
-                f"unsupported_primitive:{segment.primitive.value}"
+                (
+                    f"unsupported_primitive:{segment.primitive.value}"
+                    if segment.primitive not in delegated_primitives
+                    else (
+                        "unsupported_delegated_source_policy:"
+                        f"{segment.charge_source_policy.value}"
+                        if segment.charge_source_policy is not None
+                        else "unsupported_delegated_source_policy:missing"
+                    )
+                )
                 for segment in path.segments
-                if segment.primitive is not ExecutionPrimitive.CHARGE_AT_POWER
+                if (
+                    segment.primitive is not ExecutionPrimitive.CHARGE_AT_POWER
+                    and (
+                        segment.primitive not in delegated_primitives
+                        or segment.charge_source_policy is None
+                        or segment.charge_source_policy.value != "pv_only"
+                    )
+                )
             )
         )
         if unsupported:
@@ -143,6 +168,11 @@ class CanonicalReferenceObserver:
                 candidate_family=candidate.family,
                 path=path,
             )
+            delegated_energy_intents = self._delegated_energy_intents(
+                snapshot=snapshot,
+                path=path,
+                storage=domain_storage,
+            )
             requirement_target = (
                 legacy_outcome.required_energy_wh
                 if legacy_outcome is not None
@@ -163,6 +193,7 @@ class CanonicalReferenceObserver:
                 conversion_model=snapshot.storage_conversion_model,
                 energy_contract=snapshot.energy_contract_snapshot,
                 requirement_target_energy_wh=requirement_target,
+                delegated_energy_intents=delegated_energy_intents,
             )
         except ValueError as exc:
             return self._blocked(
@@ -170,8 +201,16 @@ class CanonicalReferenceObserver:
                 path.path_id,
                 (f"simulation_blocked:{exc}",),
             )
-        reference_pv = sum(item.pv_to_storage_input_wh for item in ledger.intervals)
-        reference_grid = sum(item.grid_to_storage_input_wh for item in ledger.intervals)
+        reference_pv = sum(
+            item.pv_to_storage_input_wh
+            * snapshot.storage_conversion_model.charge_efficiency
+            for item in ledger.intervals
+        )
+        reference_grid = sum(
+            item.grid_to_storage_input_wh
+            * snapshot.storage_conversion_model.charge_efficiency
+            for item in ledger.intervals
+        )
         reference_losses = sum(
             item.storage_charge_loss_wh + item.storage_discharge_loss_wh
             for item in ledger.intervals
@@ -339,6 +378,79 @@ class CanonicalReferenceObserver:
             ),
         )
         return domain_snapshot, domain_path, domain_storage
+
+    @staticmethod
+    def _delegated_energy_intents(
+        *,
+        snapshot: PlanningInputSnapshot,
+        path: EnergyPath,
+        storage: DomainStorageState,
+    ) -> tuple[DelegatedEnergyIntent, ...]:
+        delegated_primitives = {
+            ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+            ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+        }
+        if not any(
+            segment.primitive in delegated_primitives for segment in path.segments
+        ):
+            return ()
+        if snapshot.capability_snapshot_set is None:
+            raise ValueError("Delegated energy intent requires capability evidence.")
+        capabilities = {
+            item.capability_id: item
+            for item in snapshot.capability_snapshot_set.capabilities
+        }
+        result: list[DelegatedEnergyIntent] = []
+        for segment in path.segments:
+            if segment.primitive not in delegated_primitives:
+                continue
+            capability = capabilities.get(segment.capability_id)
+            if capability is None:
+                raise ValueError("Delegated energy intent capability is missing.")
+            minimum_storage_energy_wh = (
+                capability.minimum_soc * storage.usable_capacity_wh
+                if capability.minimum_soc is not None
+                else None
+            )
+            if (
+                segment.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                and minimum_storage_energy_wh is None
+            ):
+                raise ValueError(
+                    "Bidirectional household support requires explicit minimum SoC."
+                )
+            maximum_storage_energy_wh = (
+                capability.maximum_soc * storage.usable_capacity_wh
+                if capability.maximum_soc is not None
+                else storage.usable_capacity_wh
+            )
+            result.append(
+                DelegatedEnergyIntent(
+                    segment_id=segment.segment_id,
+                    primitive=segment.primitive,
+                    kind=(
+                        DelegatedEnergyIntentKind.PV_SURPLUS_WITH_HOUSEHOLD_SUPPORT
+                        if segment.primitive
+                        is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                        else DelegatedEnergyIntentKind.PV_SURPLUS_ACQUISITION
+                    ),
+                    minimum_storage_energy_wh=minimum_storage_energy_wh,
+                    maximum_storage_energy_wh=maximum_storage_energy_wh,
+                    evidence_ids=tuple(
+                        dict.fromkeys(
+                            (
+                                segment.segment_id,
+                                segment.capability_id,
+                                capability.source_mapping_id,
+                                capability.adapter_contract_version,
+                                *segment.evidence_ids,
+                            )
+                        )
+                    ),
+                    method_version=DELEGATED_INTENT_METHOD_VERSION,
+                )
+            )
+        return tuple(result)
 
     @staticmethod
     def _normalise_pv_intervals(

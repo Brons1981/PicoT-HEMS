@@ -13,6 +13,10 @@ from picot.domain.capability_snapshot import (
     LogicalCapabilitySnapshot,
 )
 from picot.domain.daily_reference_simulation import PVScenario
+from picot.domain.daily_reference_tariff import (
+    DailyReferenceTariffInterval,
+    DailyReferenceTariffSchedule,
+)
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.v2.contracts import (
@@ -22,6 +26,7 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
     PlanningInputSnapshot,
+    PriceForecastPoint,
 )
 from picot.v2.independent_daily_reference_adapter import (
     DailyReferenceInputError,
@@ -36,6 +41,7 @@ def _snapshot(
     *,
     complete_range: bool = True,
     capability_snapshot_id: str = "snapshot",
+    maximum_soc: float = 1.0,
 ) -> PlanningInputSnapshot:
     storage = CurrentStorageState(
         storage_state_id="storage",
@@ -61,7 +67,7 @@ def _snapshot(
         flow_directions=(EnergyFlowDirection.BIDIRECTIONAL,),
         maximum_power_w=2400.0,
         minimum_soc=0.1,
-        maximum_soc=1.0,
+        maximum_soc=maximum_soc,
     )
     pv_intervals = tuple(
         PVEnergyTimelineInterval(
@@ -104,6 +110,16 @@ def _snapshot(
         pipeline_contract_version=1,
         strategy_id="strategy",
         horizon_end=START + 4 * QUARTER,
+        price_points=(
+            PriceForecastPoint(
+                point_id="price",
+                starts_at=START,
+                ends_at=START + 4 * QUARTER,
+                value_eur_per_kwh=0.30,
+                confidence=0.95,
+                evidence_id="nordpool",
+            ),
+        ),
         current_storage_states=(storage,),
         pv_energy_timeline=PVEnergyTimeline(
             timeline_id="pv-timeline",
@@ -138,6 +154,27 @@ def _conversion() -> StorageConversionModel:
     )
 
 
+def _tariffs(*, snapshot_id: str = "snapshot") -> DailyReferenceTariffSchedule:
+    return DailyReferenceTariffSchedule(
+        schedule_id="tariffs",
+        snapshot_id=snapshot_id,
+        horizon_start=START,
+        horizon_end=START + 4 * QUARTER,
+        intervals=tuple(
+            DailyReferenceTariffInterval(
+                starts_at=START + index * QUARTER,
+                ends_at=START + (index + 1) * QUARTER,
+                import_eur_per_kwh=0.25 + index * 0.01,
+                export_eur_per_kwh=0.10 + index * 0.01,
+                confidence=0.95,
+                evidence_ids=(f"tariff-{index}",),
+            )
+            for index in range(4)
+        ),
+        method_version="test-tariff:v1",
+    )
+
+
 def test_adapter_builds_three_quarter_hour_trajectories_from_shared_snapshot() -> None:
     result = IndependentDailyReferenceAdapter().simulate(
         snapshot=_snapshot(),
@@ -164,6 +201,50 @@ def test_adapter_blocks_when_any_pv_uncertainty_range_is_missing() -> None:
         IndependentDailyReferenceAdapter().simulate(
             snapshot=_snapshot(complete_range=False),
             conversion_model=_conversion(),
+        )
+
+
+def test_adapter_runs_complete_observer_chain_from_one_shared_snapshot() -> None:
+    result = IndependentDailyReferenceAdapter().observe(
+        snapshot=_snapshot(maximum_soc=0.7),
+        conversion_model=_conversion(),
+        tariffs=_tariffs(),
+    )
+
+    assert result.snapshot_id == "snapshot"
+    assert result.strategy_space.snapshot_id == "snapshot"
+    assert result.observer_result.snapshot_id == "snapshot"
+    assert result.observer_only is True
+    assert result.selection_permitted is False
+    assert result.commitment_permitted is False
+    assert result.strategy_space.source_charge_window_set_id == (
+        "daily-charge-windows:snapshot"
+    )
+    assert result.observer_result.best_observation_ids
+
+
+def test_adapter_derives_tariffs_automatically_from_shared_snapshot() -> None:
+    result = IndependentDailyReferenceAdapter().observe(
+        snapshot=_snapshot(maximum_soc=0.7),
+        conversion_model=_conversion(),
+    )
+
+    strategy_results = result.observer_result.portfolio.strategy_results
+    assert strategy_results
+    assert all(item.run.financial.snapshot_id == "snapshot" for item in strategy_results)
+    assert all(
+        path.tariff_schedule_id == "daily-tariffs:snapshot"
+        for item in strategy_results
+        for path in item.run.financial.paths
+    )
+
+
+def test_complete_observer_chain_blocks_tariffs_from_another_snapshot() -> None:
+    with pytest.raises(DailyReferenceInputError, match="tariff_lineage_mismatch"):
+        IndependentDailyReferenceAdapter().observe(
+            snapshot=_snapshot(maximum_soc=0.7),
+            conversion_model=_conversion(),
+            tariffs=_tariffs(snapshot_id="other-snapshot"),
         )
 
 

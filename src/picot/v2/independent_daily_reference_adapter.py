@@ -172,16 +172,21 @@ class IndependentDailyReferenceAdapter:
             or capability.health is not CapabilityHealth.HEALTHY
         ):
             raise DailyReferenceInputError("daily_reference_capability_unavailable")
-        if capability.maximum_power_w is None:
-            raise DailyReferenceInputError("daily_reference_power_limit_missing")
-        if capability.minimum_soc is None or capability.maximum_soc is None:
-            raise DailyReferenceInputError("daily_reference_soc_limits_missing")
         directions = set(capability.flow_directions)
         if EnergyFlowDirection.BIDIRECTIONAL not in directions and not {
             EnergyFlowDirection.CHARGE,
             EnergyFlowDirection.DISCHARGE,
         }.issubset(directions):
             raise DailyReferenceInputError("daily_reference_directions_incomplete")
+        physical_limits = tuple(
+            item
+            for item in snapshot.storage_physical_limits
+            if item.capability_id == storage.capability_id
+            and item.execution_scope_id == storage.execution_scope_id
+        )
+        if len(physical_limits) != 1:
+            raise DailyReferenceInputError("daily_reference_physical_limits_missing")
+        limits = physical_limits[0]
 
         household = self._household(
             snapshot.household_load_forecast,
@@ -208,13 +213,17 @@ class IndependentDailyReferenceAdapter:
             pv_scenarios=pv_scenarios,
             storage=domain_storage,
             minimum_storage_energy_wh=(
-                capability.minimum_soc * storage.usable_capacity_wh
+                limits.minimum_soc * storage.usable_capacity_wh
             ),
             target_storage_energy_wh=(
-                capability.maximum_soc * storage.usable_capacity_wh
+                limits.maximum_soc * storage.usable_capacity_wh
             ),
-            maximum_charge_input_power_w=capability.maximum_power_w,
-            maximum_discharge_output_power_w=capability.maximum_power_w,
+            maximum_charge_input_power_w=(
+                limits.maximum_charge_input_power_w
+            ),
+            maximum_discharge_output_power_w=(
+                limits.maximum_discharge_output_power_w
+            ),
         )
 
     @staticmethod

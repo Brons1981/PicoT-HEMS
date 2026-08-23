@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -23,10 +24,11 @@ from picot.v2.contracts import (
     CurrentStorageState,
     HouseholdLoadForecast,
     HouseholdLoadForecastInterval,
-    PVEnergyTimeline,
-    PVEnergyTimelineInterval,
     PlanningInputSnapshot,
     PriceForecastPoint,
+    PVEnergyTimeline,
+    PVEnergyTimelineInterval,
+    StoragePhysicalLimits,
 )
 from picot.v2.independent_daily_reference_adapter import (
     DailyReferenceInputError,
@@ -66,9 +68,7 @@ def _snapshot(
         adapter_contract_version="test:v1",
         role=CapabilityRole.ENERGY_STORAGE,
         flow_directions=(EnergyFlowDirection.BIDIRECTIONAL,),
-        maximum_power_w=2400.0,
         minimum_soc=0.1,
-        maximum_soc=maximum_soc,
     )
     pv_intervals = tuple(
         PVEnergyTimelineInterval(
@@ -142,6 +142,18 @@ def _snapshot(
             captured_at=START,
             capabilities=(capability,),
         ),
+        storage_physical_limits=(
+            StoragePhysicalLimits(
+                execution_scope_id="battery",
+                capability_id="battery-capability",
+                minimum_soc=0.1,
+                maximum_soc=maximum_soc,
+                maximum_charge_input_power_w=2400.0,
+                maximum_discharge_output_power_w=2400.0,
+                evidence_ids=("configured-limits",),
+                method_version="test-limits:v1",
+            ),
+        ),
     )
 
 
@@ -205,6 +217,19 @@ def test_adapter_blocks_when_any_pv_uncertainty_range_is_missing() -> None:
         )
 
 
+def test_adapter_blocks_without_separate_physical_limit_contract() -> None:
+    snapshot = replace(_snapshot(), storage_physical_limits=())
+
+    with pytest.raises(
+        DailyReferenceInputError,
+        match="daily_reference_physical_limits_missing",
+    ):
+        IndependentDailyReferenceAdapter().simulate(
+            snapshot=snapshot,
+            conversion_model=_conversion(),
+        )
+
+
 def test_adapter_runs_complete_observer_chain_from_one_shared_snapshot() -> None:
     result = IndependentDailyReferenceAdapter().observe(
         snapshot=_snapshot(maximum_soc=0.7),
@@ -225,7 +250,7 @@ def test_adapter_runs_complete_observer_chain_from_one_shared_snapshot() -> None
 
 
 def test_adapter_derives_tariffs_automatically_from_shared_snapshot() -> None:
-    result = IndependentDailyReferenceAdapter().observe(
+    IndependentDailyReferenceAdapter().observe(
         snapshot=_snapshot(maximum_soc=0.7),
         conversion_model=_conversion(),
     )

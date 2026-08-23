@@ -574,6 +574,34 @@ class BMSCalibrationEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class StoragePhysicalLimits:
+    """Configured physical limits carried passively in Planning Input."""
+
+    execution_scope_id: str
+    capability_id: str
+    minimum_soc: float
+    maximum_soc: float
+    maximum_charge_input_power_w: float
+    maximum_discharge_output_power_w: float
+    evidence_ids: tuple[str, ...]
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if not self.execution_scope_id.strip() or not self.capability_id.strip():
+            raise ValueError("storage physical limit scope must be explicit")
+        if not 0.0 <= self.minimum_soc <= self.maximum_soc <= 1.0:
+            raise ValueError("storage physical SOC limits must be ordered")
+        if self.maximum_charge_input_power_w <= 0.0:
+            raise ValueError("maximum charge input power must be positive")
+        if self.maximum_discharge_output_power_w <= 0.0:
+            raise ValueError("maximum discharge output power must be positive")
+        if not self.evidence_ids:
+            raise ValueError("storage physical limit evidence must be explicit")
+        if not self.method_version.strip():
+            raise ValueError("storage physical limit method must be explicit")
+
+
+@dataclass(frozen=True, slots=True)
 class PlanningInputSnapshot:
     run_id: str
     snapshot_id: str
@@ -593,6 +621,7 @@ class PlanningInputSnapshot:
     storage_mode_control_provenance: StorageModeControlProvenance | None = None
     bms_calibration_evidence: BMSCalibrationEvidence | None = None
     capability_snapshot_set: CapabilitySnapshotSet | None = None
+    storage_physical_limits: tuple[StoragePhysicalLimits, ...] = ()
     active_plan_commitments: tuple[ActivePlanCommitment, ...] = ()
 
     def __post_init__(self) -> None:
@@ -645,6 +674,12 @@ class PlanningInputSnapshot:
             raise ValueError(
                 "capability snapshot set lineage must match planning input"
             )
+        physical_limit_scopes = tuple(
+            (item.execution_scope_id, item.capability_id)
+            for item in self.storage_physical_limits
+        )
+        if len(physical_limit_scopes) != len(set(physical_limit_scopes)):
+            raise ValueError("storage physical limits must be unique per capability")
 
 
 @dataclass(frozen=True, slots=True)

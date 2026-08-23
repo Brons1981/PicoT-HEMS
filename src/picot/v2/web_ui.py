@@ -3070,8 +3070,13 @@ DASHBOARD_HTML = """<!doctype html>
       const best = Array.isArray(observer.candidates)
         ? observer.candidates.filter((candidate) => candidate.best_observation)
         : [];
+      const observerReasonLabels = {
+        daily_reference_physical_limits_missing:
+          "Fysieke batterijlimieten ontbreken in de Planning Input",
+      };
       const observerRows = [
         ["Status", observer.status],
+        ["Reden", observerReasonLabels[observer.reason] ?? observer.reason],
         ["Snapshot", observer.snapshot_id],
         ["Vergelijkbaarheid", aligned
           ? "Exact dezelfde Planning Input"

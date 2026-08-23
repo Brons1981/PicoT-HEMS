@@ -116,6 +116,9 @@ def test_mode_capability_evidence_is_atomic_planning_input(monkeypatch: object) 
             capability_id="storage-capability-home-battery",
             usable_capacity_wh=8160.0,
             minimum_soc=0.10,
+            maximum_soc=1.0,
+            maximum_charge_power_w=2400.0,
+            maximum_discharge_power_w=2400.0,
         ),
         storage_mode_capability_config=config,
     )
@@ -128,3 +131,11 @@ def test_mode_capability_evidence_is_atomic_planning_input(monkeypatch: object) 
     assert bundle.snapshot.capability_snapshot_set.snapshot_id == bundle.snapshot.snapshot_id
     assert bundle.snapshot.capability_snapshot_set.captured_at == bundle.snapshot.captured_at
     assert bundle.snapshot.capability_snapshot_set.capabilities[0].minimum_soc == 0.10
+    capability = bundle.snapshot.capability_snapshot_set.capabilities[0]
+    assert capability.maximum_soc is None
+    assert capability.maximum_power_w is None
+    assert len(bundle.snapshot.storage_physical_limits) == 1
+    limits = bundle.snapshot.storage_physical_limits[0]
+    assert limits.maximum_soc == 1.0
+    assert limits.maximum_charge_input_power_w == 2400.0
+    assert limits.maximum_discharge_output_power_w == 2400.0

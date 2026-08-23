@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from test_independent_daily_observer_runtime import _runtime
+from test_independent_daily_reference_adapter import _snapshot
 
 from picot.v2.independent_daily_dashboard import (
     build_daily_observer_dashboard_view,
 )
 from picot.v2.web_ui import DASHBOARD_HTML, WebViewStore
-from test_independent_daily_observer_runtime import _runtime
-from test_independent_daily_reference_adapter import _snapshot
 
 
 def test_completed_daily_outcome_projects_comparable_best_observations(
@@ -89,3 +89,4 @@ def test_dashboard_visually_separates_daily_observer_from_canonical_plan() -> No
     assert "#a855f7" in DASHBOARD_HTML
     assert "Exact dezelfde Planning Input" in DASHBOARD_HTML
     assert "vorige snapshot" in DASHBOARD_HTML
+    assert "Fysieke batterijlimieten ontbreken" in DASHBOARD_HTML

@@ -84,6 +84,9 @@ class IndependentDailyPathAssessor:
             storage_to_household_output_wh=sum(
                 item.storage_to_household_output_wh for item in intervals
             ),
+            storage_to_grid_output_wh=sum(
+                item.storage_to_grid_output_wh for item in intervals
+            ),
             storage_charge_loss_wh=sum(
                 item.storage_charge_loss_wh for item in intervals
             ),

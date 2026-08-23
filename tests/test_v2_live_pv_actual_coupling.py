@@ -455,6 +455,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             planning_fallback_notifier: object,
             planning_incident_history: object,
             independent_daily_observer_worker: object,
+            planner_comparison_ledger: object,
         ) -> None:
         del (
                 price_config,
@@ -474,6 +475,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
                 canonical_execution_enabled,
                 planning_fallback_notifier,
                 independent_daily_observer_worker,
+                planner_comparison_ledger,
             )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))

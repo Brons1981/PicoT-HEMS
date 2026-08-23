@@ -72,6 +72,7 @@ from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
 )
+from picot.v2.planner_comparison_ledger import PlannerComparisonLedger
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import (
@@ -163,6 +164,12 @@ DAILY_OBSERVER_LATEST_PATH = Path(
 )
 DAILY_OBSERVER_HISTORY_PATH = Path(
     "/data/picot_v2_daily_observer_history.jsonl"
+)
+PLANNER_COMPARISON_STATE_PATH = Path(
+    "/data/picot_v2_planner_comparison_state.json"
+)
+PLANNER_COMPARISON_HISTORY_PATH = Path(
+    "/data/picot_v2_planner_comparison_history.jsonl"
 )
 
 
@@ -1554,6 +1561,7 @@ def _execute_planning_bundle(
     independent_daily_observer_worker: (
         IndependentDailyObserverWorker | None
     ) = None,
+    planner_comparison_ledger: PlannerComparisonLedger | None = None,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -1800,6 +1808,26 @@ def _execute_planning_bundle(
             else ()
         ),
     )
+    if planner_comparison_ledger is not None:
+        try:
+            planner_comparison_ledger.register_canonical(bundle.snapshot, web_view)
+            if power_history is not None:
+                planner_comparison_ledger.ingest(bundle.snapshot, power_history)
+            web_view["planner_comparison_history"] = (
+                planner_comparison_ledger.dashboard_view()
+            )
+        except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_planner_comparison_error",
+                        "snapshot_id": bundle.snapshot.snapshot_id,
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
     web_view_build_ms = round(
         (perf_counter() - web_view_build_started) * 1000.0,
         3,
@@ -1987,29 +2015,41 @@ def main() -> None:
             options.get("pv_local_timezone", "Europe/Amsterdam")
         ).strip(),
     )
-    independent_daily_observer_runtime = IndependentDailyObserverRuntime(
-        conversion_model=StorageConversionModel(
-            model_id="live-observer-configured-conversion",
-            charge_efficiency=float(
-                options.get("daily_reference_charge_efficiency", 1.0)
-            ),
-            discharge_efficiency=float(
-                options.get("daily_reference_discharge_efficiency", 1.0)
-            ),
-            evidence_ids=("addon-options:daily-reference-efficiency",),
-            method_version="live-observer-configured-conversion:v1",
+    daily_conversion_model = StorageConversionModel(
+        model_id="live-observer-configured-conversion",
+        charge_efficiency=float(
+            options.get("daily_reference_charge_efficiency", 1.0)
         ),
+        discharge_efficiency=float(
+            options.get("daily_reference_discharge_efficiency", 1.0)
+        ),
+        evidence_ids=("addon-options:daily-reference-efficiency",),
+        method_version="live-observer-configured-conversion:v1",
+    )
+    independent_daily_observer_runtime = IndependentDailyObserverRuntime(
+        conversion_model=daily_conversion_model,
         store=DailyObserverResultStore(
             latest_path=DAILY_OBSERVER_LATEST_PATH,
             history_path=DAILY_OBSERVER_HISTORY_PATH,
         ),
     )
+    planner_comparison_ledger = PlannerComparisonLedger(
+        state_path=PLANNER_COMPARISON_STATE_PATH,
+        history_path=PLANNER_COMPARISON_HISTORY_PATH,
+        charge_efficiency=daily_conversion_model.charge_efficiency,
+        discharge_efficiency=daily_conversion_model.discharge_efficiency,
+    )
 
     def publish_daily_observer_outcome(
         outcome: DailyObserverRuntimeOutcome,
     ) -> None:
+        observer_view = build_daily_observer_dashboard_view(outcome)
+        planner_comparison_ledger.attach_observer(observer_view)
         web_view_store.publish_daily_observer_comparison(
-            build_daily_observer_dashboard_view(outcome)
+            observer_view
+        )
+        web_view_store.publish_planner_comparison_history(
+            planner_comparison_ledger.dashboard_view()
         )
 
     def report_daily_observer_error(
@@ -2046,8 +2086,17 @@ def main() -> None:
             ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
             DAILY_OBSERVER_LATEST_PATH,
             DAILY_OBSERVER_HISTORY_PATH,
+            PLANNER_COMPARISON_STATE_PATH,
+            PLANNER_COMPARISON_HISTORY_PATH,
         ),
         incident_history_path=PLANNING_INCIDENT_HISTORY_PATH,
+    )
+    web_view_store.set_planner_stress_marker(
+        lambda marker_id, note: planner_comparison_ledger.mark_stress(
+            marker_id=marker_id,
+            occurred_at=datetime.now(UTC),
+            note=note,
+        )
     )
 
     def reset_storage_mode_override(
@@ -2316,7 +2365,17 @@ def main() -> None:
 
     def refresh_unchanged(bundle: PlanningInputBundle) -> None:
         power_history, _ = read_power_history(bundle)
+        try:
+            planner_comparison_ledger.ingest(bundle.snapshot, power_history)
+        except Exception as exc:
+            report_daily_observer_error(bundle.snapshot, exc)
         web_view_store.publish_power_history(power_history)
+        try:
+            web_view_store.publish_planner_comparison_history(
+                planner_comparison_ledger.dashboard_view()
+            )
+        except Exception as exc:
+            report_daily_observer_error(bundle.snapshot, exc)
 
     def execute(
         bundle: PlanningInputBundle,
@@ -2401,6 +2460,7 @@ def main() -> None:
             independent_daily_observer_worker=(
                 independent_daily_observer_worker
             ),
+            planner_comparison_ledger=planner_comparison_ledger,
         )
 
     previous_signature: str | None = None

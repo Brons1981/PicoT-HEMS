@@ -318,6 +318,32 @@ After at least 48 hours, replacement may be considered only when the accumulated
 
 Any promotion from observer-only to authoritative planning requires a new explicit user decision and a separately reviewed implementation plan.
 
+## Implemented outcome-assessment contract
+
+The observer comparison now retains one persistent dossier per shared Planning
+Input snapshot. Each dossier freezes the canonical decision and the independent
+daily intent schedule before measurements can change. It then accumulates the
+same measured PV, household, grid-import, grid-export, battery-charge,
+battery-discharge and storage-energy evidence for both alternatives.
+
+At the end of the daily horizon both intent schedules are replayed from the
+same measured initial storage state, with the configured conversion efficiency,
+physical power limits and the same versioned import/export tariff schedule.
+Reserve, target reach, energy allocation and financial result are compared only
+when every required measured series and every tariff interval has complete
+coverage. Missing coverage produces `insufficient_data` and never a winner.
+
+The append-only closed history and restart-safe open state are included in the
+diagnostic export. The dashboard exposes the latest 48 hours and provides an
+explicit manual-discharge marker. Marking a stress intervention supersedes the
+prior projection for disturbance analysis; the next snapshot records that both
+planners restarted from the newest measured storage state and did not reuse a
+simulated state.
+
+This assessment path remains observer-only. It has no selection, Commitment,
+Execution Plan, primitive, adapter or dispatch authority and cannot replace the
+canonical strategy without the separate replacement decision defined above.
+
 ## Next-session implementation boundary
 
 The next implementation proposal must cover only:

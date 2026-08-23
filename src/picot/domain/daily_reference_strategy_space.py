@@ -24,6 +24,7 @@ class DailyReferenceStrategySpace:
     ranking_permitted: bool
     method_version: str
     source_charge_window_set_id: str | None = None
+    charge_requirement_status: str = "required"
 
     def __post_init__(self) -> None:
         if not self.strategy_space_id.strip() or not self.snapshot_id.strip():
@@ -37,16 +38,26 @@ class DailyReferenceStrategySpace:
             raise ValueError("Daily strategy charge window lineage must be explicit.")
         if self.baseline_intent is not DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY:
             raise ValueError("Daily strategy baseline must be household support only.")
-        if not self.active_intents or len(self.active_intents) != len(
-            set(self.active_intents)
+        if self.charge_requirement_status not in {"required", "not_required"}:
+            raise ValueError("Daily strategy charge requirement status is invalid.")
+        if self.charge_requirement_status == "required" and (
+            not self.active_intents
+            or len(self.active_intents) != len(set(self.active_intents))
         ):
             raise ValueError(
                 "Daily strategy active intents must be explicit and unique."
             )
+        if self.charge_requirement_status == "not_required" and (
+            self.active_intents
+            or self.window_lengths_intervals
+            or len(self.schedules) != 1
+        ):
+            raise ValueError("Daily strategy without charge must contain only baseline.")
         if self.baseline_intent in self.active_intents:
             raise ValueError("Daily strategy active intents must differ from baseline.")
-        if not self.window_lengths_intervals or any(
-            item <= 0 for item in self.window_lengths_intervals
+        if self.charge_requirement_status == "required" and (
+            not self.window_lengths_intervals
+            or any(item <= 0 for item in self.window_lengths_intervals)
         ):
             raise ValueError("Daily strategy window lengths must be positive.")
         if len(self.window_lengths_intervals) != len(

@@ -37,8 +37,12 @@ from picot.v2.household_planning_regime import (
     HouseholdPlanningRegime,
     UserObjectiveProfile,
 )
+from picot.v2.independent_daily_dashboard import (
+    build_daily_observer_dashboard_view,
+)
 from picot.v2.independent_daily_observer_runtime import (
     DailyObserverResultStore,
+    DailyObserverRuntimeOutcome,
     IndependentDailyObserverRuntime,
     IndependentDailyObserverWorker,
 )
@@ -1973,6 +1977,13 @@ def main() -> None:
         ),
     )
 
+    def publish_daily_observer_outcome(
+        outcome: DailyObserverRuntimeOutcome,
+    ) -> None:
+        web_view_store.publish_daily_observer_comparison(
+            build_daily_observer_dashboard_view(outcome)
+        )
+
     def report_daily_observer_error(
         snapshot: PlanningInputSnapshot,
         exc: Exception,
@@ -1992,6 +2003,7 @@ def main() -> None:
 
     independent_daily_observer_worker = IndependentDailyObserverWorker(
         independent_daily_observer_runtime,
+        on_outcome=publish_daily_observer_outcome,
         on_error=report_daily_observer_error,
     )
     web_view_store.set_diagnostic_paths(

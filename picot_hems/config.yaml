@@ -28,6 +28,9 @@ options:
   storage_capability_id: "storage-capability-home-battery"
   storage_usable_capacity_wh: 8160.0
   storage_minimum_soc_percent: 10.0
+  storage_maximum_soc_percent: 100.0
+  storage_maximum_charge_power_w: 2400.0
+  storage_maximum_discharge_power_w: 2400.0
   household_load_fallback_power_w: 500.0
   household_load_fallback_confidence: 0.50
   solcast_forecast_entity: "sensor.solcast_pv_forecast_voorspelling_vandaag"
@@ -76,6 +79,9 @@ schema:
   storage_capability_id: str
   storage_usable_capacity_wh: float(0,)
   storage_minimum_soc_percent: float(0,100)
+  storage_maximum_soc_percent: float(0,100)
+  storage_maximum_charge_power_w: float(0,)
+  storage_maximum_discharge_power_w: float(0,)
   household_load_fallback_power_w: float(0,)
   household_load_fallback_confidence: float(0,1)
   solcast_forecast_entity: str

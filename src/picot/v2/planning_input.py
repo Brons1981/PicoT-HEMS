@@ -25,6 +25,7 @@ from picot.v2.contracts import (
     PriceForecastPoint,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
+    StoragePhysicalLimits,
 )
 from picot.v2.household_load_forecast import (
     build_fallback_household_load_forecast,
@@ -53,10 +54,31 @@ class StorageStateConfig:
     capability_id: str
     usable_capacity_wh: float
     minimum_soc: float | None = None
+    maximum_soc: float | None = None
+    maximum_charge_power_w: float | None = None
+    maximum_discharge_power_w: float | None = None
 
     def __post_init__(self) -> None:
         if self.minimum_soc is not None and not 0.0 <= self.minimum_soc <= 1.0:
             raise ValueError("minimum_soc must be between 0.0 and 1.0")
+        if self.maximum_soc is not None and not 0.0 <= self.maximum_soc <= 1.0:
+            raise ValueError("maximum_soc must be between 0.0 and 1.0")
+        if (
+            self.minimum_soc is not None
+            and self.maximum_soc is not None
+            and self.minimum_soc > self.maximum_soc
+        ):
+            raise ValueError("minimum_soc must not exceed maximum_soc")
+        if (
+            self.maximum_charge_power_w is not None
+            and self.maximum_charge_power_w <= 0.0
+        ):
+            raise ValueError("maximum_charge_power_w must be positive")
+        if (
+            self.maximum_discharge_power_w is not None
+            and self.maximum_discharge_power_w <= 0.0
+        ):
+            raise ValueError("maximum_discharge_power_w must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +180,9 @@ DEFAULT_BINDINGS = (
 
 DEFAULT_STORAGE_POWER_CONSISTENCY_TOLERANCE_W = 25.0
 HOUSEHOLD_LOAD_OBSERVATION_METHOD_VERSION = "complete-power-balance:v1"
+DEFAULT_STORAGE_MAXIMUM_SOC_PERCENT = 100.0
+DEFAULT_STORAGE_MAXIMUM_CHARGE_POWER_W = 2400.0
+DEFAULT_STORAGE_MAXIMUM_DISCHARGE_POWER_W = 2400.0
 
 
 def _stable_id(prefix: str, seed: str) -> str:
@@ -518,6 +543,18 @@ def load_storage_state_config(
     capability_id = options.get("storage_capability_id")
     raw_capacity = options.get("storage_usable_capacity_wh")
     raw_minimum_soc_percent = options.get("storage_minimum_soc_percent")
+    raw_maximum_soc_percent = options.get(
+        "storage_maximum_soc_percent",
+        DEFAULT_STORAGE_MAXIMUM_SOC_PERCENT,
+    )
+    raw_maximum_charge_power_w = options.get(
+        "storage_maximum_charge_power_w",
+        DEFAULT_STORAGE_MAXIMUM_CHARGE_POWER_W,
+    )
+    raw_maximum_discharge_power_w = options.get(
+        "storage_maximum_discharge_power_w",
+        DEFAULT_STORAGE_MAXIMUM_DISCHARGE_POWER_W,
+    )
 
     if (
         not isinstance(execution_scope_id, str)
@@ -541,11 +578,38 @@ def load_storage_state_config(
     ):
         minimum_soc = float(raw_minimum_soc_percent) / 100.0
 
+    maximum_soc = None
+    if (
+        not isinstance(raw_maximum_soc_percent, bool)
+        and isinstance(raw_maximum_soc_percent, (int, float))
+        and 0.0 <= float(raw_maximum_soc_percent) <= 100.0
+    ):
+        maximum_soc = float(raw_maximum_soc_percent) / 100.0
+
+    maximum_charge_power_w = None
+    if (
+        not isinstance(raw_maximum_charge_power_w, bool)
+        and isinstance(raw_maximum_charge_power_w, (int, float))
+        and float(raw_maximum_charge_power_w) > 0.0
+    ):
+        maximum_charge_power_w = float(raw_maximum_charge_power_w)
+
+    maximum_discharge_power_w = None
+    if (
+        not isinstance(raw_maximum_discharge_power_w, bool)
+        and isinstance(raw_maximum_discharge_power_w, (int, float))
+        and float(raw_maximum_discharge_power_w) > 0.0
+    ):
+        maximum_discharge_power_w = float(raw_maximum_discharge_power_w)
+
     return StorageStateConfig(
         execution_scope_id=execution_scope_id.strip(),
         capability_id=capability_id.strip(),
         usable_capacity_wh=usable_capacity_wh,
         minimum_soc=minimum_soc,
+        maximum_soc=maximum_soc,
+        maximum_charge_power_w=maximum_charge_power_w,
+        maximum_discharge_power_w=maximum_discharge_power_w,
     )
 
 
@@ -913,6 +977,32 @@ def assemble_planning_input(
             )
             if storage_mode_capability_evidence is not None
             else None
+        ),
+        storage_physical_limits=(
+            (
+                StoragePhysicalLimits(
+                    execution_scope_id=(
+                        selected_storage_config.execution_scope_id
+                    ),
+                    capability_id=selected_storage_config.capability_id,
+                    minimum_soc=selected_storage_config.minimum_soc,
+                    maximum_soc=selected_storage_config.maximum_soc,
+                    maximum_charge_input_power_w=(
+                        selected_storage_config.maximum_charge_power_w
+                    ),
+                    maximum_discharge_output_power_w=(
+                        selected_storage_config.maximum_discharge_power_w
+                    ),
+                    evidence_ids=("addon-configuration:storage-physical-limits",),
+                    method_version="configured-storage-physical-limits:v1",
+                ),
+            )
+            if selected_storage_config is not None
+            and selected_storage_config.minimum_soc is not None
+            and selected_storage_config.maximum_soc is not None
+            and selected_storage_config.maximum_charge_power_w is not None
+            and selected_storage_config.maximum_discharge_power_w is not None
+            else ()
         ),
     )
     return PlanningInputBundle(

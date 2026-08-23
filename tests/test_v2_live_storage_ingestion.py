@@ -117,6 +117,9 @@ def test_storage_state_config_is_loaded_from_explicit_options(
                 "storage_capability_id": "storage-capability-home-battery",
                 "storage_usable_capacity_wh": 8160.0,
                 "storage_minimum_soc_percent": 10.0,
+                "storage_maximum_soc_percent": 100.0,
+                "storage_maximum_charge_power_w": 2400.0,
+                "storage_maximum_discharge_power_w": 2400.0,
             }
         ),
         encoding="utf-8",
@@ -127,6 +130,9 @@ def test_storage_state_config_is_loaded_from_explicit_options(
         capability_id="storage-capability-home-battery",
         usable_capacity_wh=8160.0,
         minimum_soc=0.10,
+        maximum_soc=1.0,
+        maximum_charge_power_w=2400.0,
+        maximum_discharge_power_w=2400.0,
     )
 
 
@@ -160,6 +166,10 @@ def test_default_assembly_loads_storage_config_from_same_options(
                 "storage_execution_scope_id": "home-battery",
                 "storage_capability_id": "storage-capability-home-battery",
                 "storage_usable_capacity_wh": 8160.0,
+                "storage_minimum_soc_percent": 10.0,
+                "storage_maximum_soc_percent": 100.0,
+                "storage_maximum_charge_power_w": 2400.0,
+                "storage_maximum_discharge_power_w": 2400.0,
             }
         ),
         encoding="utf-8",
@@ -209,6 +219,37 @@ def test_default_assembly_loads_storage_config_from_same_options(
     assert state.current_stored_energy_wh == pytest.approx(3264.0)
     assert state.confidence == pytest.approx(1.0)
     assert state.evidence_ids == ("evidence-zendure-live",)
+    assert len(bundle.snapshot.storage_physical_limits) == 1
+    limits = bundle.snapshot.storage_physical_limits[0]
+    assert limits.execution_scope_id == "home-battery"
+    assert limits.capability_id == "storage-capability-home-battery"
+    assert limits.minimum_soc == pytest.approx(0.10)
+    assert limits.maximum_soc == pytest.approx(1.0)
+    assert limits.maximum_charge_input_power_w == pytest.approx(2400.0)
+    assert limits.maximum_discharge_output_power_w == pytest.approx(2400.0)
+    assert limits.evidence_ids == ("addon-configuration:storage-physical-limits",)
+
+
+def test_existing_options_gain_daily_reference_physical_defaults(
+    tmp_path: Path,
+) -> None:
+    options_path = tmp_path / "options.json"
+    options_path.write_text(
+        json.dumps({
+            "storage_execution_scope_id": "home-battery",
+            "storage_capability_id": "storage-capability-home-battery",
+            "storage_usable_capacity_wh": 8160.0,
+            "storage_minimum_soc_percent": 10.0,
+        }),
+        encoding="utf-8",
+    )
+
+    config = load_storage_state_config(str(options_path))
+
+    assert config is not None
+    assert config.maximum_soc == 1.0
+    assert config.maximum_charge_power_w == 2400.0
+    assert config.maximum_discharge_power_w == 2400.0
 
 
 def test_live_power_evidence_becomes_household_load_observation(

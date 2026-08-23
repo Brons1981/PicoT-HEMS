@@ -76,6 +76,20 @@ def test_v2_addon_exposes_explicit_storage_minimum_soc() -> None:
     assert "  storage_minimum_soc_percent: float(0,100)" in schema_lines
 
 
+def test_v2_addon_exposes_explicit_storage_simulation_limits() -> None:
+    config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
+    lines = config_path.read_text(encoding="utf-8").splitlines()
+    option_lines = lines[lines.index("options:") + 1 : lines.index("schema:")]
+    schema_lines = lines[lines.index("schema:") + 1 :]
+
+    assert "  storage_maximum_soc_percent: 100.0" in option_lines
+    assert "  storage_maximum_charge_power_w: 2400.0" in option_lines
+    assert "  storage_maximum_discharge_power_w: 2400.0" in option_lines
+    assert "  storage_maximum_soc_percent: float(0,100)" in schema_lines
+    assert "  storage_maximum_charge_power_w: float(0,)" in schema_lines
+    assert "  storage_maximum_discharge_power_w: float(0,)" in schema_lines
+
+
 def test_v2_addon_exposes_pipeline_dashboard_via_ingress() -> None:
     config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
     top_level = {
@@ -132,4 +146,3 @@ def test_v2_addon_exposes_explicit_pv_local_timezone() -> None:
 
     assert options.get("pv_local_timezone") == "Europe/Amsterdam"
     assert "  pv_local_timezone: str" in schema_lines
-

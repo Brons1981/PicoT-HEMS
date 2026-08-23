@@ -3077,6 +3077,8 @@ DASHBOARD_HTML = """<!doctype html>
           "Wacht op volledige Nordpool-prijzen voor de komende 24 uur",
         "Daily settlement requires complete interval tariff coverage.":
           "Tariefdekking is niet volledig voor ieder simulatie-interval",
+        "Daily financial horizon does not match.":
+          "Financiële afrekening dekt niet exact dezelfde etmaalhorizon",
       };
       const observerRows = [
         ["Status", observer.status],

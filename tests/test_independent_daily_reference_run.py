@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 
 import pytest
+from test_independent_daily_financial_settlement import _split_tariffs, _tariffs
+from test_independent_daily_simulator import _simulate
 
 from picot.domain.daily_reference_run import DailyReferenceRun
 from picot.domain.daily_reference_simulation import PVScenario
 from picot.planner.independent_daily_reference_run import (
     IndependentDailyReferenceRunProducer,
 )
-from test_independent_daily_financial_settlement import _tariffs
-from test_independent_daily_simulator import _simulate
 
 
 def test_run_closes_physical_assessment_and_financial_lineage() -> None:
@@ -63,6 +64,47 @@ def test_run_rejects_financial_path_for_another_trajectory() -> None:
     )
 
     with pytest.raises(ValueError, match="financial trajectory lineage"):
+        replace(result, financial=changed_financial)
+
+
+def test_run_accepts_finer_financial_partition_for_the_same_horizon() -> None:
+    simulation = _simulate()
+
+    result = IndependentDailyReferenceRunProducer().produce(
+        simulation=simulation,
+        tariffs=_split_tariffs(),
+    )
+
+    assert all(
+        len(financial.intervals) == 2 * len(trajectory.intervals)
+        for trajectory, financial in zip(
+            result.simulation.trajectories,
+            result.financial.paths,
+            strict=True,
+        )
+    )
+
+
+def test_run_rejects_financial_partition_with_a_different_horizon() -> None:
+    result = IndependentDailyReferenceRunProducer().produce(
+        simulation=_simulate(),
+        tariffs=_tariffs(),
+    )
+    path = result.financial.paths[0]
+    shortened_first = replace(
+        path.intervals[0],
+        starts_at=path.intervals[0].starts_at + timedelta(minutes=1),
+    )
+    changed_path = replace(
+        path,
+        intervals=(shortened_first, *path.intervals[1:]),
+    )
+    changed_financial = replace(
+        result.financial,
+        paths=(changed_path, *result.financial.paths[1:]),
+    )
+
+    with pytest.raises(ValueError, match="financial horizon does not match"):
         replace(result, financial=changed_financial)
 
 

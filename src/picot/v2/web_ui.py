@@ -3583,7 +3583,7 @@ DASHBOARD_HTML = """<!doctype html>
           dossier.result
             ? JSON.stringify(dossier.result, null, 2)
             : "Uitkomst volgt na sluiting van de meetperiode.",
-        ].join("\n");
+        ].join("\\n");
         details.append(body);
         container.append(details);
       }

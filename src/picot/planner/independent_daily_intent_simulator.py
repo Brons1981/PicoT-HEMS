@@ -6,7 +6,6 @@ from datetime import timedelta
 
 from picot.domain.current_storage_state import CurrentStorageState
 from picot.domain.daily_reference_intent import (
-    DailyReferenceIntentInterval,
     DailyReferenceIntentSchedule,
     DailyStorageIntent,
 )

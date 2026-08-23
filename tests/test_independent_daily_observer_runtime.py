@@ -117,3 +117,4 @@ def test_worker_does_not_block_canonical_caller_and_keeps_latest_snapshot() -> N
     release.set()
     assert completed.wait(timeout=2.0)
     assert observed == ["snapshot", "snapshot-three"]
+

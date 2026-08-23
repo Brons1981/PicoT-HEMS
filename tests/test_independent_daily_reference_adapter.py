@@ -167,12 +167,9 @@ def test_adapter_blocks_when_any_pv_uncertainty_range_is_missing() -> None:
         )
 
 
-def test_adapter_blocks_capability_data_from_another_snapshot() -> None:
-    with pytest.raises(DailyReferenceInputError, match="capability_lineage_mismatch"):
-        IndependentDailyReferenceAdapter().simulate(
-            snapshot=_snapshot(capability_snapshot_id="other-snapshot"),
-            conversion_model=_conversion(),
-        )
+def test_shared_snapshot_contract_blocks_capability_data_from_another_snapshot() -> None:
+    with pytest.raises(ValueError, match="lineage must match planning input"):
+        _snapshot(capability_snapshot_id="other-snapshot")
 
 
 def test_adapter_does_not_import_current_pipeline_selection_types() -> None:

@@ -1305,3 +1305,20 @@ Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.151, begin the accepted 48-hour side-by-side
 observation, and perform one deliberate manual discharge above the configured
 minimum reserve using the dashboard stress marker.
+
+
+## 2026-08-24 — 2.0.0-dev.152
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Fixes the dashboard-wide JavaScript syntax failure introduced in dev.151 by
+  preserving the intended newline escape in the generated HTML.
+- Adds a regression test that parses the complete embedded dashboard script
+  with Node.js, so a syntax error cannot pass the release suite again.
+- Leaves both planners, their persisted comparison evidence, commitments,
+  execution and Zendure control unchanged.
+
+Exact next action: install dev.152, confirm the dashboard loads, and then begin
+the accepted 48-hour side-by-side observation with one deliberate manual
+discharge above the configured minimum reserve using the dashboard stress
+marker.

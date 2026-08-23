@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 from typing import cast
+from urllib.error import HTTPError
 
 import pytest
 
@@ -87,3 +88,64 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
     assert performance.attributes["power_history_read_ms"] == 12.5
     assert performance.attributes["web_view_build_ms"] >= 0.0
     assert performance.attributes["web_view_publish_ms"] >= 0.0
+
+
+def test_temporary_home_assistant_publish_failure_does_not_stop_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured_at = datetime(2026, 8, 23, 10, 0, tzinfo=UTC)
+    snapshot = CanonicalPipeline().run(captured_at=captured_at).planning_input
+    bundle = PlanningInputBundle(
+        snapshot=snapshot,
+        evidence=(),
+        facts=(),
+        assembly_started_at=captured_at,
+        assembly_finished_at=captured_at + timedelta(milliseconds=2),
+    )
+    attempts: list[str] = []
+    store = WebViewStore()
+
+    class FailingSink:
+        def __init__(self, token: str) -> None:
+            assert token == "test-token"
+
+        def publish(self, card: Card) -> None:
+            attempts.append(card.entity_id)
+            raise HTTPError(
+                url="http://supervisor/core/api/states/test",
+                code=502,
+                msg="Bad Gateway",
+                hdrs=None,
+                fp=None,
+            )
+
+    monkeypatch.setattr(live_runtime, "HomeAssistantProjectionSink", FailingSink)
+
+    live_runtime._execute_planning_bundle(
+        token="test-token",
+        price_config=PriceOpportunityConfig(
+            low_price_margin_eur_per_kwh=0.02,
+            high_price_margin_eur_per_kwh=0.02,
+            config_version="test:v1",
+        ),
+        bundle=bundle,
+        web_view_store=store,
+    )
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    publish_error = next(
+        event
+        for event in events
+        if event["event"] == "picot_v2_ha_projection_publish_error"
+    )
+    ready = next(
+        event
+        for event in events
+        if event["event"] == "picot_v2_planning_input_ready"
+    )
+    assert attempts == ["sensor.picot_v2_pipeline_01_planning_input"]
+    assert publish_error["run_id"] == snapshot.run_id
+    assert publish_error["error"] == "HTTP Error 502: Bad Gateway"
+    assert ready["ha_publish_status"] == "retry_next_poll"
+    assert store.latest_json() is not None

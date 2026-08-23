@@ -19,7 +19,7 @@ class DailyReferenceExclusionReason(StrEnum):
 
     PHYSICAL_PATH_INCOMPLETE = "physical_path_incomplete"
     RESERVE_NOT_RESPECTED = "reserve_not_respected"
-    TARGET_NOT_HELD = "target_not_held"
+    TARGET_NOT_REACHED = "target_not_reached"
 
 
 @dataclass(frozen=True, slots=True)

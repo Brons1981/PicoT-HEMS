@@ -89,6 +89,25 @@ class IndependentDailyStrategyGenerator:
     ) -> DailyReferenceStrategySpace:
         """Build charging strategies only from physically minimal windows."""
 
+        if charge_windows.discovery_status == "not_required":
+            return DailyReferenceStrategySpace(
+                strategy_space_id=(
+                    f"daily-strategy-space:{charge_windows.snapshot_id}:"
+                    "baseline-charge-not-required"
+                ),
+                snapshot_id=charge_windows.snapshot_id,
+                baseline_intent=BASELINE_INTENT,
+                active_intents=(),
+                window_lengths_intervals=(),
+                schedules=(
+                    self._baseline(charge_windows.snapshot_id, household),
+                ),
+                observer_only=True,
+                ranking_permitted=False,
+                method_version=METHOD_VERSION,
+                source_charge_window_set_id=charge_windows.window_set_id,
+                charge_requirement_status="not_required",
+            )
         if not charge_windows.windows:
             raise ValueError("Daily strategy requires proven charge windows.")
         if any(

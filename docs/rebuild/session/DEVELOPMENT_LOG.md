@@ -1097,3 +1097,23 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 
 Exact next action: publish dev.138, reset the dev.137 commitment once and
 verify that the fresh plan selects the equal-price window nearest local midday.
+
+
+## 2026-08-23 — 2.0.0-dev.141
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Packages the independent daily observer runtime and the purple dashboard
+  comparison beside the unchanged canonical planner.
+- Restores only the dev.139 Home Assistant projection recovery boundary from
+  PR #466: transient HTTP/URL/timeout/OS publish failures stop publication for
+  the current cycle, emit `picot_v2_ha_projection_publish_error` and retry on
+  the next planner poll.
+- Does not restore the rolled-back grid/planner chain from PRs #448–#465.
+- Keeps the daily simulation observer-only: no canonical selection,
+  commitment or Zendure authority.
+
+Exact next action: install dev.141, verify both dashboard plans are visible,
+and run the accepted 48-hour observer trial including one deliberate manual
+battery-discharge stress event.
+

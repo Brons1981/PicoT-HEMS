@@ -35,8 +35,7 @@ def test_generator_keeps_active_window_and_baseline_physically_explicit() -> Non
         window_lengths_intervals=(2,),
         active_intents=(DailyStorageIntent.NOM,),
     )
-    first_length_two = 1 + len(_household().intervals)
-    schedule = result.schedules[first_length_two + 1]
+    schedule = result.schedules[2]
 
     assert schedule.intervals[0].intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
     assert schedule.intervals[1].intent is DailyStorageIntent.NOM

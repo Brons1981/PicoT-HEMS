@@ -1136,3 +1136,23 @@ Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.142, confirm the daily observer changes from
 `blocked` to `completed`, then start the accepted 48-hour observer comparison
 including one deliberate manual battery-discharge stress event.
+
+
+## 2026-08-23 — 2.0.0-dev.143
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Corrects the independent daily observer horizon from the canonical 36 hours
+  to one exact rolling 24-hour period while retaining the same Planning Input
+  snapshot and lineage.
+- Truncates household, PV and financial tariff inputs at the same daily
+  boundary without estimating unknown prices or modifying source evidence.
+- Treats missing next-day Nordpool coverage before its normal publication
+  around 15:00 as an explicit wait state and shows a readable Dutch reason on
+  the purple dashboard card.
+- Leaves the canonical 36-hour planner, Candidate Engine, Evaluation,
+  Commitment and Zendure control unchanged.
+
+Exact next action: install dev.143 and confirm the observer reaches
+`completed` when 24 hours of prices are available. Then start the accepted
+48-hour comparison and perform one deliberate manual discharge stress event.

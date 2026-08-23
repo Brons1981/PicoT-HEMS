@@ -1193,3 +1193,24 @@ Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.145 and confirm the independent daily observer
 reaches `completed`. Then begin the accepted 48-hour observer comparison and
 perform one deliberate manual battery-discharge stress event.
+
+
+## 2026-08-23 — 2.0.0-dev.146
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Makes physical admission precede financial ranking in the observer-only
+  daily simulation.
+- Excludes every grid-supported candidate when a complete, reserve-safe
+  no-grid/PV path proves that the target remains reachable.
+- Allows PV plus grid only when no no-grid path proves sufficient across the
+  daily uncertainty scenarios.
+- Retains PV storage opportunity cost as traceable evidence without deducting
+  it twice from the physical financial result.
+- Leaves the canonical 36-hour planner, Candidate Engine, Evaluation,
+  Commitment and Zendure control unchanged.
+
+Exact next action: install dev.146 and confirm one daily observer run reaches
+`completed` with the PV-first exclusion reason visible where applicable. Then
+begin the accepted 48-hour side-by-side comparison and perform one deliberate
+manual battery-discharge stress event during that observation period.

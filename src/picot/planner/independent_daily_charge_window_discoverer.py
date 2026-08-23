@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from picot.domain.current_storage_state import CurrentStorageState
 from picot.domain.daily_reference_charge_window import (
     DailyReferenceChargeWindow,
@@ -21,7 +23,7 @@ from picot.planner.independent_daily_intent_simulator import (
 )
 from picot.planner.independent_daily_simulator import ScenarioTimeline
 
-METHOD_VERSION = "independent-daily-charge-window-discoverer:v1"
+METHOD_VERSION = "independent-daily-charge-window-discoverer:v2"
 BASELINE_INTENT = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
 CHARGE_INTENTS = (
     DailyStorageIntent.NOM,
@@ -53,6 +55,10 @@ class IndependentDailyChargeWindowDiscoverer:
             if intent not in CHARGE_INTENTS:
                 raise ValueError("Daily window discovery accepts only charge intents.")
             for start_index in range(len(household.intervals)):
+                if not self._is_market_quarter(
+                    household.intervals[start_index].starts_at
+                ):
+                    continue
                 probe = self._schedule(
                     snapshot_id=snapshot_id,
                     household=household,
@@ -86,6 +92,10 @@ class IndependentDailyChargeWindowDiscoverer:
                     if interval.ends_at >= conservative
                 )
                 if end_index <= start_index:
+                    continue
+                if not self._is_market_quarter(
+                    household.intervals[end_index - 1].ends_at
+                ):
                     continue
                 schedule = self._schedule(
                     snapshot_id=snapshot_id,
@@ -175,6 +185,14 @@ class IndependentDailyChargeWindowDiscoverer:
             snapshot_id,
             tuple(windows),
             status="discovered" if windows else "no_feasible_window",
+        )
+
+    @staticmethod
+    def _is_market_quarter(value: datetime) -> bool:
+        return (
+            value.minute % 15 == 0
+            and value.second == 0
+            and value.microsecond == 0
         )
 
     @staticmethod

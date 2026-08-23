@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from picot.domain.current_storage_state import CurrentStorageState
 from picot.domain.daily_reference_simulation import (

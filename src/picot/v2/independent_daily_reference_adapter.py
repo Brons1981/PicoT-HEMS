@@ -19,7 +19,11 @@ from picot.domain.household_load_forecast import (
 )
 from picot.domain.pv_energy_timeline import (
     PVEnergyEvidenceType,
+)
+from picot.domain.pv_energy_timeline import (
     PVEnergyTimeline as DomainPVTimeline,
+)
+from picot.domain.pv_energy_timeline import (
     PVEnergyTimelineInterval as DomainPVInterval,
 )
 from picot.domain.storage_conversion_model import StorageConversionModel
@@ -29,9 +33,9 @@ from picot.planner.independent_daily_simulator import (
 )
 from picot.v2.contracts import (
     HouseholdLoadForecast,
+    PlanningInputSnapshot,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
-    PlanningInputSnapshot,
 )
 
 METHOD_VERSION = "v2-independent-daily-reference-adapter:v1"

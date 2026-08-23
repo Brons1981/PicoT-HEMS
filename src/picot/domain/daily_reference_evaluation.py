@@ -20,6 +20,7 @@ class DailyReferenceExclusionReason(StrEnum):
     PHYSICAL_PATH_INCOMPLETE = "physical_path_incomplete"
     RESERVE_NOT_RESPECTED = "reserve_not_respected"
     TARGET_NOT_REACHED = "target_not_reached"
+    GRID_NOT_REQUIRED_PV_RECOVERABLE = "grid_not_required_pv_recoverable"
 
 
 @dataclass(frozen=True, slots=True)

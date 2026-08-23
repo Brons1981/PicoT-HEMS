@@ -3,15 +3,17 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 
+from test_independent_daily_reference_portfolio import _produce
+
 from picot.domain.daily_reference_evaluation import (
     DailyReferenceEvaluationDirection,
     DailyReferenceExclusionReason,
 )
+from picot.domain.daily_reference_intent import DailyStorageIntent
 from picot.planner.independent_daily_candidate_engine import (
     IndependentDailyCandidateEngine,
 )
 from picot.planner.independent_daily_evaluator import IndependentDailyEvaluator
-from test_independent_daily_reference_portfolio import _produce
 
 
 def _candidates():
@@ -143,6 +145,88 @@ def test_evaluator_preserves_exact_ties_without_hidden_tie_break() -> None:
     result = IndependentDailyEvaluator().evaluate(candidate_set)
 
     assert result.best_candidate_ids == (first.candidate_id, second.candidate_id)
+
+
+def test_evaluator_excludes_grid_when_no_grid_path_is_proven_sufficient() -> None:
+    candidates = _candidates()
+    proven_grid = next(
+        candidate
+        for candidate in candidates.candidates
+        if DailyStorageIntent.GRID_REQUIREMENT in candidate.intents_used
+        and candidate.complete_across_scenarios
+        and candidate.reserve_respected_across_scenarios
+        and candidate.target_reached_across_scenarios
+    )
+    proven_pv = replace(
+        proven_grid,
+        candidate_id=f"{proven_grid.candidate_id}:pv-proof",
+        intent_schedule_id=f"{proven_grid.intent_schedule_id}:pv-proof",
+        intents_used=(DailyStorageIntent.NOM,),
+    )
+    candidates = replace(
+        candidates,
+        candidates=(proven_pv, *candidates.candidates),
+    )
+
+    result = IndependentDailyEvaluator().evaluate(candidates)
+
+    no_grid_admitted = tuple(
+        record
+        for record, candidate in zip(result.records, candidates.candidates, strict=True)
+        if DailyStorageIntent.GRID_REQUIREMENT not in candidate.intents_used
+        and record.admissible
+    )
+    grid_records = tuple(
+        record
+        for record, candidate in zip(result.records, candidates.candidates, strict=True)
+        if DailyStorageIntent.GRID_REQUIREMENT in candidate.intents_used
+    )
+    assert no_grid_admitted
+    assert grid_records
+    assert all(record.admissible is False for record in grid_records)
+    assert all(
+        DailyReferenceExclusionReason.GRID_NOT_REQUIRED_PV_RECOVERABLE
+        in record.exclusion_reasons
+        for record in grid_records
+    )
+
+
+def test_evaluator_allows_grid_comparison_only_after_no_grid_paths_fail() -> None:
+    candidates = _candidates()
+    changed = tuple(
+        replace(
+            candidate,
+            scenario_outcomes=tuple(
+                replace(
+                    outcome,
+                    target_reached_during_horizon=False,
+                    target_reached_at=None,
+                )
+                for outcome in candidate.scenario_outcomes
+            ),
+            target_reached_across_scenarios=False,
+        )
+        if DailyStorageIntent.GRID_REQUIREMENT not in candidate.intents_used
+        else candidate
+        for candidate in candidates.candidates
+    )
+
+    result = IndependentDailyEvaluator().evaluate(
+        replace(candidates, candidates=changed)
+    )
+
+    grid_records = tuple(
+        record
+        for record, candidate in zip(result.records, changed, strict=True)
+        if DailyStorageIntent.GRID_REQUIREMENT in candidate.intents_used
+    )
+    assert grid_records
+    assert any(record.admissible for record in grid_records)
+    assert all(
+        DailyReferenceExclusionReason.GRID_NOT_REQUIRED_PV_RECOVERABLE
+        not in record.exclusion_reasons
+        for record in grid_records
+    )
 
 
 def test_evaluator_does_not_import_current_pipeline_evaluation_or_commitment() -> None:

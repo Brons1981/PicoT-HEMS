@@ -12,9 +12,10 @@ from picot.domain.daily_reference_evaluation import (
     DailyReferenceEvaluationRecord,
     DailyReferenceExclusionReason,
 )
+from picot.domain.daily_reference_intent import DailyStorageIntent
 
-METHOD_VERSION = "independent-daily-evaluator:v1"
-OBJECTIVE = "maximize_worst_case_net_financial_result_eur"
+METHOD_VERSION = "independent-daily-evaluator:v2"
+OBJECTIVE = "pv_preferred_then_maximize_worst_case_net_financial_result_eur"
 
 
 class IndependentDailyEvaluator:
@@ -24,8 +25,27 @@ class IndependentDailyEvaluator:
         self,
         candidate_set: DailyReferencePortfolioCandidateSet,
     ) -> DailyReferenceEvaluation:
-        reasons_by_candidate = {
+        physical_reasons_by_candidate = {
             candidate.candidate_id: self._exclusion_reasons(candidate)
+            for candidate in candidate_set.candidates
+        }
+        pv_recoverable = any(
+            DailyStorageIntent.GRID_REQUIREMENT not in candidate.intents_used
+            and not physical_reasons_by_candidate[candidate.candidate_id]
+            for candidate in candidate_set.candidates
+        )
+        reasons_by_candidate = {
+            candidate.candidate_id: (
+                *physical_reasons_by_candidate[candidate.candidate_id],
+                *(
+                    (
+                        DailyReferenceExclusionReason.GRID_NOT_REQUIRED_PV_RECOVERABLE,
+                    )
+                    if pv_recoverable
+                    and DailyStorageIntent.GRID_REQUIREMENT in candidate.intents_used
+                    else ()
+                ),
+            )
             for candidate in candidate_set.candidates
         }
         admitted = tuple(

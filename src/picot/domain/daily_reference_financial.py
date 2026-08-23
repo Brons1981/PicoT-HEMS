@@ -35,7 +35,6 @@ class DailyReferenceFinancialInterval:
             self.grid_export_result_eur
             + self.avoided_import_value_eur
             - self.grid_import_cost_eur
-            - self.pv_storage_opportunity_cost_eur
         )
         if not isclose(
             self.net_financial_result_eur,

@@ -1117,3 +1117,22 @@ Exact next action: install dev.141, verify both dashboard plans are visible,
 and run the accepted 48-hour observer trial including one deliberate manual
 battery-discharge stress event.
 
+
+## 2026-08-23 — 2.0.0-dev.142
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Completes the observer-only physical input contract after the first live
+  dev.141 run blocked on `daily_reference_power_limit_missing`.
+- Carries explicit 10–100% storage bounds and separate 2400 W charge and
+  discharge limits in the exact Planning Input snapshot observed by the
+  independent daily simulation.
+- Keeps these limits outside the canonical storage capability consumed by
+  Candidate Engine, Evaluation and Commitment, so the current strategy and
+  live Zendure control remain unchanged.
+- Adds compatible defaults for existing add-on installations and exposes a
+  readable observer blocking reason on the purple dashboard card.
+
+Exact next action: install dev.142, confirm the daily observer changes from
+`blocked` to `completed`, then start the accepted 48-hour observer comparison
+including one deliberate manual battery-discharge stress event.

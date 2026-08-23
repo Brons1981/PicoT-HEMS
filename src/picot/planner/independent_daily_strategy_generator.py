@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from picot.domain.daily_reference_charge_window import (
+    DailyReferenceChargeWindowSet,
+)
 from picot.domain.daily_reference_intent import (
     DailyReferenceIntentInterval,
     DailyReferenceIntentSchedule,
@@ -76,6 +79,47 @@ class IndependentDailyStrategyGenerator:
             observer_only=True,
             ranking_permitted=False,
             method_version=METHOD_VERSION,
+        )
+
+    def generate_from_charge_windows(
+        self,
+        *,
+        charge_windows: DailyReferenceChargeWindowSet,
+        household: HouseholdLoadForecast,
+    ) -> DailyReferenceStrategySpace:
+        """Build charging strategies only from physically minimal windows."""
+
+        if not charge_windows.windows:
+            raise ValueError("Daily strategy requires proven charge windows.")
+        if any(
+            item.schedule.horizon_start != household.horizon_start
+            or item.schedule.horizon_end != household.horizon_end
+            for item in charge_windows.windows
+        ):
+            raise ValueError("Daily charge windows and household horizon must match.")
+        intents = tuple(
+            dict.fromkeys(item.intent for item in charge_windows.windows)
+        )
+        lengths = tuple(
+            dict.fromkeys(item.interval_count for item in charge_windows.windows)
+        )
+        return DailyReferenceStrategySpace(
+            strategy_space_id=(
+                f"daily-strategy-space:{charge_windows.snapshot_id}:"
+                "physical-charge-windows"
+            ),
+            snapshot_id=charge_windows.snapshot_id,
+            baseline_intent=BASELINE_INTENT,
+            active_intents=intents,
+            window_lengths_intervals=lengths,
+            schedules=(
+                self._baseline(charge_windows.snapshot_id, household),
+                *(item.schedule for item in charge_windows.windows),
+            ),
+            observer_only=True,
+            ranking_permitted=False,
+            method_version=METHOD_VERSION,
+            source_charge_window_set_id=charge_windows.window_set_id,
         )
 
     @staticmethod

@@ -109,3 +109,38 @@ def test_explicit_daily_horizon_does_not_require_canonical_36_hour_coverage() ->
 
     assert result.horizon_start == starts_at
     assert result.horizon_end == daily_end
+
+
+def test_published_horizon_ends_at_last_contiguous_known_price() -> None:
+    starts_at = datetime(2026, 8, 24, 0, 32, tzinfo=timezone(timedelta(hours=2)))
+    market_day_end = datetime(2026, 8, 25, 0, 0, tzinfo=starts_at.tzinfo)
+    snapshot = replace(
+        _snapshot(starts_at, hours=36),
+        price_points=(PriceForecastPoint(
+            point_id="published-current-market-day",
+            starts_at=starts_at.replace(minute=30),
+            ends_at=market_day_end,
+            value_eur_per_kwh=0.30,
+            confidence=1.0,
+            evidence_id="nordpool-today",
+        ),),
+    )
+
+    result = IndependentDailyTariffAdapter().published_horizon_end(
+        snapshot,
+        maximum_horizon_end=starts_at + timedelta(hours=24),
+    )
+
+    assert result == market_day_end
+
+
+def test_published_horizon_is_capped_at_24_hours_after_next_prices_arrive() -> None:
+    starts_at = datetime(2026, 8, 24, 15, 0, tzinfo=timezone(timedelta(hours=2)))
+    snapshot = _snapshot(starts_at, hours=36)
+
+    result = IndependentDailyTariffAdapter().published_horizon_end(
+        snapshot,
+        maximum_horizon_end=starts_at + timedelta(hours=24),
+    )
+
+    assert result == starts_at + timedelta(hours=24)

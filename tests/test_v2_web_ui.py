@@ -1,4 +1,6 @@
 import json
+import shutil
+import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -24,6 +26,24 @@ from picot.v2.web_ui import (
     _self_consumption_history_view,
     build_web_view,
 )
+
+
+def test_dashboard_embedded_javascript_is_syntactically_valid() -> None:
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError("Node.js is required to validate dashboard JavaScript")
+
+    script_start = DASHBOARD_HTML.index("<script>") + len("<script>")
+    script_end = DASHBOARD_HTML.index("</script>", script_start)
+    result = subprocess.run(
+        [node, "--check"],
+        input=DASHBOARD_HTML[script_start:script_end],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_web_view_serializes_nine_stages_and_full_pv_timeline() -> None:

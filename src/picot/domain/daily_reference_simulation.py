@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from math import isclose
+from enum import StrEnum
 
 
 ENERGY_TOLERANCE_WH = 1e-6

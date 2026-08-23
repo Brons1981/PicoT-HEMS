@@ -32,6 +32,11 @@ def test_completed_daily_outcome_projects_comparable_best_observations(
     ]
     assert all(item["scenarios"] for item in best)
     assert all(item["intent_intervals"] for item in best)
+    assert all(
+        item["average_charge_window_price_eur_per_kwh"] is not None
+        for item in best
+    )
+    assert all(item["charge_window_confidence"] is not None for item in best)
 
 
 def test_blocked_daily_outcome_remains_visible_without_candidate_claims(
@@ -104,6 +109,11 @@ def test_dashboard_explains_daily_observer_result_in_user_language() -> None:
     assert "PV laden + slim ontladen" in DASHBOARD_HTML
     assert "Financieel resultaat (worst case, 24 uur)" in DASHBOARD_HTML
     assert "Laagste confidence over 24 uur" in DASHBOARD_HTML
+    assert "Confidence voorgesteld laadvenster" in DASHBOARD_HTML
+    assert "Gemiddelde prijs voorgesteld laadvenster" in DASHBOARD_HTML
+    assert "Gekozen door huidige planner" in DASHBOARD_HTML
+    assert "Gekozen door etmaalsimulatie" in DASHBOARD_HTML
+    assert "selectedPlannerWindows" in DASHBOARD_HTML
     assert "Observer-only; stuurt niets aan" in DASHBOARD_HTML
     assert "mergeDailyIntentWindows" in DASHBOARD_HTML
     assert "formatTimestamp(window.starts_at)" in DASHBOARD_HTML

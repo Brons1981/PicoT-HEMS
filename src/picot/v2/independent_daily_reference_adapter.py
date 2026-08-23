@@ -57,7 +57,7 @@ from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
 
-METHOD_VERSION = "v2-independent-daily-reference-adapter:v1"
+METHOD_VERSION = "v2-independent-daily-reference-adapter:v2"
 DAILY_REFERENCE_DURATION = timedelta(hours=24)
 
 
@@ -254,35 +254,68 @@ class IndependentDailyReferenceAdapter:
         captured_at: datetime,
         horizon_end: datetime,
     ) -> DomainHouseholdForecast:
-        intervals = tuple(
+        source_intervals = tuple(
             interval
             for interval in forecast.intervals
-            if interval.starts_at >= captured_at
-            and interval.ends_at <= horizon_end
+            if interval.starts_at < horizon_end
+            and interval.ends_at > captured_at
         )
-        if not intervals:
+        if not source_intervals:
             raise DailyReferenceInputError("daily_reference_household_empty")
-        if intervals[0].starts_at != captured_at or intervals[-1].ends_at != horizon_end:
-            raise DailyReferenceInputError("daily_reference_household_horizon_incomplete")
-        if any(
-            left.ends_at != right.starts_at
-            for left, right in zip(intervals, intervals[1:], strict=False)
-        ):
-            raise DailyReferenceInputError("daily_reference_household_gap")
+        boundaries = [captured_at]
+        next_quarter = captured_at.replace(second=0, microsecond=0)
+        remainder = next_quarter.minute % 15
+        if remainder:
+            next_quarter += timedelta(minutes=15 - remainder)
+        elif next_quarter < captured_at:
+            next_quarter += timedelta(minutes=15)
+        if captured_at < next_quarter < horizon_end:
+            boundaries.append(next_quarter)
+        while boundaries[-1] + timedelta(minutes=15) < horizon_end:
+            boundaries.append(boundaries[-1] + timedelta(minutes=15))
+        if boundaries[-1] != horizon_end:
+            boundaries.append(horizon_end)
+
+        normalised: list[DomainHouseholdInterval] = []
+        for starts_at, ends_at in zip(boundaries, boundaries[1:], strict=False):
+            overlapping = tuple(
+                item
+                for item in source_intervals
+                if item.starts_at < ends_at and item.ends_at > starts_at
+            )
+            covered_seconds = sum(
+                (
+                    min(item.ends_at, ends_at) - max(item.starts_at, starts_at)
+                ).total_seconds()
+                for item in overlapping
+            )
+            required_seconds = (ends_at - starts_at).total_seconds()
+            if not overlapping or covered_seconds != required_seconds:
+                raise DailyReferenceInputError(
+                    "daily_reference_household_horizon_incomplete"
+                )
+            expected_energy_wh = sum(
+                item.expected_energy_wh
+                * (
+                    min(item.ends_at, ends_at) - max(item.starts_at, starts_at)
+                ).total_seconds()
+                / (item.ends_at - item.starts_at).total_seconds()
+                for item in overlapping
+            )
+            normalised.append(
+                DomainHouseholdInterval(
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    expected_energy_wh=expected_energy_wh,
+                    confidence=min(item.confidence for item in overlapping),
+                )
+            )
         return DomainHouseholdForecast(
             forecast_id=forecast.forecast_id,
             created_at=captured_at,
             horizon_start=captured_at,
             horizon_end=horizon_end,
-            intervals=tuple(
-                DomainHouseholdInterval(
-                    starts_at=item.starts_at,
-                    ends_at=item.ends_at,
-                    expected_energy_wh=item.expected_energy_wh,
-                    confidence=item.confidence,
-                )
-                for item in intervals
-            ),
+            intervals=tuple(normalised),
             historical_source_reference=forecast.forecast_id,
             method_version=METHOD_VERSION,
         )

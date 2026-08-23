@@ -14,12 +14,12 @@ from picot.domain.daily_reference_evaluation import (
 )
 from picot.domain.daily_reference_intent import DailyStorageIntent
 
-METHOD_VERSION = "independent-daily-evaluator:v2"
-OBJECTIVE = "pv_preferred_then_maximize_worst_case_net_financial_result_eur"
+METHOD_VERSION = "independent-daily-evaluator:v3"
+OBJECTIVE = "pv_preferred_then_minimize_average_charge_window_price_eur_per_kwh"
 
 
 class IndependentDailyEvaluator:
-    """Apply hard physical gates, then compare worst-case financial outcomes."""
+    """Apply PV-first physical gates, then compare average window prices."""
 
     def evaluate(
         self,
@@ -53,10 +53,22 @@ class IndependentDailyEvaluator:
             for candidate in candidate_set.candidates
             if not reasons_by_candidate[candidate.candidate_id]
         )
-        best_result = (
-            max(item.worst_case_financial_result_eur for item in admitted)
-            if admitted
+        priced = tuple(
+            item
+            for item in admitted
+            if item.average_charge_window_price_eur_per_kwh is not None
+        )
+        best_price = (
+            min(
+                item.average_charge_window_price_eur_per_kwh
+                for item in priced
+                if item.average_charge_window_price_eur_per_kwh is not None
+            )
+            if priced
             else None
+        )
+        best_unpriced_ids = (
+            {item.candidate_id for item in admitted} if admitted and not priced else set()
         )
         records = tuple(
             DailyReferenceEvaluationRecord(
@@ -69,10 +81,20 @@ class IndependentDailyEvaluator:
                     candidate.worst_case_financial_result_eur
                 ),
                 minimum_confidence=candidate.minimum_confidence,
+                average_charge_window_price_eur_per_kwh=(
+                    candidate.average_charge_window_price_eur_per_kwh
+                ),
+                charge_window_confidence=candidate.charge_window_confidence,
                 best_observation=(
-                    best_result is not None
-                    and not reasons_by_candidate[candidate.candidate_id]
-                    and candidate.worst_case_financial_result_eur == best_result
+                    not reasons_by_candidate[candidate.candidate_id]
+                    and (
+                        candidate.candidate_id in best_unpriced_ids
+                        or (
+                            best_price is not None
+                            and candidate.average_charge_window_price_eur_per_kwh
+                            == best_price
+                        )
+                    )
                 ),
             )
             for candidate in candidate_set.candidates
@@ -86,7 +108,7 @@ class IndependentDailyEvaluator:
                 item.candidate_id for item in records if item.best_observation
             ),
             objective=OBJECTIVE,
-            direction=DailyReferenceEvaluationDirection.HIGHER_IS_BETTER,
+            direction=DailyReferenceEvaluationDirection.LOWER_IS_BETTER,
             observer_only=True,
             selection_permitted=False,
             commitment_permitted=False,

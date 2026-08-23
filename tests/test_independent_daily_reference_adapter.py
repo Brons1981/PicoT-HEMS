@@ -219,6 +219,44 @@ def test_adapter_builds_three_quarter_hour_trajectories_from_shared_snapshot() -
     )
 
 
+def test_adapter_rebins_off_quarter_household_input_to_market_quarters() -> None:
+    snapshot = _snapshot()
+    offset = timedelta(minutes=7, seconds=17)
+    shifted = replace(
+        snapshot.household_load_forecast,
+        intervals=tuple(
+            replace(
+                item,
+                starts_at=item.starts_at + offset,
+                ends_at=item.ends_at + offset,
+            )
+            for item in snapshot.household_load_forecast.intervals
+        ),
+    )
+
+    result = IndependentDailyReferenceAdapter._household(
+        shifted,
+        captured_at=START + offset,
+        horizon_end=START + offset + timedelta(hours=24),
+    )
+
+    assert len(result.intervals) == 97
+    assert result.intervals[0].starts_at == START + offset
+    assert result.intervals[0].ends_at.minute % 15 == 0
+    assert result.intervals[0].ends_at.second == 0
+    assert result.intervals[-1].ends_at == START + offset + timedelta(hours=24)
+    assert all(
+        interval.starts_at.minute % 15 == 0
+        and interval.starts_at.second == 0
+        and interval.ends_at.minute % 15 == 0
+        and interval.ends_at.second == 0
+        for interval in result.intervals[1:-1]
+    )
+    assert sum(item.expected_energy_wh for item in result.intervals) == pytest.approx(
+        sum(item.expected_energy_wh for item in shifted.intervals)
+    )
+
+
 def test_observer_waits_when_next_day_prices_do_not_cover_24_hours() -> None:
     snapshot = _snapshot(maximum_soc=0.7)
     short_price = replace(

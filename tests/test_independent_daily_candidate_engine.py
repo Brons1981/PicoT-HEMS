@@ -3,8 +3,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from test_independent_daily_financial_settlement import _tariffs
+from test_independent_daily_reference_portfolio import _produce as _produce_portfolio
+from test_independent_daily_simulator import _simulate
 
 from picot.domain.daily_reference_candidate import DailyReferenceCandidateFamily
+from picot.domain.daily_reference_intent import DailyStorageIntent
 from picot.domain.daily_reference_simulation import PVScenario
 from picot.planner.independent_daily_candidate_engine import (
     IndependentDailyCandidateEngine,
@@ -12,9 +16,6 @@ from picot.planner.independent_daily_candidate_engine import (
 from picot.planner.independent_daily_reference_run import (
     IndependentDailyReferenceRunProducer,
 )
-from test_independent_daily_financial_settlement import _tariffs
-from test_independent_daily_reference_portfolio import _produce as _produce_portfolio
-from test_independent_daily_simulator import _simulate
 
 
 def _run():
@@ -76,6 +77,25 @@ def test_engine_builds_one_unranked_candidate_per_portfolio_strategy() -> None:
     assert len({item.intent_schedule_id for item in result.candidates}) == len(
         result.candidates
     )
+
+
+def test_engine_uses_relevant_average_tariff_without_fixed_margin() -> None:
+    result = IndependentDailyCandidateEngine().build_portfolio(_produce_portfolio())
+    nom = next(
+        item
+        for item in result.candidates
+        if item.intents_used == (DailyStorageIntent.NOM,)
+    )
+    grid = next(
+        item
+        for item in result.candidates
+        if item.intents_used == (DailyStorageIntent.GRID_REQUIREMENT,)
+    )
+
+    assert nom.average_charge_window_price_eur_per_kwh == pytest.approx(0.10)
+    assert grid.average_charge_window_price_eur_per_kwh == pytest.approx(0.30)
+    assert nom.charge_window_confidence is not None
+    assert grid.charge_window_confidence is not None
 
 
 def test_engine_does_not_import_current_candidate_or_evaluation_modules() -> None:

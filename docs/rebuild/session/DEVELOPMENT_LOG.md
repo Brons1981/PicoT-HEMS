@@ -1214,3 +1214,17 @@ Exact next action: install dev.146 and confirm one daily observer run reaches
 `completed` with the PV-first exclusion reason visible where applicable. Then
 begin the accepted 48-hour side-by-side comparison and perform one deliberate
 manual battery-discharge stress event during that observation period.
+
+
+## 2026-08-23 — 2.0.0-dev.147
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Replaces internal daily-observer identifiers with a Dutch advice and reason.
+- Shows one merged local-time window instead of repeated UTC intervals.
+- Explains the 24-hour worst-case financial result and minimum confidence.
+- States explicitly when proven PV sufficiency excludes grid charging.
+- Leaves simulation, canonical planning and live control unchanged.
+
+Exact next action: install dev.147, confirm the explanation is readable, and
+then continue the accepted 48-hour observer comparison.

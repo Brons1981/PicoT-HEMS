@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_140() -> None:
-    assert __version__ == "2.0.0-dev.140"
+def test_v2_release_version_is_dev_141() -> None:
+    assert __version__ == "2.0.0-dev.141"
 
 
 def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:
@@ -132,3 +132,4 @@ def test_v2_addon_exposes_explicit_pv_local_timezone() -> None:
 
     assert options.get("pv_local_timezone") == "Europe/Amsterdam"
     assert "  pv_local_timezone: str" in schema_lines
+

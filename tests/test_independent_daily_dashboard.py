@@ -95,3 +95,18 @@ def test_dashboard_visually_separates_daily_observer_from_canonical_plan() -> No
     assert "Financiële afrekening dekt niet exact dezelfde etmaalhorizon" in (
         DASHBOARD_HTML
     )
+
+
+def test_dashboard_explains_daily_observer_result_in_user_language() -> None:
+    assert "PV-only is bewezen voldoende; netladen is daarom uitgesloten." in (
+        DASHBOARD_HTML
+    )
+    assert "PV laden + slim ontladen" in DASHBOARD_HTML
+    assert "Financieel resultaat (worst case, 24 uur)" in DASHBOARD_HTML
+    assert "Laagste confidence over 24 uur" in DASHBOARD_HTML
+    assert "Observer-only; stuurt niets aan" in DASHBOARD_HTML
+    assert "mergeDailyIntentWindows" in DASHBOARD_HTML
+    assert "formatTimestamp(window.starts_at)" in DASHBOARD_HTML
+    assert '["Doel", observer.objective]' not in DASHBOARD_HTML
+    assert '["Richting", observer.direction]' not in DASHBOARD_HTML
+    assert '["Beste observatie(s)"' not in DASHBOARD_HTML

@@ -3025,6 +3025,58 @@ DASHBOARD_HTML = """<!doctype html>
       container.appendChild(table);
     }
 
+    function mergeDailyIntentWindows(intervals) {
+      const actionable = (intervals ?? []).filter(
+        (interval) => interval.intent !== "household_support_only"
+      );
+      const merged = [];
+      for (const interval of actionable) {
+        const previous = merged.at(-1);
+        if (
+          previous &&
+          previous.intent === interval.intent &&
+          previous.ends_at === interval.starts_at
+        ) {
+          previous.ends_at = interval.ends_at;
+        } else {
+          merged.push({...interval});
+        }
+      }
+      return merged;
+    }
+
+    function dailyStrategyLabel(candidate) {
+      const intents = new Set(candidate?.intents_used ?? []);
+      if (intents.has("grid_requirement")) return "PV + netaanvulling";
+      if (intents.has("nom") && intents.has("household_support_only")) {
+        return "PV laden + slim ontladen";
+      }
+      if (intents.has("nom")) return "PV laden";
+      if (intents.has("storage_export")) return "Batterij ontladen naar het net";
+      if (intents.has("standby")) return "Stand-by";
+      return "Alleen slim ontladen";
+    }
+
+    function dailyIntentLabel(intent) {
+      return {
+        nom: "PV laden (NOM)",
+        grid_requirement: "Netaanvulling",
+        storage_export: "Ontladen naar het net",
+        standby: "Stand-by",
+      }[intent] ?? displayValue(intent);
+    }
+
+    function dailyWindowLabel(candidate) {
+      const windows = mergeDailyIntentWindows(candidate?.intent_intervals);
+      if (!windows.length) return "Geen laad- of ontlaadvenster nodig";
+      return windows.map((window) => [
+        dailyIntentLabel(window.intent),
+        formatTimestamp(window.starts_at),
+        "tot",
+        formatTimestamp(window.ends_at),
+      ].join(" ")).join(" | ");
+    }
+
     function renderDailyObserverComparison(view) {
       const container = element("daily-observer-comparison");
       container.replaceChildren();
@@ -3070,6 +3122,29 @@ DASHBOARD_HTML = """<!doctype html>
       const best = Array.isArray(observer.candidates)
         ? observer.candidates.filter((candidate) => candidate.best_observation)
         : [];
+      const gridExcludedByPv = Array.isArray(observer.candidates) &&
+        observer.candidates.some((candidate) =>
+          (candidate.exclusion_reasons ?? []).includes(
+            "grid_not_required_pv_recoverable"
+          )
+        );
+      const representative = best[0];
+      const usesGrid = best.some((candidate) =>
+        (candidate.intents_used ?? []).includes("grid_requirement")
+      );
+      const usesPv = best.some((candidate) =>
+        (candidate.intents_used ?? []).includes("nom")
+      );
+      const advice = usesGrid
+        ? "PV laden met uitsluitend de bewezen benodigde netaanvulling"
+        : usesPv
+          ? "Laden met PV; geen netladen"
+          : "Geen laadactie nodig";
+      const explanation = gridExcludedByPv
+        ? "PV-only is bewezen voldoende; netladen is daarom uitgesloten."
+        : usesGrid
+          ? "PV-only is niet bewezen voldoende; netaanvulling is toegestaan."
+          : "Het beste toegelaten plan gebruikt geen netenergie.";
       const observerReasonLabels = {
         daily_reference_physical_limits_missing:
           "Fysieke batterijlimieten ontbreken in de Planning Input",
@@ -3081,15 +3156,36 @@ DASHBOARD_HTML = """<!doctype html>
           "Financiële afrekening dekt niet exact dezelfde etmaalhorizon",
       };
       const observerRows = [
-        ["Status", observer.status],
-        ["Reden", observerReasonLabels[observer.reason] ?? observer.reason],
-        ["Snapshot", observer.snapshot_id],
+        ["Status", observer.status === "completed" ? "Afgerond" : observer.status],
+        ...(observer.reason ? [[
+          "Blokkadereden",
+          observerReasonLabels[observer.reason] ?? observer.reason,
+        ]] : []),
+        ["Advies", best.length ? advice : null],
+        ["Waarom", best.length ? explanation : null],
+        ["Strategie", representative
+          ? dailyStrategyLabel(representative)
+          : null],
+        ["Voorgesteld venster", representative
+          ? dailyWindowLabel(representative)
+          : null],
+        ...(best.length > 1 ? [[
+          "Gelijkwaardige plannen",
+          `${best.length} plannen met hetzelfde resultaat`,
+        ]] : []),
+        ["Financieel resultaat (worst case, 24 uur)", representative &&
+          Number.isFinite(Number(representative.worst_case_financial_result_eur))
+          ? `€ ${formatDutchNumber(Number(
+              representative.worst_case_financial_result_eur
+            ))}`
+          : null],
+        ["Laagste confidence over 24 uur", representative
+          ? formatConfidence(representative.minimum_confidence)
+          : null],
         ["Vergelijkbaarheid", aligned
           ? "Exact dezelfde Planning Input"
           : "Wacht op dezelfde Planning Input-snapshot"],
-        ["Doel", observer.objective],
-        ["Richting", observer.direction],
-        ["Beste observatie(s)", best.map((item) => item.candidate_id).join(", ")],
+        ["Werking", "Observer-only; stuurt niets aan"],
         ["Rekentijd", Number.isFinite(Number(observer.duration_ms))
           ? `${formatDutchNumber(Number(observer.duration_ms))} ms`
           : null],
@@ -3113,7 +3209,7 @@ DASHBOARD_HTML = """<!doctype html>
         details.className = "technical-details";
         const summary = document.createElement("summary");
         summary.textContent = [
-          displayValue(candidate.family),
+          dailyStrategyLabel(candidate),
           Number.isFinite(Number(candidate.worst_case_financial_result_eur))
             ? `€ ${formatDutchNumber(Number(
                 candidate.worst_case_financial_result_eur
@@ -3123,14 +3219,7 @@ DASHBOARD_HTML = """<!doctype html>
         ].join(" · ");
         details.append(summary);
         const schedule = document.createElement("p");
-        schedule.textContent = (candidate.intent_intervals ?? [])
-          .filter((interval) => interval.intent !== "household_support_only")
-          .map((interval) => [
-            interval.intent,
-            interval.starts_at,
-            interval.ends_at,
-          ].map(displayValue).join(" · "))
-          .join(" | ") || "Alleen huishoudondersteuning nodig.";
+        schedule.textContent = dailyWindowLabel(candidate);
         details.append(schedule);
         observerCard.append(details);
       }

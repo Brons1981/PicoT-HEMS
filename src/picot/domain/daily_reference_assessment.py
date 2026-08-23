@@ -33,6 +33,7 @@ class DailyReferencePathAssessment:
     pv_to_grid_wh: float
     grid_to_household_wh: float
     storage_to_household_output_wh: float
+    storage_to_grid_output_wh: float
     storage_charge_loss_wh: float
     storage_discharge_loss_wh: float
     minimum_confidence: float
@@ -63,6 +64,7 @@ class DailyReferencePathAssessment:
             self.pv_to_grid_wh,
             self.grid_to_household_wh,
             self.storage_to_household_output_wh,
+            self.storage_to_grid_output_wh,
             self.storage_charge_loss_wh,
             self.storage_discharge_loss_wh,
         ):

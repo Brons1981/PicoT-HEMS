@@ -138,7 +138,11 @@ class IndependentDailyFinancialSettlement:
     ) -> DailyReferenceFinancialInterval:
         grid_import_wh = physical.grid_to_household_wh + physical.grid_to_storage_input_wh
         grid_import_cost_eur = grid_import_wh * tariff.import_eur_per_kwh / 1000.0
-        grid_export_result_eur = physical.pv_to_grid_wh * tariff.export_eur_per_kwh / 1000.0
+        grid_export_result_eur = (
+            (physical.pv_to_grid_wh + physical.storage_to_grid_output_wh)
+            * tariff.export_eur_per_kwh
+            / 1000.0
+        )
         avoided_import_value_eur = (
             physical.storage_to_household_output_wh
             * tariff.import_eur_per_kwh

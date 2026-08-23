@@ -1250,3 +1250,21 @@ Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.148 and begin the accepted 48-hour side-by-side
 observation. During that period, perform one deliberate manual battery
 discharge stress event and compare both planners' reactions.
+
+
+## 2026-08-23 — 2.0.0-dev.149
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Replaces the small planner-window marks above the price bars with transparent
+  vertical bands spanning the complete price plot.
+- Shows the exact chosen start and end time for the canonical planner and the
+  daily observer in separate blue and purple labels above the chart.
+- Uses a solid blue boundary for the canonical window and a dashed purple
+  boundary for the daily observer so overlapping windows remain distinguishable.
+- Leaves price data, candidate evaluation, daily simulation and live execution
+  unchanged.
+
+Exact next action: install dev.149, confirm both selected windows and their
+quarter-hour boundaries are readable, and then start the accepted 48-hour
+side-by-side observation with one deliberate manual-discharge stress event.

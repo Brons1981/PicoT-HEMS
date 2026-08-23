@@ -37,6 +37,10 @@ def test_completed_daily_outcome_projects_comparable_best_observations(
         for item in best
     )
     assert all(item["charge_window_confidence"] is not None for item in best)
+    assert view["simulation_horizon_start"] == "2026-08-23T10:00:00+00:00"
+    assert view["simulation_horizon_end"] == "2026-08-24T10:00:00+00:00"
+    assert view["simulation_duration_hours"] == pytest.approx(24.0)
+    assert view["price_coverage_hours"] == pytest.approx(24.0)
 
 
 def test_blocked_daily_outcome_remains_visible_without_candidate_claims(
@@ -95,7 +99,9 @@ def test_dashboard_visually_separates_daily_observer_from_canonical_plan() -> No
     assert "Exact dezelfde Planning Input" in DASHBOARD_HTML
     assert "vorige snapshot" in DASHBOARD_HTML
     assert "Fysieke batterijlimieten ontbreken" in DASHBOARD_HTML
-    assert "Wacht op volledige Nordpool-prijzen" in DASHBOARD_HTML
+    assert "Geen aaneengesloten Nordpool-prijzen beschikbaar vanaf nu" in (
+        DASHBOARD_HTML
+    )
     assert "Tariefdekking is niet volledig" in DASHBOARD_HTML
     assert "Financiële afrekening dekt niet exact dezelfde etmaalhorizon" in (
         DASHBOARD_HTML
@@ -107,8 +113,10 @@ def test_dashboard_explains_daily_observer_result_in_user_language() -> None:
         DASHBOARD_HTML
     )
     assert "PV laden + slim ontladen" in DASHBOARD_HTML
-    assert "Financieel resultaat (worst case, 24 uur)" in DASHBOARD_HTML
-    assert "Laagste confidence over 24 uur" in DASHBOARD_HTML
+    assert "Financieel resultaat (worst case, gebruikte horizon)" in DASHBOARD_HTML
+    assert "Laagste confidence over gebruikte horizon" in DASHBOARD_HTML
+    assert "Gebruikte simulatiehorizon" in DASHBOARD_HTML
+    assert "Beschikbare aaneengesloten prijsdekking" in DASHBOARD_HTML
     assert "Confidence voorgesteld laadvenster" in DASHBOARD_HTML
     assert "Gemiddelde prijs voorgesteld laadvenster" in DASHBOARD_HTML
     assert "Gekozen door huidige planner" in DASHBOARD_HTML

@@ -107,12 +107,23 @@ class IndependentDailyReferenceAdapter:
     ) -> DailyReferenceStrategyObservation:
         """Run the complete observer chain from one immutable Planning Input."""
 
-        inputs = self._inputs(snapshot)
+        maximum_horizon_end = snapshot.captured_at + DAILY_REFERENCE_DURATION
         if tariffs is None:
-            tariffs = IndependentDailyTariffAdapter().build(
+            tariff_adapter = IndependentDailyTariffAdapter()
+            published_horizon_end = tariff_adapter.published_horizon_end(
                 snapshot,
-                horizon_end=inputs.household.horizon_end,
+                maximum_horizon_end=maximum_horizon_end,
             )
+            inputs = self._inputs(
+                snapshot,
+                horizon_end=published_horizon_end,
+            )
+            tariffs = tariff_adapter.build(
+                snapshot,
+                horizon_end=published_horizon_end,
+            )
+        else:
+            inputs = self._inputs(snapshot, horizon_end=tariffs.horizon_end)
         self._validate_tariffs(snapshot, inputs.household, tariffs)
         charge_windows = IndependentDailyChargeWindowDiscoverer().discover(
             snapshot_id=snapshot.snapshot_id,
@@ -144,7 +155,12 @@ class IndependentDailyReferenceAdapter:
             maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
         )
 
-    def _inputs(self, snapshot: PlanningInputSnapshot) -> _DailyReferenceInputs:
+    def _inputs(
+        self,
+        snapshot: PlanningInputSnapshot,
+        *,
+        horizon_end: datetime | None = None,
+    ) -> _DailyReferenceInputs:
         if snapshot.horizon_end is None:
             raise DailyReferenceInputError("daily_reference_horizon_missing")
         if snapshot.household_load_forecast is None:
@@ -191,9 +207,17 @@ class IndependentDailyReferenceAdapter:
         if len(physical_limits) != 1:
             raise DailyReferenceInputError("daily_reference_physical_limits_missing")
         limits = physical_limits[0]
-        reference_horizon_end = snapshot.captured_at + DAILY_REFERENCE_DURATION
+        maximum_reference_horizon_end = (
+            snapshot.captured_at + DAILY_REFERENCE_DURATION
+        )
+        reference_horizon_end = horizon_end or maximum_reference_horizon_end
         if snapshot.horizon_end < reference_horizon_end:
             raise DailyReferenceInputError("daily_reference_horizon_too_short")
+        if (
+            reference_horizon_end <= snapshot.captured_at
+            or reference_horizon_end > maximum_reference_horizon_end
+        ):
+            raise DailyReferenceInputError("daily_reference_horizon_invalid")
 
         household = self._household(
             snapshot.household_load_forecast,

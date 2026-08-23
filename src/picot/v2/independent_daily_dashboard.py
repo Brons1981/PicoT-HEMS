@@ -32,6 +32,10 @@ def build_daily_observer_dashboard_view(
         "direction": None,
         "best_observation_ids": [],
         "candidates": [],
+        "simulation_horizon_start": None,
+        "simulation_horizon_end": None,
+        "simulation_duration_hours": None,
+        "price_coverage_hours": None,
     }
     if outcome.observation is None:
         return base
@@ -46,10 +50,18 @@ def build_daily_observer_dashboard_view(
         schedule.schedule_id: schedule
         for schedule in observation.strategy_space.schedules
     }
+    schedule = next(iter(schedules_by_id.values()))
+    duration_hours = (
+        schedule.horizon_end - schedule.horizon_start
+    ).total_seconds() / 3600.0
     base.update({
         "objective": evaluation.objective,
         "direction": evaluation.direction.value,
         "best_observation_ids": list(evaluation.best_candidate_ids),
+        "simulation_horizon_start": schedule.horizon_start.isoformat(),
+        "simulation_horizon_end": schedule.horizon_end.isoformat(),
+        "simulation_duration_hours": duration_hours,
+        "price_coverage_hours": duration_hours,
         "candidates": [
             _candidate_view(
                 observation,

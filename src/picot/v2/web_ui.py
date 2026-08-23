@@ -3073,6 +3073,8 @@ DASHBOARD_HTML = """<!doctype html>
       const observerReasonLabels = {
         daily_reference_physical_limits_missing:
           "Fysieke batterijlimieten ontbreken in de Planning Input",
+        daily_tariff_price_coverage_incomplete:
+          "Wacht op volledige Nordpool-prijzen voor de komende 24 uur",
       };
       const observerRows = [
         ["Status", observer.status],

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from picot.domain.capability_snapshot import (
     CapabilityAvailability,
@@ -58,6 +58,7 @@ from picot.v2.independent_daily_tariff_adapter import (
 )
 
 METHOD_VERSION = "v2-independent-daily-reference-adapter:v1"
+DAILY_REFERENCE_DURATION = timedelta(hours=24)
 
 
 class DailyReferenceInputError(ValueError):
@@ -108,7 +109,10 @@ class IndependentDailyReferenceAdapter:
 
         inputs = self._inputs(snapshot)
         if tariffs is None:
-            tariffs = IndependentDailyTariffAdapter().build(snapshot)
+            tariffs = IndependentDailyTariffAdapter().build(
+                snapshot,
+                horizon_end=inputs.household.horizon_end,
+            )
         self._validate_tariffs(snapshot, inputs.household, tariffs)
         charge_windows = IndependentDailyChargeWindowDiscoverer().discover(
             snapshot_id=snapshot.snapshot_id,
@@ -187,11 +191,14 @@ class IndependentDailyReferenceAdapter:
         if len(physical_limits) != 1:
             raise DailyReferenceInputError("daily_reference_physical_limits_missing")
         limits = physical_limits[0]
+        reference_horizon_end = snapshot.captured_at + DAILY_REFERENCE_DURATION
+        if snapshot.horizon_end < reference_horizon_end:
+            raise DailyReferenceInputError("daily_reference_horizon_too_short")
 
         household = self._household(
             snapshot.household_load_forecast,
             captured_at=snapshot.captured_at,
-            horizon_end=snapshot.horizon_end,
+            horizon_end=reference_horizon_end,
         )
         pv_scenarios = self._pv_scenarios(
             snapshot.pv_energy_timeline,
@@ -247,7 +254,12 @@ class IndependentDailyReferenceAdapter:
         captured_at: datetime,
         horizon_end: datetime,
     ) -> DomainHouseholdForecast:
-        intervals = forecast.intervals
+        intervals = tuple(
+            interval
+            for interval in forecast.intervals
+            if interval.starts_at >= captured_at
+            and interval.ends_at <= horizon_end
+        )
         if not intervals:
             raise DailyReferenceInputError("daily_reference_household_empty")
         if intervals[0].starts_at != captured_at or intervals[-1].ends_at != horizon_end:

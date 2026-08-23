@@ -852,6 +852,20 @@ DASHBOARD_HTML = """<!doctype html>
     <section
       id="tab-history" class="tab-panel" data-tab-panel="history" hidden
     >
+      <h2>48-uurs vergelijking planners</h2>
+      <section class="timeline-panel" aria-live="polite">
+        <p class="muted">
+          Beide plannen worden achteraf met exact dezelfde gemeten
+          energiestromen herberekend. Onvolledige meetdekking levert geen
+          winnaar op.
+        </p>
+        <button id="mark-planner-stress" type="button">
+          Markeer handmatige ontlaadstresstest
+        </button>
+        <div id="planner-comparison-history">
+          Nog geen vergelijkingsdossiers.
+        </div>
+      </section>
       <h2>Schakelhistorie batterijmodus</h2>
       <section
         id="storage-mode-transition-history"
@@ -3534,6 +3548,65 @@ DASHBOARD_HTML = """<!doctype html>
       container.append(table);
     }
 
+    function renderPlannerComparisonHistory(history) {
+      const container = element("planner-comparison-history");
+      container.replaceChildren();
+      const dossiers = Array.isArray(history?.dossiers)
+        ? history.dossiers : [];
+      if (!dossiers.length) {
+        container.textContent = "Nog geen vergelijkingsdossiers.";
+        return;
+      }
+      for (const dossier of dossiers) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        const winner = dossier.result?.winner;
+        const outcome = winner === "canonical" ? "huidige planner beter"
+          : winner === "daily_observer" ? "etmaalsimulatie beter"
+          : winner === "equal" ? "gelijkwaardig"
+          : displayValue(dossier.status);
+        summary.textContent = `${formatTimestamp(dossier.captured_at)} · ${outcome}`;
+        details.append(summary);
+        const body = document.createElement("pre");
+        body.textContent = [
+          `Meetperiode tot: ${formatTimestamp(dossier.horizon_end)}`,
+          `Status: ${displayValue(dossier.status)}`,
+          `Huidige planner: ${displayValue(
+            dossier.canonical?.charge_window_starts_at
+          )} – ${displayValue(dossier.canonical?.charge_window_ends_at)}`,
+          `Etmaalsimulatie: ${dailyWindowLabel(dossier.observer)}`,
+          `Stresstestmarkeringen: ${(dossier.stress_markers ?? []).length}`,
+          `Projectiestaat: ${displayValue(dossier.projection_state)}`,
+          dossier.stress_restart
+            ? `Herstart na stress: ${JSON.stringify(dossier.stress_restart)}`
+            : "Herstart na stress: niet van toepassing",
+          dossier.result
+            ? JSON.stringify(dossier.result, null, 2)
+            : "Uitkomst volgt na sluiting van de meetperiode.",
+        ].join("\n");
+        details.append(body);
+        container.append(details);
+      }
+    }
+
+    async function markPlannerStress() {
+      const note = window.prompt(
+        "Korte toelichting (optioneel)",
+        "Batterij handmatig ontladen"
+      );
+      if (note === null) return;
+      const response = await fetch("api/planner-comparison/stress", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({marker_id: crypto.randomUUID(), note}),
+      });
+      if (!response.ok) {
+        window.alert("De stresstestmarkering kon niet worden opgeslagen.");
+      } else {
+        loadView();
+      }
+    }
+
     function renderPlanningIncidentHistory(events) {
       const container = element("planning-incident-history");
       const signature = JSON.stringify(events);
@@ -3653,6 +3726,7 @@ DASHBOARD_HTML = """<!doctype html>
       renderStorageModeTransitionHistory(
         view.storage_mode_transition_history ?? []
       );
+      renderPlannerComparisonHistory(view.planner_comparison_history ?? {});
       loadPlanningIncidentHistory();
       renderPriceTimeline(
         view.price_timeline ?? {
@@ -3769,6 +3843,9 @@ DASHBOARD_HTML = """<!doctype html>
       resetStorageModeOverride
     );
     element("reset-planning").addEventListener("click", resetPlanning);
+    element("mark-planner-stress").addEventListener(
+      "click", markPlannerStress
+    );
     initializeTabs();
     loadView().finally(watchViewUpdates);
     setInterval(loadView, 60000);
@@ -3787,11 +3864,15 @@ class WebViewStore:
         self._latest_json: str | None = None
         self._fast_grid_power_source: dict[str, object] | None = None
         self._daily_observer_comparison: dict[str, object] | None = None
+        self._planner_comparison_history: dict[str, object] | None = None
         self._revision = 0
         self._reset_storage_mode_override: (
             Callable[[str], dict[str, object]] | None
         ) = None
         self._reset_planning: Callable[[str], dict[str, object]] | None = None
+        self._mark_planner_stress: (
+            Callable[[str, str], dict[str, object]] | None
+        ) = None
         self._diagnostic_paths: tuple[Path, ...] = ()
         self._incident_history_path: Path | None = None
 
@@ -3828,6 +3909,10 @@ class WebViewStore:
         if self._daily_observer_comparison is not None:
             view["daily_observer_comparison"] = dict(
                 self._daily_observer_comparison
+            )
+        if self._planner_comparison_history is not None:
+            view["planner_comparison_history"] = dict(
+                self._planner_comparison_history
             )
         self._latest_json = json.dumps(view, separators=(",", ":"))
         self._revision += 1
@@ -3898,6 +3983,41 @@ class WebViewStore:
             if not isinstance(latest, dict):
                 raise TypeError("latest web view must be an object")
             self._replace_latest_locked(latest)
+
+    def publish_planner_comparison_history(
+        self,
+        comparison: dict[str, object],
+    ) -> None:
+        """Overlay persistent replay evidence without planner authority."""
+        copied: object = json.loads(json.dumps(comparison))
+        if not isinstance(copied, dict):
+            raise TypeError("planner comparison history must be an object")
+        if (
+            copied.get("observer_only") is not True
+            or copied.get("selection_permitted") is not False
+            or copied.get("commitment_permitted") is not False
+        ):
+            raise ValueError("planner comparison history must remain passive")
+        with self._condition:
+            self._planner_comparison_history = copied
+            if self._latest_json is None:
+                return
+            latest: object = json.loads(self._latest_json)
+            if isinstance(latest, dict):
+                self._replace_latest_locked(latest)
+
+    def set_planner_stress_marker(
+        self,
+        marker: Callable[[str, str], dict[str, object]],
+    ) -> None:
+        with self._lock:
+            self._mark_planner_stress = marker
+
+    def planner_stress_marker(
+        self,
+    ) -> Callable[[str, str], dict[str, object]] | None:
+        with self._lock:
+            return self._mark_planner_stress
 
     def latest_json(self) -> str | None:
         """Return the latest immutable JSON snapshot, when available."""
@@ -4138,6 +4258,7 @@ def create_web_server(
             if path not in {
                 "/api/storage-mode-override/reset",
                 "/api/planning/reset",
+                "/api/planner-comparison/stress",
             }:
                 self._reject_write()
                 return
@@ -4147,6 +4268,39 @@ def create_web_server(
                 else reset_storage_mode_override
                 or store.storage_mode_override_reset()
             )
+            stress = (
+                store.planner_stress_marker()
+                if path == "/api/planner-comparison/stress"
+                else None
+            )
+            if stress is not None:
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    payload = json.loads(self.rfile.read(length))
+                    marker_id = (
+                        payload.get("marker_id")
+                        if isinstance(payload, dict)
+                        else None
+                    )
+                    note = (
+                        payload.get("note", "")
+                        if isinstance(payload, dict)
+                        else ""
+                    )
+                    if not isinstance(marker_id, str) or not isinstance(note, str):
+                        raise ValueError
+                    result = stress(marker_id, note)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        '{"status":"invalid_stress_marker"}',
+                    )
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    json.dumps(result, separators=(",", ":")),
+                )
+                return
             if reset is None:
                 self._send_json(
                     HTTPStatus.CONFLICT,

@@ -206,3 +206,32 @@ def test_realtime_update_endpoint_returns_published_revision_and_view() -> None:
         thread.join(timeout=2)
 
     assert not thread.is_alive()
+
+
+def test_dashboard_accepts_only_explicit_passive_stress_marker() -> None:
+    captured = []
+    store = WebViewStore()
+    store.set_planner_stress_marker(
+        lambda marker_id, note: captured.append((marker_id, note))
+        or {"status": "recorded", "observer_only": True}
+    )
+    server = create_web_server(store, host="127.0.0.1", port=0)
+    thread = Thread(target=server.serve_forever)
+    thread.start()
+    request = Request(
+        f"http://127.0.0.1:{server.server_port}/api/planner-comparison/stress",
+        data=json.dumps(
+            {"marker_id": "stress-1", "note": "handmatig"}
+        ).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=2) as response:
+            payload = json.loads(response.read())
+        assert payload == {"status": "recorded", "observer_only": True}
+        assert captured == [("stress-1", "handmatig")]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

@@ -21,6 +21,7 @@ from time import perf_counter
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
 from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
@@ -35,6 +36,11 @@ from picot.v2.household_planning_regime import (
     AdaptiveHouseholdObjectivePolicy,
     HouseholdPlanningRegime,
     UserObjectiveProfile,
+)
+from picot.v2.independent_daily_observer_runtime import (
+    DailyObserverResultStore,
+    IndependentDailyObserverRuntime,
+    IndependentDailyObserverWorker,
 )
 from picot.v2.live_pv_actual import (
     LivePVActualCache,
@@ -146,6 +152,12 @@ ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH = Path(
 )
 PLANNING_INCIDENT_HISTORY_PATH = Path(
     "/data/picot_v2_planning_incident_history.jsonl"
+)
+DAILY_OBSERVER_LATEST_PATH = Path(
+    "/data/picot_v2_daily_observer_latest.json"
+)
+DAILY_OBSERVER_HISTORY_PATH = Path(
+    "/data/picot_v2_daily_observer_history.jsonl"
 )
 
 
@@ -1534,6 +1546,9 @@ def _execute_planning_bundle(
     canonical_execution_enabled: bool = False,
     planning_fallback_notifier: PlanningFallbackNotifier | None = None,
     planning_incident_history: PlanningIncidentHistory | None = None,
+    independent_daily_observer_worker: (
+        IndependentDailyObserverWorker | None
+    ) = None,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -1546,6 +1561,8 @@ def _execute_planning_bundle(
         price_opportunity_config=price_config,
         control_change_allowed=canonical_execution_enabled,
     )
+    if independent_daily_observer_worker is not None:
+        independent_daily_observer_worker.submit(bundle.snapshot)
     if canonical_execution_runtime is not None:
         run = canonical_execution_runtime.apply(run)
         if (
@@ -1938,6 +1955,45 @@ def main() -> None:
             options.get("pv_local_timezone", "Europe/Amsterdam")
         ).strip(),
     )
+    independent_daily_observer_runtime = IndependentDailyObserverRuntime(
+        conversion_model=StorageConversionModel(
+            model_id="live-observer-configured-conversion",
+            charge_efficiency=float(
+                options.get("daily_reference_charge_efficiency", 1.0)
+            ),
+            discharge_efficiency=float(
+                options.get("daily_reference_discharge_efficiency", 1.0)
+            ),
+            evidence_ids=("addon-options:daily-reference-efficiency",),
+            method_version="live-observer-configured-conversion:v1",
+        ),
+        store=DailyObserverResultStore(
+            latest_path=DAILY_OBSERVER_LATEST_PATH,
+            history_path=DAILY_OBSERVER_HISTORY_PATH,
+        ),
+    )
+
+    def report_daily_observer_error(
+        snapshot: PlanningInputSnapshot,
+        exc: Exception,
+    ) -> None:
+        print(
+            json.dumps(
+                {
+                    "event": "picot_v2_daily_observer_runtime_error",
+                    "run_id": snapshot.run_id,
+                    "snapshot_id": snapshot.snapshot_id,
+                    "error": str(exc) or exc.__class__.__name__,
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+
+    independent_daily_observer_worker = IndependentDailyObserverWorker(
+        independent_daily_observer_runtime,
+        on_error=report_daily_observer_error,
+    )
     web_view_store.set_diagnostic_paths(
         (
             PLANNING_INCIDENT_HISTORY_PATH,
@@ -1948,6 +2004,8 @@ def main() -> None:
             STORAGE_MODE_TRANSITION_HISTORY_PATH,
             ACTIVE_PLAN_COMMITMENT_PATH,
             ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
+            DAILY_OBSERVER_LATEST_PATH,
+            DAILY_OBSERVER_HISTORY_PATH,
         ),
         incident_history_path=PLANNING_INCIDENT_HISTORY_PATH,
     )
@@ -2300,6 +2358,9 @@ def main() -> None:
             canonical_execution_enabled=canonical_execution_enabled,
             planning_fallback_notifier=planning_fallback_notifier,
             planning_incident_history=planning_incident_history,
+            independent_daily_observer_worker=(
+                independent_daily_observer_worker
+            ),
         )
 
     previous_signature: str | None = None

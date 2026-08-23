@@ -42,12 +42,13 @@ def _snapshot(
     complete_range: bool = True,
     capability_snapshot_id: str = "snapshot",
     maximum_soc: float = 1.0,
+    current_soc: float = 0.5,
 ) -> PlanningInputSnapshot:
     storage = CurrentStorageState(
         storage_state_id="storage",
         execution_scope_id="battery",
         capability_id="battery-capability",
-        current_soc=0.5,
+        current_soc=current_soc,
         usable_capacity_wh=8160.0,
         measured_at=START,
         confidence=1.0,
@@ -228,6 +229,17 @@ def test_adapter_derives_tariffs_automatically_from_shared_snapshot() -> None:
         snapshot=_snapshot(maximum_soc=0.7),
         conversion_model=_conversion(),
     )
+
+
+def test_adapter_observes_baseline_when_storage_already_meets_target() -> None:
+    result = IndependentDailyReferenceAdapter().observe(
+        snapshot=_snapshot(current_soc=1.0),
+        conversion_model=_conversion(),
+    )
+
+    assert result.strategy_space.charge_requirement_status == "not_required"
+    assert len(result.strategy_space.schedules) == 1
+    assert len(result.observer_result.evaluation.records) == 1
 
     strategy_results = result.observer_result.portfolio.strategy_results
     assert strategy_results

@@ -54,6 +54,8 @@ options:
   household_minimum_pv_overperformance_wh: 500.0
   household_minimum_pv_overperformance_duration_seconds: 3600
   household_minimum_conservative_pv_storage_margin_wh: 500.0
+  daily_reference_charge_efficiency: 1.0
+  daily_reference_discharge_efficiency: 1.0
   grid_power_observation_interval_seconds: 1
   live_poll_interval_seconds: 60
   live_pv_canary_mode: "observer"
@@ -100,6 +102,8 @@ schema:
   household_minimum_pv_overperformance_wh: float(0,)
   household_minimum_pv_overperformance_duration_seconds: int(0,)
   household_minimum_conservative_pv_storage_margin_wh: float(0,)
+  daily_reference_charge_efficiency: float(0,1)
+  daily_reference_discharge_efficiency: float(0,1)
   grid_power_observation_interval_seconds: int(1,60)
   live_poll_interval_seconds: int(5,3600)
   live_pv_canary_mode: list(observer|live)

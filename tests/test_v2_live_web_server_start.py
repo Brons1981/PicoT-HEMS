@@ -108,7 +108,9 @@ def test_main_starts_one_web_server_before_pipeline_loop(
         "picot_v2_storage_mode_transition_history.jsonl",
         "picot_v2_active_plan_commitments.json",
         "picot_v2_active_plan_commitment_incidents.jsonl",
-        ]
+        "picot_v2_daily_observer_latest.json",
+        "picot_v2_daily_observer_history.jsonl",
+    ]
     assert stores[0].incident_history_path() == (
         live_runtime.PLANNING_INCIDENT_HISTORY_PATH
     )

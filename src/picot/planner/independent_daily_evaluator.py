@@ -82,6 +82,6 @@ class IndependentDailyEvaluator:
             reasons.append(DailyReferenceExclusionReason.PHYSICAL_PATH_INCOMPLETE)
         if not candidate.reserve_respected_across_scenarios:
             reasons.append(DailyReferenceExclusionReason.RESERVE_NOT_RESPECTED)
-        if not candidate.target_held_across_scenarios:
-            reasons.append(DailyReferenceExclusionReason.TARGET_NOT_HELD)
+        if not candidate.target_reached_across_scenarios:
+            reasons.append(DailyReferenceExclusionReason.TARGET_NOT_REACHED)
         return tuple(reasons)

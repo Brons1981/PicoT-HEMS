@@ -86,6 +86,20 @@ def test_settlement_values_all_paths_without_ranking() -> None:
     assert all(item.evidence_ids for item in result.paths)
 
 
+def test_pv_storage_opportunity_cost_is_explanatory_not_double_charged() -> None:
+    result = IndependentDailyFinancialSettlement().settle(
+        simulation=_simulate(),
+        tariffs=_tariffs(),
+    )
+
+    for path in result.paths:
+        assert path.net_financial_result_eur == pytest.approx(
+            path.grid_export_result_eur
+            + path.avoided_import_value_eur
+            - path.grid_import_cost_eur
+        )
+
+
 def test_average_prices_are_duration_weighted_and_traceable() -> None:
     result = IndependentDailyFinancialSettlement().settle(
         simulation=_simulate(),

@@ -20,7 +20,7 @@ from picot.domain.daily_reference_tariff import (
     DailyReferenceTariffSchedule,
 )
 
-METHOD_VERSION = "independent-daily-financial-settlement:v1"
+METHOD_VERSION = "independent-daily-financial-settlement:v2"
 
 
 class IndependentDailyFinancialSettlement:
@@ -277,7 +277,6 @@ class IndependentDailyFinancialSettlement:
             grid_export_result_eur
             + avoided_import_value_eur
             - grid_import_cost_eur
-            - opportunity_cost_eur
         )
         return DailyReferenceFinancialInterval(
             starts_at=physical.starts_at,

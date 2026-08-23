@@ -23,7 +23,7 @@ def _candidates():
 def test_evaluator_applies_physical_gates_before_financial_comparison() -> None:
     result = IndependentDailyEvaluator().evaluate(_candidates())
 
-    assert result.direction is DailyReferenceEvaluationDirection.HIGHER_IS_BETTER
+    assert result.direction is DailyReferenceEvaluationDirection.LOWER_IS_BETTER
     assert result.observer_only is True
     assert result.selection_permitted is False
     assert result.commitment_permitted is False
@@ -34,11 +34,12 @@ def test_evaluator_applies_physical_gates_before_financial_comparison() -> None:
         if record.candidate_id in result.best_candidate_ids
     )
     assert all(
-        record.worst_case_financial_result_eur
-        == max(
-            item.worst_case_financial_result_eur
+        record.average_charge_window_price_eur_per_kwh
+        == min(
+            item.average_charge_window_price_eur_per_kwh
             for item in result.records
             if item.admissible
+            and item.average_charge_window_price_eur_per_kwh is not None
         )
         for record in result.records
         if record.best_observation
@@ -105,6 +106,8 @@ def test_evaluator_preserves_exact_ties_without_hidden_tie_break() -> None:
         first.worst_case_financial_result_eur,
         second.worst_case_financial_result_eur,
     )
+    tied_price = second.average_charge_window_price_eur_per_kwh
+    assert tied_price is not None
     first = replace(
         first,
         scenario_outcomes=tuple(
@@ -120,6 +123,7 @@ def test_evaluator_preserves_exact_ties_without_hidden_tie_break() -> None:
         worst_case_financial_result_eur=tied_result,
         target_reached_across_scenarios=True,
         target_held_across_scenarios=True,
+        average_charge_window_price_eur_per_kwh=tied_price,
     )
     second = replace(
         second,
@@ -136,6 +140,7 @@ def test_evaluator_preserves_exact_ties_without_hidden_tie_break() -> None:
         worst_case_financial_result_eur=tied_result,
         target_reached_across_scenarios=True,
         target_held_across_scenarios=True,
+        average_charge_window_price_eur_per_kwh=tied_price,
     )
     candidate_set = replace(
         candidates,

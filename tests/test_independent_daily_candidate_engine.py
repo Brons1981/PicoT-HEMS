@@ -13,6 +13,7 @@ from picot.planner.independent_daily_reference_run import (
     IndependentDailyReferenceRunProducer,
 )
 from test_independent_daily_financial_settlement import _tariffs
+from test_independent_daily_reference_portfolio import _produce as _produce_portfolio
 from test_independent_daily_simulator import _simulate
 
 
@@ -55,6 +56,26 @@ def test_engine_rejects_run_not_closed_for_candidate_input() -> None:
 
     with pytest.raises(ValueError, match="requires a complete daily run"):
         IndependentDailyCandidateEngine().build(incomplete)
+
+
+def test_engine_builds_one_unranked_candidate_per_portfolio_strategy() -> None:
+    portfolio = _produce_portfolio()
+    result = IndependentDailyCandidateEngine().build_portfolio(portfolio)
+
+    assert result.source_portfolio_id == portfolio.portfolio_id
+    assert result.ranking_permitted is False
+    assert len(result.candidates) == len(portfolio.strategy_results)
+    assert {item.family for item in result.candidates} == {
+        DailyReferenceCandidateFamily.HOUSEHOLD_SUPPORT_ONLY,
+        DailyReferenceCandidateFamily.NOM,
+        DailyReferenceCandidateFamily.STANDBY,
+        DailyReferenceCandidateFamily.GRID_REQUIREMENT,
+        DailyReferenceCandidateFamily.STORAGE_EXPORT,
+    }
+    assert all(item.selection_eligible is False for item in result.candidates)
+    assert len({item.intent_schedule_id for item in result.candidates}) == len(
+        result.candidates
+    )
 
 
 def test_engine_does_not_import_current_candidate_or_evaluation_modules() -> None:

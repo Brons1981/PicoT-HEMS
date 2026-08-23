@@ -740,18 +740,13 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .price-bar.high { fill: #df6b57; }
     .price-chart .price-bar.past { opacity: 0.30; }
     .price-chart .planner-window {
-      fill-opacity: 0.10;
-      stroke-width: 2;
       pointer-events: none;
     }
     .price-chart .planner-window.canonical-plan {
       fill: #38bdf8;
-      stroke: #38bdf8;
     }
     .price-chart .planner-window.daily-plan {
       fill: #a855f7;
-      stroke: #a855f7;
-      stroke-dasharray: 6 3;
     }
     .price-chart .now-line {
       stroke: #eef4fb;
@@ -1368,7 +1363,7 @@ DASHBOARD_HTML = """<!doctype html>
         svg.appendChild(bar);
       }
 
-      for (const window of plannerWindows) {
+      for (const [index, window] of plannerWindows.entries()) {
         const windowStart = Math.max(
           startsAtMs,
           new Date(window.starts_at).getTime()
@@ -1382,10 +1377,10 @@ DASHBOARD_HTML = """<!doctype html>
         svg.appendChild(createSvgElement("rect", {
           class: `planner-window ${window.kind}`,
           x: xPosition(windowStart),
-          y: margin.top,
+          y: height - margin.bottom - 16 + index * 8,
           width: Math.max(2, xPosition(windowEnd) - xPosition(windowStart)),
-          height: plotHeight,
-          rx: 0
+          height: 6,
+          rx: 2
         }));
       }
 

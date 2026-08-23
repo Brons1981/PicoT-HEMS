@@ -34,12 +34,12 @@ from picot.domain.pv_energy_timeline import (
     PVEnergyTimelineInterval as DomainPVInterval,
 )
 from picot.domain.storage_conversion_model import StorageConversionModel
+from picot.planner.independent_daily_charge_window_discoverer import (
+    IndependentDailyChargeWindowDiscoverer,
+)
 from picot.planner.independent_daily_simulator import (
     IndependentDailySimulator,
     ScenarioTimeline,
-)
-from picot.planner.independent_daily_charge_window_discoverer import (
-    IndependentDailyChargeWindowDiscoverer,
 )
 from picot.planner.independent_daily_strategy_generator import (
     IndependentDailyStrategyGenerator,

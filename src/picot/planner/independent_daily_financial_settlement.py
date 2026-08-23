@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 
 from picot.domain.daily_reference_financial import (
@@ -33,14 +34,15 @@ class IndependentDailyFinancialSettlement:
     ) -> DailyReferenceFinancialSet:
         if tariffs.snapshot_id != simulation.snapshot_id:
             raise ValueError("Daily tariff and simulation snapshots must match.")
-        tariff_by_interval = {
-            (item.starts_at, item.ends_at): item for item in tariffs.intervals
-        }
+        tariffs_by_physical_interval = self._index_tariffs(
+            simulation.trajectories[0].intervals,
+            tariffs,
+        )
         paths = tuple(
             self._settle_path(
                 trajectory=trajectory,
                 tariffs=tariffs,
-                tariff_by_interval=tariff_by_interval,
+                tariffs_by_physical_interval=tariffs_by_physical_interval,
             )
             for trajectory in simulation.trajectories
         )
@@ -59,8 +61,8 @@ class IndependentDailyFinancialSettlement:
         *,
         trajectory: DailyReferenceTrajectory,
         tariffs: DailyReferenceTariffSchedule,
-        tariff_by_interval: dict[
-            tuple[datetime, datetime], DailyReferenceTariffInterval
+        tariffs_by_physical_interval: dict[
+            tuple[datetime, datetime], tuple[DailyReferenceTariffInterval, ...]
         ],
     ) -> DailyReferenceFinancialPath:
         if (
@@ -70,10 +72,24 @@ class IndependentDailyFinancialSettlement:
             raise ValueError("Daily tariff must cover the exact trajectory horizon.")
         settled: list[DailyReferenceFinancialInterval] = []
         for physical in trajectory.intervals:
-            tariff = tariff_by_interval.get((physical.starts_at, physical.ends_at))
-            if tariff is None:
-                raise ValueError("Daily settlement requires an exact interval tariff.")
-            settled.append(self._settle_interval(physical, tariff))
+            physical_tariffs = tariffs_by_physical_interval.get(
+                (physical.starts_at, physical.ends_at)
+            )
+            if not physical_tariffs:
+                raise ValueError(
+                    "Daily settlement requires complete interval tariff coverage."
+                )
+            settled.extend(
+                self._settle_interval(
+                    self._physical_segment(
+                        physical,
+                        starts_at=max(physical.starts_at, tariff.starts_at),
+                        ends_at=min(physical.ends_at, tariff.ends_at),
+                    ),
+                    tariff,
+                )
+                for tariff in physical_tariffs
+            )
         intervals = tuple(settled)
         duration_hours = tuple(
             (item.ends_at - item.starts_at).total_seconds() / 3600.0
@@ -129,6 +145,95 @@ class IndependentDailyFinancialSettlement:
             intervals=intervals,
             evidence_ids=evidence_ids,
             method_version=METHOD_VERSION,
+        )
+
+    @staticmethod
+    def _index_tariffs(
+        physical_intervals: tuple[DailyReferenceInterval, ...],
+        tariffs: DailyReferenceTariffSchedule,
+    ) -> dict[tuple[datetime, datetime], tuple[DailyReferenceTariffInterval, ...]]:
+        result: dict[
+            tuple[datetime, datetime], tuple[DailyReferenceTariffInterval, ...]
+        ] = {}
+        tariff_index = 0
+        for physical in physical_intervals:
+            while (
+                tariff_index < len(tariffs.intervals)
+                and tariffs.intervals[tariff_index].ends_at <= physical.starts_at
+            ):
+                tariff_index += 1
+            overlapping: list[DailyReferenceTariffInterval] = []
+            cursor = physical.starts_at
+            scan_index = tariff_index
+            while (
+                scan_index < len(tariffs.intervals)
+                and tariffs.intervals[scan_index].starts_at < physical.ends_at
+            ):
+                tariff = tariffs.intervals[scan_index]
+                segment_start = max(physical.starts_at, tariff.starts_at)
+                segment_end = min(physical.ends_at, tariff.ends_at)
+                if segment_start != cursor or segment_end <= segment_start:
+                    raise ValueError(
+                        "Daily settlement requires complete interval tariff coverage."
+                    )
+                overlapping.append(tariff)
+                cursor = segment_end
+                if tariff.ends_at <= physical.ends_at:
+                    scan_index += 1
+                else:
+                    break
+            if cursor != physical.ends_at:
+                raise ValueError(
+                    "Daily settlement requires complete interval tariff coverage."
+                )
+            result[(physical.starts_at, physical.ends_at)] = tuple(overlapping)
+        return result
+
+    @staticmethod
+    def _physical_segment(
+        physical: DailyReferenceInterval,
+        *,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> DailyReferenceInterval:
+        total_seconds = (physical.ends_at - physical.starts_at).total_seconds()
+        offset_fraction = (
+            (starts_at - physical.starts_at).total_seconds() / total_seconds
+        )
+        fraction = (ends_at - starts_at).total_seconds() / total_seconds
+        storage_delta_wh = (
+            physical.storage_energy_at_end_wh
+            - physical.storage_energy_at_start_wh
+        )
+        energy_fields = (
+            "household_demand_wh",
+            "usable_pv_wh",
+            "pv_to_household_wh",
+            "pv_to_storage_input_wh",
+            "pv_to_grid_wh",
+            "grid_to_household_wh",
+            "grid_to_storage_input_wh",
+            "storage_to_household_output_wh",
+            "storage_charge_loss_wh",
+            "storage_discharge_loss_wh",
+            "storage_to_grid_output_wh",
+        )
+        return replace(
+            physical,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            storage_energy_at_start_wh=(
+                physical.storage_energy_at_start_wh
+                + storage_delta_wh * offset_fraction
+            ),
+            storage_energy_at_end_wh=(
+                physical.storage_energy_at_start_wh
+                + storage_delta_wh * (offset_fraction + fraction)
+            ),
+            **{
+                field: getattr(physical, field) * fraction
+                for field in energy_fields
+            },
         )
 
     @staticmethod

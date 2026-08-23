@@ -3075,6 +3075,8 @@ DASHBOARD_HTML = """<!doctype html>
           "Fysieke batterijlimieten ontbreken in de Planning Input",
         daily_tariff_price_coverage_incomplete:
           "Wacht op volledige Nordpool-prijzen voor de komende 24 uur",
+        "Daily settlement requires complete interval tariff coverage.":
+          "Tariefdekking is niet volledig voor ieder simulatie-interval",
       };
       const observerRows = [
         ["Status", observer.status],

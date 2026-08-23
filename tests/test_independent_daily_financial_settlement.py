@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 
 import pytest
+from test_independent_daily_simulator import _simulate
 
 from picot.domain.daily_reference_tariff import (
     DailyReferenceTariffInterval,
@@ -11,7 +13,6 @@ from picot.domain.daily_reference_tariff import (
 from picot.planner.independent_daily_financial_settlement import (
     IndependentDailyFinancialSettlement,
 )
-from test_independent_daily_simulator import _simulate
 
 
 def _tariffs(snapshot_id: str = "snapshot-incident") -> DailyReferenceTariffSchedule:
@@ -68,10 +69,80 @@ def test_settlement_fails_closed_for_an_interval_without_tariff() -> None:
     incomplete = replace(tariffs)
     object.__setattr__(incomplete, "intervals", tariffs.intervals[:-1])
 
-    with pytest.raises(ValueError, match="exact interval tariff"):
+    with pytest.raises(ValueError, match="complete interval tariff coverage"):
         IndependentDailyFinancialSettlement().settle(
             simulation=_simulate(),
             tariffs=incomplete,
+        )
+
+
+def test_settlement_splits_physical_energy_at_tariff_boundaries() -> None:
+    simulation = _simulate()
+    physical_intervals = simulation.trajectories[0].intervals
+    split_tariffs = DailyReferenceTariffSchedule(
+        schedule_id="split-tariffs",
+        snapshot_id=simulation.snapshot_id,
+        horizon_start=physical_intervals[0].starts_at,
+        horizon_end=physical_intervals[-1].ends_at,
+        intervals=tuple(
+            tariff
+            for index, physical in enumerate(physical_intervals)
+            for tariff in (
+                DailyReferenceTariffInterval(
+                    starts_at=physical.starts_at,
+                    ends_at=physical.starts_at + timedelta(minutes=15),
+                    import_eur_per_kwh=0.20,
+                    export_eur_per_kwh=0.10,
+                    confidence=0.95,
+                    evidence_ids=(f"split-tariff-{index}-a",),
+                ),
+                DailyReferenceTariffInterval(
+                    starts_at=physical.starts_at + timedelta(minutes=15),
+                    ends_at=physical.ends_at,
+                    import_eur_per_kwh=0.40,
+                    export_eur_per_kwh=0.20,
+                    confidence=0.95,
+                    evidence_ids=(f"split-tariff-{index}-b",),
+                ),
+            )
+        ),
+        method_version="split-test:v1",
+    )
+    weighted_tariffs = replace(
+        _tariffs(),
+        intervals=tuple(
+            replace(
+                tariff,
+                import_eur_per_kwh=0.30,
+                export_eur_per_kwh=0.15,
+            )
+            for tariff in _tariffs().intervals
+        ),
+    )
+
+    split = IndependentDailyFinancialSettlement().settle(
+        simulation=simulation,
+        tariffs=split_tariffs,
+    )
+    weighted = IndependentDailyFinancialSettlement().settle(
+        simulation=simulation,
+        tariffs=weighted_tariffs,
+    )
+
+    assert all(len(path.intervals) == 18 for path in split.paths)
+    for split_path, weighted_path in zip(
+        split.paths,
+        weighted.paths,
+        strict=True,
+    ):
+        assert split_path.grid_import_cost_eur == pytest.approx(
+            weighted_path.grid_import_cost_eur
+        )
+        assert split_path.grid_export_result_eur == pytest.approx(
+            weighted_path.grid_export_result_eur
+        )
+        assert split_path.net_financial_result_eur == pytest.approx(
+            weighted_path.net_financial_result_eur
         )
 
 

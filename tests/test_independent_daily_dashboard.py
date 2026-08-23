@@ -91,3 +91,4 @@ def test_dashboard_visually_separates_daily_observer_from_canonical_plan() -> No
     assert "vorige snapshot" in DASHBOARD_HTML
     assert "Fysieke batterijlimieten ontbreken" in DASHBOARD_HTML
     assert "Wacht op volledige Nordpool-prijzen" in DASHBOARD_HTML
+    assert "Tariefdekking is niet volledig" in DASHBOARD_HTML

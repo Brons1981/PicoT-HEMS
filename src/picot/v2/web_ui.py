@@ -689,6 +689,8 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.low { background: #35a862; }
     .price-swatch.high { background: #df6b57; }
     .price-swatch.missing { background: #2b3541; }
+    .price-swatch.canonical-plan { background: #38bdf8; }
+    .price-swatch.daily-plan { background: #a855f7; }
     .price-chart-scroll { overflow-x: auto; }
     .price-chart {
       display: block;
@@ -716,6 +718,8 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .price-bar.low { fill: #35a862; }
     .price-chart .price-bar.high { fill: #df6b57; }
     .price-chart .price-bar.past { opacity: 0.30; }
+    .price-chart .planner-window.canonical-plan { fill: #38bdf8; }
+    .price-chart .planner-window.daily-plan { fill: #a855f7; }
     .price-chart .now-line {
       stroke: #eef4fb;
       stroke-width: 1.5;
@@ -1092,7 +1096,7 @@ DASHBOARD_HTML = """<!doctype html>
       return "Geen prijsvenster";
     }
 
-    function renderPriceTimeline(timeline, capturedAt) {
+    function renderPriceTimeline(timeline, capturedAt, plannerWindows = []) {
       const container = element("price-timeline");
       container.replaceChildren();
 
@@ -1134,7 +1138,9 @@ DASHBOARD_HTML = """<!doctype html>
         ["normal", "Overige prijzen"],
         ["low", "Laagste-prijsvenster"],
         ["high", "Hoogste-teruglevervenster"],
-        ["missing", "Nog niet gepubliceerd"]
+        ["missing", "Nog niet gepubliceerd"],
+        ["canonical-plan", "Gekozen door huidige planner"],
+        ["daily-plan", "Gekozen door etmaalsimulatie"]
       ]) {
         const item = document.createElement("span");
         item.className = "price-legend-item";
@@ -1287,18 +1293,49 @@ DASHBOARD_HTML = """<!doctype html>
           tabindex: 0
         });
         const showDetail = () => {
+          const selectedBy = plannerWindows
+            .filter((window) => {
+              const windowStart = new Date(window.starts_at).getTime();
+              const windowEnd = new Date(window.ends_at).getTime();
+              return pointStart < windowEnd && pointEnd > windowStart;
+            })
+            .map((window) => window.label);
           detail.textContent = [
             `${formatTimestamp(point.starts_at)} – ` +
               formatTimestamp(point.ends_at),
             formatPrice(value),
             priceWindowLabel(kind),
-            `Confidence ${formatConfidence(point.confidence)}`
+            `Confidence ${formatConfidence(point.confidence)}`,
+            ...(selectedBy.length
+              ? [`Gekozen door ${selectedBy.join(" en ")}`]
+              : [])
           ].join(" · ");
         };
         bar.addEventListener("mouseenter", showDetail);
         bar.addEventListener("focus", showDetail);
         bar.addEventListener("click", showDetail);
         svg.appendChild(bar);
+      }
+
+      for (const [index, window] of plannerWindows.entries()) {
+        const windowStart = Math.max(
+          startsAtMs,
+          new Date(window.starts_at).getTime()
+        );
+        const windowEnd = Math.min(
+          endsAtMs,
+          new Date(window.ends_at).getTime()
+        );
+        if (!Number.isFinite(windowStart) || !Number.isFinite(windowEnd) ||
+            windowEnd <= windowStart) continue;
+        svg.appendChild(createSvgElement("rect", {
+          class: `planner-window ${window.kind}`,
+          x: xPosition(windowStart),
+          y: margin.top + 3 + index * 8,
+          width: Math.max(2, xPosition(windowEnd) - xPosition(windowStart)),
+          height: 5,
+          rx: 2
+        }));
       }
 
       if (
@@ -3077,6 +3114,35 @@ DASHBOARD_HTML = """<!doctype html>
       ].join(" ")).join(" | ");
     }
 
+    function selectedPlannerWindows(view) {
+      const windows = [];
+      const canonical = view.planning_status?.chosen_plan ?? {};
+      if (canonical.charge_window_starts_at && canonical.charge_window_ends_at) {
+        windows.push({
+          starts_at: canonical.charge_window_starts_at,
+          ends_at: canonical.charge_window_ends_at,
+          kind: "canonical-plan",
+          label: "huidige planner",
+        });
+      }
+      const observer = view.daily_observer_comparison ?? {};
+      const representative = Array.isArray(observer.candidates)
+        ? observer.candidates.find((candidate) => candidate.best_observation)
+        : null;
+      for (const interval of mergeDailyIntentWindows(
+        representative?.intent_intervals
+      )) {
+        if (!["nom", "grid_requirement"].includes(interval.intent)) continue;
+        windows.push({
+          starts_at: interval.starts_at,
+          ends_at: interval.ends_at,
+          kind: "daily-plan",
+          label: "etmaalsimulatie",
+        });
+      }
+      return windows;
+    }
+
     function renderDailyObserverComparison(view) {
       const container = element("daily-observer-comparison");
       container.replaceChildren();
@@ -3178,6 +3244,17 @@ DASHBOARD_HTML = """<!doctype html>
           ? `€ ${formatDutchNumber(Number(
               representative.worst_case_financial_result_eur
             ))}`
+          : null],
+        ["Gemiddelde prijs voorgesteld laadvenster", representative &&
+          Number.isFinite(Number(
+            representative.average_charge_window_price_eur_per_kwh
+          ))
+          ? formatPrice(Number(
+              representative.average_charge_window_price_eur_per_kwh
+            ))
+          : null],
+        ["Confidence voorgesteld laadvenster", representative
+          ? formatConfidence(representative.charge_window_confidence)
           : null],
         ["Laagste confidence over 24 uur", representative
           ? formatConfidence(representative.minimum_confidence)
@@ -3542,7 +3619,8 @@ DASHBOARD_HTML = """<!doctype html>
           points: [],
           opportunities: []
         },
-        view.captured_at
+        view.captured_at,
+        selectedPlannerWindows(view)
       );
       renderPipeline(pipeline);
       renderPipelineHealth(view.pipeline_health);

@@ -257,21 +257,22 @@ def test_adapter_rebins_off_quarter_household_input_to_market_quarters() -> None
     )
 
 
-def test_observer_waits_when_next_day_prices_do_not_cover_24_hours() -> None:
+def test_observer_uses_contiguous_published_prices_without_waiting_for_24_hours() -> None:
     snapshot = _snapshot(maximum_soc=0.7)
     short_price = replace(
         snapshot.price_points[0],
         ends_at=START + timedelta(hours=20),
     )
 
-    with pytest.raises(
-        ValueError,
-        match="daily_tariff_price_coverage_incomplete",
-    ):
-        IndependentDailyReferenceAdapter().observe(
-            snapshot=replace(snapshot, price_points=(short_price,)),
-            conversion_model=_conversion(),
-        )
+    result = IndependentDailyReferenceAdapter().observe(
+        snapshot=replace(snapshot, price_points=(short_price,)),
+        conversion_model=_conversion(),
+    )
+
+    assert all(
+        schedule.horizon_end == START + timedelta(hours=20)
+        for schedule in result.strategy_space.schedules
+    )
 
 
 def test_adapter_blocks_when_any_pv_uncertainty_range_is_missing() -> None:

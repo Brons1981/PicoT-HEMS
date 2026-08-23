@@ -1283,3 +1283,25 @@ Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.150, confirm the two bars align with their
 displayed quarter-hour windows, and then begin the accepted 48-hour comparison
 with one deliberate manual-discharge stress event.
+
+
+## 2026-08-24 — 2.0.0-dev.151
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Releases the persistent observer-only comparison between the canonical
+  planner and the independent daily simulation.
+- Freezes both decisions per shared Planning Input and replays them after the
+  horizon against the same measured PV, household, grid and battery evidence.
+- Uses the same physical limits, configured conversion efficiencies and
+  versioned import/export tariff contract for both replays.
+- Persists open and closed comparison dossiers across restarts and exposes the
+  latest 48 hours on the dashboard and in the diagnostic export.
+- Adds an explicit manual-discharge stress marker and proves that the next
+  comparison starts from the newest measured battery state.
+- Remains fully observer-only and cannot influence candidates, Evaluation,
+  commitments, execution or Zendure control.
+
+Exact next action: install dev.151, begin the accepted 48-hour side-by-side
+observation, and perform one deliberate manual discharge above the configured
+minimum reserve using the dashboard stress marker.

@@ -43,6 +43,7 @@ class DailyReferenceInterval:
     storage_energy_at_end_wh: float
     confidence: float
     evidence_ids: tuple[str, ...]
+    storage_to_grid_output_wh: float = 0.0
 
     def __post_init__(self) -> None:
         _aware(self.starts_at, "Daily interval start")
@@ -58,6 +59,7 @@ class DailyReferenceInterval:
             (self.grid_to_household_wh, "Grid to household"),
             (self.grid_to_storage_input_wh, "Grid to storage"),
             (self.storage_to_household_output_wh, "Storage to household"),
+            (self.storage_to_grid_output_wh, "Storage to grid"),
             (self.storage_charge_loss_wh, "Storage charge loss"),
             (self.storage_discharge_loss_wh, "Storage discharge loss"),
             (self.storage_energy_at_start_wh, "Storage energy at start"),
@@ -65,8 +67,6 @@ class DailyReferenceInterval:
         ):
             if value < 0.0:
                 raise ValueError(f"{label} must not be negative.")
-        if self.grid_to_storage_input_wh > ENERGY_TOLERANCE_WH:
-            raise ValueError("The NOM baseline may not charge storage from grid.")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("Daily interval confidence must be between 0.0 and 1.0.")
         if not self.evidence_ids or any(not item.strip() for item in self.evidence_ids):
@@ -91,7 +91,9 @@ class DailyReferenceInterval:
             - self.storage_charge_loss_wh
         )
         storage_energy_removed_wh = (
-            self.storage_to_household_output_wh + self.storage_discharge_loss_wh
+            self.storage_to_household_output_wh
+            + self.storage_to_grid_output_wh
+            + self.storage_discharge_loss_wh
         )
         self._require_close(
             self.storage_energy_at_end_wh,
@@ -123,6 +125,7 @@ class DailyReferenceTrajectory:
     target_reached_at: datetime | None
     intervals: tuple[DailyReferenceInterval, ...]
     method_version: str
+    intent_schedule_id: str = "nom-full-horizon"
 
     def __post_init__(self) -> None:
         if not self.trajectory_id.strip() or not self.snapshot_id.strip():
@@ -155,6 +158,8 @@ class DailyReferenceTrajectory:
                 raise ValueError("Daily target time must remain within the horizon.")
         if not self.method_version.strip():
             raise ValueError("Daily trajectory method version must be explicit.")
+        if not self.intent_schedule_id.strip():
+            raise ValueError("Daily trajectory intent schedule must be explicit.")
 
 
 @dataclass(frozen=True, slots=True)

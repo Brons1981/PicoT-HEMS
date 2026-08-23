@@ -24,6 +24,30 @@ class DailyReferenceTariffInputError(ValueError):
 class IndependentDailyTariffAdapter:
     """Apply the explicit Dutch 2026/2027 tariff policy observer-only."""
 
+    def published_horizon_end(
+        self,
+        snapshot: PlanningInputSnapshot,
+        *,
+        maximum_horizon_end: datetime,
+    ) -> datetime:
+        """Return the contiguous published tariff boundary, capped by policy."""
+        if not snapshot.price_points:
+            raise DailyReferenceTariffInputError("daily_tariff_prices_missing")
+        cursor = snapshot.captured_at
+        for point in sorted(snapshot.price_points, key=lambda item: item.starts_at):
+            if point.ends_at <= cursor:
+                continue
+            if point.starts_at > cursor:
+                break
+            cursor = min(max(cursor, point.ends_at), maximum_horizon_end)
+            if cursor == maximum_horizon_end:
+                return cursor
+        if cursor == snapshot.captured_at:
+            raise DailyReferenceTariffInputError(
+                "daily_tariff_price_coverage_incomplete"
+            )
+        return cursor
+
     def build(
         self,
         snapshot: PlanningInputSnapshot,

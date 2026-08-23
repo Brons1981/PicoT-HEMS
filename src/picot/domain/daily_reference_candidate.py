@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+from picot.domain.daily_reference_intent import DailyStorageIntent
 from picot.domain.daily_reference_simulation import PVScenario
 
 
@@ -13,6 +14,12 @@ class DailyReferenceCandidateFamily(StrEnum):
     """Physical intent families proven by the independent simulator."""
 
     NOM_FULL_HORIZON = "nom_full_horizon"
+    HOUSEHOLD_SUPPORT_ONLY = "household_support_only"
+    NOM = "nom"
+    STANDBY = "standby"
+    GRID_REQUIREMENT = "grid_requirement"
+    STORAGE_EXPORT = "storage_export"
+    MIXED_SCHEDULE = "mixed_schedule"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,12 +66,18 @@ class DailyReferenceCandidate:
     observer_only: bool
     selection_eligible: bool
     method_version: str
+    intent_schedule_id: str = "nom-full-horizon"
+    intents_used: tuple[DailyStorageIntent, ...] = (DailyStorageIntent.NOM,)
 
     def __post_init__(self) -> None:
         if not self.candidate_id.strip() or not self.source_run_id.strip():
             raise ValueError("Reference candidate identity must be explicit.")
         if not self.snapshot_id.strip() or not self.method_version.strip():
             raise ValueError("Reference candidate lineage must be explicit.")
+        if not self.intent_schedule_id.strip() or not self.intents_used:
+            raise ValueError("Reference candidate intent schedule must be explicit.")
+        if len(self.intents_used) != len(set(self.intents_used)):
+            raise ValueError("Reference candidate intents must be unique.")
         scenarios = tuple(item.scenario for item in self.scenario_outcomes)
         if set(scenarios) != set(PVScenario) or len(scenarios) != len(PVScenario):
             raise ValueError("Reference candidate requires lower, central and upper.")
@@ -121,3 +134,31 @@ class DailyReferenceCandidateSet:
             raise ValueError("Reference candidates must share one snapshot.")
         if not self.observer_only or self.ranking_permitted:
             raise ValueError("Reference candidate set must remain observer-only and unranked.")
+
+
+@dataclass(frozen=True, slots=True)
+class DailyReferencePortfolioCandidateSet:
+    """One unranked candidate per complete portfolio strategy result."""
+
+    candidate_set_id: str
+    source_portfolio_id: str
+    snapshot_id: str
+    candidates: tuple[DailyReferenceCandidate, ...]
+    observer_only: bool
+    ranking_permitted: bool
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if not self.candidate_set_id.strip() or not self.source_portfolio_id.strip():
+            raise ValueError("Portfolio candidate set identity must be explicit.")
+        if not self.snapshot_id.strip() or not self.method_version.strip():
+            raise ValueError("Portfolio candidate set lineage must be explicit.")
+        if not self.candidates:
+            raise ValueError("Portfolio candidate set requires proven candidates.")
+        schedule_ids = tuple(item.intent_schedule_id for item in self.candidates)
+        if len(schedule_ids) != len(set(schedule_ids)):
+            raise ValueError("Portfolio candidates must have unique intent schedules.")
+        if any(item.snapshot_id != self.snapshot_id for item in self.candidates):
+            raise ValueError("Portfolio candidates must share one snapshot.")
+        if not self.observer_only or self.ranking_permitted:
+            raise ValueError("Portfolio candidates must remain observer-only and unranked.")

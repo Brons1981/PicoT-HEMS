@@ -47,7 +47,7 @@ class IndependentDailyChargeWindowDiscoverer:
         intents: tuple[DailyStorageIntent, ...] = CHARGE_INTENTS,
     ) -> DailyReferenceChargeWindowSet:
         if storage_state.current_stored_energy_wh >= target_storage_energy_wh:
-            return self._window_set(snapshot_id, ())
+            return self._window_set(snapshot_id, (), status="not_required")
         windows: list[DailyReferenceChargeWindow] = []
         for intent in tuple(dict.fromkeys(intents)):
             if intent not in CHARGE_INTENTS:
@@ -171,7 +171,11 @@ class IndependentDailyChargeWindowDiscoverer:
                         method_version=METHOD_VERSION,
                     )
                 )
-        return self._window_set(snapshot_id, tuple(windows))
+        return self._window_set(
+            snapshot_id,
+            tuple(windows),
+            status="discovered" if windows else "no_feasible_window",
+        )
 
     @staticmethod
     def _schedule(
@@ -237,6 +241,8 @@ class IndependentDailyChargeWindowDiscoverer:
     def _window_set(
         snapshot_id: str,
         windows: tuple[DailyReferenceChargeWindow, ...],
+        *,
+        status: str,
     ) -> DailyReferenceChargeWindowSet:
         return DailyReferenceChargeWindowSet(
             window_set_id=f"daily-charge-windows:{snapshot_id}",
@@ -245,4 +251,5 @@ class IndependentDailyChargeWindowDiscoverer:
             observer_only=True,
             ranking_permitted=False,
             method_version=METHOD_VERSION,
+            discovery_status=status,
         )

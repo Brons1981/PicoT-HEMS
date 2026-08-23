@@ -1342,3 +1342,123 @@ Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.153, confirm the observer completes before
 15:00 with a horizon ending at the published tariff boundary, and begin the
 accepted 48-hour side-by-side observation.
+
+
+## 2026-08-24 — consolidated recovery log and start of 48-hour observation
+
+Status: `LIVE_VERIFIED`; 48-hour observer-only comparison started after the
+live dev.153 confirmation in this session.
+
+### PURPOSE AND RECOVERY DECISION
+
+The independent daily simulation is now running beside the canonical pipeline
+to determine, from real operation, whether it produces demonstrably better
+plans. It is not a patch inside Candidate Engine, Evaluation, Commitment or
+Execution and it has no control authority. This preserves an honest comparison
+and prevents another cycle in which observer code changes the pipeline it is
+supposed to assess.
+
+The recovery conclusion remains:
+
+- retain the current canonical pipeline unchanged as the live authority;
+- retain reusable physical, tariff, financial and dashboard contracts outside
+  the canonical decision path;
+- do not restore the earlier broad coupling that was rolled back after roughly
+  7,500 lines had affected the pipeline;
+- assess replacement only from persisted, same-input, same-reality evidence;
+- require a separate explicit decision after the observation period before any
+  daily-simulation result may influence selection, commitment or execution.
+
+### IMPLEMENTED TODAY
+
+- Completed the independent physical daily path over current storage state,
+  household demand, lower/central/upper PV, physical storage limits,
+  conversion efficiencies, reserve and target state.
+- Included explicit import/export financial settlement from the start so the
+  simulator does not need to be reopened later for grid acquisition.
+- Applied the agreed strategy contract to the observer:
+  - PV charging is preferred;
+  - grid supplementation is permitted only for a proven residual shortage;
+  - PV-recoverable plans exclude unnecessary grid charging;
+  - no dynamic trading preference or fixed EUR 0.02 selection contract is
+    used;
+  - charge windows are financially compared using their relevant
+    duration-weighted average tariff.
+- Retained the versioned 2026/2027 Dutch tariff treatment, including the
+  changed export tax treatment from 2027.
+- Restored the recoverable Home Assistant 502 behaviour without changing
+  planner decisions.
+- Added the purple observer result beside the blue canonical result and marked
+  both selected windows in the price chart.
+- Added plain-language observer advice, proposed window, average window price,
+  window confidence and worst-case financial result.
+- Added persistent comparison dossiers for the latest 48 hours. Both decisions
+  are frozen from the same Planning Input and later replayed against the same
+  measured PV, household, grid and battery evidence.
+- Added an explicit manual-discharge stress marker. The next comparison starts
+  from the latest measured battery state; the marker has no control authority.
+- Preserved comparison evidence across restarts and added it to diagnostics.
+
+### RELEASE CORRECTIONS AND LESSONS
+
+- dev.151 introduced the persistent comparison ledger but its dashboard did
+  not load because a newline was emitted inside an embedded JavaScript string.
+- dev.152 corrected the escape and added a Node.js syntax test for the complete
+  embedded dashboard script. The PicoT runtime itself had remained healthy.
+- dev.153 corrected a deeper tariff-horizon contract error. Requiring exactly
+  24 future hours of Nordpool prices would block the observer every day between
+  midnight and publication of next-day prices around 15:00.
+- The final rule is now: use the contiguous published tariff horizon from the
+  snapshot, capped at 24 hours, and use that exact same boundary for household,
+  PV, physical simulation and financial settlement. The horizon expands
+  automatically when new prices arrive.
+- The dashboard shows the exact horizon start, horizon end and available price
+  coverage. Missing prices only block when no contiguous coverage exists from
+  the current snapshot.
+
+### VERIFIED END STATE
+
+- PR #511 merged as merge commit
+  `cbf396188c1dd0a3b54e7c67ca472effa38236ed`.
+- Installed version: `2.0.0-dev.153`.
+- Alex confirmed live that the dashboard and daily observer work again.
+- Local release verification before merge: 1,019 tests passed.
+- PicoT Core CI, PicoT v2 Rebuild and Tests workflows passed.
+- Ruff and mypy passed on every changed file.
+- The daily observer remains observer-only and cannot change the canonical
+  winner, commitments, live execution or Zendure mode.
+
+### 48-HOUR OBSERVATION PROTOCOL
+
+For the full observation period:
+
+1. Do not tune either planner merely because one intermediate decision looks
+   surprising; first preserve the complete evidence.
+2. Compare canonical and daily decisions only when they share the exact same
+   Planning Input snapshot.
+3. Verify selected window, required energy, PV contribution, any proven grid
+   shortage, average window price, confidence, reserve and target outcome.
+4. Let closed dossiers replay both decisions against the same measured energy
+   flows and tariff contract; incomplete measurement coverage produces no
+   winner.
+5. Perform one deliberate manual battery discharge above the configured 10%
+   minimum reserve. Create the dashboard stress marker immediately before the
+   discharge and record a concise note.
+6. Check whether both planners replan from the newly measured battery state,
+   whether PV remains preferred and whether grid supplementation appears only
+   after a proven shortage.
+7. Export diagnostics after the period before making a replacement decision.
+
+### ACCEPTANCE DECISION AFTER 48 HOURS
+
+The daily simulation may be considered as a replacement strategy only if the
+stored evidence shows that it is physically correct, consistently at least as
+good financially, more explainable, responsive to the manual-discharge stress
+event and free of unnecessary grid charging. A favourable dashboard suggestion
+alone is not sufficient. Until that assessment is explicitly accepted, the
+canonical pipeline remains the sole live authority.
+
+Exact next action: allow dev.153 to run unchanged for 48 hours, perform the one
+marked manual-discharge stress test, then export diagnostics and evaluate every
+closed comparison dossier before deciding whether the daily strategy should
+replace the canonical strategy.

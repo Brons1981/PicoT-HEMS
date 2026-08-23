@@ -68,6 +68,8 @@ class DailyReferenceCandidate:
     method_version: str
     intent_schedule_id: str = "nom-full-horizon"
     intents_used: tuple[DailyStorageIntent, ...] = (DailyStorageIntent.NOM,)
+    average_charge_window_price_eur_per_kwh: float | None = None
+    charge_window_confidence: float | None = None
 
     def __post_init__(self) -> None:
         if not self.candidate_id.strip() or not self.source_run_id.strip():
@@ -78,6 +80,10 @@ class DailyReferenceCandidate:
             raise ValueError("Reference candidate intent schedule must be explicit.")
         if len(self.intents_used) != len(set(self.intents_used)):
             raise ValueError("Reference candidate intents must be unique.")
+        if self.charge_window_confidence is not None and not (
+            0.0 <= self.charge_window_confidence <= 1.0
+        ):
+            raise ValueError("Reference charge-window confidence must be bounded.")
         scenarios = tuple(item.scenario for item in self.scenario_outcomes)
         if set(scenarios) != set(PVScenario) or len(scenarios) != len(PVScenario):
             raise ValueError("Reference candidate requires lower, central and upper.")

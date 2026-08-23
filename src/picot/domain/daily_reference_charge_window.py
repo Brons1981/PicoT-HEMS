@@ -78,12 +78,21 @@ class DailyReferenceChargeWindowSet:
     observer_only: bool
     ranking_permitted: bool
     method_version: str
+    discovery_status: str = "discovered"
 
     def __post_init__(self) -> None:
         if not self.window_set_id.strip() or not self.snapshot_id.strip():
             raise ValueError("Daily charge window set identity must be explicit.")
         if not self.method_version.strip():
             raise ValueError("Daily charge window set lineage must be explicit.")
+        if self.discovery_status not in {
+            "discovered",
+            "not_required",
+            "no_feasible_window",
+        }:
+            raise ValueError("Daily charge window discovery status is invalid.")
+        if (self.discovery_status == "discovered") != bool(self.windows):
+            raise ValueError("Daily charge window status must match discovered windows.")
         window_ids = tuple(item.window_id for item in self.windows)
         if len(window_ids) != len(set(window_ids)):
             raise ValueError("Daily charge windows must be unique.")

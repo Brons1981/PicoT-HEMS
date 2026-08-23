@@ -59,6 +59,8 @@ def build_daily_observer_dashboard_view(
                 tuple(reason.value for reason in record.exclusion_reasons),
                 record.worst_case_financial_result_eur,
                 record.minimum_confidence,
+                record.average_charge_window_price_eur_per_kwh,
+                record.charge_window_confidence,
                 record.best_observation,
                 candidates_by_id,
                 schedules_by_id,
@@ -77,6 +79,8 @@ def _candidate_view(
     exclusion_reasons: tuple[str, ...],
     financial_result_eur: float,
     minimum_confidence: float,
+    average_charge_window_price_eur_per_kwh: float | None,
+    charge_window_confidence: float | None,
     best_observation: bool,
     candidates_by_id: dict[str, DailyReferenceCandidate],
     schedules_by_id: dict[str, DailyReferenceIntentSchedule],
@@ -91,6 +95,10 @@ def _candidate_view(
         "exclusion_reasons": list(exclusion_reasons),
         "worst_case_financial_result_eur": financial_result_eur,
         "minimum_confidence": minimum_confidence,
+        "average_charge_window_price_eur_per_kwh": (
+            average_charge_window_price_eur_per_kwh
+        ),
+        "charge_window_confidence": charge_window_confidence,
         "best_observation": best_observation,
         "complete_across_scenarios": candidate.complete_across_scenarios,
         "target_reached_across_scenarios": (

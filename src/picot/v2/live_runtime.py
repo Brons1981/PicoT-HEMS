@@ -19,6 +19,7 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from time import perf_counter
 from typing import Any
+from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from picot.domain.storage_conversion_model import StorageConversionModel
@@ -1812,46 +1813,72 @@ def _execute_planning_bundle(
 
     sink = HomeAssistantProjectionSink(token)
     publish_started = perf_counter()
-    for card in projection.cards:
-        sink.publish(card)
-    publish_ms = round((perf_counter() - publish_started) * 1000.0, 3)
+    ha_publish_status = "ready"
+    try:
+        for card in projection.cards:
+            sink.publish(card)
+        publish_ms = round((perf_counter() - publish_started) * 1000.0, 3)
 
-    sink.publish(
-        Card(
-            "sensor.picot_v2_diagnostic_performance",
-            "ready",
-            {
-                "picot_version": run.planning_input.picot_version,
-                "run_id": run.planning_input.run_id,
-                "pipeline_total_ms": pipeline_total_ms,
-                "planning_input_ms": planning_input_ms,
-                "opportunity_engine_ms": stage_timings.opportunity_engine_ms,
-                "candidate_engine_ms": stage_timings.candidate_engine_ms,
-                "evaluation_engine_ms": stage_timings.evaluation_engine_ms,
-                "execution_plan_builder_ms": stage_timings.execution_plan_builder_ms,
-                "execution_engine_ms": stage_timings.execution_engine_ms,
-                "execution_primitive_ms": stage_timings.execution_primitive_ms,
-                "device_adapter_ms": stage_timings.device_adapter_ms,
-                "vendor_result_ms": stage_timings.vendor_result_ms,
-                "canonical_pipeline_02_09_ms": stage_timings.canonical_total_ms,
-                "planner_cycle_ms": planner_cycle_ms,
-                "diagnostic_projection_ms": projection.projection_ms,
-                "serialization_ms": serialization_ms,
-                "ha_publish_ms": publish_ms,
-                "power_history_read_ms": power_history_read_ms,
-                "web_view_build_ms": web_view_build_ms,
-                "web_view_publish_ms": web_view_publish_ms,
-                "persistence_ms": 0.0,
-                "trace_events_per_run": len(projection.cards),
-                "buffer_depth": 0,
-                "source_fact_count": len(bundle.facts),
-                "source_available_count": sum(
-                    fact.availability == "available" for fact in bundle.facts
-                ),
-                "observer_only": True,
-            },
+        sink.publish(
+            Card(
+                "sensor.picot_v2_diagnostic_performance",
+                "ready",
+                {
+                    "picot_version": run.planning_input.picot_version,
+                    "run_id": run.planning_input.run_id,
+                    "pipeline_total_ms": pipeline_total_ms,
+                    "planning_input_ms": planning_input_ms,
+                    "opportunity_engine_ms": (
+                        stage_timings.opportunity_engine_ms
+                    ),
+                    "candidate_engine_ms": stage_timings.candidate_engine_ms,
+                    "evaluation_engine_ms": stage_timings.evaluation_engine_ms,
+                    "execution_plan_builder_ms": (
+                        stage_timings.execution_plan_builder_ms
+                    ),
+                    "execution_engine_ms": stage_timings.execution_engine_ms,
+                    "execution_primitive_ms": (
+                        stage_timings.execution_primitive_ms
+                    ),
+                    "device_adapter_ms": stage_timings.device_adapter_ms,
+                    "vendor_result_ms": stage_timings.vendor_result_ms,
+                    "canonical_pipeline_02_09_ms": (
+                        stage_timings.canonical_total_ms
+                    ),
+                    "planner_cycle_ms": planner_cycle_ms,
+                    "diagnostic_projection_ms": projection.projection_ms,
+                    "serialization_ms": serialization_ms,
+                    "ha_publish_ms": publish_ms,
+                    "power_history_read_ms": power_history_read_ms,
+                    "web_view_build_ms": web_view_build_ms,
+                    "web_view_publish_ms": web_view_publish_ms,
+                    "persistence_ms": 0.0,
+                    "trace_events_per_run": len(projection.cards),
+                    "buffer_depth": 0,
+                    "source_fact_count": len(bundle.facts),
+                    "source_available_count": sum(
+                        fact.availability == "available"
+                        for fact in bundle.facts
+                    ),
+                    "observer_only": True,
+                },
+            )
         )
-    )
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        publish_ms = round((perf_counter() - publish_started) * 1000.0, 3)
+        ha_publish_status = "retry_next_poll"
+        print(
+            json.dumps(
+                {
+                    "event": "picot_v2_ha_projection_publish_error",
+                    "run_id": run.planning_input.run_id,
+                    "error": str(exc) or exc.__class__.__name__,
+                    "retry": "next_poll",
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
 
     print(
         json.dumps(
@@ -1872,6 +1899,7 @@ def _execute_planning_bundle(
                 "web_view_build_ms": web_view_build_ms,
                 "web_view_publish_ms": web_view_publish_ms,
                 "ha_publish_ms": publish_ms,
+                "ha_publish_status": ha_publish_status,
                 "cards": len(projection.cards),
             },
             separators=(",", ":"),

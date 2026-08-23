@@ -1322,3 +1322,23 @@ Exact next action: install dev.152, confirm the dashboard loads, and then begin
 the accepted 48-hour side-by-side observation with one deliberate manual
 discharge above the configured minimum reserve using the dashboard stress
 marker.
+
+
+## 2026-08-24 — 2.0.0-dev.153
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Corrects the daily observer's tariff horizon to the contiguous Nordpool
+  prices actually published from the snapshot time, capped at 24 hours.
+- Uses that exact same bounded horizon for household demand, PV scenarios,
+  physical intent simulation and financial settlement.
+- Prevents the normal pre-15:00 absence of next-day prices from blocking all
+  daily planning; the horizon expands automatically when those prices arrive.
+- Shows the exact simulation start, end and available price-coverage duration
+  on the observer dashboard.
+- Keeps the canonical planner, preferences, commitments, execution and Zendure
+  control unchanged.
+
+Exact next action: install dev.153, confirm the observer completes before
+15:00 with a horizon ending at the published tariff boundary, and begin the
+accepted 48-hour side-by-side observation.

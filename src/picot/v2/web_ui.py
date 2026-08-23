@@ -390,6 +390,28 @@ DASHBOARD_HTML = """<!doctype html>
       background: #151b23;
     }
     .metric { padding: 12px; }
+    .daily-comparison-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .daily-comparison-card {
+      min-width: 0;
+      padding: 14px;
+      border: 1px solid #386f96;
+      border-radius: 12px;
+      background: #10283a;
+    }
+    .daily-comparison-card.daily-reference {
+      border-color: #a855f7;
+      background: #251337;
+      box-shadow: inset 4px 0 0 #c084fc;
+    }
+    .daily-reference-label { color: #d8b4fe; }
+    .daily-lineage-warning { color: #ffd77a; }
+    @media (max-width: 800px) {
+      .daily-comparison-grid { grid-template-columns: 1fr; }
+    }
     .metric span { display: block; }
     .metric .value {
       margin-top: 5px;
@@ -926,6 +948,15 @@ DASHBOARD_HTML = """<!doctype html>
       aria-live="polite"
     >
       Nog geen actuele planningsfeiten beschikbaar.
+    </section>
+
+    <h2>Canonieke planning naast etmaalsimulatie</h2>
+    <section
+      id="daily-observer-comparison"
+      class="timeline-panel"
+      aria-live="polite"
+    >
+      Nog geen etmaalsimulatie-uitkomst beschikbaar.
     </section>
 
     <h2>Onderliggende energiekansen</h2>
@@ -2994,6 +3025,108 @@ DASHBOARD_HTML = """<!doctype html>
       container.appendChild(table);
     }
 
+    function renderDailyObserverComparison(view) {
+      const container = element("daily-observer-comparison");
+      container.replaceChildren();
+      const observer = view.daily_observer_comparison ?? {};
+      const canonical = view.planning_status?.chosen_plan ?? {};
+      const grid = document.createElement("div");
+      grid.className = "daily-comparison-grid";
+
+      function comparisonCard(title, className, rows) {
+        const card = document.createElement("article");
+        card.className = "daily-comparison-card " + className;
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        card.append(heading);
+        const values = document.createElement("dl");
+        for (const [label, value] of rows) {
+          const row = document.createElement("div");
+          row.className = "attribute";
+          const term = document.createElement("dt");
+          term.textContent = label;
+          const description = document.createElement("dd");
+          description.textContent = displayValue(value);
+          row.append(term, description);
+          values.append(row);
+        }
+        card.append(values);
+        return card;
+      }
+
+      grid.append(comparisonCard("Huidige canonieke keuze", "canonical", [
+        ["Kandidaat", canonical.candidate_id],
+        ["Planfamilie", canonical.family],
+        ["Venster vanaf", canonical.charge_window_starts_at],
+        ["Venster tot", canonical.charge_window_ends_at],
+        ["Benodigde toevoeging", formatEnergyKwh(
+          canonical.required_storage_addition_wh
+        )],
+        ["Confidence", formatConfidence(canonical.confidence)],
+        ["Beslisreden", canonical.reason],
+      ]));
+
+      const aligned = observer.snapshot_id === view.snapshot_id;
+      const best = Array.isArray(observer.candidates)
+        ? observer.candidates.filter((candidate) => candidate.best_observation)
+        : [];
+      const observerRows = [
+        ["Status", observer.status],
+        ["Snapshot", observer.snapshot_id],
+        ["Vergelijkbaarheid", aligned
+          ? "Exact dezelfde Planning Input"
+          : "Wacht op dezelfde Planning Input-snapshot"],
+        ["Doel", observer.objective],
+        ["Richting", observer.direction],
+        ["Beste observatie(s)", best.map((item) => item.candidate_id).join(", ")],
+        ["Rekentijd", Number.isFinite(Number(observer.duration_ms))
+          ? `${formatDutchNumber(Number(observer.duration_ms))} ms`
+          : null],
+      ];
+      const observerCard = comparisonCard(
+        "Etmaalsimulatie · observer-only",
+        "daily-reference",
+        observerRows
+      );
+      observerCard.querySelector("h3").className = "daily-reference-label";
+      if (!aligned && observer.snapshot_id) {
+        const warning = document.createElement("p");
+        warning.className = "daily-lineage-warning";
+        warning.textContent =
+          "Deze uitkomst hoort nog bij de vorige snapshot en wordt niet als " +
+          "eerlijke winnaarvergelijking beschouwd.";
+        observerCard.append(warning);
+      }
+      for (const candidate of best) {
+        const details = document.createElement("details");
+        details.className = "technical-details";
+        const summary = document.createElement("summary");
+        summary.textContent = [
+          displayValue(candidate.family),
+          Number.isFinite(Number(candidate.worst_case_financial_result_eur))
+            ? `€ ${formatDutchNumber(Number(
+                candidate.worst_case_financial_result_eur
+              ))}`
+            : "—",
+          formatConfidence(candidate.minimum_confidence),
+        ].join(" · ");
+        details.append(summary);
+        const schedule = document.createElement("p");
+        schedule.textContent = (candidate.intent_intervals ?? [])
+          .filter((interval) => interval.intent !== "household_support_only")
+          .map((interval) => [
+            interval.intent,
+            interval.starts_at,
+            interval.ends_at,
+          ].map(displayValue).join(" · "))
+          .join(" | ") || "Alleen huishoudondersteuning nodig.";
+        details.append(schedule);
+        observerCard.append(details);
+      }
+      grid.append(observerCard);
+      container.append(grid);
+    }
+
     function movePanelContent(elementId, panelName, includeHeading = true) {
       const node = element(elementId);
       const panel = element("tab-" + panelName);
@@ -3031,6 +3164,7 @@ DASHBOARD_HTML = """<!doctype html>
       movePanelContent("zendure-now", "overview");
       movePanelContent("price-timeline", "planning");
       movePanelContent("planning-status", "planning");
+      movePanelContent("daily-observer-comparison", "planning");
       movePanelContent("plan-explanation", "planning");
       movePanelContent("storage-energy-source-needs", "planning");
       movePanelContent("pv-energy-timeline", "planning");
@@ -3314,6 +3448,7 @@ DASHBOARD_HTML = """<!doctype html>
       renderPipelineHealth(view.pipeline_health);
       renderZendureNow(view.zendure_now);
       renderPlanningStatus(view.planning_status);
+      renderDailyObserverComparison(view);
       renderPlanExplanation(view.plan_explanation);
       renderStorageModeOverride(primitiveBoundary);
       renderStorageEnergySourceNeeds(
@@ -3427,6 +3562,7 @@ class WebViewStore:
         self._condition = Condition(self._lock)
         self._latest_json: str | None = None
         self._fast_grid_power_source: dict[str, object] | None = None
+        self._daily_observer_comparison: dict[str, object] | None = None
         self._revision = 0
         self._reset_storage_mode_override: (
             Callable[[str], dict[str, object]] | None
@@ -3465,6 +3601,10 @@ class WebViewStore:
         view: dict[str, object],
     ) -> None:
         self._overlay_fast_grid_power_source(view)
+        if self._daily_observer_comparison is not None:
+            view["daily_observer_comparison"] = dict(
+                self._daily_observer_comparison
+            )
         self._latest_json = json.dumps(view, separators=(",", ":"))
         self._revision += 1
         self._condition.notify_all()
@@ -3510,6 +3650,29 @@ class WebViewStore:
                 raise TypeError("latest web view must be an object")
             latest["power_history"] = history_view
             latest["self_consumption_history"] = self_consumption_view
+            self._replace_latest_locked(latest)
+
+    def publish_daily_observer_comparison(
+        self,
+        comparison: dict[str, object],
+    ) -> None:
+        """Overlay a passive daily result without running the Planner."""
+        copied: object = json.loads(json.dumps(comparison))
+        if not isinstance(copied, dict):
+            raise TypeError("daily observer comparison must be an object")
+        if (
+            copied.get("observer_only") is not True
+            or copied.get("selection_permitted") is not False
+            or copied.get("commitment_permitted") is not False
+        ):
+            raise ValueError("daily dashboard comparison must remain passive")
+        with self._condition:
+            self._daily_observer_comparison = copied
+            if self._latest_json is None:
+                return
+            latest: object = json.loads(self._latest_json)
+            if not isinstance(latest, dict):
+                raise TypeError("latest web view must be an object")
             self._replace_latest_locked(latest)
 
     def latest_json(self) -> str | None:

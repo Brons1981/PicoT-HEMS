@@ -7,6 +7,7 @@ from typing import cast
 
 from picot.v2.independent_daily_observer_runtime import (
     DailyObserverResultStore,
+    DailyObserverRuntimeOutcome,
     IndependentDailyObserverRuntime,
     IndependentDailyObserverWorker,
 )
@@ -98,3 +99,25 @@ def test_worker_does_not_block_canonical_caller_and_keeps_latest_snapshot() -> N
     release.set()
     assert completed.wait(timeout=2.0)
     assert observed == [first.strategy_id, "strategy-three"]
+
+
+def test_worker_publishes_completed_outcome_without_control_coupling(tmp_path) -> None:
+    published: list[DailyObserverRuntimeOutcome] = []
+    completed = Event()
+
+    def capture(outcome: DailyObserverRuntimeOutcome) -> None:
+        published.append(outcome)
+        completed.set()
+
+    worker = IndependentDailyObserverWorker(
+        _runtime(tmp_path),
+        on_outcome=capture,
+    )
+
+    worker.submit(_snapshot(maximum_soc=0.7))
+
+    assert completed.wait(timeout=2.0)
+    assert len(published) == 1
+    assert published[0].observer_only is True
+    assert published[0].selection_permitted is False
+    assert published[0].commitment_permitted is False

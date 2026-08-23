@@ -77,34 +77,15 @@ def test_worker_does_not_block_canonical_caller_and_keeps_latest_snapshot() -> N
 
     class BlockingRuntime:
         def observe(self, snapshot):
-            observed.append(snapshot.snapshot_id)
+            observed.append(snapshot.strategy_id)
             started.set()
             release.wait(timeout=2.0)
             if len(observed) == 2:
                 completed.set()
 
     first = _snapshot(maximum_soc=0.7)
-    assert first.pv_energy_timeline is not None
-    second = replace(
-        first,
-        snapshot_id="snapshot-two",
-        run_id="run-two",
-        pv_energy_timeline=replace(
-            first.pv_energy_timeline,
-            snapshot_id="snapshot-two",
-            run_id="run-two",
-        ),
-    )
-    third = replace(
-        first,
-        snapshot_id="snapshot-three",
-        run_id="run-three",
-        pv_energy_timeline=replace(
-            first.pv_energy_timeline,
-            snapshot_id="snapshot-three",
-            run_id="run-three",
-        ),
-    )
+    second = replace(first, strategy_id="strategy-two")
+    third = replace(first, strategy_id="strategy-three")
     worker = IndependentDailyObserverWorker(
         cast(IndependentDailyObserverRuntime, BlockingRuntime())
     )
@@ -113,8 +94,7 @@ def test_worker_does_not_block_canonical_caller_and_keeps_latest_snapshot() -> N
     assert started.wait(timeout=1.0)
     worker.submit(second)
     worker.submit(third)
-    assert observed == ["snapshot"]
+    assert observed == [first.strategy_id]
     release.set()
     assert completed.wait(timeout=2.0)
-    assert observed == ["snapshot", "snapshot-three"]
-
+    assert observed == [first.strategy_id, "strategy-three"]

@@ -1156,3 +1156,22 @@ Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.143 and confirm the observer reaches
 `completed` when 24 hours of prices are available. Then start the accepted
 48-hour comparison and perform one deliberate manual discharge stress event.
+
+
+## 2026-08-23 — 2.0.0-dev.144
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Corrects observer-only financial settlement when a rolling physical
+  simulation interval crosses a fixed Nordpool quarter-hour tariff boundary.
+- Splits such an interval at every applicable tariff boundary and allocates
+  energy and conversion losses proportionally while preserving the physical
+  totals and storage trajectory.
+- Keeps settlement fail-closed when tariff coverage contains a real gap or
+  overlap and exposes that condition as a readable Dutch dashboard reason.
+- Leaves the canonical 36-hour planner, Candidate Engine, Evaluation,
+  Commitment and Zendure control unchanged.
+
+Exact next action: install dev.144 and confirm the independent daily observer
+reaches `completed`. Then start the accepted 48-hour observer comparison and
+perform one deliberate manual battery-discharge stress event.

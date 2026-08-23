@@ -29,6 +29,8 @@ class DailyReferenceFinancialInterval:
     evidence_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        if self.ends_at <= self.starts_at:
+            raise ValueError("Daily financial interval must have positive duration.")
         expected = (
             self.grid_export_result_eur
             + self.avoided_import_value_eur

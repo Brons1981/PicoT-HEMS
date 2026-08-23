@@ -71,5 +71,8 @@ class DailyReferenceRun:
                 raise ValueError("Daily financial trajectory lineage does not match.")
             if assessment.interval_count != len(trajectory.intervals):
                 raise ValueError("Daily assessment interval count does not match.")
-            if len(financial.intervals) != len(trajectory.intervals):
-                raise ValueError("Daily financial interval count does not match.")
+            if (
+                financial.intervals[0].starts_at != trajectory.horizon_start
+                or financial.intervals[-1].ends_at != trajectory.horizon_end
+            ):
+                raise ValueError("Daily financial horizon does not match.")

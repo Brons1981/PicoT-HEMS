@@ -38,6 +38,40 @@ def _tariffs(snapshot_id: str = "snapshot-incident") -> DailyReferenceTariffSche
     )
 
 
+def _split_tariffs() -> DailyReferenceTariffSchedule:
+    simulation = _simulate()
+    physical_intervals = simulation.trajectories[0].intervals
+    return DailyReferenceTariffSchedule(
+        schedule_id="split-tariffs",
+        snapshot_id=simulation.snapshot_id,
+        horizon_start=physical_intervals[0].starts_at,
+        horizon_end=physical_intervals[-1].ends_at,
+        intervals=tuple(
+            tariff
+            for index, physical in enumerate(physical_intervals)
+            for tariff in (
+                DailyReferenceTariffInterval(
+                    starts_at=physical.starts_at,
+                    ends_at=physical.starts_at + timedelta(minutes=15),
+                    import_eur_per_kwh=0.20,
+                    export_eur_per_kwh=0.10,
+                    confidence=0.95,
+                    evidence_ids=(f"split-tariff-{index}-a",),
+                ),
+                DailyReferenceTariffInterval(
+                    starts_at=physical.starts_at + timedelta(minutes=15),
+                    ends_at=physical.ends_at,
+                    import_eur_per_kwh=0.40,
+                    export_eur_per_kwh=0.20,
+                    confidence=0.95,
+                    evidence_ids=(f"split-tariff-{index}-b",),
+                ),
+            )
+        ),
+        method_version="split-test:v1",
+    )
+
+
 def test_settlement_values_all_paths_without_ranking() -> None:
     result = IndependentDailyFinancialSettlement().settle(
         simulation=_simulate(),
@@ -78,36 +112,6 @@ def test_settlement_fails_closed_for_an_interval_without_tariff() -> None:
 
 def test_settlement_splits_physical_energy_at_tariff_boundaries() -> None:
     simulation = _simulate()
-    physical_intervals = simulation.trajectories[0].intervals
-    split_tariffs = DailyReferenceTariffSchedule(
-        schedule_id="split-tariffs",
-        snapshot_id=simulation.snapshot_id,
-        horizon_start=physical_intervals[0].starts_at,
-        horizon_end=physical_intervals[-1].ends_at,
-        intervals=tuple(
-            tariff
-            for index, physical in enumerate(physical_intervals)
-            for tariff in (
-                DailyReferenceTariffInterval(
-                    starts_at=physical.starts_at,
-                    ends_at=physical.starts_at + timedelta(minutes=15),
-                    import_eur_per_kwh=0.20,
-                    export_eur_per_kwh=0.10,
-                    confidence=0.95,
-                    evidence_ids=(f"split-tariff-{index}-a",),
-                ),
-                DailyReferenceTariffInterval(
-                    starts_at=physical.starts_at + timedelta(minutes=15),
-                    ends_at=physical.ends_at,
-                    import_eur_per_kwh=0.40,
-                    export_eur_per_kwh=0.20,
-                    confidence=0.95,
-                    evidence_ids=(f"split-tariff-{index}-b",),
-                ),
-            )
-        ),
-        method_version="split-test:v1",
-    )
     weighted_tariffs = replace(
         _tariffs(),
         intervals=tuple(
@@ -122,7 +126,7 @@ def test_settlement_splits_physical_energy_at_tariff_boundaries() -> None:
 
     split = IndependentDailyFinancialSettlement().settle(
         simulation=simulation,
-        tariffs=split_tariffs,
+        tariffs=_split_tariffs(),
     )
     weighted = IndependentDailyFinancialSettlement().settle(
         simulation=simulation,
@@ -144,6 +148,17 @@ def test_settlement_splits_physical_energy_at_tariff_boundaries() -> None:
         assert split_path.net_financial_result_eur == pytest.approx(
             weighted_path.net_financial_result_eur
         )
+
+
+def test_financial_interval_rejects_non_positive_duration() -> None:
+    result = IndependentDailyFinancialSettlement().settle(
+        simulation=_simulate(),
+        tariffs=_tariffs(),
+    )
+    interval = result.paths[0].intervals[0]
+
+    with pytest.raises(ValueError, match="positive duration"):
+        replace(interval, ends_at=interval.starts_at)
 
 
 def test_settlement_fails_closed_for_different_snapshot() -> None:

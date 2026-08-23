@@ -116,7 +116,8 @@ def test_dashboard_explains_daily_observer_result_in_user_language() -> None:
     assert "selectedPlannerWindows" in DASHBOARD_HTML
     assert "planner-window-summary" in DASHBOARD_HTML
     assert "planner-window-chip" in DASHBOARD_HTML
-    assert "height: plotHeight" in DASHBOARD_HTML
+    assert "height - margin.bottom - 16 + index * 8" in DASHBOARD_HTML
+    assert "height: 6" in DASHBOARD_HTML
     assert "Observer-only; stuurt niets aan" in DASHBOARD_HTML
     assert "mergeDailyIntentWindows" in DASHBOARD_HTML
     assert "formatTimestamp(window.starts_at)" in DASHBOARD_HTML

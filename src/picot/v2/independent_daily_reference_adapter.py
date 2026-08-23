@@ -121,7 +121,7 @@ class IndependentDailyReferenceAdapter:
             maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
             maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
         )
-        if not charge_windows.windows:
+        if charge_windows.discovery_status == "no_feasible_window":
             raise DailyReferenceInputError("daily_reference_charge_windows_unavailable")
         strategy_space = IndependentDailyStrategyGenerator().generate_from_charge_windows(
             charge_windows=charge_windows,

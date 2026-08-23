@@ -84,8 +84,27 @@ def test_worker_does_not_block_canonical_caller_and_keeps_latest_snapshot() -> N
                 completed.set()
 
     first = _snapshot(maximum_soc=0.7)
-    second = replace(first, snapshot_id="snapshot-two", run_id="run-two")
-    third = replace(first, snapshot_id="snapshot-three", run_id="run-three")
+    assert first.pv_energy_timeline is not None
+    second = replace(
+        first,
+        snapshot_id="snapshot-two",
+        run_id="run-two",
+        pv_energy_timeline=replace(
+            first.pv_energy_timeline,
+            snapshot_id="snapshot-two",
+            run_id="run-two",
+        ),
+    )
+    third = replace(
+        first,
+        snapshot_id="snapshot-three",
+        run_id="run-three",
+        pv_energy_timeline=replace(
+            first.pv_energy_timeline,
+            snapshot_id="snapshot-three",
+            run_id="run-three",
+        ),
+    )
     worker = IndependentDailyObserverWorker(
         cast(IndependentDailyObserverRuntime, BlockingRuntime())
     )

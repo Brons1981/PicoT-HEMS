@@ -9,7 +9,10 @@ from picot.domain.daily_reference_candidate import (
     DailyReferenceCandidateSet,
     DailyReferencePortfolioCandidateSet,
 )
-from picot.domain.daily_reference_intent import DailyStorageIntent
+from picot.domain.daily_reference_intent import (
+    DailyReferenceIntentInterval,
+    DailyStorageIntent,
+)
 from picot.domain.daily_reference_portfolio import (
     DailyReferencePortfolio,
     DailyReferenceStrategyResult,
@@ -17,7 +20,7 @@ from picot.domain.daily_reference_portfolio import (
 from picot.domain.daily_reference_run import DailyReferenceRun
 from picot.domain.daily_reference_simulation import PVScenario
 
-METHOD_VERSION = "independent-daily-candidate-engine:v1"
+METHOD_VERSION = "independent-daily-candidate-engine:v2"
 
 
 class IndependentDailyCandidateEngine:
@@ -90,6 +93,10 @@ class IndependentDailyCandidateEngine:
             family=family,
             intent_schedule_id=strategy.intent_schedule.schedule_id,
             intents_used=intents_used,
+            average_charge_window_price_eur_per_kwh=(
+                self._average_charge_window_price(strategy)
+            ),
+            charge_window_confidence=self._charge_window_confidence(strategy),
         )
 
     @staticmethod
@@ -99,6 +106,8 @@ class IndependentDailyCandidateEngine:
         family: DailyReferenceCandidateFamily,
         intent_schedule_id: str,
         intents_used: tuple[DailyStorageIntent, ...],
+        average_charge_window_price_eur_per_kwh: float | None = None,
+        charge_window_confidence: float | None = None,
     ) -> DailyReferenceCandidate:
         assessments = {item.scenario: item for item in run.assessment.assessments}
         financial = {item.scenario: item for item in run.financial.paths}
@@ -155,5 +164,74 @@ class IndependentDailyCandidateEngine:
             method_version=METHOD_VERSION,
             intent_schedule_id=intent_schedule_id,
             intents_used=intents_used,
+            average_charge_window_price_eur_per_kwh=(
+                average_charge_window_price_eur_per_kwh
+            ),
+            charge_window_confidence=charge_window_confidence,
         )
         return candidate
+
+    @staticmethod
+    def _charge_intervals(
+        strategy: DailyReferenceStrategyResult,
+    ) -> tuple[DailyReferenceIntentInterval, ...]:
+        charge_intents = {DailyStorageIntent.NOM, DailyStorageIntent.GRID_REQUIREMENT}
+        return tuple(
+            item
+            for item in strategy.intent_schedule.intervals
+            if item.intent in charge_intents
+        )
+
+    @classmethod
+    def _average_charge_window_price(
+        cls,
+        strategy: DailyReferenceStrategyResult,
+    ) -> float | None:
+        charge_intervals = cls._charge_intervals(strategy)
+        if not charge_intervals:
+            return None
+        financial = strategy.run.financial.paths[0].intervals
+        weighted: list[tuple[float, float]] = []
+        for tariff in financial:
+            for charge in charge_intervals:
+                if (
+                    tariff.starts_at >= charge.ends_at
+                    or tariff.ends_at <= charge.starts_at
+                ):
+                    continue
+                seconds = (
+                    min(tariff.ends_at, charge.ends_at)
+                    - max(tariff.starts_at, charge.starts_at)
+                ).total_seconds()
+                price = (
+                    tariff.export_eur_per_kwh
+                    if charge.intent is DailyStorageIntent.NOM
+                    else tariff.import_eur_per_kwh
+                )
+                weighted.append((price, seconds))
+        total_seconds = sum(seconds for _, seconds in weighted)
+        return (
+            sum(price * seconds for price, seconds in weighted) / total_seconds
+            if total_seconds > 0.0
+            else None
+        )
+
+    @classmethod
+    def _charge_window_confidence(
+        cls,
+        strategy: DailyReferenceStrategyResult,
+    ) -> float | None:
+        charge_intervals = cls._charge_intervals(strategy)
+        if not charge_intervals:
+            return None
+        confidences = tuple(
+            interval.confidence
+            for trajectory in strategy.run.simulation.trajectories
+            for interval in trajectory.intervals
+            if any(
+                interval.starts_at < charge.ends_at
+                and interval.ends_at > charge.starts_at
+                for charge in charge_intervals
+            )
+        )
+        return min(confidences) if confidences else None

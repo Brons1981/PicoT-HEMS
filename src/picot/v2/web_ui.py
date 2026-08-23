@@ -3275,7 +3275,7 @@ DASHBOARD_HTML = """<!doctype html>
         daily_reference_physical_limits_missing:
           "Fysieke batterijlimieten ontbreken in de Planning Input",
         daily_tariff_price_coverage_incomplete:
-          "Wacht op volledige Nordpool-prijzen voor de komende 24 uur",
+          "Geen aaneengesloten Nordpool-prijzen beschikbaar vanaf nu",
         "Daily settlement requires complete interval tariff coverage.":
           "Tariefdekking is niet volledig voor ieder simulatie-interval",
         "Daily financial horizon does not match.":
@@ -3295,11 +3295,20 @@ DASHBOARD_HTML = """<!doctype html>
         ["Voorgesteld venster", representative
           ? dailyWindowLabel(representative)
           : null],
+        ["Gebruikte simulatiehorizon", observer.simulation_horizon_start &&
+          observer.simulation_horizon_end
+          ? `${formatTimestamp(observer.simulation_horizon_start)} tot ${
+              formatTimestamp(observer.simulation_horizon_end)}`
+          : null],
+        ["Beschikbare aaneengesloten prijsdekking",
+          Number.isFinite(Number(observer.price_coverage_hours))
+            ? `${formatDutchNumber(Number(observer.price_coverage_hours))} uur`
+            : null],
         ...(best.length > 1 ? [[
           "Gelijkwaardige plannen",
           `${best.length} plannen met hetzelfde resultaat`,
         ]] : []),
-        ["Financieel resultaat (worst case, 24 uur)", representative &&
+        ["Financieel resultaat (worst case, gebruikte horizon)", representative &&
           Number.isFinite(Number(representative.worst_case_financial_result_eur))
           ? `€ ${formatDutchNumber(Number(
               representative.worst_case_financial_result_eur
@@ -3316,7 +3325,7 @@ DASHBOARD_HTML = """<!doctype html>
         ["Confidence voorgesteld laadvenster", representative
           ? formatConfidence(representative.charge_window_confidence)
           : null],
-        ["Laagste confidence over 24 uur", representative
+        ["Laagste confidence over gebruikte horizon", representative
           ? formatConfidence(representative.minimum_confidence)
           : null],
         ["Vergelijkbaarheid", aligned

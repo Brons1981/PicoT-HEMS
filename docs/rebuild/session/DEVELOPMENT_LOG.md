@@ -1228,3 +1228,25 @@ Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
 
 Exact next action: install dev.147, confirm the explanation is readable, and
 then continue the accepted 48-hour observer comparison.
+
+
+## 2026-08-23 — 2.0.0-dev.148
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Keeps PV-only as the hard preference and permits grid supplementation only
+  when no complete PV-only path proves the target reachable.
+- Compares feasible charge windows using their duration-weighted average
+  relevant tariff, without a fixed EUR 0.02 margin contract.
+- Uses export value for NOM/PV opportunity cost and import price for proven
+  grid supplementation.
+- Aligns future observer charge windows to Nordpool market-quarter boundaries.
+- Separates proposed-window confidence from minimum confidence over 24 hours.
+- Marks the canonical planner window in blue and the daily observer window in
+  purple in the price timeline.
+- Leaves the daily simulation observer-only without selection, commitment or
+  live Zendure control authority.
+
+Exact next action: install dev.148 and begin the accepted 48-hour side-by-side
+observation. During that period, perform one deliberate manual battery
+discharge stress event and compare both planners' reactions.

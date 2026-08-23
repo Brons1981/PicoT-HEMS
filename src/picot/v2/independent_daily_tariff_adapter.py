@@ -46,6 +46,19 @@ class IndependentDailyTariffAdapter:
             for point in points
             if snapshot.captured_at < point.ends_at < snapshot.horizon_end
         )
+        if snapshot.household_load_forecast is not None:
+            boundaries.update(
+                interval.starts_at
+                for interval in snapshot.household_load_forecast.intervals
+                if snapshot.captured_at
+                < interval.starts_at
+                < snapshot.horizon_end
+            )
+            boundaries.update(
+                interval.ends_at
+                for interval in snapshot.household_load_forecast.intervals
+                if snapshot.captured_at < interval.ends_at < snapshot.horizon_end
+            )
         if snapshot.captured_at < EXPORT_TAX_TRANSITION < snapshot.horizon_end:
             boundaries.add(EXPORT_TAX_TRANSITION)
         ordered = tuple(sorted(boundaries))

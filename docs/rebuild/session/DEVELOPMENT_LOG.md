@@ -1268,3 +1268,18 @@ Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.149, confirm both selected windows and their
 quarter-hour boundaries are readable, and then start the accepted 48-hour
 side-by-side observation with one deliberate manual-discharge stress event.
+
+
+## 2026-08-23 — 2.0.0-dev.150
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Removes the full-height planner-window overlays from the price bars.
+- Places the canonical and daily-observer windows as two horizontal bars in
+  the grey strip below the price bars, aligned to their actual start and end.
+- Keeps the exact blue and purple time labels above the price chart.
+- Leaves price data, planner decisions, simulation and live execution unchanged.
+
+Exact next action: install dev.150, confirm the two bars align with their
+displayed quarter-hour windows, and then begin the accepted 48-hour comparison
+with one deliberate manual-discharge stress event.

@@ -75,7 +75,7 @@ def test_physical_charge_windows_flow_through_complete_observer_chain() -> None:
     assert result.observer_result.best_observation_ids
 
 
-def test_generator_rejects_empty_physical_charge_window_set() -> None:
+def test_generator_uses_baseline_when_charge_is_already_not_required() -> None:
     household, pv_scenarios, _storage_state, conversion = _physical_inputs()
     windows = IndependentDailyChargeWindowDiscoverer().discover(
         snapshot_id="snapshot-intent",
@@ -89,12 +89,17 @@ def test_generator_rejects_empty_physical_charge_window_set() -> None:
         maximum_discharge_output_power_w=2400.0,
     )
 
-    try:
-        IndependentDailyStrategyGenerator().generate_from_charge_windows(
-            charge_windows=windows,
-            household=household,
-        )
-    except ValueError as exc:
-        assert "requires proven charge windows" in str(exc)
-    else:
-        raise AssertionError("Empty physical charge window set was accepted.")
+    strategy_space = IndependentDailyStrategyGenerator().generate_from_charge_windows(
+        charge_windows=windows,
+        household=household,
+    )
+
+    assert windows.discovery_status == "not_required"
+    assert strategy_space.charge_requirement_status == "not_required"
+    assert strategy_space.active_intents == ()
+    assert strategy_space.window_lengths_intervals == ()
+    assert len(strategy_space.schedules) == 1
+    assert all(
+        interval.intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+        for interval in strategy_space.schedules[0].intervals
+    )

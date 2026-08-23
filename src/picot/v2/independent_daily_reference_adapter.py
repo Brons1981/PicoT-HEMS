@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from picot.domain.capability_snapshot import (
@@ -11,6 +12,12 @@ from picot.domain.capability_snapshot import (
 )
 from picot.domain.current_storage_state import CurrentStorageState as DomainStorageState
 from picot.domain.daily_reference_simulation import DailyReferenceSimulationSet, PVScenario
+from picot.domain.daily_reference_strategy_observation import (
+    DailyReferenceStrategyObservation,
+)
+from picot.domain.daily_reference_tariff import (
+    DailyReferenceTariffSchedule,
+)
 from picot.domain.household_load_forecast import (
     HouseholdLoadForecast as DomainHouseholdForecast,
 )
@@ -27,9 +34,18 @@ from picot.domain.pv_energy_timeline import (
     PVEnergyTimelineInterval as DomainPVInterval,
 )
 from picot.domain.storage_conversion_model import StorageConversionModel
+from picot.planner.independent_daily_charge_window_discoverer import (
+    IndependentDailyChargeWindowDiscoverer,
+)
 from picot.planner.independent_daily_simulator import (
     IndependentDailySimulator,
     ScenarioTimeline,
+)
+from picot.planner.independent_daily_strategy_generator import (
+    IndependentDailyStrategyGenerator,
+)
+from picot.planner.independent_daily_strategy_observer import (
+    IndependentDailyStrategyObserver,
 )
 from picot.v2.contracts import (
     HouseholdLoadForecast,
@@ -37,12 +53,26 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
+from picot.v2.independent_daily_tariff_adapter import (
+    IndependentDailyTariffAdapter,
+)
 
 METHOD_VERSION = "v2-independent-daily-reference-adapter:v1"
 
 
 class DailyReferenceInputError(ValueError):
     """The shared snapshot cannot prove a complete independent simulation input."""
+
+
+@dataclass(frozen=True, slots=True)
+class _DailyReferenceInputs:
+    household: DomainHouseholdForecast
+    pv_scenarios: tuple[ScenarioTimeline, ...]
+    storage: DomainStorageState
+    minimum_storage_energy_wh: float
+    target_storage_energy_wh: float
+    maximum_charge_input_power_w: float
+    maximum_discharge_output_power_w: float
 
 
 class IndependentDailyReferenceAdapter:
@@ -54,6 +84,63 @@ class IndependentDailyReferenceAdapter:
         snapshot: PlanningInputSnapshot,
         conversion_model: StorageConversionModel,
     ) -> DailyReferenceSimulationSet:
+        inputs = self._inputs(snapshot)
+        return IndependentDailySimulator().simulate(
+            snapshot_id=snapshot.snapshot_id,
+            household=inputs.household,
+            pv_scenarios=inputs.pv_scenarios,
+            storage_state=inputs.storage,
+            conversion_model=conversion_model,
+            minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+            target_storage_energy_wh=inputs.target_storage_energy_wh,
+            maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+        )
+
+    def observe(
+        self,
+        *,
+        snapshot: PlanningInputSnapshot,
+        conversion_model: StorageConversionModel,
+        tariffs: DailyReferenceTariffSchedule | None = None,
+    ) -> DailyReferenceStrategyObservation:
+        """Run the complete observer chain from one immutable Planning Input."""
+
+        inputs = self._inputs(snapshot)
+        if tariffs is None:
+            tariffs = IndependentDailyTariffAdapter().build(snapshot)
+        self._validate_tariffs(snapshot, inputs.household, tariffs)
+        charge_windows = IndependentDailyChargeWindowDiscoverer().discover(
+            snapshot_id=snapshot.snapshot_id,
+            household=inputs.household,
+            pv_scenarios=inputs.pv_scenarios,
+            storage_state=inputs.storage,
+            conversion_model=conversion_model,
+            minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+            target_storage_energy_wh=inputs.target_storage_energy_wh,
+            maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+        )
+        if not charge_windows.windows:
+            raise DailyReferenceInputError("daily_reference_charge_windows_unavailable")
+        strategy_space = IndependentDailyStrategyGenerator().generate_from_charge_windows(
+            charge_windows=charge_windows,
+            household=inputs.household,
+        )
+        return IndependentDailyStrategyObserver().observe(
+            strategy_space=strategy_space,
+            household=inputs.household,
+            pv_scenarios=inputs.pv_scenarios,
+            storage_state=inputs.storage,
+            conversion_model=conversion_model,
+            tariffs=tariffs,
+            minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+            target_storage_energy_wh=inputs.target_storage_energy_wh,
+            maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+        )
+
+    def _inputs(self, snapshot: PlanningInputSnapshot) -> _DailyReferenceInputs:
         if snapshot.horizon_end is None:
             raise DailyReferenceInputError("daily_reference_horizon_missing")
         if snapshot.household_load_forecast is None:
@@ -116,12 +203,10 @@ class IndependentDailyReferenceAdapter:
             confidence=storage.confidence,
             evidence_ids=storage.evidence_ids,
         )
-        return IndependentDailySimulator().simulate(
-            snapshot_id=snapshot.snapshot_id,
+        return _DailyReferenceInputs(
             household=household,
             pv_scenarios=pv_scenarios,
-            storage_state=domain_storage,
-            conversion_model=conversion_model,
+            storage=domain_storage,
             minimum_storage_energy_wh=(
                 capability.minimum_soc * storage.usable_capacity_wh
             ),
@@ -131,6 +216,20 @@ class IndependentDailyReferenceAdapter:
             maximum_charge_input_power_w=capability.maximum_power_w,
             maximum_discharge_output_power_w=capability.maximum_power_w,
         )
+
+    @staticmethod
+    def _validate_tariffs(
+        snapshot: PlanningInputSnapshot,
+        household: DomainHouseholdForecast,
+        tariffs: DailyReferenceTariffSchedule,
+    ) -> None:
+        if tariffs.snapshot_id != snapshot.snapshot_id:
+            raise DailyReferenceInputError("daily_reference_tariff_lineage_mismatch")
+        if (
+            tariffs.horizon_start != household.horizon_start
+            or tariffs.horizon_end != household.horizon_end
+        ):
+            raise DailyReferenceInputError("daily_reference_tariff_horizon_mismatch")
 
     @staticmethod
     def _household(

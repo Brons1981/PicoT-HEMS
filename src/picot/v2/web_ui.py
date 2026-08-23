@@ -691,6 +691,27 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.missing { background: #2b3541; }
     .price-swatch.canonical-plan { background: #38bdf8; }
     .price-swatch.daily-plan { background: #a855f7; }
+    .planner-window-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 10px;
+    }
+    .planner-window-chip {
+      border: 1px solid;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .planner-window-chip.canonical-plan {
+      border-color: #38bdf8;
+      color: #7dd3fc;
+    }
+    .planner-window-chip.daily-plan {
+      border-color: #a855f7;
+      color: #d8b4fe;
+    }
     .price-chart-scroll { overflow-x: auto; }
     .price-chart {
       display: block;
@@ -718,8 +739,20 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .price-bar.low { fill: #35a862; }
     .price-chart .price-bar.high { fill: #df6b57; }
     .price-chart .price-bar.past { opacity: 0.30; }
-    .price-chart .planner-window.canonical-plan { fill: #38bdf8; }
-    .price-chart .planner-window.daily-plan { fill: #a855f7; }
+    .price-chart .planner-window {
+      fill-opacity: 0.10;
+      stroke-width: 2;
+      pointer-events: none;
+    }
+    .price-chart .planner-window.canonical-plan {
+      fill: #38bdf8;
+      stroke: #38bdf8;
+    }
+    .price-chart .planner-window.daily-plan {
+      fill: #a855f7;
+      stroke: #a855f7;
+      stroke-dasharray: 6 3;
+    }
     .price-chart .now-line {
       stroke: #eef4fb;
       stroke-width: 1.5;
@@ -1151,6 +1184,24 @@ DASHBOARD_HTML = """<!doctype html>
       }
       container.appendChild(legend);
 
+      if (plannerWindows.length) {
+        const summary = document.createElement("div");
+        summary.className = "planner-window-summary";
+        for (const window of plannerWindows) {
+          const chip = document.createElement("span");
+          chip.className = `planner-window-chip ${window.kind}`;
+          chip.textContent = [
+            window.label === "huidige planner"
+              ? "Huidige planner"
+              : "Etmaalsimulatie",
+            `${formatTimestamp(window.starts_at)} – ` +
+              formatTimestamp(window.ends_at),
+          ].join(": ");
+          summary.appendChild(chip);
+        }
+        container.appendChild(summary);
+      }
+
       const width = 1200;
       const height = 350;
       const margin = {
@@ -1317,7 +1368,7 @@ DASHBOARD_HTML = """<!doctype html>
         svg.appendChild(bar);
       }
 
-      for (const [index, window] of plannerWindows.entries()) {
+      for (const window of plannerWindows) {
         const windowStart = Math.max(
           startsAtMs,
           new Date(window.starts_at).getTime()
@@ -1331,10 +1382,10 @@ DASHBOARD_HTML = """<!doctype html>
         svg.appendChild(createSvgElement("rect", {
           class: `planner-window ${window.kind}`,
           x: xPosition(windowStart),
-          y: margin.top + 3 + index * 8,
+          y: margin.top,
           width: Math.max(2, xPosition(windowEnd) - xPosition(windowStart)),
-          height: 5,
-          rx: 2
+          height: plotHeight,
+          rx: 0
         }));
       }
 

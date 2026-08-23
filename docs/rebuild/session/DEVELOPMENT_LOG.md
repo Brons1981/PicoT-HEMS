@@ -1175,3 +1175,21 @@ Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
 Exact next action: install dev.144 and confirm the independent daily observer
 reaches `completed`. Then start the accepted 48-hour observer comparison and
 perform one deliberate manual battery-discharge stress event.
+
+
+## 2026-08-23 — 2.0.0-dev.145
+
+Status: `CI_PENDING`; not yet `LIVE_VERIFIED`.
+
+- Corrects the observer-only run contract after financial settlement began
+  splitting physical intervals at fixed Nordpool quarter-hour boundaries.
+- Allows multiple financial tariff segments inside one physical interval
+  while requiring exact start and end coverage of the same daily horizon.
+- Retains fail-closed contiguous coverage and now explicitly rejects financial
+  segments without positive duration.
+- Leaves the canonical 36-hour planner, Candidate Engine, Evaluation,
+  Commitment and Zendure control unchanged.
+
+Exact next action: install dev.145 and confirm the independent daily observer
+reaches `completed`. Then begin the accepted 48-hour observer comparison and
+perform one deliberate manual battery-discharge stress event.

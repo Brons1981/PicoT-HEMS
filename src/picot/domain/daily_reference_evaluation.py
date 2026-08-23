@@ -9,9 +9,10 @@ from picot.domain.daily_reference_candidate import DailyReferenceCandidateFamily
 
 
 class DailyReferenceEvaluationDirection(StrEnum):
-    """The only supported financial comparison direction."""
+    """Supported deterministic comparison directions."""
 
     HIGHER_IS_BETTER = "higher_is_better"
+    LOWER_IS_BETTER = "lower_is_better"
 
 
 class DailyReferenceExclusionReason(StrEnum):
@@ -35,6 +36,8 @@ class DailyReferenceEvaluationRecord:
     worst_case_financial_result_eur: float
     minimum_confidence: float
     best_observation: bool
+    average_charge_window_price_eur_per_kwh: float | None = None
+    charge_window_confidence: float | None = None
 
     def __post_init__(self) -> None:
         if not self.candidate_id.strip() or not self.intent_schedule_id.strip():

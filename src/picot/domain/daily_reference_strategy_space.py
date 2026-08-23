@@ -23,12 +23,18 @@ class DailyReferenceStrategySpace:
     observer_only: bool
     ranking_permitted: bool
     method_version: str
+    source_charge_window_set_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.strategy_space_id.strip() or not self.snapshot_id.strip():
             raise ValueError("Daily strategy space identity must be explicit.")
         if not self.method_version.strip() or not self.schedules:
             raise ValueError("Daily strategy space requires schedules and lineage.")
+        if (
+            self.source_charge_window_set_id is not None
+            and not self.source_charge_window_set_id.strip()
+        ):
+            raise ValueError("Daily strategy charge window lineage must be explicit.")
         if self.baseline_intent is not DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY:
             raise ValueError("Daily strategy baseline must be household support only.")
         if not self.active_intents or len(self.active_intents) != len(

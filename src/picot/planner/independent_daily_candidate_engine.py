@@ -7,6 +7,12 @@ from picot.domain.daily_reference_candidate import (
     DailyReferenceCandidateFamily,
     DailyReferenceCandidateScenario,
     DailyReferenceCandidateSet,
+    DailyReferencePortfolioCandidateSet,
+)
+from picot.domain.daily_reference_intent import DailyStorageIntent
+from picot.domain.daily_reference_portfolio import (
+    DailyReferencePortfolio,
+    DailyReferenceStrategyResult,
 )
 from picot.domain.daily_reference_run import DailyReferenceRun
 from picot.domain.daily_reference_simulation import PVScenario
@@ -20,6 +26,80 @@ class IndependentDailyCandidateEngine:
     def build(self, run: DailyReferenceRun) -> DailyReferenceCandidateSet:
         if not run.candidate_input_complete:
             raise ValueError("Reference Candidate Engine requires a complete daily run.")
+        candidate = self._build_candidate(
+            run=run,
+            family=DailyReferenceCandidateFamily.NOM_FULL_HORIZON,
+            intent_schedule_id="nom-full-horizon",
+            intents_used=(DailyStorageIntent.NOM,),
+        )
+        return DailyReferenceCandidateSet(
+            candidate_set_id=f"daily-candidates:{run.run_id}",
+            source_run_id=run.run_id,
+            snapshot_id=run.snapshot_id,
+            candidates=(candidate,),
+            observer_only=True,
+            ranking_permitted=False,
+            method_version=METHOD_VERSION,
+        )
+
+    def build_portfolio(
+        self,
+        portfolio: DailyReferencePortfolio,
+    ) -> DailyReferencePortfolioCandidateSet:
+        candidates = tuple(
+            self._build_strategy_candidate(item)
+            for item in portfolio.strategy_results
+        )
+        return DailyReferencePortfolioCandidateSet(
+            candidate_set_id=f"daily-portfolio-candidates:{portfolio.portfolio_id}",
+            source_portfolio_id=portfolio.portfolio_id,
+            snapshot_id=portfolio.snapshot_id,
+            candidates=candidates,
+            observer_only=True,
+            ranking_permitted=False,
+            method_version=METHOD_VERSION,
+        )
+
+    def _build_strategy_candidate(
+        self,
+        strategy: DailyReferenceStrategyResult,
+    ) -> DailyReferenceCandidate:
+        intents_used = tuple(
+            dict.fromkeys(item.intent for item in strategy.intent_schedule.intervals)
+        )
+        family_by_intent = {
+            DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY: (
+                DailyReferenceCandidateFamily.HOUSEHOLD_SUPPORT_ONLY
+            ),
+            DailyStorageIntent.NOM: DailyReferenceCandidateFamily.NOM,
+            DailyStorageIntent.STANDBY: DailyReferenceCandidateFamily.STANDBY,
+            DailyStorageIntent.GRID_REQUIREMENT: (
+                DailyReferenceCandidateFamily.GRID_REQUIREMENT
+            ),
+            DailyStorageIntent.STORAGE_EXPORT: (
+                DailyReferenceCandidateFamily.STORAGE_EXPORT
+            ),
+        }
+        family = (
+            family_by_intent[intents_used[0]]
+            if len(intents_used) == 1
+            else DailyReferenceCandidateFamily.MIXED_SCHEDULE
+        )
+        return self._build_candidate(
+            run=strategy.run,
+            family=family,
+            intent_schedule_id=strategy.intent_schedule.schedule_id,
+            intents_used=intents_used,
+        )
+
+    @staticmethod
+    def _build_candidate(
+        *,
+        run: DailyReferenceRun,
+        family: DailyReferenceCandidateFamily,
+        intent_schedule_id: str,
+        intents_used: tuple[DailyStorageIntent, ...],
+    ) -> DailyReferenceCandidate:
         assessments = {item.scenario: item for item in run.assessment.assessments}
         financial = {item.scenario: item for item in run.financial.paths}
         outcomes = tuple(
@@ -49,10 +129,10 @@ class IndependentDailyCandidateEngine:
             for scenario in PVScenario
         )
         candidate = DailyReferenceCandidate(
-            candidate_id=f"daily-candidate:{run.run_id}:nom-full-horizon",
+            candidate_id=f"daily-candidate:{run.run_id}:{intent_schedule_id}",
             source_run_id=run.run_id,
             snapshot_id=run.snapshot_id,
-            family=DailyReferenceCandidateFamily.NOM_FULL_HORIZON,
+            family=family,
             scenario_outcomes=outcomes,
             complete_across_scenarios=all(
                 item.physically_complete for item in outcomes
@@ -73,13 +153,7 @@ class IndependentDailyCandidateEngine:
             observer_only=True,
             selection_eligible=False,
             method_version=METHOD_VERSION,
+            intent_schedule_id=intent_schedule_id,
+            intents_used=intents_used,
         )
-        return DailyReferenceCandidateSet(
-            candidate_set_id=f"daily-candidates:{run.run_id}",
-            source_run_id=run.run_id,
-            snapshot_id=run.snapshot_id,
-            candidates=(candidate,),
-            observer_only=True,
-            ranking_permitted=False,
-            method_version=METHOD_VERSION,
-        )
+        return candidate

@@ -81,3 +81,31 @@ def test_missing_price_coverage_blocks_schedule() -> None:
         IndependentDailyTariffAdapter().build(
             replace(snapshot, price_points=(short,))
         )
+
+
+def test_explicit_daily_horizon_does_not_require_canonical_36_hour_coverage() -> None:
+    starts_at = datetime(2026, 8, 23, 18, 30, tzinfo=UTC)
+    canonical_end = starts_at + timedelta(hours=36)
+    daily_end = starts_at + timedelta(hours=24)
+    snapshot = replace(
+        _snapshot(starts_at, hours=36),
+        price_points=(
+            PriceForecastPoint(
+                point_id="known-day-prices",
+                starts_at=starts_at,
+                ends_at=daily_end,
+                value_eur_per_kwh=0.30,
+                confidence=1.0,
+                evidence_id="nordpool-today-and-tomorrow",
+            ),
+        ),
+    )
+    assert snapshot.horizon_end == canonical_end
+
+    result = IndependentDailyTariffAdapter().build(
+        snapshot,
+        horizon_end=daily_end,
+    )
+
+    assert result.horizon_start == starts_at
+    assert result.horizon_end == daily_end

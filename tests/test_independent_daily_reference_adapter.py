@@ -75,20 +75,26 @@ def _snapshot(
             interval_id=f"pv-{index}",
             starts_at=START + index * 2 * QUARTER,
             ends_at=START + (index + 1) * 2 * QUARTER,
-            pv_energy_wh=1000.0,
+            pv_energy_wh=1000.0 if index < 2 else 0.0,
             evidence_type="FORECAST",
             confidence=0.8,
             actual_evidence_ids=(),
             forecast_evidence_ids=(f"solcast-{index}",),
             conversion_method_version="solcast:v1",
-            forecast_lower_energy_wh=800.0 if complete_range else None,
-            forecast_central_energy_wh=1000.0 if complete_range else None,
-            forecast_upper_energy_wh=1200.0 if complete_range else None,
+            forecast_lower_energy_wh=(800.0 if index < 2 else 0.0)
+            if complete_range
+            else None,
+            forecast_central_energy_wh=(1000.0 if index < 2 else 0.0)
+            if complete_range
+            else None,
+            forecast_upper_energy_wh=(1200.0 if index < 2 else 0.0)
+            if complete_range
+            else None,
             forecast_range_status="available" if complete_range else "unavailable",
             forecast_range_source_fields=("p10", "p50", "p90") if complete_range else (),
             forecast_range_method_version="range:v1" if complete_range else None,
         )
-        for index in range(2)
+        for index in range(48)
     )
     household_intervals = tuple(
         HouseholdLoadForecastInterval(
@@ -100,7 +106,7 @@ def _snapshot(
             source_reference="history",
             method_version="household:v1",
         )
-        for index in range(4)
+        for index in range(96)
     )
     return PlanningInputSnapshot(
         run_id="run",
@@ -110,12 +116,12 @@ def _snapshot(
         architecture_baseline_commit="baseline",
         pipeline_contract_version=1,
         strategy_id="strategy",
-        horizon_end=START + 4 * QUARTER,
+        horizon_end=START + timedelta(hours=36),
         price_points=(
             PriceForecastPoint(
                 point_id="price",
                 starts_at=START,
-                ends_at=START + 4 * QUARTER,
+                ends_at=START + timedelta(hours=24),
                 value_eur_per_kwh=0.30,
                 confidence=0.95,
                 evidence_id="nordpool",
@@ -172,17 +178,17 @@ def _tariffs(*, snapshot_id: str = "snapshot") -> DailyReferenceTariffSchedule:
         schedule_id="tariffs",
         snapshot_id=snapshot_id,
         horizon_start=START,
-        horizon_end=START + 4 * QUARTER,
+        horizon_end=START + timedelta(hours=24),
         intervals=tuple(
             DailyReferenceTariffInterval(
                 starts_at=START + index * QUARTER,
                 ends_at=START + (index + 1) * QUARTER,
-                import_eur_per_kwh=0.25 + index * 0.01,
-                export_eur_per_kwh=0.10 + index * 0.01,
+                import_eur_per_kwh=0.25,
+                export_eur_per_kwh=0.10,
                 confidence=0.95,
                 evidence_ids=(f"tariff-{index}",),
             )
-            for index in range(4)
+            for index in range(96)
         ),
         method_version="test-tariff:v1",
     )
@@ -206,7 +212,28 @@ def test_adapter_builds_three_quarter_hour_trajectories_from_shared_snapshot() -
         PVScenario.CENTRAL: pytest.approx(2000.0),
         PVScenario.UPPER: pytest.approx(2400.0),
     }
-    assert all(len(item.intervals) == 4 for item in result.trajectories)
+    assert all(len(item.intervals) == 96 for item in result.trajectories)
+    assert all(
+        item.horizon_end == START + timedelta(hours=24)
+        for item in result.trajectories
+    )
+
+
+def test_observer_waits_when_next_day_prices_do_not_cover_24_hours() -> None:
+    snapshot = _snapshot(maximum_soc=0.7)
+    short_price = replace(
+        snapshot.price_points[0],
+        ends_at=START + timedelta(hours=20),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="daily_tariff_price_coverage_incomplete",
+    ):
+        IndependentDailyReferenceAdapter().observe(
+            snapshot=replace(snapshot, price_points=(short_price,)),
+            conversion_model=_conversion(),
+        )
 
 
 def test_adapter_blocks_when_any_pv_uncertainty_range_is_missing() -> None:

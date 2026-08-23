@@ -5,13 +5,14 @@ from dataclasses import replace
 from threading import Event
 from typing import cast
 
+from test_independent_daily_reference_adapter import _conversion, _snapshot
+
 from picot.v2.independent_daily_observer_runtime import (
     DailyObserverResultStore,
     DailyObserverRuntimeOutcome,
     IndependentDailyObserverRuntime,
     IndependentDailyObserverWorker,
 )
-from test_independent_daily_reference_adapter import _conversion, _snapshot
 
 
 def _runtime(tmp_path):
@@ -116,7 +117,7 @@ def test_worker_publishes_completed_outcome_without_control_coupling(tmp_path) -
 
     worker.submit(_snapshot(maximum_soc=0.7))
 
-    assert completed.wait(timeout=2.0)
+    assert completed.wait(timeout=5.0)
     assert len(published) == 1
     assert published[0].observer_only is True
     assert published[0].selection_permitted is False

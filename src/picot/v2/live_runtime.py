@@ -551,7 +551,11 @@ def _attach_live_household_objectives(
     )
     return replace(bundle, snapshot=snapshot)
 
-def _planning_input_signature(bundle: PlanningInputBundle) -> str:
+def _planning_input_signature(
+    bundle: PlanningInputBundle,
+    *,
+    retain_active_commitment: bool = True,
+) -> str:
     """Return a stable signature for decision-relevant Planning Input content."""
     active_commitments = bundle.snapshot.active_plan_commitments
     facts = [
@@ -595,7 +599,7 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
             else ()
         )
     ]
-    if active_commitments:
+    if active_commitments and retain_active_commitment:
         # ADR-034: raw telemetry and rolling forecasts are plan progress while
         # an accepted execution commitment is active. Hard authority,
         # capability and completion facts remain decision-relevant below.
@@ -760,6 +764,32 @@ def _planning_input_signature(bundle: PlanningInputBundle) -> str:
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _observer_input_signature(bundle: PlanningInputBundle) -> str:
+    """Track slow planning inputs independently from execution commitments.
+
+    Instantaneous power telemetry is intentionally excluded: it is published
+    live through the dashboard overlay and must not start a full daily
+    simulation on every poll. Availability changes remain relevant.
+    """
+    live_power_roles = {
+        "grid_power",
+        "pv_power",
+        "storage_power_signed",
+        "storage_power_charge",
+        "storage_power_discharge",
+    }
+    observer_facts = tuple(
+        fact
+        for fact in bundle.facts
+        if fact.semantic_role not in live_power_roles
+        or fact.availability != "available"
+    )
+    return _planning_input_signature(
+        replace(bundle, facts=observer_facts),
+        retain_active_commitment=False,
+    )
+
+
 def _restore_active_plan_commitments(
     snapshot: PlanningInputSnapshot,
     store: ActivePlanCommitmentStore,
@@ -853,6 +883,7 @@ def _poll_live_cycle(
         Callable[[HouseholdLoadObservation], None] | None
     ) = None,
     refresh_unchanged: Callable[[PlanningInputBundle], None] | None = None,
+    observe: Callable[[PlanningInputBundle], None] | None = None,
 ) -> str:
     """Load fresh Planning Input and execute only when decision input changed."""
     bundle = load_bundle()
@@ -875,6 +906,9 @@ def _poll_live_cycle(
     preparation_diagnostics: Any = None
     if prepare_bundle is not None:
         bundle, preparation_diagnostics = prepare_bundle(bundle)
+
+    if observe is not None:
+        observe(bundle)
 
     if prepare_bundle is not None:
 
@@ -1062,14 +1096,10 @@ def _project_interval_pv_deviation(
     }
 
 
-def _with_planning_input_diagnostics(
-    projection: Projection,
+def _planning_input_sources(
     bundle: PlanningInputBundle,
-    *,
-    pv_actual_diagnostics: LivePVActualDiagnostics | None = None,
-) -> Projection:
-    """Passively enrich card 1 from already assembled Planning Input data."""
-    sources = [
+) -> list[dict[str, object]]:
+    return [
         {
             "category": evidence.category,
             "semantic_role": evidence.semantic_role,
@@ -1089,6 +1119,16 @@ def _with_planning_input_diagnostics(
         }
         for evidence, fact in zip(bundle.evidence, bundle.facts, strict=True)
     ]
+
+
+def _with_planning_input_diagnostics(
+    projection: Projection,
+    bundle: PlanningInputBundle,
+    *,
+    pv_actual_diagnostics: LivePVActualDiagnostics | None = None,
+) -> Projection:
+    """Passively enrich card 1 from already assembled Planning Input data."""
+    sources = _planning_input_sources(bundle)
     pv_actual_attributes: dict[str, Any] = {}
     if pv_actual_diagnostics is not None:
         deviation = pv_actual_diagnostics.deviation_result
@@ -2363,6 +2403,24 @@ def main() -> None:
         )
         return power_history, power_history_read_ms
 
+    previous_observer_signature: str | None = None
+
+    def observe_fresh_input(bundle: PlanningInputBundle) -> None:
+        nonlocal previous_observer_signature
+        web_view_store.publish_planning_input_sources(
+            _planning_input_sources(bundle)
+        )
+        signature = _observer_input_signature(bundle)
+        if _should_run_cycle(previous_signature, bundle):
+            # The canonical execution path submits this snapshot. Remember its
+            # observer signature to avoid queueing it again on the next poll.
+            previous_observer_signature = signature
+            return
+        if signature == previous_observer_signature:
+            return
+        previous_observer_signature = signature
+        independent_daily_observer_worker.submit(bundle.snapshot)
+
     def refresh_unchanged(bundle: PlanningInputBundle) -> None:
         power_history, _ = read_power_history(bundle)
         try:
@@ -2477,6 +2535,7 @@ def main() -> None:
                 execute=execute,
                 persist_observation=household_load_history.append,
                 refresh_unchanged=refresh_unchanged,
+                observe=observe_fresh_input,
             )
         )
         _wait_for_poll_or_reset(

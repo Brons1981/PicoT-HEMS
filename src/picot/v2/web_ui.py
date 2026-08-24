@@ -3982,6 +3982,39 @@ class WebViewStore:
                 raise TypeError("latest web view must be an object")
             self._replace_latest_locked(latest)
 
+    def publish_planning_input_sources(
+        self,
+        sources: list[dict[str, object]],
+    ) -> None:
+        """Overlay fresh source evidence without replacing the active plan."""
+        copied: object = json.loads(json.dumps(sources))
+        if not isinstance(copied, list):
+            raise TypeError("planning input sources must serialize to a list")
+        with self._condition:
+            if self._latest_json is None:
+                return
+            latest: object = json.loads(self._latest_json)
+            if not isinstance(latest, dict):
+                raise TypeError("latest web view must be an object")
+            pipeline = latest.get("pipeline")
+            if not isinstance(pipeline, list):
+                return
+            for card in pipeline:
+                if not isinstance(card, dict) or card.get("stage") != 1:
+                    continue
+                attributes = card.get("attributes")
+                if not isinstance(attributes, dict):
+                    return
+                attributes["sources"] = copied
+                attributes["source_count"] = len(copied)
+                attributes["source_available_count"] = sum(
+                    isinstance(source, dict)
+                    and source.get("availability") == "available"
+                    for source in copied
+                )
+                break
+            self._replace_latest_locked(latest)
+
     def publish_power_history(
         self,
         power_history: PowerHistorySnapshot,

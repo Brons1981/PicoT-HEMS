@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, Thread
@@ -7,9 +8,11 @@ from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
 from picot.v2.live_runtime import (
     PlanningResetBarrier,
+    _observer_input_signature,
     _planning_input_signature,
     _poll_live_cycle,
 )
+from picot.v2.plan_commitment_store import ActivePlanCommitment
 from picot.v2.planning_input import (
     CanonicalInputFact,
     HouseholdLoadObservation,
@@ -96,6 +99,28 @@ def _bundle(
     )
 
 
+def _with_active_commitment(
+    bundle: PlanningInputBundle,
+) -> PlanningInputBundle:
+    commitment = ActivePlanCommitment(
+        execution_scope_id="home-battery",
+        plan_id="plan-tomorrow",
+        plan_revision=1,
+        primitive="balance_bidirectional",
+        source_policy="pv_only",
+        starts_at=BASE + timedelta(hours=12),
+        ends_at=BASE + timedelta(hours=15),
+        target_energy_wh=8160.0,
+    )
+    return replace(
+        bundle,
+        snapshot=replace(
+            bundle.snapshot,
+            active_plan_commitments=(commitment,),
+        ),
+    )
+
+
 def test_poll_cycle_always_loads_fresh_input_but_skips_identical_execution() -> None:
     first = _bundle(captured_at=BASE, price=0.20)
     second = _bundle(captured_at=BASE + timedelta(minutes=1), price=0.20)
@@ -131,6 +156,59 @@ def test_poll_cycle_executes_when_fresh_input_changed() -> None:
 
     assert calls == [changed.snapshot.run_id]
     assert result == _planning_input_signature(changed)
+
+
+def test_observer_detects_fresh_input_while_commitment_stays_stable() -> None:
+    first = _with_active_commitment(_bundle(captured_at=BASE, price=0.20))
+    changed = _with_active_commitment(
+        _bundle(captured_at=BASE + timedelta(minutes=1), price=0.10)
+    )
+    observed: list[str] = []
+    executed: list[str] = []
+
+    assert _planning_input_signature(first) == _planning_input_signature(changed)
+    assert _observer_input_signature(first) != _observer_input_signature(changed)
+
+    _poll_live_cycle(
+        previous_signature=_planning_input_signature(first),
+        load_bundle=lambda: changed,
+        execute=lambda bundle: executed.append(bundle.snapshot.run_id),
+        observe=lambda bundle: observed.append(bundle.snapshot.run_id),
+    )
+
+    assert observed == [changed.snapshot.run_id]
+    assert executed == []
+
+
+def test_observer_ignores_live_power_noise_but_detects_soc_change() -> None:
+    first = _with_active_commitment(_bundle(captured_at=BASE, price=0.20))
+    power_changed = replace(
+        first,
+        facts=(replace(first.facts[0], value=750.0),),
+    )
+    soc_first = replace(
+        first,
+        facts=(
+            replace(
+                first.facts[0],
+                category="zendure",
+                semantic_role="storage_soc",
+                value=98.0,
+                unit="%",
+            ),
+        ),
+    )
+    soc_changed = replace(
+        soc_first,
+        facts=(replace(soc_first.facts[0], value=97.0),),
+    )
+
+    assert _observer_input_signature(first) == _observer_input_signature(
+        power_changed
+    )
+    assert _observer_input_signature(soc_first) != _observer_input_signature(
+        soc_changed
+    )
 
 
 def test_planning_reset_waits_for_older_cycle_before_clearing_state() -> None:

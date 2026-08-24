@@ -848,6 +848,32 @@ def test_web_view_store_overlays_fast_grid_power_without_planner_run() -> None:
         "raw_state"
     ] == "8.345"
 
+
+def test_web_view_store_overlays_fresh_soc_without_replacing_plan() -> None:
+    store = WebViewStore()
+    store.publish({
+        "run_id": "run-committed-plan",
+        "pipeline": [{
+            "stage": 1,
+            "attributes": {"sources": [], "source_count": 0},
+        }],
+    })
+
+    store.publish_planning_input_sources([{
+        "semantic_role": "storage_soc",
+        "raw_state": "97",
+        "availability": "available",
+    }])
+
+    latest_json = store.latest_json()
+    assert latest_json is not None
+    latest = json.loads(latest_json)
+    assert latest["run_id"] == "run-committed-plan"
+    attributes = latest["pipeline"][0]["attributes"]
+    assert attributes["sources"][0]["raw_state"] == "97"
+    assert attributes["source_count"] == 1
+    assert attributes["source_available_count"] == 1
+
 def test_dashboard_exposes_exact_chosen_execution_plan_facts() -> None:
     assert "Gekozen uitvoeringsplan" in DASHBOARD_HTML
     assert 'const chosenPlan = status.chosen_plan ?? {};' in DASHBOARD_HTML

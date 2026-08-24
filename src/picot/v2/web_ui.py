@@ -1165,7 +1165,7 @@ DASHBOARD_HTML = """<!doctype html>
         timeline.market_timezone ?? "Europe/Amsterdam";
       const startsAtMs = start.getTime();
       const endsAtMs = end.getTime();
-      const capturedAtMs = captured.getTime();
+      const nowMs = Date.now();
       const displayHours =
         (endsAtMs - startsAtMs) / (60 * 60 * 1000);
       const visiblePoints = points.filter((point) => {
@@ -1338,7 +1338,7 @@ DASHBOARD_HTML = """<!doctype html>
         }
 
         const kind = priceWindowKind(point, opportunities);
-        const isPast = pointEnd <= capturedAtMs;
+        const isPast = pointEnd <= nowMs;
         const valueY = yPosition(value);
         const bar = createSvgElement("rect", {
           class: `price-bar ${kind}${isPast ? " past" : ""}`,
@@ -1399,10 +1399,10 @@ DASHBOARD_HTML = """<!doctype html>
       }
 
       if (
-        capturedAtMs > startsAtMs &&
-        capturedAtMs < endsAtMs
+        nowMs > startsAtMs &&
+        nowMs < endsAtMs
       ) {
-        const x = xPosition(capturedAtMs);
+        const x = xPosition(nowMs);
         svg.appendChild(
           createSvgElement("line", {
             class: "now-line",
@@ -3208,6 +3208,17 @@ DASHBOARD_HTML = """<!doctype html>
       container.replaceChildren();
       const observer = view.daily_observer_comparison ?? {};
       const canonical = view.planning_status?.chosen_plan ?? {};
+      const storageTarget = view.planning_status?.storage_target ?? {};
+      const usableCapacityWh =
+        Number(storageTarget.required_soc) > 0
+          ? Number(storageTarget.required_energy_wh) /
+            Number(storageTarget.required_soc)
+          : null;
+      const socAtCalculation =
+        Number.isFinite(usableCapacityWh) && usableCapacityWh > 0 &&
+        Number.isFinite(Number(canonical.initial_storage_energy_wh))
+          ? Number(canonical.initial_storage_energy_wh) / usableCapacityWh
+          : null;
       const grid = document.createElement("div");
       grid.className = "daily-comparison-grid";
 
@@ -3233,6 +3244,8 @@ DASHBOARD_HTML = """<!doctype html>
       }
 
       grid.append(comparisonCard("Huidige canonieke keuze", "canonical", [
+        ["Plan berekend", view.planning_status?.captured_at],
+        ["SoC bij berekening", formatConfidence(socAtCalculation)],
         ["Kandidaat", canonical.candidate_id],
         ["Planfamilie", canonical.family],
         ["Venster vanaf", canonical.charge_window_starts_at],
@@ -3283,6 +3296,10 @@ DASHBOARD_HTML = """<!doctype html>
       };
       const observerRows = [
         ["Status", observer.status === "completed" ? "Afgerond" : observer.status],
+        ["Plan berekend", observer.captured_at],
+        ["SoC bij berekening", aligned
+          ? formatConfidence(socAtCalculation)
+          : "Andere Planning Input-snapshot"],
         ...(observer.reason ? [[
           "Blokkadereden",
           observerReasonLabels[observer.reason] ?? observer.reason,
@@ -3353,6 +3370,8 @@ DASHBOARD_HTML = """<!doctype html>
       for (const candidate of best) {
         const details = document.createElement("details");
         details.className = "technical-details";
+        details.dataset.technicalKey =
+          `daily-observer:${candidate.candidate_id}`;
         const summary = document.createElement("summary");
         summary.textContent = [
           dailyStrategyLabel(candidate),
@@ -3431,6 +3450,13 @@ DASHBOARD_HTML = """<!doctype html>
       const openTechnicalDetails = Array.from(
         document.querySelectorAll("details.technical-details")
       ).map((details) => details.open);
+      const openTechnicalDetailsByKey = Object.fromEntries(
+        Array.from(
+          document.querySelectorAll(
+            "details.technical-details[data-technical-key]"
+          )
+        ).map((details) => [details.dataset.technicalKey, details.open])
+      );
       const openPlanExplanationDetails = Object.fromEntries(
         Array.from(
           document.querySelectorAll("details.plan-explanation-detail")
@@ -3451,6 +3477,7 @@ DASHBOARD_HTML = """<!doctype html>
       return {
         openStageCards,
         openTechnicalDetails,
+        openTechnicalDetailsByKey,
         openPlanExplanationDetails,
         scrollPositions,
         windowScrollX: window.scrollX,
@@ -3472,7 +3499,10 @@ DASHBOARD_HTML = """<!doctype html>
       Array.from(
         document.querySelectorAll("details.technical-details")
       ).forEach((details, index) => {
-        details.open = state.openTechnicalDetails[index] ?? false;
+        const key = details.dataset.technicalKey;
+        details.open = key
+          ? Boolean(state.openTechnicalDetailsByKey?.[key])
+          : state.openTechnicalDetails[index] ?? false;
       });
       Array.from(
         document.querySelectorAll("details.plan-explanation-detail")

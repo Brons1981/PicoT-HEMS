@@ -647,9 +647,22 @@ def test_dashboard_contains_48_hour_price_window_chart() -> None:
     assert "display_ends_at" in DASHBOARD_HTML
     assert ".price-bar.past" in DASHBOARD_HTML
     assert "now-line" in DASHBOARD_HTML
+    assert "const nowMs = Date.now();" in DASHBOARD_HTML
+    assert "pointEnd <= nowMs" in DASHBOARD_HTML
     assert "Nog niet gepubliceerd" in DASHBOARD_HTML
     assert "LOWEST_PRICE_WINDOW" in DASHBOARD_HTML
     assert "HIGH_EXPORT_VALUE_WINDOW" in DASHBOARD_HTML
+
+
+def test_dashboard_preserves_open_daily_measure_details_by_stable_key() -> None:
+    assert "details.dataset.technicalKey" in DASHBOARD_HTML
+    assert "openTechnicalDetailsByKey" in DASHBOARD_HTML
+
+
+def test_dashboard_shows_plan_calculation_time_and_soc() -> None:
+    assert '["Plan berekend", view.planning_status?.captured_at]' in DASHBOARD_HTML
+    assert '["Plan berekend", observer.captured_at]' in DASHBOARD_HTML
+    assert "SoC bij berekening" in DASHBOARD_HTML
 
 
 def test_web_view_represents_missing_pv_timeline_without_intervals() -> None:

@@ -17,6 +17,29 @@ from picot.v2.planning_input import (
 BASE = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
 
 
+def test_legacy_single_battery_soc_binding_is_migrated_to_stack_soc(
+    tmp_path: Path,
+) -> None:
+    options_path = tmp_path / "options.json"
+    options_path.write_text(
+        json.dumps({
+            "zendure_soc_entity": (
+                "sensor.zendure_2400_ac_batterij_1_laadpercentage"
+            ),
+        }),
+        encoding="utf-8",
+    )
+
+    bindings = {
+        binding.semantic_role: binding.entity_id
+        for binding in load_bindings(str(options_path))
+    }
+
+    assert bindings["storage_soc"] == (
+        "sensor.zendure_2400_ac_laadpercentage"
+    )
+
+
 def test_storage_power_bindings_are_loaded_from_explicit_options(
     tmp_path: Path,
 ) -> None:

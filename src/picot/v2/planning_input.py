@@ -178,6 +178,12 @@ DEFAULT_BINDINGS = (
     ("nordpool", "energy_price", "nordpool_price_entity"),
 )
 
+LEGACY_SOC_ENTITY_MIGRATIONS = {
+    "sensor.zendure_2400_ac_batterij_1_laadpercentage": (
+        "sensor.zendure_2400_ac_laadpercentage"
+    ),
+}
+
 DEFAULT_STORAGE_POWER_CONSISTENCY_TOLERANCE_W = 25.0
 HOUSEHOLD_LOAD_OBSERVATION_METHOD_VERSION = "complete-power-balance:v1"
 DEFAULT_STORAGE_MAXIMUM_SOC_PERCENT = 100.0
@@ -619,6 +625,8 @@ def load_bindings(options_path: str = "/data/options.json") -> tuple[SourceBindi
     for category, semantic_role, option_key in DEFAULT_BINDINGS:
         raw = options.get(option_key)
         entity_id = raw.strip() if isinstance(raw, str) and raw.strip() else None
+        if semantic_role == "storage_soc" and entity_id is not None:
+            entity_id = LEGACY_SOC_ENTITY_MIGRATIONS.get(entity_id, entity_id)
         result.append(SourceBinding(category, semantic_role, entity_id))
     return tuple(result)
 

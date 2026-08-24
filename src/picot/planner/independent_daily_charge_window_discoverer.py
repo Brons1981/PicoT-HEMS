@@ -15,7 +15,10 @@ from picot.domain.daily_reference_intent import (
     DailyReferenceIntentSchedule,
     DailyStorageIntent,
 )
-from picot.domain.daily_reference_simulation import DailyReferenceSimulationSet
+from picot.domain.daily_reference_simulation import (
+    DailyReferenceSimulationSet,
+    DailyReferenceTrajectory,
+)
 from picot.domain.household_load_forecast import HouseholdLoadForecast
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.independent_daily_intent_simulator import (
@@ -48,8 +51,39 @@ class IndependentDailyChargeWindowDiscoverer:
         maximum_discharge_output_power_w: float,
         intents: tuple[DailyStorageIntent, ...] = CHARGE_INTENTS,
     ) -> DailyReferenceChargeWindowSet:
-        if storage_state.current_stored_energy_wh >= target_storage_energy_wh:
-            return self._window_set(snapshot_id, (), status="not_required")
+        starts_at_target = (
+            storage_state.current_stored_energy_wh >= target_storage_energy_wh
+        )
+        if starts_at_target:
+            baseline = self._schedule(
+                snapshot_id=snapshot_id,
+                household=household,
+                intent=DailyStorageIntent.NOM,
+                start_index=len(household.intervals),
+                end_index=len(household.intervals),
+                label="full-storage-baseline",
+            )
+            baseline_result = self._simulate(
+                snapshot_id=snapshot_id,
+                household=household,
+                pv_scenarios=pv_scenarios,
+                storage_state=storage_state,
+                conversion_model=conversion_model,
+                schedule=baseline,
+                minimum_storage_energy_wh=minimum_storage_energy_wh,
+                target_storage_energy_wh=target_storage_energy_wh,
+                maximum_charge_input_power_w=maximum_charge_input_power_w,
+                maximum_discharge_output_power_w=maximum_discharge_output_power_w,
+            )
+            if all(
+                all(
+                    interval.storage_energy_at_end_wh
+                    >= target_storage_energy_wh
+                    for interval in trajectory.intervals
+                )
+                for trajectory in baseline_result.trajectories
+            ):
+                return self._window_set(snapshot_id, (), status="not_required")
         windows: list[DailyReferenceChargeWindow] = []
         for intent in tuple(dict.fromkeys(intents)):
             if intent not in CHARGE_INTENTS:
@@ -80,7 +114,11 @@ class IndependentDailyChargeWindowDiscoverer:
                     maximum_discharge_output_power_w=maximum_discharge_output_power_w,
                 )
                 reached = tuple(
-                    item.target_reached_at for item in probe_result.trajectories
+                    self._recovery_target_reached_at(
+                        item,
+                        starts_at_target=starts_at_target,
+                    )
+                    for item in probe_result.trajectories
                 )
                 if any(item is None for item in reached):
                     continue
@@ -118,7 +156,11 @@ class IndependentDailyChargeWindowDiscoverer:
                     maximum_discharge_output_power_w=maximum_discharge_output_power_w,
                 )
                 exact_reached = tuple(
-                    item.target_reached_at for item in exact.trajectories
+                    self._recovery_target_reached_at(
+                        item,
+                        starts_at_target=starts_at_target,
+                    )
+                    for item in exact.trajectories
                 )
                 sufficient = all(item is not None for item in exact_reached)
                 shorter_sufficient = False
@@ -146,7 +188,11 @@ class IndependentDailyChargeWindowDiscoverer:
                         ),
                     )
                     shorter_sufficient = all(
-                        item.target_reached_at is not None
+                        self._recovery_target_reached_at(
+                            item,
+                            starts_at_target=starts_at_target,
+                        )
+                        is not None
                         for item in shorter_result.trajectories
                     )
                 if not sufficient or shorter_sufficient:
@@ -154,13 +200,17 @@ class IndependentDailyChargeWindowDiscoverer:
                         "Daily charge window minimality did not reconcile."
                     )
                 outcomes_list: list[DailyReferenceChargeWindowScenario] = []
-                for trajectory in exact.trajectories:
-                    if trajectory.target_reached_at is None:
+                for trajectory, reached_at in zip(
+                    exact.trajectories,
+                    exact_reached,
+                    strict=True,
+                ):
+                    if reached_at is None:
                         raise ValueError("Daily charge window lost target evidence.")
                     outcomes_list.append(
                         DailyReferenceChargeWindowScenario(
                             scenario=trajectory.scenario,
-                            target_reached_at=trajectory.target_reached_at,
+                            target_reached_at=reached_at,
                         )
                     )
                 outcomes = tuple(outcomes_list)
@@ -186,6 +236,27 @@ class IndependentDailyChargeWindowDiscoverer:
             tuple(windows),
             status="discovered" if windows else "no_feasible_window",
         )
+
+    @staticmethod
+    def _recovery_target_reached_at(
+        trajectory: DailyReferenceTrajectory,
+        *,
+        starts_at_target: bool,
+    ) -> datetime | None:
+        if not starts_at_target:
+            return trajectory.target_reached_at
+        target = trajectory.target_storage_energy_wh
+        fell_below_target = False
+        for interval in trajectory.intervals:
+            if (
+                interval.storage_energy_at_start_wh < target
+                or interval.storage_to_household_output_wh > 0.0
+                or interval.storage_to_grid_output_wh > 0.0
+            ):
+                fell_below_target = True
+            if fell_below_target and interval.storage_energy_at_end_wh >= target:
+                return interval.ends_at
+        return None
 
     @staticmethod
     def _is_market_quarter(value: datetime) -> bool:

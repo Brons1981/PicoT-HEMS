@@ -322,15 +322,17 @@ def test_adapter_derives_tariffs_automatically_from_shared_snapshot() -> None:
     )
 
 
-def test_adapter_observes_baseline_when_storage_already_meets_target() -> None:
+def test_adapter_considers_recovery_when_full_storage_is_later_depleted() -> None:
     result = IndependentDailyReferenceAdapter().observe(
         snapshot=_snapshot(current_soc=1.0),
         conversion_model=_conversion(),
     )
 
-    assert result.strategy_space.charge_requirement_status == "not_required"
-    assert len(result.strategy_space.schedules) == 1
-    assert len(result.observer_result.evaluation.records) == 1
+    assert result.strategy_space.charge_requirement_status == "required"
+    assert len(result.strategy_space.schedules) > 1
+    assert len(result.observer_result.evaluation.records) == len(
+        result.strategy_space.schedules
+    )
 
     strategy_results = result.observer_result.portfolio.strategy_results
     assert strategy_results

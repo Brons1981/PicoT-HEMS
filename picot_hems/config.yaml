@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.153"
+version: "2.0.0-dev.154"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -18,7 +18,7 @@ options:
   pv_power_entity: "sensor.inverter_54200dsn211r0265_vermogen"
   pv_installation_scope_id: "pv-installation-home"
   pv_local_timezone: "Europe/Amsterdam"
-  zendure_soc_entity: ""
+  zendure_soc_entity: "sensor.zendure_2400_ac_laadpercentage"
   zendure_calibration_entity: "sensor.zendure_2400_ac_kalibreren"
   zendure_mode_entity: "input_select.zendure_2400_ac_modus_selecteren"
   zendure_signed_power_entity: "sensor.zendure_2400_ac_vermogen_aansturing"

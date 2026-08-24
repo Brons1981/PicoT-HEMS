@@ -1614,6 +1614,8 @@ def _execute_planning_bundle(
         price_opportunity_config=price_config,
         control_change_allowed=canonical_execution_enabled,
     )
+    if independent_daily_observer_worker is not None:
+        independent_daily_observer_worker.submit(bundle.snapshot)
     if canonical_execution_runtime is not None:
         run = canonical_execution_runtime.apply(run)
         if (
@@ -2409,6 +2411,11 @@ def main() -> None:
             _planning_input_sources(bundle)
         )
         signature = _observer_input_signature(bundle)
+        if _should_run_cycle(previous_signature, bundle):
+            # The canonical execution path submits this snapshot. Remember its
+            # observer signature to avoid queueing it again on the next poll.
+            previous_observer_signature = signature
+            return
         if signature == previous_observer_signature:
             return
         previous_observer_signature = signature

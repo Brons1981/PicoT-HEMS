@@ -1,19 +1,41 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+from test_independent_daily_simulator import _household, _storage, _timeline
+
 from picot.domain.daily_reference_intent import DailyStorageIntent
 from picot.domain.daily_reference_simulation import PVScenario
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.independent_daily_charge_window_discoverer import (
     IndependentDailyChargeWindowDiscoverer,
 )
-from test_independent_daily_simulator import _household, _storage, _timeline
 
 
-def _discover(*, soc: float = 0.5):
+def _discover(*, soc: float = 0.5, deplete_after_pv: bool = False):
+    scenarios = tuple(_timeline(scenario) for scenario in PVScenario)
+    if deplete_after_pv:
+        scenarios = tuple(
+            replace(
+                scenario,
+                timeline=replace(
+                    scenario.timeline,
+                    intervals=tuple(
+                        replace(interval, energy_wh=0.0)
+                        if index >= 3
+                        else interval
+                        for index, interval in enumerate(
+                            scenario.timeline.intervals
+                        )
+                    ),
+                ),
+            )
+            for scenario in scenarios
+        )
     return IndependentDailyChargeWindowDiscoverer().discover(
         snapshot_id="snapshot-intent",
         household=_household(),
-        pv_scenarios=tuple(_timeline(scenario) for scenario in PVScenario),
+        pv_scenarios=scenarios,
         storage_state=_storage(soc),
         conversion_model=StorageConversionModel(
             model_id="conversion",
@@ -61,10 +83,14 @@ def test_discovered_window_ends_at_conservative_physical_target_interval() -> No
         assert window.ends_at == target_interval.ends_at
 
 
-def test_discoverer_creates_no_window_when_storage_is_already_at_target() -> None:
-    result = _discover(soc=1.0)
+def test_discoverer_recovers_target_after_full_storage_is_later_depleted() -> None:
+    result = _discover(soc=1.0, deplete_after_pv=True)
 
-    assert result.windows == ()
+    assert result.windows
+    assert all(
+        item.conservative_target_reached_at > item.starts_at
+        for item in result.windows
+    )
 
 
 def test_discoverer_does_not_import_current_pipeline_selection_types() -> None:

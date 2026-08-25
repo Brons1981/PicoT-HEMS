@@ -16,6 +16,10 @@ from picot.v2.power_history import PowerHistorySnapshot
 
 SCHEMA_VERSION = 1
 METHOD_VERSION = "planner-comparison-replay:v1"
+MAX_STATE_BYTES = 64 * 1024 * 1024
+MAX_ACTIVE_DOSSIERS = 8
+MAX_PENDING_OBSERVERS = 16
+MEASUREMENT_BUCKET_SECONDS = 15
 REQUIRED_ROLES = frozenset(
     {
         "pv_generation",
@@ -64,17 +68,67 @@ class PlannerComparisonLedger:
 
     def _load(self) -> dict[str, Any]:
         if not self.state_path.is_file():
-            return {
-                "schema_version": SCHEMA_VERSION,
-                "dossiers": {},
-                "pending_observers": {},
+            return self._empty_state()
+        size_bytes = self.state_path.stat().st_size
+        if size_bytes > MAX_STATE_BYTES:
+            quarantined_at = datetime.now(UTC)
+            quarantine_path = self.state_path.with_name(
+                f"{self.state_path.stem}.oversized-"
+                f"{quarantined_at.strftime('%Y%m%dT%H%M%SZ')}"
+                f"{self.state_path.suffix}"
+            )
+            self.state_path.replace(quarantine_path)
+            state = self._empty_state()
+            state["recovery"] = {
+                "status": "oversized_state_quarantined",
+                "quarantined_at": _iso(quarantined_at),
+                "quarantine_path": str(quarantine_path),
+                "size_bytes": size_bytes,
+                "maximum_size_bytes": MAX_STATE_BYTES,
             }
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_planner_comparison_state_quarantined",
+                        **state["recovery"],
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
+            return state
         value = json.loads(self.state_path.read_text(encoding="utf-8"))
         if not isinstance(value, dict) or value.get("schema_version") != SCHEMA_VERSION:
             raise ValueError("unsupported planner comparison state")
         return value
 
+    @staticmethod
+    def _empty_state() -> dict[str, Any]:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "dossiers": {},
+            "pending_observers": {},
+        }
+
+    def _prune(self) -> None:
+        dossiers = self._state.get("dossiers")
+        if isinstance(dossiers, dict) and len(dossiers) > MAX_ACTIVE_DOSSIERS:
+            ordered = sorted(
+                dossiers.items(),
+                key=lambda item: str(item[1].get("captured_at", ""))
+                if isinstance(item[1], dict)
+                else "",
+                reverse=True,
+            )
+            self._state["dossiers"] = dict(ordered[:MAX_ACTIVE_DOSSIERS])
+        pending = self._state.get("pending_observers")
+        if isinstance(pending, dict) and len(pending) > MAX_PENDING_OBSERVERS:
+            self._state["pending_observers"] = dict(
+                list(pending.items())[-MAX_PENDING_OBSERVERS:]
+            )
+
     def _save(self) -> None:
+        self._prune()
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.state_path.with_name(f".{self.state_path.name}.writing")
         temporary.write_text(json.dumps(self._state, separators=(",", ":")), encoding="utf-8")
@@ -259,7 +313,13 @@ class PlannerComparisonLedger:
                     for point in series.points:
                         if not measurement_start <= point.sampled_at <= measurement_end:
                             continue
-                        points[point.evidence_id] = {
+                        bucket_epoch = (
+                            int(point.sampled_at.timestamp())
+                            // MEASUREMENT_BUCKET_SECONDS
+                            * MEASUREMENT_BUCKET_SECONDS
+                        )
+                        bucket_at = datetime.fromtimestamp(bucket_epoch, UTC)
+                        points[f"{series.role}:{_iso(bucket_at)}"] = {
                             "at": _iso(point.sampled_at),
                             "power_w": point.power_w,
                             "semantics": series.history_semantics,
@@ -355,6 +415,10 @@ class PlannerComparisonLedger:
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
         with self.history_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(dossier, separators=(",", ":")) + "\n")
+        # The append-only history now owns the raw replay evidence.  Keep only
+        # the compact result in active state so dashboard startup remains bounded.
+        for key in ("measurements", "prices", "physical", "storage_samples"):
+            dossier.pop(key, None)
 
     @staticmethod
     def _canonical_schedule(dossier: dict[str, Any]) -> list[dict[str, object]]:

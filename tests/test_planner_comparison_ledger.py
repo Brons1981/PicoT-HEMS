@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 
+import picot.v2.planner_comparison_ledger as comparison_ledger
 from picot.v2.planner_comparison_ledger import PlannerComparisonLedger
+from picot.v2.planner_comparison_ledger import (
+    MAX_ACTIVE_DOSSIERS,
+)
 
 
 def _dossier() -> dict:
@@ -98,6 +102,57 @@ def test_closes_both_planners_against_same_measurements(tmp_path) -> None:
         json.loads((tmp_path / "history.jsonl").read_text().splitlines()[0])["snapshot_id"]
         == "snapshot"
     )
+    assert "measurements" not in dossier
+    assert "prices" not in dossier
+    assert "physical" not in dossier
+    assert "storage_samples" not in dossier
+
+
+def test_oversized_state_is_quarantined_before_json_parse(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text("not-json-and-deliberately-oversized", encoding="utf-8")
+    monkeypatch.setattr(comparison_ledger, "MAX_STATE_BYTES", 8)
+
+    ledger = PlannerComparisonLedger(
+        state_path=state_path,
+        history_path=tmp_path / "history.jsonl",
+    )
+
+    assert ledger._state["dossiers"] == {}
+    assert ledger._state["recovery"]["status"] == (
+        "oversized_state_quarantined"
+    )
+    assert not state_path.exists()
+    quarantine_files = list(tmp_path.glob("state.oversized-*.json"))
+    assert len(quarantine_files) == 1
+    assert quarantine_files[0].read_text(encoding="utf-8") == (
+        "not-json-and-deliberately-oversized"
+    )
+    assert "picot_v2_planner_comparison_state_quarantined" in capsys.readouterr().out
+
+
+def test_save_keeps_only_latest_active_dossiers(tmp_path) -> None:
+    ledger = PlannerComparisonLedger(
+        state_path=tmp_path / "state.json",
+        history_path=tmp_path / "history.jsonl",
+    )
+    start = datetime(2026, 8, 24, 10, tzinfo=UTC)
+    ledger._state["dossiers"] = {
+        f"snapshot-{index}": {
+            "snapshot_id": f"snapshot-{index}",
+            "captured_at": (start + timedelta(minutes=index)).isoformat(),
+        }
+        for index in range(MAX_ACTIVE_DOSSIERS + 3)
+    }
+
+    ledger._save()
+
+    persisted = json.loads(ledger.state_path.read_text(encoding="utf-8"))
+    assert len(persisted["dossiers"]) == MAX_ACTIVE_DOSSIERS
+    assert "snapshot-0" not in persisted["dossiers"]
+    assert f"snapshot-{MAX_ACTIVE_DOSSIERS + 2}" in persisted["dossiers"]
 
 
 def test_incomplete_measurement_coverage_never_names_winner(tmp_path) -> None:

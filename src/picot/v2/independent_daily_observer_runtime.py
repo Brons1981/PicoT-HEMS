@@ -1,11 +1,11 @@
-"""Passive runtime and persistence for independent daily observations."""
+"""Passive runtime and bounded persistence for independent daily observations."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from threading import Lock, Thread
@@ -20,8 +20,12 @@ from picot.v2.independent_daily_reference_adapter import (
     IndependentDailyReferenceAdapter,
 )
 
-SCHEMA_VERSION = 1
-METHOD_VERSION = "v2-independent-daily-observer-runtime:v1"
+SCHEMA_VERSION = 2
+METHOD_VERSION = "v2-independent-daily-observer-runtime:v2"
+FULL_DETAIL_RETENTION = timedelta(hours=48)
+COMPACT_RETENTION = timedelta(days=14)
+MAX_LATEST_BYTES = 16 * 1024 * 1024
+MAX_HISTORY_BYTES = 128 * 1024 * 1024
 
 
 def _json_value(value: object) -> object:
@@ -32,6 +36,14 @@ def _json_value(value: object) -> object:
     if isinstance(value, Enum):
         return value.value
     raise TypeError(f"unsupported daily observer value: {type(value).__name__}")
+
+
+def _json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        default=_json_value,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,11 +76,29 @@ class DailyObserverRuntimeOutcome:
 
 
 class DailyObserverResultStore:
-    """Retain one full latest result plus append-only compact history."""
+    """Retain bounded winner detail and compact run history.
 
-    def __init__(self, *, latest_path: Path, history_path: Path) -> None:
+    The live dashboard still receives the original in-memory outcome. Persistence
+    deliberately avoids serialising every simulated trajectory for every losing
+    candidate.
+    """
+
+    def __init__(
+        self,
+        *,
+        latest_path: Path,
+        history_path: Path,
+        full_detail_retention: timedelta = FULL_DETAIL_RETENTION,
+        compact_retention: timedelta = COMPACT_RETENTION,
+        maximum_latest_bytes: int = MAX_LATEST_BYTES,
+        maximum_history_bytes: int = MAX_HISTORY_BYTES,
+    ) -> None:
         self.latest_path = latest_path
         self.history_path = history_path
+        self.full_detail_retention = full_detail_retention
+        self.compact_retention = compact_retention
+        self.maximum_latest_bytes = maximum_latest_bytes
+        self.maximum_history_bytes = maximum_history_bytes
 
     def save(
         self,
@@ -76,43 +106,53 @@ class DailyObserverResultStore:
         *,
         conversion_model: StorageConversionModel,
     ) -> None:
+        dashboard_view = self._dashboard_view(outcome)
+        storage_policy = self._storage_policy()
         payload = {
             "schema_version": SCHEMA_VERSION,
-            "outcome": asdict(outcome),
+            "storage_policy": storage_policy,
+            "outcome": self._outcome_metadata(outcome),
+            "winner_detail": self._winner_detail(dashboard_view),
+            "evaluation_records": self._evaluation_records(dashboard_view),
             "conversion_model": asdict(conversion_model),
         }
-        self.latest_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.latest_path.with_name(f".{self.latest_path.name}.writing")
-        temporary.write_text(
-            json.dumps(payload, default=_json_value, separators=(",", ":")),
-            encoding="utf-8",
-        )
-        temporary.replace(self.latest_path)
-
-        self.history_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.history_path.open("a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(
-                    self._summary(outcome, conversion_model),
-                    default=_json_value,
-                    separators=(",", ":"),
-                )
-                + "\n"
+        encoded = _json_bytes(payload)
+        if len(encoded) > self.maximum_latest_bytes:
+            payload["winner_detail"] = self._bounded_winner_detail(
+                payload["winner_detail"]
             )
+            storage_policy["latest_detail_truncated"] = True
+            encoded = _json_bytes(payload)
+        if len(encoded) > self.maximum_latest_bytes:
+            raise ValueError("daily_observer_latest_exceeds_storage_limit")
+        self._atomic_write(self.latest_path, encoded)
+
+        history = self._read_history()
+        history.append(self._history_record(outcome, conversion_model, dashboard_view))
+        history = self._prune_history(history, now=outcome.captured_at)
+        self._write_history(history)
+
+    def _storage_policy(self) -> dict[str, object]:
+        return {
+            "full_detail_hours": self.full_detail_retention.total_seconds() / 3600,
+            "compact_retention_days": self.compact_retention.total_seconds() / 86400,
+            "maximum_latest_bytes": self.maximum_latest_bytes,
+            "maximum_history_bytes": self.maximum_history_bytes,
+            "latest_detail_truncated": False,
+        }
 
     @staticmethod
-    def _summary(
-        outcome: DailyObserverRuntimeOutcome,
-        conversion_model: StorageConversionModel,
-    ) -> dict[str, object]:
-        observation = outcome.observation
-        evaluation = (
-            observation.observer_result.evaluation
-            if observation is not None
-            else None
+    def _dashboard_view(outcome: DailyObserverRuntimeOutcome) -> dict[str, object]:
+        # Local import avoids a module cycle: the projection imports the outcome type.
+        from picot.v2.independent_daily_dashboard import (
+            build_daily_observer_dashboard_view,
         )
+
+        return build_daily_observer_dashboard_view(outcome)
+
+    @staticmethod
+    def _outcome_metadata(outcome: DailyObserverRuntimeOutcome) -> dict[str, object]:
         return {
-            "schema_version": SCHEMA_VERSION,
             "snapshot_id": outcome.snapshot_id,
             "run_id": outcome.run_id,
             "captured_at": outcome.captured_at,
@@ -122,19 +162,135 @@ class DailyObserverResultStore:
             "observer_only": outcome.observer_only,
             "selection_permitted": outcome.selection_permitted,
             "commitment_permitted": outcome.commitment_permitted,
-            "best_observation_ids": (
-                list(evaluation.best_candidate_ids)
-                if evaluation is not None
-                else []
-            ),
-            "evaluation_records": (
-                [asdict(item) for item in evaluation.records]
-                if evaluation is not None
-                else []
-            ),
-            "conversion_model": asdict(conversion_model),
             "method_version": outcome.method_version,
         }
+
+    @staticmethod
+    def _winner_detail(view: dict[str, object]) -> list[dict[str, object]]:
+        candidates = view.get("candidates", [])
+        if not isinstance(candidates, list):
+            return []
+        return [item for item in candidates if item.get("best_observation") is True]
+
+    @staticmethod
+    def _evaluation_records(view: dict[str, object]) -> list[dict[str, object]]:
+        candidates = view.get("candidates", [])
+        if not isinstance(candidates, list):
+            return []
+        omitted = {"intent_intervals", "scenarios"}
+        return [
+            {key: value for key, value in item.items() if key not in omitted}
+            for item in candidates
+        ]
+
+    @staticmethod
+    def _bounded_winner_detail(value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        return [
+            {
+                key: item
+                for key, item in candidate.items()
+                if key != "intent_intervals"
+            }
+            for candidate in value
+        ]
+
+    def _history_record(
+        self,
+        outcome: DailyObserverRuntimeOutcome,
+        conversion_model: StorageConversionModel,
+        dashboard_view: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            **self._outcome_metadata(outcome),
+            "objective": dashboard_view.get("objective"),
+            "direction": dashboard_view.get("direction"),
+            "best_observation_ids": dashboard_view.get("best_observation_ids", []),
+            "winner_detail": self._winner_detail(dashboard_view),
+            "evaluation_records": self._evaluation_records(dashboard_view),
+            "conversion_model": asdict(conversion_model),
+        }
+
+    def _read_history(self) -> list[dict[str, object]]:
+        if not self.history_path.exists():
+            return []
+        records: list[dict[str, object]] = []
+        for line in self.history_path.read_text(encoding="utf-8").splitlines():
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                records.append(value)
+        return records
+
+    def _prune_history(
+        self,
+        records: list[dict[str, object]],
+        *,
+        now: datetime,
+    ) -> list[dict[str, object]]:
+        detail_cutoff = now.astimezone(UTC) - self.full_detail_retention
+        compact_cutoff = now.astimezone(UTC) - self.compact_retention
+        retained: list[dict[str, object]] = []
+        for record in records:
+            captured_at = self._captured_at(record)
+            if captured_at is None or captured_at < compact_cutoff:
+                continue
+            retained.append(record)
+        retained.sort(
+            key=lambda item: self._captured_at(item) or datetime.min.replace(tzinfo=UTC)
+        )
+        detailed_hours: set[datetime] = set()
+        for index in range(len(retained) - 1, -1, -1):
+            record = retained[index]
+            captured_at = self._captured_at(record)
+            if captured_at is None:
+                continue
+            hour = captured_at.replace(minute=0, second=0, microsecond=0)
+            if captured_at < detail_cutoff or hour in detailed_hours:
+                record = dict(record)
+                record.pop("winner_detail", None)
+                retained[index] = record
+            else:
+                detailed_hours.add(hour)
+        while retained and self._history_size(retained) > self.maximum_history_bytes:
+            retained.pop(0)
+        return retained
+
+    @staticmethod
+    def _captured_at(record: dict[str, object]) -> datetime | None:
+        value = record.get("captured_at")
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return None
+            return value.astimezone(UTC)
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(UTC)
+
+    @staticmethod
+    def _history_size(records: list[dict[str, object]]) -> int:
+        return sum(len(_json_bytes(record)) + 1 for record in records)
+
+    def _write_history(self, records: list[dict[str, object]]) -> None:
+        encoded = b"".join(_json_bytes(record) + b"\n" for record in records)
+        self._atomic_write(self.history_path, encoded)
+
+    @staticmethod
+    def _atomic_write(path: Path, encoded: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.writing")
+        temporary.write_bytes(encoded)
+        temporary.replace(path)
 
 
 class IndependentDailyObserverRuntime:

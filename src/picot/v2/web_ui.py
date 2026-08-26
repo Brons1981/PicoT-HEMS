@@ -408,6 +408,11 @@ DASHBOARD_HTML = """<!doctype html>
       box-shadow: inset 4px 0 0 #c084fc;
     }
     .daily-reference-label { color: #d8b4fe; }
+    .daily-comparison-card.market-daily {
+      border-color: #2dd4bf;
+      background: #0d2c2d;
+      box-shadow: inset 4px 0 0 #5eead4;
+    }
     .daily-lineage-warning { color: #ffd77a; }
     @media (max-width: 800px) {
       .daily-comparison-grid { grid-template-columns: 1fr; }
@@ -691,6 +696,8 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.missing { background: #2b3541; }
     .price-swatch.canonical-plan { background: #38bdf8; }
     .price-swatch.daily-plan { background: #a855f7; }
+    .price-swatch.mep-charge { background: #19b981; }
+    .price-swatch.mep-export { background: #ef4444; }
     .planner-window-summary {
       display: flex;
       flex-wrap: wrap;
@@ -738,6 +745,8 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .price-chart .price-bar.low { fill: #35a862; }
     .price-chart .price-bar.high { fill: #df6b57; }
+    .price-chart .price-bar.mep-charge { fill: #19b981; }
+    .price-chart .price-bar.mep-export { fill: #ef4444; }
     .price-chart .price-bar.past { opacity: 0.30; }
     .price-chart .planner-window {
       pointer-events: none;
@@ -1138,7 +1147,12 @@ DASHBOARD_HTML = """<!doctype html>
       return "Geen prijsvenster";
     }
 
-    function renderPriceTimeline(timeline, capturedAt, plannerWindows = []) {
+    function renderPriceTimeline(
+      timeline,
+      capturedAt,
+      plannerWindows = [],
+      mepIntents = []
+    ) {
       const container = element("price-timeline");
       container.replaceChildren();
 
@@ -1182,7 +1196,9 @@ DASHBOARD_HTML = """<!doctype html>
         ["high", "Hoogste-teruglevervenster"],
         ["missing", "Nog niet gepubliceerd"],
         ["canonical-plan", "Gekozen door huidige planner"],
-        ["daily-plan", "Gekozen door etmaalsimulatie"]
+        ["daily-plan", "Gekozen door etmaalsimulatie"],
+        ["mep-charge", "MEP live laden"],
+        ["mep-export", "MEP live terugleveren"]
       ]) {
         const item = document.createElement("span");
         item.className = "price-legend-item";
@@ -1338,10 +1354,18 @@ DASHBOARD_HTML = """<!doctype html>
         }
 
         const kind = priceWindowKind(point, opportunities);
+        const mepIntent = mepIntents.find((interval) => {
+          const intentStart = new Date(interval.starts_at).getTime();
+          const intentEnd = new Date(interval.ends_at).getTime();
+          return pointStart < intentEnd && pointEnd > intentStart;
+        });
+        const mepKind = mepIntent?.kind ?? "";
         const isPast = pointEnd <= nowMs;
         const valueY = yPosition(value);
         const bar = createSvgElement("rect", {
-          class: `price-bar ${kind}${isPast ? " past" : ""}`,
+          class: `price-bar ${kind}${mepKind ? ` ${mepKind}` : ""}${
+            isPast ? " past" : ""
+          }`,
           x: xPosition(pointStart) + 0.5,
           y: Math.min(valueY, zeroY),
           width: Math.max(
@@ -1365,6 +1389,7 @@ DASHBOARD_HTML = """<!doctype html>
               formatTimestamp(point.ends_at),
             formatPrice(value),
             priceWindowLabel(kind),
+            ...(mepIntent ? [mepIntent.label] : []),
             `Confidence ${formatConfidence(point.confidence)}`,
             ...(selectedBy.length
               ? [`Gekozen door ${selectedBy.join(" en ")}`]
@@ -3203,6 +3228,34 @@ DASHBOARD_HTML = """<!doctype html>
       return windows;
     }
 
+    function selectedMepIntents(view) {
+      const mep = view.market_daily_planner ?? {};
+      const baseline = mep.native_plan ?? {};
+      const representative = Array.isArray(baseline.candidates)
+        ? baseline.candidates.find((candidate) => candidate.best_observation)
+        : null;
+      const selectedIntervals = Array.isArray(mep.selected_intent_intervals)
+        ? mep.selected_intent_intervals
+        : (representative?.intent_intervals ?? []);
+      return selectedIntervals.flatMap((interval) => {
+        if (["nom", "grid_requirement"].includes(interval.intent)) {
+          return [{
+            ...interval,
+            kind: "mep-charge",
+            label: `MEP live laden · ${dailyIntentLabel(interval.intent)}`,
+          }];
+        }
+        if (interval.intent === "storage_export") {
+          return [{
+            ...interval,
+            kind: "mep-export",
+            label: "MEP live terugleveren",
+          }];
+        }
+        return [];
+      });
+    }
+
     function renderDailyObserverComparison(view) {
       const container = element("daily-observer-comparison");
       container.replaceChildren();
@@ -3389,6 +3442,158 @@ DASHBOARD_HTML = """<!doctype html>
         observerCard.append(details);
       }
       grid.append(observerCard);
+      const mep = view.market_daily_planner ?? {};
+      const mepAligned = mep.snapshot_id === view.snapshot_id;
+      const mepBaseline = mep.native_plan ?? {};
+      const mepBest = Array.isArray(mepBaseline.candidates)
+        ? mepBaseline.candidates.filter(
+            (candidate) => candidate.best_observation
+          )
+        : [];
+      const mepRepresentative = mepBest[0];
+      const mepUsesGrid = mepBest.some((candidate) =>
+        (candidate.intents_used ?? []).includes("grid_requirement")
+      );
+      const mepUsesPv = mepBest.some((candidate) =>
+        (candidate.intents_used ?? []).includes("nom")
+      );
+      const mepGridExcludedByPv = Array.isArray(mepBaseline.candidates) &&
+        mepBaseline.candidates.some((candidate) =>
+          (candidate.exclusion_reasons ?? []).includes(
+            "grid_not_required_pv_recoverable"
+          )
+        );
+      const mepAdvice = mepUsesGrid
+        ? "PV laden met uitsluitend de bewezen benodigde netaanvulling"
+        : mepUsesPv
+          ? "Laden met PV; geen netladen"
+          : "Geen laadactie nodig";
+      const mepExplanation = mepGridExcludedByPv
+        ? "PV-only is bewezen voldoende; netladen is daarom uitgesloten."
+        : mepUsesGrid
+          ? "PV-only is niet bewezen voldoende; netaanvulling is toegestaan."
+          : "Het beste toegelaten plan gebruikt geen netenergie.";
+      const admittedMepRoutes = Array.isArray(mep.routes)
+        ? mep.routes.filter((route) => route.admitted)
+        : [];
+      const mepRoute = admittedMepRoutes[0] ?? mep.routes?.[0];
+      const mepCard = comparisonCard(
+        "MEP · Markt Etmaal Planner",
+        "market-daily",
+        [
+          ["Status", mep.status === "completed" ? "Afgerond" : mep.status],
+          ["Plan berekend", mep.captured_at],
+          ["SoC bij berekening", mepAligned
+            ? formatConfidence(socAtCalculation)
+            : "Andere Planning Input-snapshot"],
+          ["Advies", mepBest.length ? mepAdvice : null],
+          ["Waarom", mepBest.length ? mepExplanation : null],
+          ["Strategie", mepRepresentative
+            ? dailyStrategyLabel(mepRepresentative)
+            : null],
+          ["Voorgesteld venster", mepRepresentative
+            ? dailyWindowLabel(mepRepresentative)
+            : null],
+          ["Gebruikte simulatiehorizon",
+            mepBaseline.simulation_horizon_start &&
+            mepBaseline.simulation_horizon_end
+              ? `${formatTimestamp(
+                  mepBaseline.simulation_horizon_start
+                )} tot ${formatTimestamp(
+                  mepBaseline.simulation_horizon_end
+                )}`
+              : null],
+          ["Beschikbare aaneengesloten prijsdekking",
+            Number.isFinite(Number(mepBaseline.price_coverage_hours))
+              ? `${formatDutchNumber(Number(
+                  mepBaseline.price_coverage_hours
+                ))} uur`
+              : null],
+          ...(mepBest.length > 1 ? [[
+            "Gelijkwaardige plannen",
+            `${mepBest.length} plannen met hetzelfde resultaat`,
+          ]] : []),
+          ["Financieel resultaat (worst case, gebruikte horizon)",
+            mepRepresentative && Number.isFinite(Number(
+              mepRepresentative.worst_case_financial_result_eur
+            ))
+              ? `€ ${formatDutchNumber(Number(
+                  mepRepresentative.worst_case_financial_result_eur
+                ))}`
+              : null],
+          ["Gemiddelde prijs voorgesteld laadvenster",
+            mepRepresentative && Number.isFinite(Number(
+              mepRepresentative.average_charge_window_price_eur_per_kwh
+            ))
+              ? formatPrice(Number(
+                  mepRepresentative.average_charge_window_price_eur_per_kwh
+                ))
+              : null],
+          ["Confidence voorgesteld laadvenster", mepRepresentative
+            ? formatConfidence(mepRepresentative.charge_window_confidence)
+            : null],
+          ["Laagste confidence over gebruikte horizon", mepRepresentative
+            ? formatConfidence(mepRepresentative.minimum_confidence)
+            : null],
+          ["Vergelijkbaarheid", mepAligned
+            ? "Exact dezelfde Planning Input"
+            : "Wacht op dezelfde Planning Input-snapshot"],
+          ["Winnende bron", mep.winning_source === "market_route"
+            ? "Complete marktroute"
+            : "Bevroren etmaalbaseline"],
+          ["Actuele intentie", mep.current_intent],
+          ["Actief tot", mep.current_interval_ends_at],
+          ["Marktuitkomst", mep.reason === "no_admitted_market_route"
+            ? "Geen toegelaten aanvullende marktroute"
+            : mep.reason],
+          ["Negatief venster vanaf", mepRoute?.window_starts_at],
+          ["Negatief venster tot", mepRoute?.window_ends_at],
+          ["Gereserveerde laadruimte", Number.isFinite(Number(
+            mepRoute?.reserved_storage_room_kwh
+          )) ? `${formatDutchNumber(Number(
+            mepRoute.reserved_storage_room_kwh
+          ))} kWh` : null],
+          ["Vooraf extra ontladen", Number.isFinite(Number(
+            mepRoute?.required_pre_window_discharge_output_kwh
+          )) ? `${formatDutchNumber(Number(
+            mepRoute.required_pre_window_discharge_output_kwh
+          ))} kWh` : null],
+          ["Toegelaten marktroutes", mep.admitted_route_count],
+          ["Werking", mep.dispatch_authority
+            ? "Live; voert het gekozen MEP-plan uit"
+            : "Observer-only; stuurt niets aan"],
+          ["Dispatchbevoegd", mep.dispatch_authority ? "Ja" : "Nee"],
+          ["Uitvoering", mep.execution?.status],
+          ["Aangevraagde Zendure-modus",
+            mep.execution?.requested_vendor_mode],
+          ["Uitvoerreden", mep.execution?.reason],
+          ["Rekentijd", Number.isFinite(Number(mep.duration_ms))
+            ? `${formatDutchNumber(Number(mep.duration_ms))} ms`
+            : null],
+        ]
+      );
+      for (const candidate of mepBest) {
+        const details = document.createElement("details");
+        details.className = "technical-details";
+        details.dataset.technicalKey =
+          `market-daily:${candidate.candidate_id}`;
+        const summary = document.createElement("summary");
+        summary.textContent = [
+          dailyStrategyLabel(candidate),
+          Number.isFinite(Number(candidate.worst_case_financial_result_eur))
+            ? `€ ${formatDutchNumber(Number(
+                candidate.worst_case_financial_result_eur
+              ))}`
+            : "—",
+          formatConfidence(candidate.minimum_confidence),
+        ].join(" · ");
+        details.append(summary);
+        const schedule = document.createElement("p");
+        schedule.textContent = dailyWindowLabel(candidate);
+        details.append(schedule);
+        mepCard.append(details);
+      }
+      grid.append(mepCard);
       container.append(grid);
     }
 
@@ -3779,7 +3984,8 @@ DASHBOARD_HTML = """<!doctype html>
           opportunities: []
         },
         view.captured_at,
-        selectedPlannerWindows(view)
+        selectedPlannerWindows(view),
+        selectedMepIntents(view)
       );
       renderPipeline(pipeline);
       renderPipelineHealth(view.pipeline_health);
@@ -3903,6 +4109,7 @@ class WebViewStore:
         self._latest_json: str | None = None
         self._fast_grid_power_source: dict[str, object] | None = None
         self._daily_observer_comparison: dict[str, object] | None = None
+        self._market_daily_planner: dict[str, object] | None = None
         self._planner_comparison_history: dict[str, object] | None = None
         self._revision = 0
         self._reset_storage_mode_override: (
@@ -3949,6 +4156,8 @@ class WebViewStore:
             view["daily_observer_comparison"] = dict(
                 self._daily_observer_comparison
             )
+        if self._market_daily_planner is not None:
+            view["market_daily_planner"] = dict(self._market_daily_planner)
         if self._planner_comparison_history is not None:
             view["planner_comparison_history"] = dict(
                 self._planner_comparison_history
@@ -4049,6 +4258,25 @@ class WebViewStore:
             raise ValueError("daily dashboard comparison must remain passive")
         with self._condition:
             self._daily_observer_comparison = copied
+            if self._latest_json is None:
+                return
+            latest: object = json.loads(self._latest_json)
+            if not isinstance(latest, dict):
+                raise TypeError("latest web view must be an object")
+            self._replace_latest_locked(latest)
+
+    def publish_market_daily_planner(
+        self,
+        market_view: dict[str, object],
+    ) -> None:
+        """Overlay MEP output without allowing it to mutate another planner."""
+        copied: object = json.loads(json.dumps(market_view))
+        if not isinstance(copied, dict):
+            raise TypeError("MEP dashboard view must serialize to an object")
+        if copied.get("planner_id") != "mep":
+            raise ValueError("MEP dashboard identity must be explicit")
+        with self._condition:
+            self._market_daily_planner = copied
             if self._latest_json is None:
                 return
             latest: object = json.loads(self._latest_json)

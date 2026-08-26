@@ -16,8 +16,18 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_167() -> None:
-    assert __version__ == "2.0.0-dev.167"
+def test_v2_release_version_is_dev_168() -> None:
+    assert __version__ == "2.0.0-dev.168"
+
+
+def test_mep_has_83_percent_rte_without_changing_ep_defaults() -> None:
+    config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
+    text = config_path.read_text(encoding="utf-8")
+
+    assert "  daily_reference_charge_efficiency: 1.0" in text
+    assert "  daily_reference_discharge_efficiency: 1.0" in text
+    assert "  market_daily_charge_efficiency: 0.9110433579" in text
+    assert "  market_daily_discharge_efficiency: 0.9110433579" in text
 
 
 def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:

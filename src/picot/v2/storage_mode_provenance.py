@@ -111,6 +111,17 @@ def observe_storage_mode(
         status = "manual_override"
         manual_override_active = True
         reason = "observed_mode_differs_from_planner_mode"
+    elif (
+        previous.status == "released"
+        and previous.observed_vendor_mode == observed_vendor_mode
+    ):
+        status = "released"
+        manual_override_active = False
+        reason = previous.transition_reason
+    elif previous.status == "released":
+        status = "manual_override"
+        manual_override_active = True
+        reason = "observed_mode_changed_after_explicit_reset"
     else:
         status = previous.status
         manual_override_active = False

@@ -195,6 +195,40 @@ def test_explicit_reset_is_persisted_and_survives_restart(
     assert restored.transition_reason == "explicit_user_reset"
 
 
+def test_mode_change_after_explicit_reset_reactivates_manual_override(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "storage-mode-provenance.json"
+    runtime = _runtime(path)
+    runtime.observe_vendor_mode("Standby", observed_at=BASE)
+    runtime.record_planner_application(
+        "Alleen slim ontladen",
+        applied_at=BASE + timedelta(seconds=1),
+        application_id="application-live-reset-change",
+    )
+    runtime.observe_vendor_mode(
+        "Standby",
+        observed_at=BASE + timedelta(seconds=2),
+    )
+    runtime.reset_manual_override(
+        observed_vendor_mode="Standby",
+        reset_at=BASE + timedelta(seconds=3),
+        reset_id="reset-live-change",
+    )
+
+    changed = runtime.observe_vendor_mode(
+        "Alleen slim opladen",
+        observed_at=BASE + timedelta(seconds=4),
+    )
+
+    assert changed.status == "manual_override"
+    assert changed.manual_override_active is True
+    assert changed.transition_reason == (
+        "observed_mode_changed_after_explicit_reset"
+    )
+    assert changed.reset_id == "reset-live-change"
+
+
 def test_live_bundle_receives_restored_provenance_before_pipeline(
     tmp_path: Path,
 ) -> None:

@@ -30,6 +30,10 @@ from picot.v2.canonical_execution_runtime import (
     HomeAssistantCanonicalModeAdapter,
 )
 from picot.v2.contracts import CanonicalPipelineRun, PlanningInputSnapshot
+from picot.v2.daily_pv_basis import (
+    DailyPVBasisDecision,
+    apply_daily_measured_pv_basis,
+)
 from picot.v2.fast_grid_power_observation import FastGridPowerObserver
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
@@ -1175,6 +1179,7 @@ def _with_planning_input_diagnostics(
     bundle: PlanningInputBundle,
     *,
     pv_actual_diagnostics: LivePVActualDiagnostics | None = None,
+    daily_pv_basis_decision: DailyPVBasisDecision | None = None,
 ) -> Projection:
     """Passively enrich card 1 from already assembled Planning Input data."""
     sources = _planning_input_sources(bundle)
@@ -1425,6 +1430,25 @@ def _with_planning_input_diagnostics(
             _project_interval_pv_deviation(result)
             for result in pv_actual_diagnostics.deviation_results
         ]
+    if daily_pv_basis_decision is not None:
+        pv_actual_attributes |= {
+            "daily_pv_forecast_basis": daily_pv_basis_decision.basis,
+            "daily_pv_forecast_basis_reason": daily_pv_basis_decision.reason,
+            "daily_pv_tracking_ratio": daily_pv_basis_decision.tracking_ratio,
+            "daily_pv_recent_tracking_ratio": (
+                daily_pv_basis_decision.recent_tracking_ratio
+            ),
+            "daily_pv_assessed_interval_count": (
+                daily_pv_basis_decision.assessed_interval_count
+            ),
+            "daily_pv_adjusted_interval_count": (
+                daily_pv_basis_decision.adjusted_interval_count
+            ),
+            "daily_pv_basis_evidence_id": daily_pv_basis_decision.evidence_id,
+            "daily_pv_basis_method_version": (
+                daily_pv_basis_decision.method_version
+            ),
+        }
     first = projection.cards[0]
     enriched = Card(
         first.entity_id,
@@ -1650,6 +1674,8 @@ def _execute_planning_bundle(
     independent_daily_observer_worker: (
         IndependentDailyObserverWorker | None
     ) = None,
+    independent_daily_snapshot: PlanningInputSnapshot | None = None,
+    daily_pv_basis_decision: DailyPVBasisDecision | None = None,
     market_daily_planner_worker: MarketDailyPlannerWorker | None = None,
     planner_comparison_ledger: PlannerComparisonLedger | None = None,
 ) -> None:
@@ -1665,7 +1691,9 @@ def _execute_planning_bundle(
         control_change_allowed=canonical_execution_enabled,
     )
     if independent_daily_observer_worker is not None:
-        independent_daily_observer_worker.submit(bundle.snapshot)
+        independent_daily_observer_worker.submit(
+            independent_daily_snapshot or bundle.snapshot
+        )
     if canonical_execution_runtime is not None:
         run = canonical_execution_runtime.apply(run)
         if (
@@ -1766,6 +1794,7 @@ def _execute_planning_bundle(
         project(run),
         bundle,
         pv_actual_diagnostics=pv_actual_diagnostics,
+        daily_pv_basis_decision=daily_pv_basis_decision,
     )
     projection = attach_pv_attenuation_runtime_diagnostics(
         projection,
@@ -2490,6 +2519,8 @@ def main() -> None:
 
     previous_household_regime: HouseholdPlanningRegime | None = None
     household_regime_started_at: datetime | None = None
+    latest_daily_observer_snapshot: PlanningInputSnapshot | None = None
+    latest_daily_pv_basis_decision: DailyPVBasisDecision | None = None
 
     def prepare_bundle(
         bundle: PlanningInputBundle,
@@ -2497,7 +2528,10 @@ def main() -> None:
         PlanningInputBundle,
         LivePVActualDiagnostics,
     ]:
-        nonlocal previous_household_regime, household_regime_started_at
+        nonlocal previous_household_regime
+        nonlocal household_regime_started_at
+        nonlocal latest_daily_observer_snapshot
+        nonlocal latest_daily_pv_basis_decision
         bundle = attach_storage_mode_provenance(
             bundle,
             storage_mode_provenance_runtime,
@@ -2563,6 +2597,14 @@ def main() -> None:
         ):
             household_regime_started_at = captured_at
         previous_household_regime = current_regime
+        (
+            latest_daily_observer_snapshot,
+            latest_daily_pv_basis_decision,
+        ) = apply_daily_measured_pv_basis(
+            prepared_bundle.snapshot,
+            diagnostics=diagnostics,
+            local_timezone=pv_sunset_timezone,
+        )
         return prepared_bundle, diagnostics
 
     def read_power_history(
@@ -2605,7 +2647,9 @@ def main() -> None:
         if signature == previous_observer_signature:
             return
         previous_observer_signature = signature
-        independent_daily_observer_worker.submit(bundle.snapshot)
+        independent_daily_observer_worker.submit(
+            latest_daily_observer_snapshot or bundle.snapshot
+        )
 
     def refresh_unchanged(bundle: PlanningInputBundle) -> None:
         power_history, _ = read_power_history(bundle)
@@ -2711,6 +2755,8 @@ def main() -> None:
             independent_daily_observer_worker=(
                 independent_daily_observer_worker
             ),
+            independent_daily_snapshot=latest_daily_observer_snapshot,
+            daily_pv_basis_decision=latest_daily_pv_basis_decision,
             market_daily_planner_worker=market_daily_planner_worker,
             planner_comparison_ledger=planner_comparison_ledger,
         )

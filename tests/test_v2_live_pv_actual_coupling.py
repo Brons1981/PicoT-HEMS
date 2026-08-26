@@ -455,6 +455,8 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             planning_fallback_notifier: object,
                 planning_incident_history: object,
                 independent_daily_observer_worker: object,
+                independent_daily_snapshot: object,
+                daily_pv_basis_decision: object,
                 market_daily_planner_worker: object,
                 planner_comparison_ledger: object,
         ) -> None:
@@ -476,6 +478,8 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
                 canonical_execution_enabled,
                     planning_fallback_notifier,
                     independent_daily_observer_worker,
+                    independent_daily_snapshot,
+                    daily_pv_basis_decision,
                     market_daily_planner_worker,
                     planner_comparison_ledger,
             )

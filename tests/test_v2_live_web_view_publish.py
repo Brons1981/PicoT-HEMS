@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import cast
 from urllib.error import HTTPError
@@ -38,6 +39,7 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
     published_cards: list[Card] = []
     submitted_snapshot_ids: list[str] = []
     store = WebViewStore()
+    daily_snapshot = replace(snapshot, snapshot_id="snapshot-daily-central")
 
     class FakeDailyObserverWorker:
         def submit(self, submitted_snapshot) -> None:
@@ -66,6 +68,7 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
             IndependentDailyObserverWorker,
             FakeDailyObserverWorker(),
         ),
+        independent_daily_snapshot=daily_snapshot,
     )
 
     latest_json = store.latest_json()
@@ -76,7 +79,7 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
     assert view["observer_only"] is True
     assert view["run_id"] == snapshot.run_id
     assert view["snapshot_id"] == snapshot.snapshot_id
-    assert submitted_snapshot_ids == [snapshot.snapshot_id]
+    assert submitted_snapshot_ids == [daily_snapshot.snapshot_id]
     assert len(view["pipeline"]) == 9
     assert [item["stage"] for item in view["pipeline"]] == list(
         range(1, 10)

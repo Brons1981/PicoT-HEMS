@@ -3396,6 +3396,35 @@ DASHBOARD_HTML = """<!doctype html>
       grid.append(observerCard);
       const mep = view.market_daily_planner ?? {};
       const mepAligned = mep.snapshot_id === view.snapshot_id;
+      const mepBaseline = mep.baseline_plan ?? {};
+      const mepBest = Array.isArray(mepBaseline.candidates)
+        ? mepBaseline.candidates.filter(
+            (candidate) => candidate.best_observation
+          )
+        : [];
+      const mepRepresentative = mepBest[0];
+      const mepUsesGrid = mepBest.some((candidate) =>
+        (candidate.intents_used ?? []).includes("grid_requirement")
+      );
+      const mepUsesPv = mepBest.some((candidate) =>
+        (candidate.intents_used ?? []).includes("nom")
+      );
+      const mepGridExcludedByPv = Array.isArray(mepBaseline.candidates) &&
+        mepBaseline.candidates.some((candidate) =>
+          (candidate.exclusion_reasons ?? []).includes(
+            "grid_not_required_pv_recoverable"
+          )
+        );
+      const mepAdvice = mepUsesGrid
+        ? "PV laden met uitsluitend de bewezen benodigde netaanvulling"
+        : mepUsesPv
+          ? "Laden met PV; geen netladen"
+          : "Geen laadactie nodig";
+      const mepExplanation = mepGridExcludedByPv
+        ? "PV-only is bewezen voldoende; netladen is daarom uitgesloten."
+        : mepUsesGrid
+          ? "PV-only is niet bewezen voldoende; netaanvulling is toegestaan."
+          : "Het beste toegelaten plan gebruikt geen netenergie.";
       const admittedMepRoutes = Array.isArray(mep.routes)
         ? mep.routes.filter((route) => route.admitted)
         : [];
@@ -3405,6 +3434,59 @@ DASHBOARD_HTML = """<!doctype html>
         "market-daily",
         [
           ["Status", mep.status === "completed" ? "Afgerond" : mep.status],
+          ["Plan berekend", mep.captured_at],
+          ["SoC bij berekening", mepAligned
+            ? formatConfidence(socAtCalculation)
+            : "Andere Planning Input-snapshot"],
+          ["Advies", mepBest.length ? mepAdvice : null],
+          ["Waarom", mepBest.length ? mepExplanation : null],
+          ["Strategie", mepRepresentative
+            ? dailyStrategyLabel(mepRepresentative)
+            : null],
+          ["Voorgesteld venster", mepRepresentative
+            ? dailyWindowLabel(mepRepresentative)
+            : null],
+          ["Gebruikte simulatiehorizon",
+            mepBaseline.simulation_horizon_start &&
+            mepBaseline.simulation_horizon_end
+              ? `${formatTimestamp(
+                  mepBaseline.simulation_horizon_start
+                )} tot ${formatTimestamp(
+                  mepBaseline.simulation_horizon_end
+                )}`
+              : null],
+          ["Beschikbare aaneengesloten prijsdekking",
+            Number.isFinite(Number(mepBaseline.price_coverage_hours))
+              ? `${formatDutchNumber(Number(
+                  mepBaseline.price_coverage_hours
+                ))} uur`
+              : null],
+          ...(mepBest.length > 1 ? [[
+            "Gelijkwaardige plannen",
+            `${mepBest.length} plannen met hetzelfde resultaat`,
+          ]] : []),
+          ["Financieel resultaat (worst case, gebruikte horizon)",
+            mepRepresentative && Number.isFinite(Number(
+              mepRepresentative.worst_case_financial_result_eur
+            ))
+              ? `€ ${formatDutchNumber(Number(
+                  mepRepresentative.worst_case_financial_result_eur
+                ))}`
+              : null],
+          ["Gemiddelde prijs voorgesteld laadvenster",
+            mepRepresentative && Number.isFinite(Number(
+              mepRepresentative.average_charge_window_price_eur_per_kwh
+            ))
+              ? formatPrice(Number(
+                  mepRepresentative.average_charge_window_price_eur_per_kwh
+                ))
+              : null],
+          ["Confidence voorgesteld laadvenster", mepRepresentative
+            ? formatConfidence(mepRepresentative.charge_window_confidence)
+            : null],
+          ["Laagste confidence over gebruikte horizon", mepRepresentative
+            ? formatConfidence(mepRepresentative.minimum_confidence)
+            : null],
           ["Vergelijkbaarheid", mepAligned
             ? "Exact dezelfde Planning Input"
             : "Wacht op dezelfde Planning Input-snapshot"],
@@ -3413,7 +3495,9 @@ DASHBOARD_HTML = """<!doctype html>
             : "Bevroren etmaalbaseline"],
           ["Actuele intentie", mep.current_intent],
           ["Actief tot", mep.current_interval_ends_at],
-          ["Waarom", mep.reason],
+          ["Marktuitkomst", mep.reason === "no_admitted_market_route"
+            ? "Geen toegelaten aanvullende marktroute"
+            : mep.reason],
           ["Negatief venster vanaf", mepRoute?.window_starts_at],
           ["Negatief venster tot", mepRoute?.window_ends_at],
           ["Gereserveerde laadruimte", Number.isFinite(Number(
@@ -3427,6 +3511,9 @@ DASHBOARD_HTML = """<!doctype html>
             mepRoute.required_pre_window_discharge_output_kwh
           ))} kWh` : null],
           ["Toegelaten marktroutes", mep.admitted_route_count],
+          ["Werking", mep.dispatch_authority
+            ? "Live; voert het gekozen MEP-plan uit"
+            : "Observer-only; stuurt niets aan"],
           ["Dispatchbevoegd", mep.dispatch_authority ? "Ja" : "Nee"],
           ["Uitvoering", mep.execution?.status],
           ["Aangevraagde Zendure-modus",
@@ -3437,6 +3524,27 @@ DASHBOARD_HTML = """<!doctype html>
             : null],
         ]
       );
+      for (const candidate of mepBest) {
+        const details = document.createElement("details");
+        details.className = "technical-details";
+        details.dataset.technicalKey =
+          `market-daily:${candidate.candidate_id}`;
+        const summary = document.createElement("summary");
+        summary.textContent = [
+          dailyStrategyLabel(candidate),
+          Number.isFinite(Number(candidate.worst_case_financial_result_eur))
+            ? `€ ${formatDutchNumber(Number(
+                candidate.worst_case_financial_result_eur
+              ))}`
+            : "—",
+          formatConfidence(candidate.minimum_confidence),
+        ].join(" · ");
+        details.append(summary);
+        const schedule = document.createElement("p");
+        schedule.textContent = dailyWindowLabel(candidate);
+        details.append(schedule);
+        mepCard.append(details);
+      }
       grid.append(mepCard);
       container.append(grid);
     }

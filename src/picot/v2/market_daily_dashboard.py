@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from picot.planner.market_daily_planner import MarketDailyPlan
+from picot.v2.independent_daily_dashboard import (
+    build_daily_observer_dashboard_view,
+)
+from picot.v2.independent_daily_observer_runtime import (
+    DailyObserverRuntimeOutcome,
+)
 from picot.v2.market_daily_runtime import MarketDailyRuntimeOutcome
 
 
@@ -26,8 +32,24 @@ def build_market_daily_runtime_view(
             "method_version": outcome.method_version,
         }
     view = build_market_daily_dashboard_view(outcome.plan)
+    baseline_view = build_daily_observer_dashboard_view(
+        DailyObserverRuntimeOutcome(
+            snapshot_id=outcome.snapshot_id,
+            run_id=outcome.run_id,
+            captured_at=outcome.captured_at,
+            status="completed",
+            reason=None,
+            duration_ms=outcome.duration_ms,
+            observation=outcome.plan.baseline,
+            observer_only=True,
+            selection_permitted=False,
+            commitment_permitted=False,
+            method_version=outcome.method_version,
+        )
+    )
     return {
         **view,
+        "baseline_plan": baseline_view,
         "captured_at": outcome.captured_at.isoformat(),
         "status": outcome.status,
         "duration_ms": outcome.duration_ms,

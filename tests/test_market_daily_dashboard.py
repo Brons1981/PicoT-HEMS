@@ -5,7 +5,11 @@ from datetime import timedelta
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
 from picot.planner.market_daily_planner import MarketDailyPlanner
-from picot.v2.market_daily_dashboard import build_market_daily_dashboard_view
+from picot.v2.market_daily_dashboard import (
+    build_market_daily_dashboard_view,
+    build_market_daily_runtime_view,
+)
+from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
 from picot.v2.web_ui import DASHBOARD_HTML, WebViewStore
 
 
@@ -72,6 +76,23 @@ def test_web_store_keeps_mep_separate_from_existing_planner_views() -> None:
     latest = json.loads(latest_json)
     assert latest["canonical"] == "unchanged"
     assert latest["market_daily_planner"]["planner_id"] == "mep"
+
+
+def test_mep_runtime_dashboard_exposes_its_complete_baseline_plan() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.51)
+    outcome = MarketDailyPlannerRuntime(_conversion()).plan(snapshot)
+
+    view = build_market_daily_runtime_view(outcome)
+
+    baseline = view["baseline_plan"]
+    winners = [
+        item for item in baseline["candidates"] if item["best_observation"]
+    ]
+    assert baseline["captured_at"] == snapshot.captured_at.isoformat()
+    assert baseline["simulation_horizon_start"] is not None
+    assert baseline["simulation_horizon_end"] is not None
+    assert winners
+    assert winners[0]["intent_intervals"]
 
 
 def test_dashboard_renders_mep_as_a_third_visually_distinct_planner() -> None:

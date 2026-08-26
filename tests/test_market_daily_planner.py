@@ -253,6 +253,93 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
     assert grid_assessment.physically_admissible is True
 
 
+def test_mep_accepts_cheaper_recovery_later_on_same_day() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
+    source = snapshot.price_points[0]
+    export_start = snapshot.captured_at + timedelta(hours=4)
+    export_end = export_start + timedelta(hours=1)
+    recovery_end = export_end + timedelta(hours=4)
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(source, point_id="before", ends_at=export_start, value_eur_per_kwh=0.30),
+            replace(
+                source,
+                point_id="export",
+                starts_at=export_start,
+                ends_at=export_end,
+                value_eur_per_kwh=0.40,
+            ),
+            replace(
+                source,
+                point_id="recovery",
+                starts_at=export_end,
+                ends_at=recovery_end,
+                value_eur_per_kwh=0.131,
+            ),
+            replace(
+                source,
+                point_id="after",
+                starts_at=recovery_end,
+                ends_at=snapshot.captured_at + timedelta(hours=24),
+                value_eur_per_kwh=0.30,
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=StorageConversionModel(
+            model_id="zendure-rte",
+            charge_efficiency=0.83**0.5,
+            discharge_efficiency=0.83**0.5,
+            evidence_ids=("zendure-rte",),
+            method_version="test:v1",
+        ),
+    )
+
+    same_day_routes = tuple(
+        route
+        for route in result.market_routes
+        if route.route_kind == "pv_trade_grid_recovery"
+        and route.export_window_ends_at is not None
+        and route.window_starts_at.date() == route.export_window_ends_at.date()
+    )
+    assert same_day_routes
+    assert all(
+        route.window_starts_at >= route.export_window_ends_at
+        for route in same_day_routes
+        if route.export_window_ends_at is not None
+    )
+
+
+def test_mep_explains_when_profitable_export_cannot_recover_inside_horizon() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
+    source = snapshot.price_points[0]
+    export_start = snapshot.captured_at + timedelta(hours=23)
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(source, point_id="cheap", ends_at=export_start, value_eur_per_kwh=0.05),
+            replace(
+                source,
+                point_id="late-export",
+                starts_at=export_start,
+                ends_at=snapshot.captured_at + timedelta(hours=24),
+                value_eur_per_kwh=0.40,
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=_conversion(),
+    )
+
+    assert result.market_routes == ()
+    assert result.reason == "market_recovery_outside_available_horizon"
+
+
 def test_mep_source_has_no_dependency_on_cp_or_ep_runtime_outputs() -> None:
     source = __import__("inspect").getsource(
         __import__(

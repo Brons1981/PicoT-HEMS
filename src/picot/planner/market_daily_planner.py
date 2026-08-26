@@ -270,7 +270,7 @@ class MarketDailyPlanner:
         )
         tariff_build_ms = (perf_counter() - phase_started) * 1000.0
         phase_started = perf_counter()
-        routes = self._market_routes(
+        routes, recovery_outside_horizon = self._market_routes(
             snapshot=snapshot,
             native_observation=native_observation,
             tariffs=tariffs,
@@ -304,7 +304,13 @@ class MarketDailyPlanner:
             route_assessments=assessments,
             winning_source=("market_route" if market_wins else "mep_native_plan"),
             reason=(
-                "profitable_complete_market_route" if market_wins else "no_admitted_market_route"
+                "profitable_complete_market_route"
+                if market_wins
+                else (
+                    "market_recovery_outside_available_horizon"
+                    if not routes and recovery_outside_horizon
+                    else "no_admitted_market_route"
+                )
             ),
             dispatch_authority=dispatch_authority,
             current_intent=current_intent,
@@ -339,11 +345,11 @@ class MarketDailyPlanner:
         tariffs: DailyReferenceTariffSchedule,
         conversion_model: StorageConversionModel,
         trading_policy: MarketTradingPolicy,
-    ) -> tuple[MarketCapacityRoute, ...]:
+    ) -> tuple[tuple[MarketCapacityRoute, ...], bool]:
         if not trading_policy.market_routes_enabled:
-            return ()
+            return (), False
         if len(snapshot.current_storage_states) != 1:
-            return ()
+            return (), False
         storage = snapshot.current_storage_states[0]
         matching_limits = tuple(
             item
@@ -352,7 +358,7 @@ class MarketDailyPlanner:
             and item.execution_scope_id == storage.execution_scope_id
         )
         if len(matching_limits) != 1:
-            return ()
+            return (), False
         limits = matching_limits[0]
         native_candidates = {
             item.candidate_id: item
@@ -558,6 +564,11 @@ class MarketDailyPlanner:
             ]
         ] = []
         rte = conversion_model.charge_efficiency * conversion_model.discharge_efficiency
+        recovery_outside_horizon = False
+        cheapest_known_recharge_rate = min(
+            (item.import_eur_per_kwh for item in future),
+            default=0.0,
+        )
         for export_window in interval_windows:
             export_start = export_window[0].starts_at
             export_end = export_window[-1].ends_at
@@ -600,7 +611,7 @@ class MarketDailyPlanner:
             for recovery_window in recovery_windows:
                 recovery_start = recovery_window[0].starts_at
                 recovery_end = recovery_window[-1].ends_at
-                if recovery_start.date() <= export_end.date() or recovery_start < export_end:
+                if recovery_start < export_end:
                     continue
                 recovery_hours = (recovery_end - recovery_start).total_seconds() / 3600
                 if (
@@ -614,6 +625,11 @@ class MarketDailyPlanner:
                 ) / ((recovery_end - recovery_start).total_seconds())
                 recovery_candidates.append((recharge_rate, recovery_window))
             if not recovery_candidates:
+                if export_rate >= trading_policy.minimum_export_rate(
+                    cheapest_known_recharge_rate,
+                    rte,
+                ):
+                    recovery_outside_horizon = True
                 continue
             lowest_recharge_rate = min(item[0] for item in recovery_candidates)
             recharge_rate, recovery_window = max(
@@ -682,8 +698,8 @@ class MarketDailyPlanner:
                 )
             )
             # If PV cannot restore the full traded portion plus household
-            # consumption, assess the same export with an explicit, cheapest
-            # feasible next-day grid-recovery window.
+            # consumption, assess the same export with the cheapest feasible
+            # later grid-recovery window inside the available horizon.
             result.append(
                 MarketCapacityRoute(
                     route_id=(
@@ -712,7 +728,7 @@ class MarketDailyPlanner:
             )
         # Stable de-duplication: the same cheapest/highest pair can be reached
         # through overlapping rankings, but it must be simulated only once.
-        return tuple({item.route_id: item for item in result}.values())
+        return tuple({item.route_id: item for item in result}.values()), recovery_outside_horizon
 
     def _assess_routes(
         self,

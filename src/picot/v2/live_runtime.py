@@ -862,9 +862,11 @@ def _run_live_cycle(
     bundle: PlanningInputBundle,
     execute: Any,
     refresh_unchanged: Any = None,
+    force_run: Callable[[PlanningInputBundle], bool] | None = None,
 ) -> str:
     """Execute one changed-input cycle and return the committed input signature."""
-    if not _should_run_cycle(previous_signature, bundle):
+    forced = force_run(bundle) if force_run is not None else False
+    if not forced and not _should_run_cycle(previous_signature, bundle):
         assert previous_signature is not None
         if refresh_unchanged is not None:
             refresh_unchanged(bundle)
@@ -891,6 +893,7 @@ def _poll_live_cycle(
     ) = None,
     refresh_unchanged: Callable[[PlanningInputBundle], None] | None = None,
     observe: Callable[[PlanningInputBundle], None] | None = None,
+    force_run: Callable[[PlanningInputBundle], bool] | None = None,
 ) -> str:
     """Load fresh Planning Input and execute only when decision input changed."""
     bundle = load_bundle()
@@ -932,6 +935,7 @@ def _poll_live_cycle(
             bundle=bundle,
             execute=execute_prepared,
             refresh_unchanged=refresh_unchanged,
+            force_run=force_run,
         )
 
     return _run_live_cycle(
@@ -939,6 +943,7 @@ def _poll_live_cycle(
         bundle=bundle,
         execute=execute,
         refresh_unchanged=refresh_unchanged,
+        force_run=force_run,
     )
 
 
@@ -2159,9 +2164,17 @@ def main() -> None:
         on_error=report_daily_observer_error,
     )
 
+    market_daily_refresh_at: datetime | None = None
+
     def publish_market_daily_outcome(
         outcome: MarketDailyRuntimeOutcome,
     ) -> None:
+        nonlocal market_daily_refresh_at
+        market_daily_refresh_at = (
+            outcome.plan.current_interval_ends_at
+            if outcome.plan is not None
+            else None
+        )
         execution = outcome.execution
         if (
             execution is not None
@@ -2550,6 +2563,12 @@ def main() -> None:
         except Exception as exc:
             report_daily_observer_error(bundle.snapshot, exc)
 
+    def market_daily_boundary_reached(bundle: PlanningInputBundle) -> bool:
+        return (
+            market_daily_refresh_at is not None
+            and bundle.snapshot.captured_at >= market_daily_refresh_at
+        )
+
     def execute(
         bundle: PlanningInputBundle,
         pv_actual_diagnostics: LivePVActualDiagnostics,
@@ -2652,6 +2671,7 @@ def main() -> None:
                 persist_observation=household_load_history.append,
                 refresh_unchanged=refresh_unchanged,
                 observe=observe_fresh_input,
+                force_run=market_daily_boundary_reached,
             )
         )
         _wait_for_poll_or_reset(

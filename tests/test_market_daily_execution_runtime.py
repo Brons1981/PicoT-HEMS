@@ -6,7 +6,7 @@ from test_independent_daily_reference_adapter import _conversion, _snapshot
 from picot.domain.daily_reference_intent import DailyStorageIntent
 from picot.planner.market_daily_planner import MarketDailyPlanner
 from picot.v2.canonical_execution_runtime import CanonicalDispatchOutcome
-from picot.v2.live_runtime import _validate_live_execution_authority
+from picot.v2.live_runtime import _resolve_live_execution_authority
 from picot.v2.market_daily_runtime import (
     MarketDailyExecutionRuntime,
     MarketDailyPlannerRuntime,
@@ -153,17 +153,27 @@ def test_observer_mep_never_dispatches() -> None:
     assert calls == []
 
 
-def test_mep_live_authority_cannot_coexist_with_another_live_planner() -> None:
+def test_mep_live_authority_demotes_persisted_legacy_live_options() -> None:
+    effective = _resolve_live_execution_authority(
+        canonical_execution_enabled=True,
+        live_pv_canary_enabled=True,
+        market_daily_execution_enabled=True,
+    )
+
+    assert effective == (False, False, True)
+
+
+def test_legacy_planners_still_cannot_both_be_live_without_mep() -> None:
     try:
-        _validate_live_execution_authority(
+        _resolve_live_execution_authority(
             canonical_execution_enabled=True,
-            live_pv_canary_enabled=False,
-            market_daily_execution_enabled=True,
+            live_pv_canary_enabled=True,
+            market_daily_execution_enabled=False,
         )
     except ValueError as exc:
         assert "cannot share live authority" in str(exc)
     else:
-        raise AssertionError("two live planner authorities must be rejected")
+        raise AssertionError("two legacy live authorities must be rejected")
 
 
 def test_live_mep_cannot_start_without_its_execution_boundary() -> None:

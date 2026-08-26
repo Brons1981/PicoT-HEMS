@@ -1651,8 +1651,6 @@ def _execute_planning_bundle(
     )
     if independent_daily_observer_worker is not None:
         independent_daily_observer_worker.submit(bundle.snapshot)
-    if market_daily_planner_worker is not None:
-        market_daily_planner_worker.submit(bundle.snapshot)
     if canonical_execution_runtime is not None:
         run = canonical_execution_runtime.apply(run)
         if (
@@ -2181,12 +2179,6 @@ def main() -> None:
             flush=True,
         )
 
-    independent_daily_observer_worker = IndependentDailyObserverWorker(
-        independent_daily_observer_runtime,
-        on_outcome=publish_daily_observer_outcome,
-        on_error=report_daily_observer_error,
-    )
-
     market_daily_refresh_at: datetime | None = None
 
     def publish_market_daily_outcome(
@@ -2264,6 +2256,12 @@ def main() -> None:
         ),
         on_outcome=publish_market_daily_outcome,
         on_error=report_market_daily_error,
+    )
+    independent_daily_observer_worker = IndependentDailyObserverWorker(
+        independent_daily_observer_runtime,
+        on_outcome=publish_daily_observer_outcome,
+        on_error=report_daily_observer_error,
+        on_settled=market_daily_planner_worker.process,
     )
     web_view_store.set_diagnostic_paths(
         (

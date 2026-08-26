@@ -25,6 +25,28 @@ def test_mep_builds_native_plan_when_no_market_extension_applies() -> None:
     assert result.reason == "no_admitted_market_route"
 
 
+def test_mep_reports_observational_phase_timings_and_work_counts() -> None:
+    snapshot = _snapshot(maximum_soc=0.7)
+
+    result, diagnostics = MarketDailyPlanner().plan_with_diagnostics(
+        snapshot=snapshot,
+        conversion_model=_conversion(),
+    )
+
+    assert result.snapshot_id == snapshot.snapshot_id
+    assert diagnostics.planner_total_ms >= diagnostics.native_plan_ms
+    assert diagnostics.native_plan_ms >= 0.0
+    assert diagnostics.tariff_build_ms >= 0.0
+    assert diagnostics.market_route_build_ms >= 0.0
+    assert diagnostics.market_route_assessment_ms >= 0.0
+    assert diagnostics.winner_selection_ms >= 0.0
+    assert diagnostics.native_candidate_count == len(
+        result.native_observation.observer_result.candidate_set.candidates
+    )
+    assert diagnostics.market_route_count == len(result.market_routes)
+    assert diagnostics.route_assessment_count == len(result.route_assessments)
+
+
 def test_mep_keeps_negative_tariffs_signed_in_its_native_plan() -> None:
     snapshot = _snapshot(maximum_soc=0.7)
     negative = tuple(replace(point, value_eur_per_kwh=-0.18) for point in snapshot.price_points)

@@ -13,7 +13,11 @@ from picot.domain.execution import ExecutionPrimitiveRequest
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.home_assistant import HomeAssistantCommandMapping
 from picot.domain.storage_conversion_model import StorageConversionModel
-from picot.planner.market_daily_planner import MarketDailyPlan, MarketDailyPlanner
+from picot.planner.market_daily_planner import (
+    MarketDailyPlan,
+    MarketDailyPlanner,
+    MarketDailyPlannerDiagnostics,
+)
 from picot.v2.canonical_execution_runtime import (
     CanonicalDispatchOutcome,
     DispatchCanonicalMode,
@@ -194,6 +198,7 @@ class MarketDailyRuntimeOutcome:
     plan: MarketDailyPlan | None
     execution: MarketDailyExecutionOutcome | None
     method_version: str
+    planner_diagnostics: MarketDailyPlannerDiagnostics | None = None
 
     def __post_init__(self) -> None:
         if self.status not in {"completed", "blocked"}:
@@ -228,7 +233,7 @@ class MarketDailyPlannerRuntime:
         reason: str | None = None
         status = "completed"
         try:
-            plan = MarketDailyPlanner().plan(
+            plan, planner_diagnostics = MarketDailyPlanner().plan_with_diagnostics(
                 snapshot=snapshot,
                 conversion_model=self.conversion_model,
                 dispatch_authority=self.live_enabled,
@@ -236,6 +241,7 @@ class MarketDailyPlannerRuntime:
         except Exception as exc:
             status = "blocked"
             reason = str(exc) or exc.__class__.__name__
+            planner_diagnostics = None
         execution = (
             self.execution_runtime.apply(plan=plan, snapshot=snapshot)
             if plan is not None and self.execution_runtime is not None
@@ -250,6 +256,7 @@ class MarketDailyPlannerRuntime:
             duration_ms=round((perf_counter() - started) * 1000.0, 3),
             plan=plan,
             execution=execution,
+            planner_diagnostics=planner_diagnostics,
             method_version=METHOD_VERSION,
         )
 
@@ -336,6 +343,21 @@ class MarketDailyPlannerWorker:
             )
             self._thread.start()
 
+    def process(self, snapshot: PlanningInputSnapshot) -> None:
+        """Process one snapshot synchronously in an external ordered worker."""
+        self._process(snapshot)
+
+    def _process(self, snapshot: PlanningInputSnapshot) -> None:
+        try:
+            outcome = self.runtime.plan(snapshot)
+            with self._lock:
+                self._latest_outcome = outcome
+            if self.on_outcome is not None:
+                self.on_outcome(outcome)
+        except Exception as exc:
+            if self.on_error is not None:
+                self.on_error(snapshot, exc)
+
     def _drain(self) -> None:
         while True:
             with self._lock:
@@ -344,12 +366,4 @@ class MarketDailyPlannerWorker:
                 if snapshot is None:
                     self._thread = None
                     return
-            try:
-                outcome = self.runtime.plan(snapshot)
-                with self._lock:
-                    self._latest_outcome = outcome
-                if self.on_outcome is not None:
-                    self.on_outcome(outcome)
-            except Exception as exc:
-                if self.on_error is not None:
-                    self.on_error(snapshot, exc)
+            self._process(snapshot)

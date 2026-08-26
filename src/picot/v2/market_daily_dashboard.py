@@ -24,6 +24,7 @@ def build_market_daily_runtime_view(
             "status": outcome.status,
             "reason": outcome.reason,
             "duration_ms": outcome.duration_ms,
+            "planner_diagnostics": None,
             "dispatch_authority": False,
             "route_count": 0,
             "assessment_count": 0,
@@ -53,6 +54,31 @@ def build_market_daily_runtime_view(
         "captured_at": outcome.captured_at.isoformat(),
         "status": outcome.status,
         "duration_ms": outcome.duration_ms,
+        "planner_diagnostics": (
+            {
+                "native_plan_ms": outcome.planner_diagnostics.native_plan_ms,
+                "tariff_build_ms": outcome.planner_diagnostics.tariff_build_ms,
+                "market_route_build_ms": (
+                    outcome.planner_diagnostics.market_route_build_ms
+                ),
+                "market_route_assessment_ms": (
+                    outcome.planner_diagnostics.market_route_assessment_ms
+                ),
+                "winner_selection_ms": (
+                    outcome.planner_diagnostics.winner_selection_ms
+                ),
+                "planner_total_ms": outcome.planner_diagnostics.planner_total_ms,
+                "native_candidate_count": (
+                    outcome.planner_diagnostics.native_candidate_count
+                ),
+                "market_route_count": outcome.planner_diagnostics.market_route_count,
+                "route_assessment_count": (
+                    outcome.planner_diagnostics.route_assessment_count
+                ),
+            }
+            if outcome.planner_diagnostics is not None
+            else None
+        ),
         "execution": (
             {
                 "status": outcome.execution.status,

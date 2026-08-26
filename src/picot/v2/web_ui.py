@@ -3501,7 +3501,9 @@ DASHBOARD_HTML = """<!doctype html>
           ["Actief tot", mep.current_interval_ends_at],
           ["Marktuitkomst", mep.reason === "no_admitted_market_route"
             ? "Geen toegelaten aanvullende marktroute"
-            : mep.reason],
+            : (mep.reason === "market_recovery_outside_available_horizon"
+              ? "Geen volledige marktroute: herstel na export valt buiten de beschikbare horizon"
+              : mep.reason)],
           ["Gebruikte Zendure-RTE", Number.isFinite(Number(
             mep.round_trip_efficiency
           )) ? formatConfidence(Number(mep.round_trip_efficiency)) : null],

@@ -674,6 +674,10 @@ def test_dashboard_preserves_open_daily_measure_details_by_stable_key() -> None:
     ]
 
 
+def test_dashboard_explains_market_recovery_outside_available_horizon() -> None:
+    assert "Geen volledige marktroute: herstel na export valt buiten" in DASHBOARD_HTML
+
+
 def test_dashboard_shows_plan_calculation_time_and_soc() -> None:
     assert '["Plan berekend", view.planning_status?.captured_at]' in DASHBOARD_HTML
     assert '["Plan berekend", observer.captured_at]' in DASHBOARD_HTML

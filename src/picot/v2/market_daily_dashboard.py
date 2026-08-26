@@ -1,0 +1,121 @@
+"""Compact dashboard projection for MEP without granting dispatch authority."""
+
+from __future__ import annotations
+
+from picot.planner.market_daily_planner import MarketDailyPlan
+from picot.v2.market_daily_runtime import MarketDailyRuntimeOutcome
+
+
+def build_market_daily_runtime_view(
+    outcome: MarketDailyRuntimeOutcome,
+) -> dict[str, object]:
+    if outcome.plan is None:
+        return {
+            "planner_id": "mep",
+            "planner_name": "Markt Etmaal Planner",
+            "snapshot_id": outcome.snapshot_id,
+            "captured_at": outcome.captured_at.isoformat(),
+            "status": outcome.status,
+            "reason": outcome.reason,
+            "duration_ms": outcome.duration_ms,
+            "dispatch_authority": False,
+            "route_count": 0,
+            "assessment_count": 0,
+            "admitted_route_count": 0,
+            "routes": [],
+            "method_version": outcome.method_version,
+        }
+    view = build_market_daily_dashboard_view(outcome.plan)
+    return {
+        **view,
+        "captured_at": outcome.captured_at.isoformat(),
+        "status": outcome.status,
+        "duration_ms": outcome.duration_ms,
+        "execution": (
+            {
+                "status": outcome.execution.status,
+                "requested_vendor_mode": (
+                    outcome.execution.requested_vendor_mode
+                ),
+                "reason": outcome.execution.reason,
+                "command_id": outcome.execution.command_id,
+            }
+            if outcome.execution is not None
+            else None
+        ),
+        "runtime_method_version": outcome.method_version,
+    }
+
+
+def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object]:
+    """Expose market-route differences while preserving the frozen baseline."""
+
+    assessments_by_route = {
+        route.route_id: tuple(
+            item for item in plan.route_assessments if item.route_id == route.route_id
+        )
+        for route in plan.market_routes
+    }
+    admitted_count = sum(item.admitted for item in plan.route_assessments)
+    return {
+        "planner_id": plan.planner_id,
+        "planner_name": plan.planner_name,
+        "snapshot_id": plan.snapshot_id,
+        "method_version": plan.method_version,
+        "frozen_baseline_observation_id": plan.baseline.observation_id,
+        "winning_source": plan.winning_source,
+        "reason": plan.reason,
+        "dispatch_authority": plan.dispatch_authority,
+        "current_intent": (
+            plan.current_intent.value if plan.current_intent is not None else None
+        ),
+        "current_interval_ends_at": (
+            plan.current_interval_ends_at.isoformat()
+            if plan.current_interval_ends_at is not None
+            else None
+        ),
+        "route_count": len(plan.market_routes),
+        "assessment_count": len(plan.route_assessments),
+        "admitted_route_count": admitted_count,
+        "routes": [
+            {
+                "route_id": route.route_id,
+                "window_starts_at": route.window_starts_at.isoformat(),
+                "window_ends_at": route.window_ends_at.isoformat(),
+                "maximum_charge_input_kwh": route.maximum_charge_input_wh / 1000.0,
+                "reserved_storage_room_kwh": (
+                    route.reserved_storage_room_wh / 1000.0
+                ),
+                "storage_energy_ceiling_before_window_kwh": (
+                    route.storage_energy_ceiling_before_window_wh / 1000.0
+                ),
+                "required_pre_window_discharge_output_kwh": (
+                    route.required_pre_window_discharge_output_wh / 1000.0
+                ),
+                "reason": route.reason,
+                "assessment_count": len(assessments_by_route[route.route_id]),
+                "admitted": any(
+                    item.admitted for item in assessments_by_route[route.route_id]
+                ),
+                "assessments": [
+                    {
+                        "source_baseline_schedule_id": (
+                            item.source_baseline_schedule_id
+                        ),
+                        "market_schedule_id": item.market_schedule_id,
+                        "physically_admissible": item.physically_admissible,
+                        "incremental_wear_eur": item.incremental_wear_eur,
+                        "worst_case_incremental_result_eur": (
+                            item.worst_case_incremental_result_eur
+                        ),
+                        "minimum_incremental_result_eur_per_exported_kwh": (
+                            item.minimum_incremental_result_eur_per_exported_kwh
+                        ),
+                        "admitted": item.admitted,
+                    }
+                    for item in assessments_by_route[route.route_id]
+                ],
+            }
+            for route in plan.market_routes
+        ],
+    }

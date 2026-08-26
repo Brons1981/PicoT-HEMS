@@ -63,6 +63,7 @@ options:
   live_poll_interval_seconds: 60
   live_pv_canary_mode: "observer"
   canonical_execution_mode: "observer"
+  market_daily_execution_mode: "live"
   
 schema:
   p1_power_entity: str
@@ -114,3 +115,4 @@ schema:
   live_poll_interval_seconds: int(5,3600)
   live_pv_canary_mode: list(observer|live)
   canonical_execution_mode: list(observer|live)
+  market_daily_execution_mode: list(observer|live)

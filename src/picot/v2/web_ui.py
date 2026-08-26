@@ -408,6 +408,11 @@ DASHBOARD_HTML = """<!doctype html>
       box-shadow: inset 4px 0 0 #c084fc;
     }
     .daily-reference-label { color: #d8b4fe; }
+    .daily-comparison-card.market-daily {
+      border-color: #2dd4bf;
+      background: #0d2c2d;
+      box-shadow: inset 4px 0 0 #5eead4;
+    }
     .daily-lineage-warning { color: #ffd77a; }
     @media (max-width: 800px) {
       .daily-comparison-grid { grid-template-columns: 1fr; }
@@ -3389,6 +3394,50 @@ DASHBOARD_HTML = """<!doctype html>
         observerCard.append(details);
       }
       grid.append(observerCard);
+      const mep = view.market_daily_planner ?? {};
+      const mepAligned = mep.snapshot_id === view.snapshot_id;
+      const admittedMepRoutes = Array.isArray(mep.routes)
+        ? mep.routes.filter((route) => route.admitted)
+        : [];
+      const mepRoute = admittedMepRoutes[0] ?? mep.routes?.[0];
+      const mepCard = comparisonCard(
+        "MEP · Markt Etmaal Planner",
+        "market-daily",
+        [
+          ["Status", mep.status === "completed" ? "Afgerond" : mep.status],
+          ["Vergelijkbaarheid", mepAligned
+            ? "Exact dezelfde Planning Input"
+            : "Wacht op dezelfde Planning Input-snapshot"],
+          ["Winnende bron", mep.winning_source === "market_route"
+            ? "Complete marktroute"
+            : "Bevroren etmaalbaseline"],
+          ["Actuele intentie", mep.current_intent],
+          ["Actief tot", mep.current_interval_ends_at],
+          ["Waarom", mep.reason],
+          ["Negatief venster vanaf", mepRoute?.window_starts_at],
+          ["Negatief venster tot", mepRoute?.window_ends_at],
+          ["Gereserveerde laadruimte", Number.isFinite(Number(
+            mepRoute?.reserved_storage_room_kwh
+          )) ? `${formatDutchNumber(Number(
+            mepRoute.reserved_storage_room_kwh
+          ))} kWh` : null],
+          ["Vooraf extra ontladen", Number.isFinite(Number(
+            mepRoute?.required_pre_window_discharge_output_kwh
+          )) ? `${formatDutchNumber(Number(
+            mepRoute.required_pre_window_discharge_output_kwh
+          ))} kWh` : null],
+          ["Toegelaten marktroutes", mep.admitted_route_count],
+          ["Dispatchbevoegd", mep.dispatch_authority ? "Ja" : "Nee"],
+          ["Uitvoering", mep.execution?.status],
+          ["Aangevraagde Zendure-modus",
+            mep.execution?.requested_vendor_mode],
+          ["Uitvoerreden", mep.execution?.reason],
+          ["Rekentijd", Number.isFinite(Number(mep.duration_ms))
+            ? `${formatDutchNumber(Number(mep.duration_ms))} ms`
+            : null],
+        ]
+      );
+      grid.append(mepCard);
       container.append(grid);
     }
 
@@ -3903,6 +3952,7 @@ class WebViewStore:
         self._latest_json: str | None = None
         self._fast_grid_power_source: dict[str, object] | None = None
         self._daily_observer_comparison: dict[str, object] | None = None
+        self._market_daily_planner: dict[str, object] | None = None
         self._planner_comparison_history: dict[str, object] | None = None
         self._revision = 0
         self._reset_storage_mode_override: (
@@ -3949,6 +3999,8 @@ class WebViewStore:
             view["daily_observer_comparison"] = dict(
                 self._daily_observer_comparison
             )
+        if self._market_daily_planner is not None:
+            view["market_daily_planner"] = dict(self._market_daily_planner)
         if self._planner_comparison_history is not None:
             view["planner_comparison_history"] = dict(
                 self._planner_comparison_history
@@ -4049,6 +4101,25 @@ class WebViewStore:
             raise ValueError("daily dashboard comparison must remain passive")
         with self._condition:
             self._daily_observer_comparison = copied
+            if self._latest_json is None:
+                return
+            latest: object = json.loads(self._latest_json)
+            if not isinstance(latest, dict):
+                raise TypeError("latest web view must be an object")
+            self._replace_latest_locked(latest)
+
+    def publish_market_daily_planner(
+        self,
+        market_view: dict[str, object],
+    ) -> None:
+        """Overlay MEP output without allowing it to mutate another planner."""
+        copied: object = json.loads(json.dumps(market_view))
+        if not isinstance(copied, dict):
+            raise TypeError("MEP dashboard view must serialize to an object")
+        if copied.get("planner_id") != "mep":
+            raise ValueError("MEP dashboard identity must be explicit")
+        with self._condition:
+            self._market_daily_planner = copied
             if self._latest_json is None:
                 return
             latest: object = json.loads(self._latest_json)

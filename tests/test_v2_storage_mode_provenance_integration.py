@@ -168,37 +168,6 @@ def test_manual_override_only_clears_through_explicit_reset() -> None:
     assert run.primitive_boundary.blockers == ("observer_only_authority",)
 
 
-def test_user_change_after_explicit_reset_is_blocked_as_manual_override() -> None:
-    module = _module()
-    initial = module.initial_storage_mode_provenance(
-        observed_vendor_mode="Alleen slim ontladen",
-        observed_at=BASE,
-    )
-    released = module.reset_storage_mode_override(
-        initial,
-        observed_vendor_mode="Alleen slim ontladen",
-        reset_at=BASE,
-        reset_id="reset-test-change",
-    )
-
-    changed = module.observe_storage_mode(
-        released,
-        observed_vendor_mode="Alleen slim opladen",
-        observed_at=BASE,
-    )
-
-    assert changed.status == "manual_override"
-    assert changed.manual_override_active is True
-    assert changed.transition_reason == (
-        "observed_mode_changed_after_explicit_reset"
-    )
-    run = _run(current_mode="Alleen slim opladen", provenance=changed)
-    assert run.primitive_boundary.blockers == (
-        "manual_override_active",
-        "observer_only_authority",
-    )
-
-
 def test_projection_exposes_mode_provenance_without_recalculation() -> None:
     module = _module()
     provenance = module.initial_storage_mode_provenance(

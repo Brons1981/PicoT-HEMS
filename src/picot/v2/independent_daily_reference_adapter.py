@@ -155,16 +155,6 @@ class IndependentDailyReferenceAdapter:
             maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
         )
 
-    def build_inputs(
-        self,
-        snapshot: PlanningInputSnapshot,
-        *,
-        horizon_end: datetime | None = None,
-    ) -> _DailyReferenceInputs:
-        """Expose the validated simulator inputs to composition-only planners."""
-
-        return self._inputs(snapshot, horizon_end=horizon_end)
-
     def _inputs(
         self,
         snapshot: PlanningInputSnapshot,

@@ -743,8 +743,6 @@ DASHBOARD_HTML = """<!doctype html>
       fill: #477fa8;
       opacity: 0.85;
     }
-    .price-chart .price-bar.low { fill: #35a862; }
-    .price-chart .price-bar.high { fill: #df6b57; }
     .price-chart .price-bar.mep-charge { fill: #19b981; }
     .price-chart .price-bar.mep-export { fill: #ef4444; }
     .price-chart .price-bar.past { opacity: 0.30; }
@@ -1112,41 +1110,6 @@ DASHBOARD_HTML = """<!doctype html>
       });
     }
 
-    function priceWindowKind(point, opportunities) {
-      const startsAt = new Date(point.starts_at).getTime();
-      const endsAt = new Date(point.ends_at).getTime();
-      const matching = opportunities.filter((opportunity) => {
-        const windowStart = new Date(opportunity.starts_at).getTime();
-        const windowEnd = new Date(opportunity.ends_at).getTime();
-        return startsAt < windowEnd && endsAt > windowStart;
-      });
-
-      if (
-        matching.some(
-          (opportunity) =>
-            opportunity.kind === "NEGATIVE_PRICE_WINDOW" ||
-            opportunity.kind === "LOWEST_PRICE_WINDOW"
-        )
-      ) {
-        return "low";
-      }
-      if (
-        matching.some(
-          (opportunity) =>
-            opportunity.kind === "HIGH_EXPORT_VALUE_WINDOW"
-        )
-      ) {
-        return "high";
-      }
-      return "normal";
-    }
-
-    function priceWindowLabel(kind) {
-      if (kind === "low") return "Laagste-prijsvenster";
-      if (kind === "high") return "Hoogste-teruglevervenster";
-      return "Geen prijsvenster";
-    }
-
     function renderPriceTimeline(
       timeline,
       capturedAt,
@@ -1172,9 +1135,6 @@ DASHBOARD_HTML = """<!doctype html>
       const points = Array.isArray(timeline.points)
         ? timeline.points
         : [];
-      const opportunities = Array.isArray(timeline.opportunities)
-        ? timeline.opportunities
-        : [];
       const timezone =
         timeline.market_timezone ?? "Europe/Amsterdam";
       const startsAtMs = start.getTime();
@@ -1192,8 +1152,6 @@ DASHBOARD_HTML = """<!doctype html>
       legend.className = "price-legend";
       for (const [kind, label] of [
         ["normal", "Overige prijzen"],
-        ["low", "Laagste-prijsvenster"],
-        ["high", "Hoogste-teruglevervenster"],
         ["missing", "Nog niet gepubliceerd"],
         ["canonical-plan", "Gekozen door huidige planner"],
         ["daily-plan", "Gekozen door etmaalsimulatie"],
@@ -1353,7 +1311,6 @@ DASHBOARD_HTML = """<!doctype html>
           continue;
         }
 
-        const kind = priceWindowKind(point, opportunities);
         const mepIntent = mepIntents.find((interval) => {
           const intentStart = new Date(interval.starts_at).getTime();
           const intentEnd = new Date(interval.ends_at).getTime();
@@ -1363,7 +1320,7 @@ DASHBOARD_HTML = """<!doctype html>
         const isPast = pointEnd <= nowMs;
         const valueY = yPosition(value);
         const bar = createSvgElement("rect", {
-          class: `price-bar ${kind}${mepKind ? ` ${mepKind}` : ""}${
+          class: `price-bar normal${mepKind ? ` ${mepKind}` : ""}${
             isPast ? " past" : ""
           }`,
           x: xPosition(pointStart) + 0.5,
@@ -1388,7 +1345,6 @@ DASHBOARD_HTML = """<!doctype html>
             `${formatTimestamp(point.starts_at)} – ` +
               formatTimestamp(point.ends_at),
             formatPrice(value),
-            priceWindowLabel(kind),
             ...(mepIntent ? [mepIntent.label] : []),
             `Confidence ${formatConfidence(point.confidence)}`,
             ...(selectedBy.length

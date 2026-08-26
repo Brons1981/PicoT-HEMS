@@ -856,6 +856,27 @@ def _should_run_cycle(
     return _planning_input_signature(bundle) != previous_signature
 
 
+def _reset_storage_mode_override_and_request_replan(
+    *,
+    runtime: Any,
+    replan_requested: Event,
+    reset_id: str,
+    reset_at: datetime,
+) -> dict[str, object]:
+    """Clear a manual mode override and immediately wake the live planner."""
+    provenance = runtime.reset_current_manual_override(
+        reset_at=reset_at,
+        reset_id=reset_id,
+    )
+    replan_requested.set()
+    return {
+        "status": provenance.status,
+        "reset_id": provenance.reset_id,
+        "manual_override_active": provenance.manual_override_active,
+        "replan_requested": True,
+    }
+
+
 def _run_live_cycle(
     *,
     previous_signature: str | None,
@@ -2271,17 +2292,12 @@ def main() -> None:
     def reset_storage_mode_override(
         reset_id: str,
     ) -> dict[str, object]:
-        provenance = (
-            storage_mode_provenance_runtime.reset_current_manual_override(
-                reset_at=datetime.now(UTC),
-                reset_id=reset_id,
-            )
+        return _reset_storage_mode_override_and_request_replan(
+            runtime=storage_mode_provenance_runtime,
+            replan_requested=planning_reset_requested,
+            reset_id=reset_id,
+            reset_at=datetime.now(UTC),
         )
-        return {
-            "status": provenance.status,
-            "reset_id": provenance.reset_id,
-            "manual_override_active": provenance.manual_override_active,
-        }
 
     web_view_store.set_storage_mode_override_reset(
         reset_storage_mode_override

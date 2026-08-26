@@ -298,6 +298,37 @@ def test_planning_reset_waits_for_older_cycle_before_clearing_state() -> None:
     assert barrier.generation == 1
 
 
+def test_manual_override_reset_requests_an_immediate_fresh_planning_cycle() -> None:
+    replan_requested = Event()
+
+    class Runtime:
+        def reset_current_manual_override(self, *, reset_at, reset_id):
+            return type(
+                "Provenance",
+                (),
+                {
+                    "status": "observed",
+                    "reset_id": reset_id,
+                    "manual_override_active": False,
+                },
+            )()
+
+    result = live_runtime._reset_storage_mode_override_and_request_replan(
+        runtime=Runtime(),
+        replan_requested=replan_requested,
+        reset_id="reset-override",
+        reset_at=BASE,
+    )
+
+    assert result == {
+        "status": "observed",
+        "reset_id": "reset-override",
+        "manual_override_active": False,
+        "replan_requested": True,
+    }
+    assert replan_requested.is_set()
+
+
 def test_poll_cycle_executes_when_only_storage_mode_changed() -> None:
     first = _bundle(
         captured_at=BASE,

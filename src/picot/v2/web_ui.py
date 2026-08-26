@@ -3598,7 +3598,14 @@ DASHBOARD_HTML = """<!doctype html>
       for (const route of (mep.routes ?? [])) {
         const details = document.createElement("details");
         details.className = "technical-details";
-        details.dataset.technicalKey = `market-route:${route.route_id}`;
+        details.dataset.technicalKey = [
+          "market-route",
+          route.route_kind,
+          route.export_window_starts_at ?? "none",
+          route.export_window_ends_at ?? "none",
+          route.window_starts_at,
+          route.window_ends_at,
+        ].join(":");
         const summary = document.createElement("summary");
         summary.textContent = [
           routeKindLabels[route.route_kind] ?? route.route_kind,

@@ -233,10 +233,24 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
     assert route.minimum_export_eur_per_kwh == pytest.approx(0.223614, abs=1e-6)
     assert route.window_starts_at.date() > export_end.date()
     assert route.maximum_charge_input_wh == 0.0
-    assert grid_recovery.maximum_charge_input_wh == pytest.approx(
+    assert grid_recovery.maximum_charge_input_wh > (
         grid_recovery.required_pre_window_discharge_output_wh / 0.83
     )
     assert grid_recovery.window_starts_at == route.window_starts_at
+    grid_assessment = next(
+        item
+        for item in result.route_assessments
+        if item.route_id == grid_recovery.route_id
+    )
+    assert all(
+        scenario.grid_to_storage_input_wh > 0.0
+        for scenario in grid_assessment.scenario_evidence
+    )
+    assert all(
+        scenario.target_held_at_horizon_end
+        for scenario in grid_assessment.scenario_evidence
+    )
+    assert grid_assessment.physically_admissible is True
 
 
 def test_mep_source_has_no_dependency_on_cp_or_ep_runtime_outputs() -> None:

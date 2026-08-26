@@ -1986,20 +1986,26 @@ def _execute_planning_bundle(
     )
 
 
-def _validate_live_execution_authority(
+def _resolve_live_execution_authority(
     *,
     canonical_execution_enabled: bool,
     live_pv_canary_enabled: bool,
     market_daily_execution_enabled: bool,
-) -> None:
+) -> tuple[bool, bool, bool]:
+    if market_daily_execution_enabled:
+        return False, False, True
     if sum((
         canonical_execution_enabled,
         live_pv_canary_enabled,
-        market_daily_execution_enabled,
     )) > 1:
         raise ValueError(
-            "canonical, live PV canary and MEP execution cannot share live authority"
+            "canonical and live PV canary cannot share live authority"
         )
+    return (
+        canonical_execution_enabled,
+        live_pv_canary_enabled,
+        False,
+    )
 
 
 def main() -> None:
@@ -2055,7 +2061,11 @@ def main() -> None:
             "market_daily_execution_mode must be observer or live"
         )
     market_daily_execution_enabled = market_daily_execution_mode == "live"
-    _validate_live_execution_authority(
+    (
+        canonical_execution_enabled,
+        live_pv_canary_enabled,
+        market_daily_execution_enabled,
+    ) = _resolve_live_execution_authority(
         canonical_execution_enabled=canonical_execution_enabled,
         live_pv_canary_enabled=live_pv_canary_enabled,
         market_daily_execution_enabled=market_daily_execution_enabled,

@@ -24,6 +24,7 @@ options:
   zendure_signed_power_entity: "sensor.zendure_2400_ac_vermogen_aansturing"
   zendure_power_to_house_entity: "sensor.zendure_2400_ac_vermogen_naar_huis"
   zendure_power_from_house_entity: "sensor.zendure_2400_ac_vermogen_van_huis"
+  market_daily_rte_entity: "sensor.zendure_2400_ac_rte_totaal"
   storage_execution_scope_id: "home-battery"
   storage_capability_id: "storage-capability-home-battery"
   storage_usable_capacity_wh: 8160.0
@@ -61,6 +62,8 @@ options:
   daily_reference_discharge_efficiency: 1.0
   market_daily_charge_efficiency: 0.9110433579
   market_daily_discharge_efficiency: 0.9110433579
+  market_daily_trading_margin_percent: 10.0
+  market_daily_wear_eur_per_kwh: 0.05
   grid_power_observation_interval_seconds: 1
   live_poll_interval_seconds: 60
   live_pv_canary_mode: "observer"
@@ -78,6 +81,7 @@ schema:
   zendure_signed_power_entity: str
   zendure_power_to_house_entity: str
   zendure_power_from_house_entity: str
+  market_daily_rte_entity: str
   storage_execution_scope_id: str
   storage_capability_id: str
   storage_usable_capacity_wh: float(0,)
@@ -115,6 +119,8 @@ schema:
   daily_reference_discharge_efficiency: float(0,1)
   market_daily_charge_efficiency: float(0,1)
   market_daily_discharge_efficiency: float(0,1)
+  market_daily_trading_margin_percent: float(0,100)
+  market_daily_wear_eur_per_kwh: float(0,1)
   grid_power_observation_interval_seconds: int(1,60)
   live_poll_interval_seconds: int(5,3600)
   live_pv_canary_mode: list(observer|live)

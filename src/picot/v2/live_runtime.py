@@ -23,6 +23,7 @@ from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from picot.domain.storage_conversion_model import StorageConversionModel
+from picot.planner.market_daily_planner import MarketTradingPolicy
 from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
 from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
@@ -2136,6 +2137,14 @@ def main() -> None:
         evidence_ids=("addon-options:market-daily-efficiency",),
         method_version="live-mep-configured-conversion:v1",
     )
+    market_daily_trading_policy = MarketTradingPolicy(
+        margin_fraction=(
+            float(options.get("market_daily_trading_margin_percent", 10.0)) / 100.0
+        ),
+        wear_eur_per_export_kwh=float(
+            options.get("market_daily_wear_eur_per_kwh", 0.05)
+        ),
+    )
     independent_daily_observer_runtime = IndependentDailyObserverRuntime(
         conversion_model=daily_conversion_model,
         store=DailyObserverResultStore(
@@ -2245,6 +2254,7 @@ def main() -> None:
     market_daily_planner_worker = MarketDailyPlannerWorker(
         MarketDailyPlannerRuntime(
             market_daily_conversion_model,
+            trading_policy=market_daily_trading_policy,
             live_enabled=market_daily_execution_enabled,
             execution_runtime=MarketDailyExecutionRuntime(
                 dispatch=HomeAssistantCanonicalModeAdapter(

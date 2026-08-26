@@ -26,6 +26,7 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
     StoragePhysicalLimits,
+    StorageRoundTripEfficiencyEvidence,
 )
 from picot.v2.household_load_forecast import (
     build_fallback_household_load_forecast,
@@ -164,6 +165,7 @@ DEFAULT_BINDINGS = (
         "storage_power_from_house",
         "zendure_power_from_house_entity",
     ),
+    ("zendure", "storage_round_trip_efficiency", "market_daily_rte_entity"),
     ("solcast", "pv_forecast", "solcast_forecast_entity"),
     (
         "solcast",
@@ -875,6 +877,45 @@ def assemble_planning_input(
         ),
         method_version="zendure-calibration-state:v1",
     )
+    rte_source = next(
+        (
+            item
+            for item in evidence
+            if item.semantic_role == "storage_round_trip_efficiency"
+        ),
+        None,
+    )
+    rte_percent = (
+        _canonical_value(rte_source.raw_state)
+        if rte_source is not None
+        and rte_source.availability == "available"
+        else None
+    )
+    rte_available = (
+        isinstance(rte_percent, float)
+        and 50.0 <= rte_percent <= 100.0
+        and rte_source is not None
+        and rte_source.observed_at is not None
+        and rte_source.entity_id is not None
+    )
+    rte_value = rte_percent / 100.0 if isinstance(rte_percent, float) else None
+    rte_observed_at = rte_source.observed_at if rte_source is not None else None
+    rte_entity_id = rte_source.entity_id if rte_source is not None else None
+    storage_round_trip_efficiency = StorageRoundTripEfficiencyEvidence(
+        status="available" if rte_available else "unavailable",
+        round_trip_efficiency=(rte_value if rte_available else None),
+        observed_at=(rte_observed_at if rte_available else None),
+        source_entity_id=(rte_entity_id if rte_available else None),
+        evidence_id=(
+            rte_source.evidence_id
+            if rte_source is not None
+            else _stable_id(
+                "evidence",
+                f"{snapshot_id}|storage-rte-unconfigured",
+            )
+        ),
+        method_version="zendure-total-rte-percent:v1",
+    )
     price_points = tuple(
         point
         for item in evidence
@@ -1012,6 +1053,7 @@ def assemble_planning_input(
             and selected_storage_config.maximum_discharge_power_w is not None
             else ()
         ),
+        storage_round_trip_efficiency=storage_round_trip_efficiency,
     )
     return PlanningInputBundle(
         snapshot,

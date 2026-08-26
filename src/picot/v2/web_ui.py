@@ -3546,8 +3546,29 @@ DASHBOARD_HTML = """<!doctype html>
           ["Marktuitkomst", mep.reason === "no_admitted_market_route"
             ? "Geen toegelaten aanvullende marktroute"
             : mep.reason],
-          ["Negatief venster vanaf", mepRoute?.window_starts_at],
-          ["Negatief venster tot", mepRoute?.window_ends_at],
+          ["Gebruikte Zendure-RTE", Number.isFinite(Number(
+            mep.round_trip_efficiency
+          )) ? formatConfidence(Number(mep.round_trip_efficiency)) : null],
+          ["Ingestelde handelsmarge", Number.isFinite(Number(
+            mep.trading_margin_percent
+          )) ? `${formatDutchNumber(Number(mep.trading_margin_percent))}%` : null],
+          ["Ingestelde slijtage", Number.isFinite(Number(
+            mep.wear_eur_per_export_kwh
+          )) ? formatPrice(Number(mep.wear_eur_per_export_kwh)) : null],
+          ["Exportvenster vanaf", mepRoute?.export_window_starts_at],
+          ["Exportvenster tot", mepRoute?.export_window_ends_at],
+          ["Herstelvenster vanaf", mepRoute?.window_starts_at],
+          ["Herstelvenster tot", mepRoute?.window_ends_at],
+          ["Gemiddelde exportprijs", Number.isFinite(Number(
+            mepRoute?.average_export_eur_per_kwh
+          )) ? formatPrice(Number(mepRoute.average_export_eur_per_kwh)) : null],
+          ["Gemiddelde herstelprijs", Number.isFinite(Number(
+            mepRoute?.average_recharge_eur_per_kwh
+          )) ? formatPrice(Number(mepRoute.average_recharge_eur_per_kwh)) : null],
+          ["Minimale exportprijs", Number.isFinite(Number(
+            mepRoute?.minimum_export_eur_per_kwh
+          )) ? formatPrice(Number(mepRoute.minimum_export_eur_per_kwh)) : null],
+          ["Routebeoordeling", mepRoute?.assessments?.[0]?.admission_reason],
           ["Gereserveerde laadruimte", Number.isFinite(Number(
             mepRoute?.reserved_storage_room_kwh
           )) ? `${formatDutchNumber(Number(

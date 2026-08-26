@@ -56,6 +56,7 @@ def test_storage_power_bindings_are_loaded_from_explicit_options(
                 "zendure_power_from_house_entity": (
                     "sensor.zendure_2400_ac_vermogen_van_huis"
                 ),
+                "market_daily_rte_entity": "sensor.zendure_2400_ac_rte_totaal",
             }
         ),
         encoding="utf-8",
@@ -74,6 +75,9 @@ def test_storage_power_bindings_are_loaded_from_explicit_options(
     )
     assert bindings[("zendure", "storage_power_from_house")] == (
         "sensor.zendure_2400_ac_vermogen_van_huis"
+    )
+    assert bindings[("zendure", "storage_round_trip_efficiency")] == (
+        "sensor.zendure_2400_ac_rte_totaal"
     )
 
 
@@ -127,6 +131,48 @@ def test_available_zendure_soc_becomes_current_storage_state(
     assert state.measured_at == observed_at
     assert state.confidence == pytest.approx(1.0)
     assert state.evidence_ids == ("evidence-zendure-soc",)
+
+
+def test_available_zendure_total_rte_enters_planning_input(
+    monkeypatch: object,
+) -> None:
+    observed_at = BASE - timedelta(seconds=5)
+
+    def fake_read(
+        self: HomeAssistantStateReader,
+        binding: SourceBinding,
+    ) -> SourceEvidence:
+        del self
+        return SourceEvidence(
+            evidence_id="evidence-zendure-rte",
+            category=binding.category,
+            semantic_role=binding.semantic_role,
+            entity_id=binding.entity_id,
+            raw_state="83",
+            raw_unit="%",
+            observed_at=observed_at,
+            availability="available",
+            mapping_version="mapping-zendure-rte",
+        )
+
+    monkeypatch.setattr(HomeAssistantStateReader, "read", fake_read)  # type: ignore[attr-defined]
+    bundle = assemble_planning_input(
+        "token",
+        bindings=(
+            SourceBinding(
+                "zendure",
+                "storage_round_trip_efficiency",
+                "sensor.zendure_2400_ac_rte_totaal",
+            ),
+        ),
+        captured_at=BASE,
+    )
+
+    evidence = bundle.snapshot.storage_round_trip_efficiency
+    assert evidence is not None
+    assert evidence.status == "available"
+    assert evidence.round_trip_efficiency == 0.83
+    assert evidence.source_entity_id == "sensor.zendure_2400_ac_rte_totaal"
 
 
 def test_storage_state_config_is_loaded_from_explicit_options(

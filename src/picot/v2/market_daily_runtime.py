@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from math import sqrt
 from threading import Lock, Thread
 from time import perf_counter
 
@@ -17,6 +18,7 @@ from picot.planner.market_daily_planner import (
     MarketDailyPlan,
     MarketDailyPlanner,
     MarketDailyPlannerDiagnostics,
+    MarketTradingPolicy,
 )
 from picot.v2.canonical_execution_runtime import (
     CanonicalDispatchOutcome,
@@ -220,12 +222,40 @@ class MarketDailyPlannerRuntime:
         *,
         live_enabled: bool = False,
         execution_runtime: MarketDailyExecutionRuntime | None = None,
+        trading_policy: MarketTradingPolicy | None = None,
     ) -> None:
         if live_enabled and execution_runtime is None:
             raise ValueError("live MEP requires an execution runtime")
         self.conversion_model = conversion_model
         self.live_enabled = live_enabled
         self.execution_runtime = execution_runtime
+        self.trading_policy = trading_policy or MarketTradingPolicy()
+
+    def _planning_configuration(
+        self,
+        snapshot: PlanningInputSnapshot,
+    ) -> tuple[StorageConversionModel, MarketTradingPolicy]:
+        evidence = snapshot.storage_round_trip_efficiency
+        if (
+            evidence is None
+            or evidence.status != "available"
+            or evidence.round_trip_efficiency is None
+        ):
+            return self.conversion_model, replace(
+                self.trading_policy,
+                market_routes_enabled=False,
+            )
+        directional_efficiency = sqrt(evidence.round_trip_efficiency)
+        return (
+            StorageConversionModel(
+                model_id=f"mep-zendure-rte:{snapshot.snapshot_id}",
+                charge_efficiency=directional_efficiency,
+                discharge_efficiency=directional_efficiency,
+                evidence_ids=(evidence.evidence_id,),
+                method_version="measured-zendure-total-rte:v1",
+            ),
+            self.trading_policy,
+        )
 
     def plan(self, snapshot: PlanningInputSnapshot) -> MarketDailyRuntimeOutcome:
         started = perf_counter()
@@ -233,9 +263,11 @@ class MarketDailyPlannerRuntime:
         reason: str | None = None
         status = "completed"
         try:
+            conversion_model, trading_policy = self._planning_configuration(snapshot)
             plan, planner_diagnostics = MarketDailyPlanner().plan_with_diagnostics(
                 snapshot=snapshot,
-                conversion_model=self.conversion_model,
+                conversion_model=conversion_model,
+                trading_policy=trading_policy,
                 dispatch_authority=self.live_enabled,
             )
         except Exception as exc:

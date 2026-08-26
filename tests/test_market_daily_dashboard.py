@@ -54,6 +54,9 @@ def test_mep_dashboard_exposes_baseline_market_and_authority_separately() -> Non
     assert view["current_interval_ends_at"] is not None
     assert view["route_count"] >= 1
     assert view["admitted_route_count"] >= 1
+    assert view["round_trip_efficiency"] == 1.0
+    assert view["trading_margin_percent"] == 10.0
+    assert view["wear_eur_per_export_kwh"] == 0.05
     assert any(
         item["intent"] == "storage_export"
         for item in view["selected_intent_intervals"]
@@ -63,6 +66,9 @@ def test_mep_dashboard_exposes_baseline_market_and_authority_separately() -> Non
     assert route["reserved_storage_room_kwh"] == 4.8
     assert route["assessment_count"] >= 1
     assert route["admitted"] is True
+    assert route["assessments"][0]["admission_reason"] == (
+        "admitted_profitable_complete_route"
+    )
 
 
 def test_web_store_keeps_mep_separate_from_existing_planner_views() -> None:

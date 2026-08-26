@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 51342)
-Total output lines: 5642
-
 """Pure read-only data projection for the PicoT v2 web UI."""
 
 from __future__ import annotations
@@ -2880,7 +2877,157 @@ DASHBOARD_HTML = """<!doctype html>
           body: JSON.stringify({ reset_id: storageModeResetId() })
         });
         if (!response.ok) {
-          throw new Error(`Reset geweigerd (${re…1342 tokens truncated…allback_active ? "Actief" : "Niet actief"
+          throw new Error(`Reset geweigerd (${response.status})`);
+        }
+        element("storage-mode-override-result").textContent =
+          "De handmatige blokkade is vrijgegeven.";
+        resetButton.hidden = true;
+        await loadView();
+      } catch (error) {
+        element("storage-mode-override-result").textContent =
+          error instanceof Error ? error.message : "Reset mislukt.";
+      } finally {
+        resetButton.disabled = false;
+      }
+    }
+
+    async function resetPlanning() {
+      const resetButton = element("reset-planning");
+      const confirmed = globalThis.confirm(
+        "Alle huidige en toekomstige plannen worden beëindigd. PicoT maakt " +
+        "direct een nieuw plan met actuele gegevens. Historie, leerdata en " +
+        "instellingen blijven behouden. Een actieve laadplanning kan worden " +
+        "afgebroken. Doorgaan?"
+      );
+      if (!confirmed) return;
+      resetButton.disabled = true;
+      try {
+        const response = await fetch("api/planning/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reset_id: storageModeResetId() })
+        });
+        if (!response.ok) {
+          throw new Error(`Planningreset geweigerd (${response.status})`);
+        }
+        const result = await response.json();
+        element("planning-reset-result").textContent =
+          `Reset geaccepteerd; ${result.removed_commitment_count ?? 0} ` +
+          "commitment(s) verwijderd. Nieuwe planning wordt opgebouwd.";
+        await loadView();
+      } catch (error) {
+        element("planning-reset-result").textContent =
+          error instanceof Error ? error.message : "Planningreset mislukt.";
+      } finally {
+        resetButton.disabled = false;
+      }
+    }
+
+    function renderStorageEnergySourceNeeds(needs) {
+      const container = element("storage-energy-source-needs");
+      container.replaceChildren();
+
+      if (!Array.isArray(needs) || needs.length === 0) {
+        container.textContent =
+          "Nog geen energieplan voor de batterij beschikbaar.";
+        return;
+      }
+
+      for (const need of needs) {
+        const article = document.createElement("article");
+        const summary = document.createElement("p");
+        const deadline = formatTimestamp(need.required_by);
+
+        if (need.status === "target_already_met") {
+          summary.textContent =
+            "Zendure batterij heeft het geplande doel van " +
+            formatEnergyKwh(need.target_energy_wh) +
+            " al bereikt; aanvullende laadenergie is niet nodig.";
+        } else if (need.status === "pv_only_feasible") {
+          summary.textContent =
+            "Zendure batterij mist " +
+            formatEnergyKwh(need.energy_to_target_wh) +
+            " om het geplande doel van " +
+            formatEnergyKwh(need.target_energy_wh) +
+            " te bereiken. De verwachte PV kan dit vóór " +
+            deadline +
+            " zonder netladen bereiken.";
+        } else {
+          summary.textContent =
+            "Zendure batterij mist " +
+            formatEnergyKwh(need.energy_to_target_wh) +
+            " om het geplande doel van " +
+            formatEnergyKwh(need.target_energy_wh) +
+            " te bereiken. Van de verwachte " +
+            formatEnergyKwh(need.expected_usable_pv_energy_wh) +
+            " PV blijft na " +
+            formatEnergyKwh(need.household_load_forecast_energy_wh) +
+            " huishoudverbruik " +
+            formatEnergyKwh(need.pv_storage_contribution_wh) +
+            " beschikbaar voor opslag. Daardoor resteert " +
+            formatEnergyKwh(need.grid_energy_required_wh) +
+            " mogelijke netlaadbehoefte vóór " +
+            deadline +
+            ".";
+        }
+
+        const attributes = document.createElement("dl");
+        appendAttribute(
+          attributes,
+          "PV-only haalbaar",
+          need.pv_only_feasible ? "Ja" : "Nee"
+        );
+        appendAttribute(
+          attributes,
+          "Confidence",
+          formatConfidence(need.confidence)
+        );
+        article.append(summary, attributes);
+        appendTechnicalDetails(article, need);
+        container.appendChild(article);
+      }
+    }
+
+    function renderHouseholdLoadForecast(forecast) {
+      const container = element("household-load-forecast");
+      const quarterDetailsOpen =
+        container.querySelector("details")?.open ?? false;
+      container.replaceChildren();
+
+      if (!forecast.available) {
+        container.textContent =
+          "Nog geen prognose voor huishoudverbruik beschikbaar.";
+        return;
+      }
+
+      const intervals = Array.isArray(forecast.intervals)
+        ? forecast.intervals
+        : [];
+      const attributes = document.createElement("dl");
+      appendAttribute(
+        attributes,
+        "Periode",
+        `${formatTimestamp(forecast.starts_at)} – ${formatTimestamp(forecast.ends_at)}`
+      );
+      appendAttribute(
+        attributes,
+        "Verwachte energie",
+        `${forecast.total_wh} Wh`
+      );
+      appendAttribute(
+        attributes,
+        "Kwartieren",
+        forecast.interval_count
+      );
+      appendAttribute(
+        attributes,
+        "Gemiddelde confidence",
+        formatConfidence(forecast.average_confidence)
+      );
+      appendAttribute(
+        attributes,
+        "Fallback",
+        forecast.fallback_active ? "Actief" : "Niet actief"
       );
       appendAttribute(
         attributes,

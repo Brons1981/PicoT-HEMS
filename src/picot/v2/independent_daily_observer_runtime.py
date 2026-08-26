@@ -344,10 +344,12 @@ class IndependentDailyObserverWorker:
         *,
         on_outcome: Callable[[DailyObserverRuntimeOutcome], None] | None = None,
         on_error: Callable[[PlanningInputSnapshot, Exception], None] | None = None,
+        on_settled: Callable[[PlanningInputSnapshot], None] | None = None,
     ) -> None:
         self.runtime = runtime
         self.on_outcome = on_outcome
         self.on_error = on_error
+        self.on_settled = on_settled
         self._lock = Lock()
         self._pending: PlanningInputSnapshot | None = None
         self._thread: Thread | None = None
@@ -380,3 +382,10 @@ class IndependentDailyObserverWorker:
             except Exception as exc:
                 if self.on_error is not None:
                     self.on_error(snapshot, exc)
+            finally:
+                if self.on_settled is not None:
+                    try:
+                        self.on_settled(snapshot)
+                    except Exception as exc:
+                        if self.on_error is not None:
+                            self.on_error(snapshot, exc)

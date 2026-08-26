@@ -3570,6 +3570,25 @@ DASHBOARD_HTML = """<!doctype html>
           ["Rekentijd", Number.isFinite(Number(mep.duration_ms))
             ? `${formatDutchNumber(Number(mep.duration_ms))} ms`
             : null],
+          ["MEP eigen etmaalplan", Number.isFinite(Number(
+            mep.planner_diagnostics?.native_plan_ms
+          )) ? `${formatDutchNumber(Number(
+            mep.planner_diagnostics.native_plan_ms
+          ))} ms` : null],
+          ["MEP marktroutes opbouwen", Number.isFinite(Number(
+            mep.planner_diagnostics?.market_route_build_ms
+          )) ? `${formatDutchNumber(Number(
+            mep.planner_diagnostics.market_route_build_ms
+          ))} ms` : null],
+          ["MEP marktroutes simuleren", Number.isFinite(Number(
+            mep.planner_diagnostics?.market_route_assessment_ms
+          )) ? `${formatDutchNumber(Number(
+            mep.planner_diagnostics.market_route_assessment_ms
+          ))} ms` : null],
+          ["MEP onderzochte eigen kandidaten",
+            mep.planner_diagnostics?.native_candidate_count],
+          ["MEP onderzochte marktroutes",
+            mep.planner_diagnostics?.market_route_count],
         ]
       );
       for (const candidate of mepBest) {

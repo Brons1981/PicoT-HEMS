@@ -122,3 +122,28 @@ def test_worker_publishes_completed_outcome_without_control_coupling(tmp_path) -
     assert published[0].observer_only is True
     assert published[0].selection_permitted is False
     assert published[0].commitment_permitted is False
+
+
+def test_worker_starts_follow_up_only_after_observer_settles() -> None:
+    completed = Event()
+    events: list[str] = []
+
+    class OrderedRuntime:
+        def observe(self, snapshot):
+            events.append("ep-start")
+            events.append("ep-finish")
+            return None
+
+    worker = IndependentDailyObserverWorker(
+        cast(IndependentDailyObserverRuntime, OrderedRuntime()),
+        on_outcome=lambda outcome: events.append("ep-publish"),
+        on_settled=lambda snapshot: (
+            events.append("mep-start"),
+            completed.set(),
+        ),
+    )
+
+    worker.submit(_snapshot(maximum_soc=0.7))
+
+    assert completed.wait(timeout=2.0)
+    assert events == ["ep-start", "ep-finish", "ep-publish", "mep-start"]

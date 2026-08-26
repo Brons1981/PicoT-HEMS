@@ -97,6 +97,9 @@ def test_mep_runtime_dashboard_exposes_its_complete_native_plan() -> None:
     assert baseline["simulation_horizon_end"] is not None
     assert winners
     assert winners[0]["intent_intervals"]
+    diagnostics = view["planner_diagnostics"]
+    assert diagnostics["native_plan_ms"] >= 0.0
+    assert diagnostics["native_candidate_count"] > 0
 
 
 def test_dashboard_renders_mep_as_a_third_visually_distinct_planner() -> None:
@@ -106,3 +109,5 @@ def test_dashboard_renders_mep_as_a_third_visually_distinct_planner() -> None:
     assert "selectedMepIntents" in DASHBOARD_HTML
     assert ".price-bar.mep-charge" in DASHBOARD_HTML
     assert ".price-bar.mep-export" in DASHBOARD_HTML
+    assert "MEP eigen etmaalplan" in DASHBOARD_HTML
+    assert "MEP marktroutes simuleren" in DASHBOARD_HTML

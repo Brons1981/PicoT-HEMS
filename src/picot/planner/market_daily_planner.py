@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from time import perf_counter
 
 from picot.domain.daily_reference_intent import (
     DailyReferenceIntentInterval,
@@ -152,6 +153,21 @@ class MarketDailyPlan:
             raise ValueError("MEP current intent and interval end must be paired.")
 
 
+@dataclass(frozen=True, slots=True)
+class MarketDailyPlannerDiagnostics:
+    """Observational MEP phase timings; never consumed by planner policy."""
+
+    native_plan_ms: float
+    tariff_build_ms: float
+    market_route_build_ms: float
+    market_route_assessment_ms: float
+    winner_selection_ms: float
+    planner_total_ms: float
+    native_candidate_count: int
+    market_route_count: int
+    route_assessment_count: int
+
+
 class MarketDailyPlanner:
     """Plan MEP end-to-end without consuming CP or EP output."""
 
@@ -162,22 +178,44 @@ class MarketDailyPlanner:
         conversion_model: StorageConversionModel,
         dispatch_authority: bool = False,
     ) -> MarketDailyPlan:
+        plan, _ = self.plan_with_diagnostics(
+            snapshot=snapshot,
+            conversion_model=conversion_model,
+            dispatch_authority=dispatch_authority,
+        )
+        return plan
+
+    def plan_with_diagnostics(
+        self,
+        *,
+        snapshot: PlanningInputSnapshot,
+        conversion_model: StorageConversionModel,
+        dispatch_authority: bool = False,
+    ) -> tuple[MarketDailyPlan, MarketDailyPlannerDiagnostics]:
+        planner_started = perf_counter()
         # This is a private MEP planning run from the shared immutable input.
         # No CP/EP runtime, persisted observation or winner is consulted.
+        phase_started = perf_counter()
         native_observation = IndependentDailyReferenceAdapter().observe(
             snapshot=snapshot,
             conversion_model=conversion_model,
         )
+        native_plan_ms = (perf_counter() - phase_started) * 1000.0
         horizon_end = native_observation.strategy_space.schedules[0].horizon_end
+        phase_started = perf_counter()
         tariffs = IndependentDailyTariffAdapter().build(
             snapshot,
             horizon_end=horizon_end,
         )
+        tariff_build_ms = (perf_counter() - phase_started) * 1000.0
+        phase_started = perf_counter()
         routes = self._market_routes(
             snapshot=snapshot,
             tariffs=tariffs,
             conversion_model=conversion_model,
         )
+        market_route_build_ms = (perf_counter() - phase_started) * 1000.0
+        phase_started = perf_counter()
         assessments = self._assess_routes(
             snapshot=snapshot,
             native_observation=native_observation,
@@ -185,13 +223,15 @@ class MarketDailyPlanner:
             conversion_model=conversion_model,
             routes=routes,
         )
+        market_route_assessment_ms = (perf_counter() - phase_started) * 1000.0
+        phase_started = perf_counter()
         market_wins = any(item.admitted for item in assessments)
         current_intent, current_interval_ends_at = self._current_decision(
             captured_at=snapshot.captured_at,
             native_observation=native_observation,
             assessments=assessments,
         )
-        return MarketDailyPlan(
+        plan = MarketDailyPlan(
             planner_id="mep",
             planner_name="Markt Etmaal Planner",
             snapshot_id=snapshot.snapshot_id,
@@ -207,6 +247,20 @@ class MarketDailyPlanner:
             current_interval_ends_at=current_interval_ends_at,
             method_version=METHOD_VERSION,
         )
+        winner_selection_ms = (perf_counter() - phase_started) * 1000.0
+        candidates = native_observation.observer_result.candidate_set.candidates
+        diagnostics = MarketDailyPlannerDiagnostics(
+            native_plan_ms=round(native_plan_ms, 3),
+            tariff_build_ms=round(tariff_build_ms, 3),
+            market_route_build_ms=round(market_route_build_ms, 3),
+            market_route_assessment_ms=round(market_route_assessment_ms, 3),
+            winner_selection_ms=round(winner_selection_ms, 3),
+            planner_total_ms=round((perf_counter() - planner_started) * 1000.0, 3),
+            native_candidate_count=len(candidates),
+            market_route_count=len(routes),
+            route_assessment_count=len(assessments),
+        )
+        return plan, diagnostics
 
     @staticmethod
     def _market_routes(

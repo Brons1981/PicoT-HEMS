@@ -10,8 +10,8 @@ from picot.v2.planner_comparison_ledger import (
 )
 
 
-def _dossier(*, start: datetime | None = None) -> dict:
-    start = start or datetime(2026, 8, 24, 10, tzinfo=UTC)
+def _dossier() -> dict:
+    start = datetime(2026, 8, 24, 10, tzinfo=UTC)
     end = start + timedelta(hours=2)
     points = {
         f"p-{role}-{index}": {
@@ -170,12 +170,9 @@ def test_incomplete_measurement_coverage_never_names_winner(tmp_path) -> None:
 def test_explicit_stress_marker_survives_restart_and_is_passive(tmp_path) -> None:
     state_path = tmp_path / "state.json"
     ledger = PlannerComparisonLedger(state_path=state_path, history_path=tmp_path / "history.jsonl")
-    occurred_at = datetime.now(UTC)
-    ledger._state["dossiers"] = {
-        "snapshot": _dossier(start=occurred_at - timedelta(hours=1))
-    }
+    ledger._state["dossiers"] = {"snapshot": _dossier()}
     result = ledger.mark_stress(
-        marker_id="manual-1", occurred_at=occurred_at, note="handmatig ontladen"
+        marker_id="manual-1", occurred_at=datetime.now(UTC), note="handmatig ontladen"
     )
 
     assert result["observer_only"] is True

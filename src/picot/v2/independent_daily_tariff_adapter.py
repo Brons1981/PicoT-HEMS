@@ -10,11 +10,10 @@ from picot.domain.daily_reference_tariff import (
 )
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
 
-METHOD_VERSION = "v2-daily-tariff-policy-nl-2027:v2"
+METHOD_VERSION = "v2-daily-tariff-policy-nl-2027:v1"
 VAT_FACTOR = 1.21
-ENERGY_TAX_EX_VAT_EUR_PER_KWH = 0.09161
+ENERGY_TAX_EX_VAT_EUR_PER_KWH = 0.0916
 SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH = 0.01653
-EXPORT_ADDITION_EUR_PER_KWH = 0.02
 EXPORT_TAX_TRANSITION = datetime.fromisoformat("2027-01-01T00:00:00+01:00")
 
 
@@ -152,12 +151,8 @@ class IndependentDailyTariffAdapter:
         export_rate = import_rate
         policy_evidence = "nl-net-metering-through-2026"
         if starts_at >= EXPORT_TAX_TRANSITION:
-            bare_market_rate = import_rate - (
-                ENERGY_TAX_EX_VAT_EUR_PER_KWH
-                + SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH
-            ) * VAT_FACTOR
-            export_rate = bare_market_rate + EXPORT_ADDITION_EUR_PER_KWH
-            policy_evidence = "nl-export-bare-market-plus-0.02-2027"
+            export_rate = import_rate - ENERGY_TAX_EX_VAT_EUR_PER_KWH * VAT_FACTOR
+            policy_evidence = "nl-export-energy-tax-removed-2027"
         return DailyReferenceTariffInterval(
             starts_at=starts_at,
             ends_at=ends_at,

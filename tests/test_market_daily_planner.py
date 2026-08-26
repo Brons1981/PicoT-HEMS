@@ -313,6 +313,64 @@ def test_mep_accepts_cheaper_recovery_later_on_same_day() -> None:
     )
 
 
+def test_mep_uses_actual_duration_for_split_same_day_recovery_intervals() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
+    source = snapshot.price_points[0]
+    horizon_end = snapshot.captured_at + timedelta(hours=24)
+    boundaries = [snapshot.captured_at, snapshot.captured_at + timedelta(minutes=7)]
+    while boundaries[-1] + timedelta(minutes=15) < horizon_end:
+        boundaries.append(boundaries[-1] + timedelta(minutes=15))
+    boundaries.append(horizon_end)
+    price_points = tuple(
+        replace(
+            source,
+            point_id=f"split-price-{index}",
+            starts_at=starts_at,
+            ends_at=ends_at,
+            value_eur_per_kwh=(
+                0.346
+                if snapshot.captured_at + timedelta(hours=4)
+                <= starts_at
+                < snapshot.captured_at + timedelta(hours=6)
+                else 0.131
+                if snapshot.captured_at + timedelta(hours=8)
+                <= starts_at
+                < snapshot.captured_at + timedelta(hours=12)
+                else 0.30
+            ),
+        )
+        for index, (starts_at, ends_at) in enumerate(zip(boundaries, boundaries[1:], strict=False))
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=replace(snapshot, price_points=price_points),
+        conversion_model=StorageConversionModel(
+            model_id="zendure-rte",
+            charge_efficiency=0.8012**0.5,
+            discharge_efficiency=0.8012**0.5,
+            evidence_ids=("zendure-rte",),
+            method_version="test:v1",
+        ),
+    )
+
+    morning_routes = tuple(
+        route
+        for route in result.market_routes
+        if route.route_kind == "pv_trade_grid_recovery"
+        and route.export_window_starts_at is not None
+        and snapshot.captured_at + timedelta(hours=4)
+        <= route.export_window_starts_at
+        < snapshot.captured_at + timedelta(hours=6)
+        and snapshot.captured_at + timedelta(hours=8)
+        <= route.window_starts_at
+        < snapshot.captured_at + timedelta(hours=12)
+    )
+    assert morning_routes
+    assessed_route_ids = {assessment.route_id for assessment in result.route_assessments}
+    assert all(route.route_id in assessed_route_ids for route in morning_routes)
+    assert result.reason != "market_recovery_outside_available_horizon"
+
+
 def test_mep_explains_when_profitable_export_cannot_recover_inside_horizon() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
     source = snapshot.price_points[0]

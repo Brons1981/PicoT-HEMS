@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from math import ceil
 from time import perf_counter
 
 from picot.domain.daily_reference_intent import (
@@ -587,32 +586,27 @@ class MarketDailyPlanner:
                 native_end_shortfall_wh / conversion_model.charge_efficiency
                 + export_output_wh / rte
             )
-            interval_input_wh = limits.maximum_charge_input_power_w * 0.25
-            required_recovery_intervals = max(
-                1,
-                ceil(required_recharge_input_wh / interval_input_wh),
-            )
-            recovery_windows = tuple(
-                tuple(future[index : index + required_recovery_intervals])
-                for index in range(
-                    0,
-                    len(future) - required_recovery_intervals + 1,
-                )
-                if all(
-                    left.ends_at == right.starts_at
-                    for left, right in zip(
-                        future[index : index + required_recovery_intervals],
-                        future[index + 1 : index + required_recovery_intervals],
-                        strict=False,
-                    )
-                )
-            )
+            recovery_windows: list[tuple[DailyReferenceTariffInterval, ...]] = []
+            for start_index, first in enumerate(future):
+                if first.starts_at < export_end:
+                    continue
+                recovery_intervals: list[DailyReferenceTariffInterval] = []
+                available_input_wh = 0.0
+                for interval in future[start_index:]:
+                    if recovery_intervals and recovery_intervals[-1].ends_at != interval.starts_at:
+                        break
+                    recovery_intervals.append(interval)
+                    duration_hours = (
+                        interval.ends_at - interval.starts_at
+                    ).total_seconds() / 3600.0
+                    available_input_wh += limits.maximum_charge_input_power_w * duration_hours
+                    if available_input_wh >= required_recharge_input_wh:
+                        recovery_windows.append(tuple(recovery_intervals))
+                        break
             recovery_candidates = []
             for recovery_window in recovery_windows:
                 recovery_start = recovery_window[0].starts_at
                 recovery_end = recovery_window[-1].ends_at
-                if recovery_start < export_end:
-                    continue
                 recovery_hours = (recovery_end - recovery_start).total_seconds() / 3600
                 if (
                     limits.maximum_charge_input_power_w * recovery_hours

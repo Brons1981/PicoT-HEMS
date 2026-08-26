@@ -264,8 +264,7 @@ class MarketDailyPlannerRuntime:
         current_intent, current_interval_ends_at = (
             MarketDailyPlanner._current_decision(
                 captured_at=snapshot.captured_at,
-                baseline=outcome.plan.baseline,
-                assessments=outcome.plan.route_assessments,
+                schedule=outcome.plan.selected_intent_schedule,
             )
         )
         advanced_plan = replace(

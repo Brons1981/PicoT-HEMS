@@ -46,6 +46,10 @@ def test_mep_dashboard_exposes_baseline_market_and_authority_separately() -> Non
 
     assert view["planner_id"] == "mep"
     assert view["planner_name"] == "Markt Etmaal Planner"
+    assert view["selection_reason"] == plan.selection_reason
+    assert view["selected_intent_schedule_id"] == (
+        plan.selected_intent_schedule.schedule_id
+    )
     assert view["snapshot_id"] == snapshot.snapshot_id
     assert view["frozen_baseline_observation_id"] == plan.baseline.observation_id
     assert view["winning_source"] == "market_route"

@@ -294,7 +294,14 @@ def test_mep_boundary_executes_retained_nom_instead_of_replanning_it_later() -> 
             portfolio=portfolio,
         ),
     )
-    outcome = replace(outcome, plan=replace(outcome.plan, baseline=baseline))
+    outcome = replace(
+        outcome,
+        plan=replace(
+            outcome.plan,
+            baseline=baseline,
+            selected_intent_schedule=retained,
+        ),
+    )
     clock[0] = nom_interval.starts_at + timedelta(seconds=2)
     fresh = _fresh_mode_snapshot(
         snapshot,

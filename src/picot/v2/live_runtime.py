@@ -890,6 +890,9 @@ def _poll_live_cycle(
         Callable[[HouseholdLoadObservation], None] | None
     ) = None,
     refresh_unchanged: Callable[[PlanningInputBundle], None] | None = None,
+    advance_clock_boundaries: (
+        Callable[[PlanningInputBundle], None] | None
+    ) = None,
     observe: Callable[[PlanningInputBundle], None] | None = None,
 ) -> str:
     """Load fresh Planning Input and execute only when decision input changed."""
@@ -913,6 +916,9 @@ def _poll_live_cycle(
     preparation_diagnostics: Any = None
     if prepare_bundle is not None:
         bundle, preparation_diagnostics = prepare_bundle(bundle)
+
+    if advance_clock_boundaries is not None:
+        advance_clock_boundaries(bundle)
 
     if observe is not None:
         observe(bundle)
@@ -2545,11 +2551,6 @@ def main() -> None:
         independent_daily_observer_worker.submit(bundle.snapshot)
 
     def refresh_unchanged(bundle: PlanningInputBundle) -> None:
-        if (
-            market_daily_refresh_at is not None
-            and bundle.snapshot.captured_at >= market_daily_refresh_at
-        ):
-            market_daily_planner_worker.advance(bundle.snapshot)
         power_history, _ = read_power_history(bundle)
         try:
             planner_comparison_ledger.ingest(bundle.snapshot, power_history)
@@ -2562,6 +2563,13 @@ def main() -> None:
             )
         except Exception as exc:
             report_daily_observer_error(bundle.snapshot, exc)
+
+    def advance_market_daily_boundary(bundle: PlanningInputBundle) -> None:
+        if (
+            market_daily_refresh_at is not None
+            and bundle.snapshot.captured_at >= market_daily_refresh_at
+        ):
+            market_daily_planner_worker.advance(bundle.snapshot)
 
     def execute(
         bundle: PlanningInputBundle,
@@ -2664,6 +2672,7 @@ def main() -> None:
                 execute=execute,
                 persist_observation=household_load_history.append,
                 refresh_unchanged=refresh_unchanged,
+                advance_clock_boundaries=advance_market_daily_boundary,
                 observe=observe_fresh_input,
             )
         )

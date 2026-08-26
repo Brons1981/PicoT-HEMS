@@ -158,6 +158,58 @@ def test_poll_cycle_executes_when_fresh_input_changed() -> None:
     assert result == _planning_input_signature(changed)
 
 
+def test_poll_cycle_advances_clock_boundary_before_changed_execution() -> None:
+    first = _bundle(captured_at=BASE, price=0.20)
+    changed = _bundle(
+        captured_at=BASE + timedelta(minutes=15),
+        price=0.10,
+    )
+    events: list[tuple[str, str]] = []
+
+    result = _poll_live_cycle(
+        previous_signature=_planning_input_signature(first),
+        load_bundle=lambda: changed,
+        execute=lambda bundle: events.append(
+            ("execute", bundle.snapshot.run_id)
+        ),
+        advance_clock_boundaries=lambda bundle: events.append(
+            ("advance", bundle.snapshot.run_id)
+        ),
+    )
+
+    assert events == [
+        ("advance", changed.snapshot.run_id),
+        ("execute", changed.snapshot.run_id),
+    ]
+    assert result == _planning_input_signature(changed)
+
+
+def test_poll_cycle_advances_clock_boundary_when_execution_is_unchanged() -> None:
+    first = _bundle(captured_at=BASE, price=0.20)
+    unchanged = _bundle(
+        captured_at=BASE + timedelta(minutes=15),
+        price=0.20,
+    )
+    advanced: list[str] = []
+    refreshed: list[str] = []
+
+    result = _poll_live_cycle(
+        previous_signature=_planning_input_signature(first),
+        load_bundle=lambda: unchanged,
+        execute=lambda bundle: None,
+        advance_clock_boundaries=lambda bundle: advanced.append(
+            bundle.snapshot.run_id
+        ),
+        refresh_unchanged=lambda bundle: refreshed.append(
+            bundle.snapshot.run_id
+        ),
+    )
+
+    assert advanced == [unchanged.snapshot.run_id]
+    assert refreshed == [unchanged.snapshot.run_id]
+    assert result == _planning_input_signature(first)
+
+
 def test_observer_detects_fresh_input_while_commitment_stays_stable() -> None:
     first = _with_active_commitment(_bundle(captured_at=BASE, price=0.20))
     changed = _with_active_commitment(

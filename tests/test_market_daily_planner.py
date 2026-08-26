@@ -3,6 +3,15 @@ from datetime import timedelta
 
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
+from picot.domain.daily_reference_intent import (
+    DailyReferenceIntentInterval,
+    DailyReferenceIntentSchedule,
+    DailyStorageIntent,
+)
+from picot.domain.daily_reference_tariff import (
+    DailyReferenceTariffInterval,
+    DailyReferenceTariffSchedule,
+)
 from picot.planner.market_daily_planner import MarketDailyPlanner
 
 
@@ -23,6 +32,118 @@ def test_mep_preserves_frozen_daily_baseline_when_no_market_extension_applies() 
     assert result.winning_source == "frozen_daily_baseline"
     assert result.dispatch_authority is False
     assert result.reason == "no_admitted_market_route"
+    assert result.selected_intent_schedule.snapshot_id == snapshot.snapshot_id
+
+
+def test_mep_protects_today_recovery_when_ep_prefers_cheaper_tomorrow() -> None:
+    snapshot = _snapshot()
+    source = snapshot.price_points[0]
+    split_at = snapshot.captured_at + timedelta(hours=12)
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(
+                source,
+                point_id="today-expensive",
+                ends_at=split_at,
+                value_eur_per_kwh=0.40,
+            ),
+            replace(
+                source,
+                point_id="tomorrow-cheap",
+                starts_at=split_at,
+                value_eur_per_kwh=0.10,
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=_conversion(),
+    )
+
+    candidates = {
+        item.candidate_id: item
+        for item in result.baseline.observer_result.candidate_set.candidates
+    }
+    ep_winner = candidates[result.baseline.observer_result.best_observation_ids[0]]
+    assert all(
+        item.target_reached_at is not None
+        and item.target_reached_at.date() > priced.captured_at.date()
+        for item in ep_winner.scenario_outcomes
+    )
+    selected_candidate = next(
+        item
+        for item in candidates.values()
+        if item.intent_schedule_id == result.selected_intent_schedule.schedule_id
+    )
+    assert all(
+        item.target_reached_at is not None
+        and item.target_reached_at.date() == priced.captured_at.date()
+        for item in selected_candidate.scenario_outcomes
+    )
+    assert result.selection_reason == "today_pv_recovery_protected"
+    assert result.baseline.observer_result.best_observation_ids[0] == ep_winner.candidate_id
+
+
+def test_mep_uses_remaining_current_interval_when_not_more_expensive() -> None:
+    snapshot = _snapshot()
+    captured_at = snapshot.captured_at + timedelta(minutes=5)
+    quarter_end = snapshot.captured_at + timedelta(minutes=15)
+    schedule = DailyReferenceIntentSchedule(
+        schedule_id="ep-schedule",
+        snapshot_id=snapshot.snapshot_id,
+        horizon_start=snapshot.captured_at,
+        horizon_end=snapshot.captured_at + timedelta(minutes=30),
+        intervals=(
+            DailyReferenceIntentInterval(
+                starts_at=snapshot.captured_at,
+                ends_at=quarter_end,
+                intent=DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
+            ),
+            DailyReferenceIntentInterval(
+                starts_at=quarter_end,
+                ends_at=snapshot.captured_at + timedelta(minutes=30),
+                intent=DailyStorageIntent.NOM,
+            ),
+        ),
+        method_version="ep:test",
+    )
+    tariffs = DailyReferenceTariffSchedule(
+        schedule_id="tariffs",
+        snapshot_id=snapshot.snapshot_id,
+        horizon_start=snapshot.captured_at,
+        horizon_end=snapshot.captured_at + timedelta(minutes=30),
+        intervals=(
+            DailyReferenceTariffInterval(
+                starts_at=snapshot.captured_at,
+                ends_at=quarter_end,
+                import_eur_per_kwh=0.18,
+                export_eur_per_kwh=0.18,
+                confidence=1.0,
+                evidence_ids=("current-price",),
+            ),
+            DailyReferenceTariffInterval(
+                starts_at=quarter_end,
+                ends_at=snapshot.captured_at + timedelta(minutes=30),
+                import_eur_per_kwh=0.20,
+                export_eur_per_kwh=0.20,
+                confidence=1.0,
+                evidence_ids=("following-price",),
+            ),
+        ),
+        method_version="tariff:test",
+    )
+
+    adjusted = MarketDailyPlanner._use_remaining_cheap_interval(
+        captured_at=captured_at,
+        schedule=schedule,
+        tariffs=tariffs,
+    )
+
+    assert adjusted.schedule_id == "mep-current:ep-schedule"
+    assert adjusted.intervals[0].intent is DailyStorageIntent.NOM
+    assert adjusted.intervals[0].ends_at == quarter_end
 
 
 def test_mep_keeps_negative_tariffs_signed_in_its_frozen_baseline() -> None:

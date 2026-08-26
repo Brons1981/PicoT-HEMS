@@ -114,6 +114,8 @@ class MarketDailyPlan:
     baseline: DailyReferenceStrategyObservation
     market_routes: tuple[MarketCapacityRoute, ...]
     route_assessments: tuple[MarketRouteAssessment, ...]
+    selected_intent_schedule: DailyReferenceIntentSchedule
+    selection_reason: str
     winning_source: str
     reason: str
     dispatch_authority: bool
@@ -128,6 +130,10 @@ class MarketDailyPlan:
             raise ValueError("MEP baseline must share its Planning Input snapshot.")
         if not self.method_version.strip():
             raise ValueError("MEP method version must be explicit.")
+        if self.selected_intent_schedule.snapshot_id != self.snapshot_id:
+            raise ValueError("MEP selected schedule must share its Planning Input snapshot.")
+        if not self.selection_reason.strip():
+            raise ValueError("MEP selection reason must be explicit.")
         admitted = any(item.admitted for item in self.route_assessments)
         expected_source = "market_route" if admitted else "frozen_daily_baseline"
         if self.winning_source != expected_source:
@@ -168,10 +174,15 @@ class MarketDailyPlanner:
             routes=routes,
         )
         market_wins = any(item.admitted for item in assessments)
-        current_intent, current_interval_ends_at = self._current_decision(
+        selected_schedule, selection_reason = self._select_schedule(
             captured_at=snapshot.captured_at,
             baseline=baseline,
             assessments=assessments,
+            tariffs=tariffs,
+        )
+        current_intent, current_interval_ends_at = self._current_decision(
+            captured_at=snapshot.captured_at,
+            schedule=selected_schedule,
         )
         return MarketDailyPlan(
             planner_id="mep",
@@ -180,6 +191,8 @@ class MarketDailyPlanner:
             baseline=baseline,
             market_routes=routes,
             route_assessments=assessments,
+            selected_intent_schedule=selected_schedule,
+            selection_reason=selection_reason,
             winning_source=("market_route" if market_wins else "frozen_daily_baseline"),
             reason=(
                 "profitable_complete_market_route"
@@ -319,49 +332,158 @@ class MarketDailyPlanner:
         return tuple(assessments)
 
     @staticmethod
-    def _current_decision(
+    def _select_schedule(
         *,
         captured_at: datetime,
         baseline: DailyReferenceStrategyObservation,
         assessments: tuple[MarketRouteAssessment, ...],
-    ) -> tuple[DailyStorageIntent | None, datetime | None]:
+        tariffs: DailyReferenceTariffSchedule,
+    ) -> tuple[DailyReferenceIntentSchedule, str]:
         admitted = tuple(item for item in assessments if item.admitted)
         if admitted:
-            schedules = tuple(item.intent_schedule for item in admitted)
-        else:
-            candidates = {
-                item.candidate_id: item
-                for item in baseline.observer_result.candidate_set.candidates
-            }
-            results = {
-                item.intent_schedule.schedule_id: item.intent_schedule
-                for item in baseline.observer_result.portfolio.strategy_results
-            }
-            schedules = tuple(
-                results[candidates[candidate_id].intent_schedule_id]
-                for candidate_id in baseline.observer_result.best_observation_ids
+            return admitted[0].intent_schedule, "profitable_complete_market_route"
+
+        candidates = tuple(baseline.observer_result.candidate_set.candidates)
+        schedules = {
+            item.intent_schedule.schedule_id: item.intent_schedule
+            for item in baseline.observer_result.portfolio.strategy_results
+        }
+        by_id = {item.candidate_id: item for item in candidates}
+        baseline_winners = tuple(
+            by_id[item] for item in baseline.observer_result.best_observation_ids
+        )
+
+        # MEP protects a target that can still be reached today. A cheaper grid
+        # window tomorrow must not displace an otherwise complete PV-aligned
+        # recovery and leave the home with an avoidable overnight energy debt.
+        today = captured_at.astimezone(captured_at.tzinfo).date()
+        today_complete = tuple(
+            item
+            for item in candidates
+            if item.complete_across_scenarios
+            and item.reserve_respected_across_scenarios
+            and item.target_reached_across_scenarios
+            and all(
+                outcome.target_reached_at is not None
+                and outcome.target_reached_at.astimezone(captured_at.tzinfo).date()
+                == today
+                for outcome in item.scenario_outcomes
             )
-        due = tuple(
-            next(
+        )
+        if today_complete and not any(item in today_complete for item in baseline_winners):
+            pv_first = tuple(
+                item
+                for item in today_complete
+                if DailyStorageIntent.GRID_REQUIREMENT not in item.intents_used
+            )
+            eligible = pv_first or today_complete
+            selected = max(
+                eligible,
+                key=lambda item: (
+                    item.worst_case_financial_result_eur,
+                    item.minimum_confidence,
+                ),
+            )
+            schedule = schedules[selected.intent_schedule_id]
+            return (
+                MarketDailyPlanner._use_remaining_cheap_interval(
+                    captured_at=captured_at,
+                    schedule=schedule,
+                    tariffs=tariffs,
+                ),
+                "today_pv_recovery_protected",
+            )
+
+        schedule = schedules[baseline_winners[0].intent_schedule_id]
+        adjusted = MarketDailyPlanner._use_remaining_cheap_interval(
+            captured_at=captured_at,
+            schedule=schedule,
+            tariffs=tariffs,
+        )
+        return adjusted, (
+            "current_cheap_interval_used"
+            if adjusted is not schedule
+            else "frozen_daily_baseline_winner"
+        )
+
+    @staticmethod
+    def _use_remaining_cheap_interval(
+        *,
+        captured_at: datetime,
+        schedule: DailyReferenceIntentSchedule,
+        tariffs: DailyReferenceTariffSchedule,
+    ) -> DailyReferenceIntentSchedule:
+        current_index = next(
+            (
+                index
+                for index, interval in enumerate(schedule.intervals)
+                if interval.starts_at <= captured_at < interval.ends_at
+            ),
+            None,
+        )
+        if current_index is None or current_index + 1 >= len(schedule.intervals):
+            return schedule
+        current = schedule.intervals[current_index]
+        following = schedule.intervals[current_index + 1]
+        if (
+            current.intent is not DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+            or following.intent
+            not in {DailyStorageIntent.NOM, DailyStorageIntent.GRID_REQUIREMENT}
+            or current.ends_at != following.starts_at
+        ):
+            return schedule
+
+        def import_price(moment: datetime) -> float | None:
+            interval = next(
                 (
-                    interval
-                    for interval in schedule.intervals
-                    if interval.starts_at <= captured_at < interval.ends_at
+                    item
+                    for item in tariffs.intervals
+                    if item.starts_at <= moment < item.ends_at
                 ),
                 None,
             )
-            for schedule in schedules
+            return interval.import_eur_per_kwh if interval is not None else None
+
+        current_price = import_price(captured_at)
+        following_price = import_price(following.starts_at)
+        if (
+            current_price is None
+            or following_price is None
+            or current_price > following_price
+        ):
+            return schedule
+        intervals = list(schedule.intervals)
+        intervals[current_index] = DailyReferenceIntentInterval(
+            starts_at=current.starts_at,
+            ends_at=current.ends_at,
+            intent=following.intent,
         )
-        if not due or any(item is None for item in due):
+        return DailyReferenceIntentSchedule(
+            schedule_id=f"mep-current:{schedule.schedule_id}",
+            snapshot_id=schedule.snapshot_id,
+            horizon_start=schedule.horizon_start,
+            horizon_end=schedule.horizon_end,
+            intervals=tuple(intervals),
+            method_version=METHOD_VERSION,
+        )
+
+    @staticmethod
+    def _current_decision(
+        *,
+        captured_at: datetime,
+        schedule: DailyReferenceIntentSchedule,
+    ) -> tuple[DailyStorageIntent | None, datetime | None]:
+        due = next(
+            (
+                interval
+                for interval in schedule.intervals
+                if interval.starts_at <= captured_at < interval.ends_at
+            ),
+            None,
+        )
+        if due is None:
             return None, None
-        decisions = {
-            (item.intent, item.ends_at)
-            for item in due
-            if item is not None
-        }
-        if len(decisions) != 1:
-            return None, None
-        return next(iter(decisions))
+        return due.intent, due.ends_at
 
     @staticmethod
     def _market_schedule(

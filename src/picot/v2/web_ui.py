@@ -3445,11 +3445,15 @@ DASHBOARD_HTML = """<!doctype html>
       const mep = view.market_daily_planner ?? {};
       const mepAligned = mep.snapshot_id === view.snapshot_id;
       const mepBaseline = mep.baseline_plan ?? {};
-      const mepBest = Array.isArray(mepBaseline.candidates)
-        ? mepBaseline.candidates.filter(
-            (candidate) => candidate.best_observation
-          )
+      const mepCandidates = Array.isArray(mepBaseline.candidates)
+        ? mepBaseline.candidates
         : [];
+      const mepSelectedCandidate = mepCandidates.find((candidate) =>
+        candidate.intent_schedule_id === mep.selected_source_intent_schedule_id
+      );
+      const mepBest = mepSelectedCandidate
+        ? [mepSelectedCandidate]
+        : mepCandidates.filter((candidate) => candidate.best_observation);
       const mepRepresentative = mepBest[0];
       const mepUsesGrid = mepBest.some((candidate) =>
         (candidate.intents_used ?? []).includes("grid_requirement")
@@ -3541,6 +3545,13 @@ DASHBOARD_HTML = """<!doctype html>
           ["Winnende bron", mep.winning_source === "market_route"
             ? "Complete marktroute"
             : "Bevroren etmaalbaseline"],
+          ["MEP-keuzeregel", mep.selection_reason ===
+            "today_pv_recovery_protected"
+              ? "Vandaag haalbare PV/herstelroute beschermd"
+              : mep.selection_reason === "current_cheap_interval_used"
+                ? "Resterende goedkope minuten direct benut"
+                : mep.selection_reason],
+          ["Gekozen MEP-planning", mep.selected_intent_schedule_id],
           ["Actuele intentie", mep.current_intent],
           ["Actief tot", mep.current_interval_ends_at],
           ["Marktuitkomst", mep.reason === "no_admitted_market_route"

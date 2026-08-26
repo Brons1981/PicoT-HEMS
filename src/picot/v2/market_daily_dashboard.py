@@ -84,25 +84,7 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
         for route in plan.market_routes
     }
     admitted_count = sum(item.admitted for item in plan.route_assessments)
-    admitted_schedules = tuple(
-        item.intent_schedule for item in plan.route_assessments if item.admitted
-    )
-    if admitted_schedules:
-        selected_schedule = admitted_schedules[0]
-    else:
-        candidates = {
-            item.candidate_id: item
-            for item in plan.baseline.observer_result.candidate_set.candidates
-        }
-        results = {
-            item.intent_schedule.schedule_id: item.intent_schedule
-            for item in plan.baseline.observer_result.portfolio.strategy_results
-        }
-        selected_schedule = results[
-            candidates[
-                plan.baseline.observer_result.best_observation_ids[0]
-            ].intent_schedule_id
-        ]
+    selected_schedule = plan.selected_intent_schedule
     return {
         "planner_id": plan.planner_id,
         "planner_name": plan.planner_name,
@@ -111,6 +93,11 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
         "frozen_baseline_observation_id": plan.baseline.observation_id,
         "winning_source": plan.winning_source,
         "reason": plan.reason,
+        "selection_reason": plan.selection_reason,
+        "selected_intent_schedule_id": selected_schedule.schedule_id,
+        "selected_source_intent_schedule_id": (
+            selected_schedule.schedule_id.removeprefix("mep-current:")
+        ),
         "dispatch_authority": plan.dispatch_authority,
         "current_intent": (
             plan.current_intent.value if plan.current_intent is not None else None

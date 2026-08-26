@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from threading import Lock, Thread
 from time import perf_counter
@@ -52,6 +52,7 @@ class MarketDailyExecutionOutcome:
     requested_vendor_mode: str | None
     reason: str
     command_id: str | None = None
+    evaluated_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -86,41 +87,49 @@ class MarketDailyExecutionRuntime:
         if executed_at.tzinfo is None or executed_at.utcoffset() is None:
             raise ValueError("MEP execution clock must be timezone-aware")
         if executed_at >= plan.current_interval_ends_at:
-            return self._blocked("mep_current_interval_expired")
+            return self._blocked("mep_current_interval_expired", executed_at)
         evidence = snapshot.storage_mode_capability_evidence
         provenance = snapshot.storage_mode_control_provenance
         if evidence is None or evidence.status != "available":
-            return self._blocked("storage_mode_capability_unavailable")
+            return self._blocked(
+                "storage_mode_capability_unavailable",
+                executed_at,
+            )
         if (
             evidence.captured_at != snapshot.captured_at
             or executed_at - evidence.captured_at > MAXIMUM_MODE_EVIDENCE_AGE
         ):
-            return self._blocked("storage_mode_capability_stale")
+            return self._blocked("storage_mode_capability_stale", executed_at)
         if provenance is None:
-            return self._blocked("storage_mode_provenance_unavailable")
+            return self._blocked(
+                "storage_mode_provenance_unavailable",
+                executed_at,
+            )
         if provenance.manual_override_active:
-            return self._blocked("manual_override_active")
+            return self._blocked("manual_override_active", executed_at)
         if executed_at - provenance.observed_at > MAXIMUM_MODE_EVIDENCE_AGE:
-            return self._blocked("storage_mode_provenance_stale")
+            return self._blocked("storage_mode_provenance_stale", executed_at)
         calibration = snapshot.bms_calibration_evidence
         if calibration is not None and calibration.active:
-            return self._blocked("bms_soc_calibration_active")
+            return self._blocked("bms_soc_calibration_active", executed_at)
         if requested_mode not in evidence.usable_vendor_modes:
-            return self._blocked("requested_vendor_mode_unavailable")
+            return self._blocked("requested_vendor_mode_unavailable", executed_at)
         if evidence.current_vendor_mode != provenance.observed_vendor_mode:
-            return self._blocked("storage_mode_evidence_conflict")
+            return self._blocked("storage_mode_evidence_conflict", executed_at)
         if evidence.current_vendor_mode == requested_mode:
             self._pending_vendor_mode = None
             return MarketDailyExecutionOutcome(
                 status="already_active",
                 requested_vendor_mode=requested_mode,
                 reason="requested_vendor_mode_already_active",
+                evaluated_at=executed_at,
             )
         if self._pending_vendor_mode == requested_mode:
             return MarketDailyExecutionOutcome(
                 status="awaiting_mode_feedback",
                 requested_vendor_mode=requested_mode,
                 reason="duplicate_request_blocked",
+                evaluated_at=executed_at,
             )
 
         primitive = selected[1]
@@ -158,14 +167,19 @@ class MarketDailyExecutionRuntime:
             requested_vendor_mode=requested_mode,
             reason="mep_current_interval_dispatched",
             command_id=result.command_id,
+            evaluated_at=executed_at,
         )
 
     @staticmethod
-    def _blocked(reason: str) -> MarketDailyExecutionOutcome:
+    def _blocked(
+        reason: str,
+        evaluated_at: datetime | None = None,
+    ) -> MarketDailyExecutionOutcome:
         return MarketDailyExecutionOutcome(
             status="blocked",
             requested_vendor_mode=None,
             reason=reason,
+            evaluated_at=evaluated_at,
         )
 
 
@@ -239,6 +253,33 @@ class MarketDailyPlannerRuntime:
             method_version=METHOD_VERSION,
         )
 
+    def advance(
+        self,
+        outcome: MarketDailyRuntimeOutcome,
+        snapshot: PlanningInputSnapshot,
+    ) -> MarketDailyRuntimeOutcome:
+        """Execute the next interval from the retained plan without replanning."""
+        if outcome.plan is None:
+            return outcome
+        current_intent, current_interval_ends_at = (
+            MarketDailyPlanner._current_decision(
+                captured_at=snapshot.captured_at,
+                baseline=outcome.plan.baseline,
+                assessments=outcome.plan.route_assessments,
+            )
+        )
+        advanced_plan = replace(
+            outcome.plan,
+            current_intent=current_intent,
+            current_interval_ends_at=current_interval_ends_at,
+        )
+        execution = (
+            self.execution_runtime.apply(plan=advanced_plan, snapshot=snapshot)
+            if self.execution_runtime is not None
+            else None
+        )
+        return replace(outcome, plan=advanced_plan, execution=execution)
+
 
 class MarketDailyPlannerWorker:
     """Run MEP serially off-thread and coalesce superseded snapshots."""
@@ -256,6 +297,32 @@ class MarketDailyPlannerWorker:
         self._lock = Lock()
         self._pending: PlanningInputSnapshot | None = None
         self._thread: Thread | None = None
+        self._latest_outcome: MarketDailyRuntimeOutcome | None = None
+
+    def advance(self, snapshot: PlanningInputSnapshot) -> bool:
+        """Advance retained intent at a clock boundary using fresh evidence."""
+        with self._lock:
+            latest = self._latest_outcome
+        if latest is None:
+            return False
+        try:
+            outcome = self.runtime.advance(latest, snapshot)
+        except Exception as exc:
+            if self.on_error is not None:
+                self.on_error(snapshot, exc)
+            return False
+        with self._lock:
+            if self._latest_outcome is not latest:
+                return False
+            self._latest_outcome = outcome
+        try:
+            if self.on_outcome is not None:
+                self.on_outcome(outcome)
+        except Exception as exc:
+            if self.on_error is not None:
+                self.on_error(snapshot, exc)
+            return False
+        return True
 
     def submit(self, snapshot: PlanningInputSnapshot) -> None:
         with self._lock:
@@ -279,6 +346,8 @@ class MarketDailyPlannerWorker:
                     return
             try:
                 outcome = self.runtime.plan(snapshot)
+                with self._lock:
+                    self._latest_outcome = outcome
                 if self.on_outcome is not None:
                     self.on_outcome(outcome)
             except Exception as exc:

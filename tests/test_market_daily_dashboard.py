@@ -54,6 +54,10 @@ def test_mep_dashboard_exposes_baseline_market_and_authority_separately() -> Non
     assert view["current_interval_ends_at"] is not None
     assert view["route_count"] == 1
     assert view["admitted_route_count"] >= 1
+    assert any(
+        item["intent"] == "storage_export"
+        for item in view["selected_intent_intervals"]
+    )
     route = view["routes"][0]
     assert route["maximum_charge_input_kwh"] == 4.8
     assert route["reserved_storage_room_kwh"] == 4.8
@@ -99,3 +103,6 @@ def test_dashboard_renders_mep_as_a_third_visually_distinct_planner() -> None:
     assert "MEP · Markt Etmaal Planner" in DASHBOARD_HTML
     assert "view.market_daily_planner" in DASHBOARD_HTML
     assert ".daily-comparison-card.market-daily" in DASHBOARD_HTML
+    assert "selectedMepIntents" in DASHBOARD_HTML
+    assert ".price-bar.mep-charge" in DASHBOARD_HTML
+    assert ".price-bar.mep-export" in DASHBOARD_HTML

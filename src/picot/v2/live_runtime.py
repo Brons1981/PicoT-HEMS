@@ -862,11 +862,9 @@ def _run_live_cycle(
     bundle: PlanningInputBundle,
     execute: Any,
     refresh_unchanged: Any = None,
-    force_run: Callable[[PlanningInputBundle], bool] | None = None,
 ) -> str:
     """Execute one changed-input cycle and return the committed input signature."""
-    forced = force_run(bundle) if force_run is not None else False
-    if not forced and not _should_run_cycle(previous_signature, bundle):
+    if not _should_run_cycle(previous_signature, bundle):
         assert previous_signature is not None
         if refresh_unchanged is not None:
             refresh_unchanged(bundle)
@@ -893,7 +891,6 @@ def _poll_live_cycle(
     ) = None,
     refresh_unchanged: Callable[[PlanningInputBundle], None] | None = None,
     observe: Callable[[PlanningInputBundle], None] | None = None,
-    force_run: Callable[[PlanningInputBundle], bool] | None = None,
 ) -> str:
     """Load fresh Planning Input and execute only when decision input changed."""
     bundle = load_bundle()
@@ -935,7 +932,6 @@ def _poll_live_cycle(
             bundle=bundle,
             execute=execute_prepared,
             refresh_unchanged=refresh_unchanged,
-            force_run=force_run,
         )
 
     return _run_live_cycle(
@@ -943,7 +939,6 @@ def _poll_live_cycle(
         bundle=bundle,
         execute=execute,
         refresh_unchanged=refresh_unchanged,
-        force_run=force_run,
     )
 
 
@@ -2187,7 +2182,7 @@ def main() -> None:
             )
             provenance = storage_mode_provenance_runtime.record_planner_application(
                 execution.requested_vendor_mode,
-                applied_at=outcome.captured_at,
+                applied_at=execution.evaluated_at or outcome.captured_at,
                 application_id=application_id,
             )
             _append_storage_mode_transition(
@@ -2204,7 +2199,7 @@ def main() -> None:
                     f"mep-plan:{outcome.snapshot_id}"
                 ),
                 application_id=application_id,
-                occurred_at=outcome.captured_at,
+                occurred_at=execution.evaluated_at or outcome.captured_at,
             )
         web_view_store.publish_market_daily_planner(
             build_market_daily_runtime_view(outcome)
@@ -2550,6 +2545,11 @@ def main() -> None:
         independent_daily_observer_worker.submit(bundle.snapshot)
 
     def refresh_unchanged(bundle: PlanningInputBundle) -> None:
+        if (
+            market_daily_refresh_at is not None
+            and bundle.snapshot.captured_at >= market_daily_refresh_at
+        ):
+            market_daily_planner_worker.advance(bundle.snapshot)
         power_history, _ = read_power_history(bundle)
         try:
             planner_comparison_ledger.ingest(bundle.snapshot, power_history)
@@ -2562,12 +2562,6 @@ def main() -> None:
             )
         except Exception as exc:
             report_daily_observer_error(bundle.snapshot, exc)
-
-    def market_daily_boundary_reached(bundle: PlanningInputBundle) -> bool:
-        return (
-            market_daily_refresh_at is not None
-            and bundle.snapshot.captured_at >= market_daily_refresh_at
-        )
 
     def execute(
         bundle: PlanningInputBundle,
@@ -2671,7 +2665,6 @@ def main() -> None:
                 persist_observation=household_load_history.append,
                 refresh_unchanged=refresh_unchanged,
                 observe=observe_fresh_input,
-                force_run=market_daily_boundary_reached,
             )
         )
         _wait_for_poll_or_reset(

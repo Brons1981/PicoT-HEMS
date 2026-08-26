@@ -57,6 +57,41 @@ def _live_snapshot():
     )
 
 
+def _fresh_mode_snapshot(snapshot, *, captured_at, current_mode):
+    evidence = derive_zendure_mode_capability_evidence(
+        {
+            "state": current_mode,
+            "attributes": {
+                "options": [
+                    "Standby",
+                    "Nul op de meter",
+                    "Alleen slim ontladen",
+                    "Snel opladen",
+                    "Snel ontladen",
+                ]
+            },
+        },
+        captured_at=captured_at,
+        source_entity_id=MODE_ENTITY,
+        capability_id=snapshot.current_storage_states[0].capability_id,
+        execution_scope_id=(
+            snapshot.current_storage_states[0].execution_scope_id
+        ),
+    )
+    provenance = initial_storage_mode_provenance(
+        observed_vendor_mode=current_mode,
+        observed_at=captured_at,
+    )
+    return replace(
+        snapshot,
+        captured_at=captured_at,
+        storage_mode_capability_evidence=evidence,
+        storage_mode_control_provenance=provenance,
+        capability_snapshot_set=None,
+        bms_calibration_evidence=None,
+    )
+
+
 def test_live_mep_dispatches_its_unambiguous_current_intent() -> None:
     snapshot = _live_snapshot()
     plan = MarketDailyPlanner().plan(
@@ -183,3 +218,98 @@ def test_live_mep_cannot_start_without_its_execution_boundary() -> None:
         assert str(exc) == "live MEP requires an execution runtime"
     else:
         raise AssertionError("live MEP without execution runtime must be rejected")
+
+
+def test_mep_boundary_executes_retained_nom_instead_of_replanning_it_later() -> None:
+    snapshot = _live_snapshot()
+    calls = []
+    clock = [snapshot.captured_at]
+    execution = MarketDailyExecutionRuntime(
+        dispatch=lambda request, mapping: (
+            calls.append((request, mapping))
+            or CanonicalDispatchOutcome(
+                status="dispatched",
+                command_id="mep-command",
+            )
+        ),
+        now=lambda: clock[0],
+    )
+    runtime = MarketDailyPlannerRuntime(
+        _conversion(),
+        live_enabled=True,
+        execution_runtime=execution,
+    )
+    outcome = runtime.plan(snapshot)
+    calls.clear()
+    assert outcome.plan is not None
+    candidates = {
+        item.candidate_id: item
+        for item in outcome.plan.baseline.observer_result.candidate_set.candidates
+    }
+    selected_schedule_ids = {
+        candidates[candidate_id].intent_schedule_id
+        for candidate_id in outcome.plan.baseline.observer_result.best_observation_ids
+    }
+    portfolio = outcome.plan.baseline.observer_result.portfolio
+    selected_result = next(
+        item
+        for item in portfolio.strategy_results
+        if item.intent_schedule.schedule_id in selected_schedule_ids
+    )
+    retained = selected_result.intent_schedule
+    nom_interval = replace(
+        retained.intervals[1],
+        intent=DailyStorageIntent.NOM,
+    )
+    retained = replace(
+        retained,
+        intervals=(retained.intervals[0], nom_interval, *retained.intervals[2:]),
+    )
+    portfolio = replace(
+        portfolio,
+        strategy_results=tuple(
+            replace(
+                item,
+                intent_schedule=replace(
+                    item.intent_schedule,
+                    intervals=(
+                        item.intent_schedule.intervals[0],
+                        replace(
+                            item.intent_schedule.intervals[1],
+                            intent=DailyStorageIntent.NOM,
+                        ),
+                        *item.intent_schedule.intervals[2:],
+                    ),
+                ),
+            )
+            if item.intent_schedule.schedule_id in selected_schedule_ids
+            else item
+            for item in portfolio.strategy_results
+        ),
+    )
+    baseline = replace(
+        outcome.plan.baseline,
+        observer_result=replace(
+            outcome.plan.baseline.observer_result,
+            portfolio=portfolio,
+        ),
+    )
+    outcome = replace(outcome, plan=replace(outcome.plan, baseline=baseline))
+    clock[0] = nom_interval.starts_at + timedelta(seconds=2)
+    fresh = _fresh_mode_snapshot(
+        snapshot,
+        captured_at=clock[0],
+        current_mode="Alleen slim ontladen",
+    )
+
+    advanced = runtime.advance(outcome, fresh)
+
+    assert advanced.snapshot_id == outcome.snapshot_id
+    assert advanced.plan is not None
+    assert advanced.plan.current_intent is DailyStorageIntent.NOM
+    assert advanced.plan.current_interval_ends_at == nom_interval.ends_at
+    assert advanced.execution is not None
+    assert advanced.execution.status == "dispatched"
+    assert advanced.execution.requested_vendor_mode == "Nul op de meter"
+    assert advanced.execution.evaluated_at == clock[0]
+    assert len(calls) == 1

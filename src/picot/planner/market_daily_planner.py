@@ -272,6 +272,7 @@ class MarketDailyPlanner:
         phase_started = perf_counter()
         routes = self._market_routes(
             snapshot=snapshot,
+            native_observation=native_observation,
             tariffs=tariffs,
             conversion_model=conversion_model,
             trading_policy=trading_policy,
@@ -334,6 +335,7 @@ class MarketDailyPlanner:
     def _market_routes(
         *,
         snapshot: PlanningInputSnapshot,
+        native_observation: DailyReferenceStrategyObservation,
         tariffs: DailyReferenceTariffSchedule,
         conversion_model: StorageConversionModel,
         trading_policy: MarketTradingPolicy,
@@ -352,6 +354,28 @@ class MarketDailyPlanner:
         if len(matching_limits) != 1:
             return ()
         limits = matching_limits[0]
+        native_candidates = {
+            item.candidate_id: item
+            for item in native_observation.observer_result.candidate_set.candidates
+        }
+        native_results = {
+            item.intent_schedule.schedule_id: item
+            for item in native_observation.observer_result.portfolio.strategy_results
+        }
+        native_winner_id = sorted(
+            native_observation.observer_result.best_observation_ids
+        )[0]
+        native_result = native_results[
+            native_candidates[native_winner_id].intent_schedule_id
+        ]
+        native_end_shortfall_wh = max(
+            max(
+                0.0,
+                trajectory.target_storage_energy_wh
+                - trajectory.intervals[-1].storage_energy_at_end_wh,
+            )
+            for trajectory in native_result.run.simulation.trajectories
+        )
         negative_groups: list[list[DailyReferenceTariffInterval]] = []
         for interval in tariffs.intervals:
             if interval.import_eur_per_kwh >= 0.0:
@@ -548,7 +572,10 @@ class MarketDailyPlanner:
                 item.export_eur_per_kwh * (item.ends_at - item.starts_at).total_seconds()
                 for item in export_window
             ) / ((export_end - export_start).total_seconds())
-            required_recharge_input_wh = export_output_wh / rte
+            required_recharge_input_wh = (
+                native_end_shortfall_wh / conversion_model.charge_efficiency
+                + export_output_wh / rte
+            )
             interval_input_wh = limits.maximum_charge_input_power_w * 0.25
             required_recovery_intervals = max(
                 1,
@@ -622,7 +649,10 @@ class MarketDailyPlanner:
                 item.import_eur_per_kwh * (item.ends_at - item.starts_at).total_seconds()
                 for item in recovery_window
             ) / ((recovery_end - recovery_start).total_seconds())
-            recharge_input_wh = export_output_wh / rte
+            recharge_input_wh = (
+                native_end_shortfall_wh / conversion_model.charge_efficiency
+                + export_output_wh / rte
+            )
             # First assess whether MEP's native PV/NOM schedule restores the
             # sold energy without buying it back.  The cheapest next-day grid
             # price is still the policy reference: it is the proven fallback
@@ -727,7 +757,15 @@ class MarketDailyPlanner:
                         tariffs=tariffs,
                         intent_schedules=(schedule,),
                         minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
-                        target_storage_energy_wh=inputs.target_storage_energy_wh,
+                        target_storage_energy_wh=min(
+                            inputs.storage.usable_capacity_wh,
+                            inputs.target_storage_energy_wh
+                            + (
+                                route.reserved_storage_room_wh
+                                if route.route_kind == "pv_trade_grid_recovery"
+                                else 0.0
+                            ),
+                        ),
                         maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
                         maximum_discharge_output_power_w=(inputs.maximum_discharge_output_power_w),
                     )

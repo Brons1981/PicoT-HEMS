@@ -666,6 +666,12 @@ def test_price_chart_only_colors_current_planner_windows() -> None:
 def test_dashboard_preserves_open_daily_measure_details_by_stable_key() -> None:
     assert "details.dataset.technicalKey" in DASHBOARD_HTML
     assert "openTechnicalDetailsByKey" in DASHBOARD_HTML
+    assert "route.route_id" not in DASHBOARD_HTML[
+        DASHBOARD_HTML.index('details.dataset.technicalKey = [\n          "market-route"'):
+        DASHBOARD_HTML.index("const summary = document.createElement", DASHBOARD_HTML.index(
+            'details.dataset.technicalKey = [\n          "market-route"'
+        ))
+    ]
 
 
 def test_dashboard_shows_plan_calculation_time_and_soc() -> None:

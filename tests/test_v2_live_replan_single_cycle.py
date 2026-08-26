@@ -100,3 +100,20 @@ def test_run_live_cycle_executes_changed_content_and_updates_signature() -> None
     assert calls == [second.snapshot.run_id]
     assert result == _planning_input_signature(second)
     assert result != previous_signature
+
+
+def test_run_live_cycle_executes_unchanged_content_at_forced_boundary() -> None:
+    first = _bundle(captured_at=BASE)
+    boundary = BASE + timedelta(minutes=15)
+    at_boundary = _bundle(captured_at=boundary)
+    calls: list[str] = []
+
+    result = _run_live_cycle(
+        previous_signature=_planning_input_signature(first),
+        bundle=at_boundary,
+        execute=lambda current: calls.append(current.snapshot.run_id),
+        force_run=lambda current: current.snapshot.captured_at >= boundary,
+    )
+
+    assert calls == [at_boundary.snapshot.run_id]
+    assert result == _planning_input_signature(at_boundary)

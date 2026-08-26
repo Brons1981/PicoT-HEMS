@@ -696,6 +696,8 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.missing { background: #2b3541; }
     .price-swatch.canonical-plan { background: #38bdf8; }
     .price-swatch.daily-plan { background: #a855f7; }
+    .price-swatch.mep-charge { background: #19b981; }
+    .price-swatch.mep-export { background: #ef4444; }
     .planner-window-summary {
       display: flex;
       flex-wrap: wrap;
@@ -743,6 +745,8 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .price-chart .price-bar.low { fill: #35a862; }
     .price-chart .price-bar.high { fill: #df6b57; }
+    .price-chart .price-bar.mep-charge { fill: #19b981; }
+    .price-chart .price-bar.mep-export { fill: #ef4444; }
     .price-chart .price-bar.past { opacity: 0.30; }
     .price-chart .planner-window {
       pointer-events: none;
@@ -1143,7 +1147,12 @@ DASHBOARD_HTML = """<!doctype html>
       return "Geen prijsvenster";
     }
 
-    function renderPriceTimeline(timeline, capturedAt, plannerWindows = []) {
+    function renderPriceTimeline(
+      timeline,
+      capturedAt,
+      plannerWindows = [],
+      mepIntents = []
+    ) {
       const container = element("price-timeline");
       container.replaceChildren();
 
@@ -1187,7 +1196,9 @@ DASHBOARD_HTML = """<!doctype html>
         ["high", "Hoogste-teruglevervenster"],
         ["missing", "Nog niet gepubliceerd"],
         ["canonical-plan", "Gekozen door huidige planner"],
-        ["daily-plan", "Gekozen door etmaalsimulatie"]
+        ["daily-plan", "Gekozen door etmaalsimulatie"],
+        ["mep-charge", "MEP live laden"],
+        ["mep-export", "MEP live terugleveren"]
       ]) {
         const item = document.createElement("span");
         item.className = "price-legend-item";
@@ -1343,10 +1354,18 @@ DASHBOARD_HTML = """<!doctype html>
         }
 
         const kind = priceWindowKind(point, opportunities);
+        const mepIntent = mepIntents.find((interval) => {
+          const intentStart = new Date(interval.starts_at).getTime();
+          const intentEnd = new Date(interval.ends_at).getTime();
+          return pointStart < intentEnd && pointEnd > intentStart;
+        });
+        const mepKind = mepIntent?.kind ?? "";
         const isPast = pointEnd <= nowMs;
         const valueY = yPosition(value);
         const bar = createSvgElement("rect", {
-          class: `price-bar ${kind}${isPast ? " past" : ""}`,
+          class: `price-bar ${kind}${mepKind ? ` ${mepKind}` : ""}${
+            isPast ? " past" : ""
+          }`,
           x: xPosition(pointStart) + 0.5,
           y: Math.min(valueY, zeroY),
           width: Math.max(
@@ -1370,6 +1389,7 @@ DASHBOARD_HTML = """<!doctype html>
               formatTimestamp(point.ends_at),
             formatPrice(value),
             priceWindowLabel(kind),
+            ...(mepIntent ? [mepIntent.label] : []),
             `Confidence ${formatConfidence(point.confidence)}`,
             ...(selectedBy.length
               ? [`Gekozen door ${selectedBy.join(" en ")}`]
@@ -3208,6 +3228,34 @@ DASHBOARD_HTML = """<!doctype html>
       return windows;
     }
 
+    function selectedMepIntents(view) {
+      const mep = view.market_daily_planner ?? {};
+      const baseline = mep.baseline_plan ?? {};
+      const representative = Array.isArray(baseline.candidates)
+        ? baseline.candidates.find((candidate) => candidate.best_observation)
+        : null;
+      const selectedIntervals = Array.isArray(mep.selected_intent_intervals)
+        ? mep.selected_intent_intervals
+        : (representative?.intent_intervals ?? []);
+      return selectedIntervals.flatMap((interval) => {
+        if (["nom", "grid_requirement"].includes(interval.intent)) {
+          return [{
+            ...interval,
+            kind: "mep-charge",
+            label: `MEP live laden · ${dailyIntentLabel(interval.intent)}`,
+          }];
+        }
+        if (interval.intent === "storage_export") {
+          return [{
+            ...interval,
+            kind: "mep-export",
+            label: "MEP live terugleveren",
+          }];
+        }
+        return [];
+      });
+    }
+
     function renderDailyObserverComparison(view) {
       const container = element("daily-observer-comparison");
       container.replaceChildren();
@@ -3936,7 +3984,8 @@ DASHBOARD_HTML = """<!doctype html>
           opportunities: []
         },
         view.captured_at,
-        selectedPlannerWindows(view)
+        selectedPlannerWindows(view),
+        selectedMepIntents(view)
       );
       renderPipeline(pipeline);
       renderPipelineHealth(view.pipeline_health);

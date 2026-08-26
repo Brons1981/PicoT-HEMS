@@ -61,6 +61,11 @@ def build_market_daily_runtime_view(
                 ),
                 "reason": outcome.execution.reason,
                 "command_id": outcome.execution.command_id,
+                "evaluated_at": (
+                    outcome.execution.evaluated_at.isoformat()
+                    if outcome.execution.evaluated_at is not None
+                    else None
+                ),
             }
             if outcome.execution is not None
             else None
@@ -79,6 +84,25 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
         for route in plan.market_routes
     }
     admitted_count = sum(item.admitted for item in plan.route_assessments)
+    admitted_schedules = tuple(
+        item.intent_schedule for item in plan.route_assessments if item.admitted
+    )
+    if admitted_schedules:
+        selected_schedule = admitted_schedules[0]
+    else:
+        candidates = {
+            item.candidate_id: item
+            for item in plan.baseline.observer_result.candidate_set.candidates
+        }
+        results = {
+            item.intent_schedule.schedule_id: item.intent_schedule
+            for item in plan.baseline.observer_result.portfolio.strategy_results
+        }
+        selected_schedule = results[
+            candidates[
+                plan.baseline.observer_result.best_observation_ids[0]
+            ].intent_schedule_id
+        ]
     return {
         "planner_id": plan.planner_id,
         "planner_name": plan.planner_name,
@@ -99,6 +123,15 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
         "route_count": len(plan.market_routes),
         "assessment_count": len(plan.route_assessments),
         "admitted_route_count": admitted_count,
+        "selected_intent_intervals": [
+            {
+                "starts_at": item.starts_at.isoformat(),
+                "ends_at": item.ends_at.isoformat(),
+                "intent": item.intent.value,
+                "storage_export_target_wh": item.storage_export_target_wh,
+            }
+            for item in selected_schedule.intervals
+        ],
         "routes": [
             {
                 "route_id": route.route_id,

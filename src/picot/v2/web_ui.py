@@ -3589,6 +3589,68 @@ DASHBOARD_HTML = """<!doctype html>
         details.append(schedule);
         mepCard.append(details);
       }
+      const routeKindLabels = {
+        negative_capacity: "Negatieve-prijsroute",
+        grid_trade: "Netarbitrage",
+        pv_trade: "Verkoop met PV-herstel",
+        pv_trade_grid_recovery: "Verkoop met netherstel",
+      };
+      for (const route of (mep.routes ?? [])) {
+        const details = document.createElement("details");
+        details.className = "technical-details";
+        details.dataset.technicalKey = `market-route:${route.route_id}`;
+        const summary = document.createElement("summary");
+        summary.textContent = [
+          routeKindLabels[route.route_kind] ?? route.route_kind,
+          route.admitted ? "toegelaten" : "afgewezen",
+          route.assessments?.[0]?.admission_reason ?? "niet beoordeeld",
+        ].join(" · ");
+        details.append(summary);
+        const routeFacts = document.createElement("p");
+        routeFacts.textContent = [
+          `Export ${formatEnergyKwh(
+            route.required_pre_window_discharge_output_kwh * 1000
+          )}`,
+          `Netherstel ${formatEnergyKwh(
+            route.maximum_charge_input_kwh * 1000
+          )}`,
+          `Exportprijs ${formatPrice(route.average_export_eur_per_kwh)}`,
+          `Herstelprijs ${formatPrice(route.average_recharge_eur_per_kwh)}`,
+          `Minimum ${formatPrice(route.minimum_export_eur_per_kwh)}`,
+        ].join(" · ");
+        details.append(routeFacts);
+        for (const scenario of (route.assessments?.[0]?.scenarios ?? [])) {
+          const scenarioFacts = document.createElement("p");
+          scenarioFacts.textContent = [
+            `Scenario ${scenario.scenario}`,
+            `eindstand ${formatDutchNumber(
+              scenario.storage_energy_at_horizon_end_kwh
+            )} kWh`,
+            `doeltekort ${formatDutchNumber(
+              scenario.target_shortfall_kwh
+            )} kWh`,
+            `reservemarge ${formatDutchNumber(
+              scenario.reserve_margin_kwh
+            )} kWh`,
+            `net naar batterij ${formatDutchNumber(
+              scenario.grid_to_storage_input_kwh
+            )} kWh`,
+            `huisvraag ${formatDutchNumber(
+              scenario.household_demand_kwh
+            )} kWh`,
+            `export ${formatDutchNumber(
+              scenario.exported_energy_kwh
+            )} kWh`,
+            `resultaat € ${formatDutchNumber(
+              scenario.incremental_financial_result_eur
+            )}`,
+            `reserve ${scenario.reserve_respected ? "ja" : "nee"}`,
+            `doel einde ${scenario.target_held_at_horizon_end ? "ja" : "nee"}`,
+          ].join(" · ");
+          details.append(scenarioFacts);
+        }
+        mepCard.append(details);
+      }
       grid.append(mepCard);
       container.append(grid);
     }

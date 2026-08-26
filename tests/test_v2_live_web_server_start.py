@@ -1,7 +1,28 @@
+from pathlib import Path
+
 import pytest
 
 import picot.v2.live_runtime as live_runtime
 from picot.v2.web_ui import WebViewStore
+
+
+def test_market_daily_diagnostics_are_written_atomically(tmp_path: Path) -> None:
+    target = tmp_path / "picot_v2_market_daily_latest.json"
+
+    live_runtime._save_market_daily_diagnostics(
+        target,
+        {
+            "planner_id": "mep",
+            "snapshot_id": "snapshot-current",
+            "routes": [{"route_id": "route-current"}],
+        },
+    )
+
+    assert target.read_text(encoding="utf-8") == (
+        '{"planner_id":"mep","routes":[{"route_id":"route-current"}],'
+        '"snapshot_id":"snapshot-current"}'
+    )
+    assert not target.with_suffix(".json.tmp").exists()
 
 
 def test_start_web_server_uses_ingress_binding_and_daemon_thread(
@@ -112,6 +133,7 @@ def test_main_starts_one_web_server_before_pipeline_loop(
         "picot_v2_daily_observer_history.jsonl",
         "picot_v2_planner_comparison_state.json",
         "picot_v2_planner_comparison_history.jsonl",
+        "picot_v2_market_daily_latest.json",
     ]
     assert stores[0].incident_history_path() == (
         live_runtime.PLANNING_INCIDENT_HISTORY_PATH

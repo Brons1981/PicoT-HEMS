@@ -69,6 +69,16 @@ def test_mep_dashboard_exposes_baseline_market_and_authority_separately() -> Non
     assert route["assessments"][0]["admission_reason"] == (
         "admitted_profitable_complete_route"
     )
+    scenarios = route["assessments"][0]["scenarios"]
+    assert {item["scenario"] for item in scenarios} == {
+        "lower",
+        "central",
+        "upper",
+    }
+    assert all("storage_energy_at_horizon_end_kwh" in item for item in scenarios)
+    assert all("target_shortfall_kwh" in item for item in scenarios)
+    assert all("reserve_margin_kwh" in item for item in scenarios)
+    assert all("grid_to_storage_input_kwh" in item for item in scenarios)
 
 
 def test_web_store_keeps_mep_separate_from_existing_planner_views() -> None:
@@ -117,3 +127,6 @@ def test_dashboard_renders_mep_as_a_third_visually_distinct_planner() -> None:
     assert ".price-bar.mep-export" in DASHBOARD_HTML
     assert "MEP eigen etmaalplan" in DASHBOARD_HTML
     assert "MEP marktroutes simuleren" in DASHBOARD_HTML
+    assert "Verkoop met PV-herstel" in DASHBOARD_HTML
+    assert "Verkoop met netherstel" in DASHBOARD_HTML
+    assert "scenario.target_shortfall_kwh" in DASHBOARD_HTML

@@ -107,6 +107,28 @@ class MarketCapacityRoute:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketRouteScenarioEvidence:
+    """Physical admission evidence for one route and one PV scenario."""
+
+    scenario: PVScenario
+    physically_complete: bool
+    reserve_respected: bool
+    target_reached_during_horizon: bool
+    target_held_at_horizon_end: bool
+    target_storage_energy_wh: float
+    minimum_storage_energy_wh: float
+    minimum_storage_energy_observed_wh: float
+    storage_energy_at_horizon_end_wh: float
+    baseline_storage_energy_at_horizon_end_wh: float
+    target_shortfall_wh: float
+    reserve_margin_wh: float
+    grid_to_storage_input_wh: float
+    household_demand_wh: float
+    incremental_financial_result_eur: float
+    exported_energy_kwh: float
+
+
+@dataclass(frozen=True, slots=True)
 class MarketRouteAssessment:
     """Complete physical and incremental financial admission of one MEP route."""
 
@@ -120,6 +142,7 @@ class MarketRouteAssessment:
     minimum_incremental_result_eur_per_exported_kwh: float
     admitted: bool
     admission_reason: str
+    scenario_evidence: tuple[MarketRouteScenarioEvidence, ...]
     method_version: str
 
     def __post_init__(self) -> None:
@@ -145,6 +168,9 @@ class MarketRouteAssessment:
             raise ValueError("MEP route admission must reconcile.")
         if not self.admission_reason.strip():
             raise ValueError("MEP route admission reason must be explicit.")
+        scenarios = tuple(item.scenario for item in self.scenario_evidence)
+        if set(scenarios) != set(PVScenario) or len(scenarios) != len(PVScenario):
+            raise ValueError("MEP route evidence requires all three PV scenarios.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -851,6 +877,10 @@ class MarketDailyPlanner:
         incremental_results: list[float] = []
         result_per_export_kwh: list[float] = []
         wear_values: list[float] = []
+        scenario_evidence: list[MarketRouteScenarioEvidence] = []
+        market_trajectories = {
+            item.scenario: item for item in market_run.simulation.trajectories
+        }
         for scenario in PVScenario:
             baseline_flow = baseline_assessment[scenario]
             market_flow = market_assessment[scenario]
@@ -879,6 +909,47 @@ class MarketDailyPlanner:
             wear_values.append(wear_eur)
             result_per_export_kwh.append(
                 incremental_eur / extra_export_kwh if extra_export_kwh > 0.0 else float("-inf")
+            )
+            trajectory = market_trajectories[scenario]
+            scenario_evidence.append(
+                MarketRouteScenarioEvidence(
+                    scenario=scenario,
+                    physically_complete=market_flow.physically_complete,
+                    reserve_respected=market_flow.reserve_respected,
+                    target_reached_during_horizon=(
+                        market_flow.target_reached_during_horizon
+                    ),
+                    target_held_at_horizon_end=(
+                        market_flow.target_held_at_horizon_end
+                    ),
+                    target_storage_energy_wh=trajectory.target_storage_energy_wh,
+                    minimum_storage_energy_wh=trajectory.minimum_storage_energy_wh,
+                    minimum_storage_energy_observed_wh=(
+                        market_flow.minimum_storage_energy_observed_wh
+                    ),
+                    storage_energy_at_horizon_end_wh=(
+                        market_flow.storage_energy_at_horizon_end_wh
+                    ),
+                    baseline_storage_energy_at_horizon_end_wh=(
+                        baseline_flow.storage_energy_at_horizon_end_wh
+                    ),
+                    target_shortfall_wh=max(
+                        0.0,
+                        trajectory.target_storage_energy_wh
+                        - market_flow.storage_energy_at_horizon_end_wh,
+                    ),
+                    reserve_margin_wh=(
+                        market_flow.minimum_storage_energy_observed_wh
+                        - trajectory.minimum_storage_energy_wh
+                    ),
+                    grid_to_storage_input_wh=sum(
+                        interval.grid_to_storage_input_wh
+                        for interval in trajectory.intervals
+                    ),
+                    household_demand_wh=market_flow.household_demand_wh,
+                    incremental_financial_result_eur=incremental_eur,
+                    exported_energy_kwh=extra_export_kwh,
+                )
             )
         physically_admissible = all(
             item.physically_complete
@@ -913,5 +984,6 @@ class MarketDailyPlanner:
                     else "non_positive_incremental_result"
                 )
             ),
+            scenario_evidence=tuple(scenario_evidence),
             method_version=METHOD_VERSION,
         )

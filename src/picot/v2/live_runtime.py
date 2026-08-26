@@ -179,6 +179,20 @@ PLANNER_COMPARISON_STATE_PATH = Path(
 PLANNER_COMPARISON_HISTORY_PATH = Path(
     "/data/picot_v2_planner_comparison_history.jsonl"
 )
+MARKET_DAILY_LATEST_PATH = Path(
+    "/data/picot_v2_market_daily_latest.json"
+)
+
+
+def _save_market_daily_diagnostics(
+    path: Path,
+    market_view: dict[str, object],
+) -> None:
+    """Atomically retain the current complete MEP diagnostic projection."""
+    encoded = json.dumps(market_view, separators=(",", ":"), sort_keys=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(encoded, encoding="utf-8")
+    temporary.replace(path)
 
 
 def _winning_plan_confidence(run: CanonicalPipelineRun) -> float | None:
@@ -2230,9 +2244,26 @@ def main() -> None:
                 application_id=application_id,
                 occurred_at=execution.evaluated_at or outcome.captured_at,
             )
-        web_view_store.publish_market_daily_planner(
-            build_market_daily_runtime_view(outcome)
-        )
+        market_view = build_market_daily_runtime_view(outcome)
+        try:
+            _save_market_daily_diagnostics(
+                MARKET_DAILY_LATEST_PATH,
+                market_view,
+            )
+        except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_market_daily_diagnostics_error",
+                        "run_id": outcome.run_id,
+                        "snapshot_id": outcome.snapshot_id,
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
+        web_view_store.publish_market_daily_planner(market_view)
 
     def report_market_daily_error(
         snapshot: PlanningInputSnapshot,
@@ -2287,6 +2318,7 @@ def main() -> None:
             DAILY_OBSERVER_HISTORY_PATH,
             PLANNER_COMPARISON_STATE_PATH,
             PLANNER_COMPARISON_HISTORY_PATH,
+            MARKET_DAILY_LATEST_PATH,
         ),
         incident_history_path=PLANNING_INCIDENT_HISTORY_PATH,
     )

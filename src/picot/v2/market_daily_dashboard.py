@@ -206,6 +206,52 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
                         ),
                         "admitted": item.admitted,
                         "admission_reason": item.admission_reason,
+                        "scenarios": [
+                            {
+                                "scenario": evidence.scenario.value,
+                                "physically_complete": evidence.physically_complete,
+                                "reserve_respected": evidence.reserve_respected,
+                                "target_reached_during_horizon": (
+                                    evidence.target_reached_during_horizon
+                                ),
+                                "target_held_at_horizon_end": (
+                                    evidence.target_held_at_horizon_end
+                                ),
+                                "target_storage_energy_kwh": (
+                                    evidence.target_storage_energy_wh / 1000.0
+                                ),
+                                "minimum_storage_energy_kwh": (
+                                    evidence.minimum_storage_energy_wh / 1000.0
+                                ),
+                                "minimum_storage_energy_observed_kwh": (
+                                    evidence.minimum_storage_energy_observed_wh / 1000.0
+                                ),
+                                "storage_energy_at_horizon_end_kwh": (
+                                    evidence.storage_energy_at_horizon_end_wh / 1000.0
+                                ),
+                                "baseline_storage_energy_at_horizon_end_kwh": (
+                                    evidence.baseline_storage_energy_at_horizon_end_wh
+                                    / 1000.0
+                                ),
+                                "target_shortfall_kwh": (
+                                    evidence.target_shortfall_wh / 1000.0
+                                ),
+                                "reserve_margin_kwh": (
+                                    evidence.reserve_margin_wh / 1000.0
+                                ),
+                                "grid_to_storage_input_kwh": (
+                                    evidence.grid_to_storage_input_wh / 1000.0
+                                ),
+                                "household_demand_kwh": (
+                                    evidence.household_demand_wh / 1000.0
+                                ),
+                                "incremental_financial_result_eur": (
+                                    evidence.incremental_financial_result_eur
+                                ),
+                                "exported_energy_kwh": evidence.exported_energy_kwh,
+                            }
+                            for evidence in item.scenario_evidence
+                        ],
                     }
                     for item in assessments_by_route[route.route_id]
                 ],

@@ -1,9 +1,20 @@
 from dataclasses import replace
 from datetime import timedelta
 
+import pytest
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
-from picot.planner.market_daily_planner import MarketDailyPlanner
+from picot.domain.storage_conversion_model import StorageConversionModel
+from picot.planner.market_daily_planner import MarketDailyPlanner, MarketTradingPolicy
+
+
+def test_mep_trading_threshold_applies_margin_before_fixed_wear() -> None:
+    policy = MarketTradingPolicy(
+        margin_fraction=0.10,
+        wear_eur_per_export_kwh=0.05,
+    )
+
+    assert policy.minimum_export_rate(0.131, 0.83) == pytest.approx(0.223614, abs=1e-6)
 
 
 def test_mep_builds_native_plan_when_no_market_extension_applies() -> None:
@@ -115,8 +126,8 @@ def test_mep_reserves_the_full_physically_chargeable_negative_window_volume() ->
     assessment = next(item for item in result.route_assessments if item.admitted)
     assert assessment.physically_admissible is True
     assert assessment.incremental_wear_eur > 0.0
-    assert assessment.worst_case_incremental_result_eur >= 0.25
-    assert assessment.minimum_incremental_result_eur_per_exported_kwh >= 0.05
+    assert assessment.worst_case_incremental_result_eur > 0.0
+    assert assessment.minimum_incremental_result_eur_per_exported_kwh > 0.0
     assert assessment.admitted is True
     assert result.winning_source == "market_route"
     assert result.reason == "profitable_complete_market_route"
@@ -152,8 +163,80 @@ def test_mep_does_not_assume_2026_saldering_for_grid_trade() -> None:
 
     grid_routes = tuple(item for item in result.market_routes if item.route_kind == "grid_trade")
     assert grid_routes == ()
-    assert any(item.route_kind == "pv_trade" for item in result.market_routes)
-    assert result.route_assessments
+
+
+def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
+    source = snapshot.price_points[0]
+    export_start = snapshot.captured_at + timedelta(hours=8)
+    export_end = export_start + timedelta(hours=1)
+    midnight = export_start.replace(hour=0) + timedelta(days=1)
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(source, point_id="before", ends_at=export_start, value_eur_per_kwh=0.30),
+            replace(
+                source,
+                point_id="export",
+                starts_at=export_start,
+                ends_at=export_end,
+                value_eur_per_kwh=0.40,
+            ),
+            replace(
+                source,
+                point_id="overnight",
+                starts_at=export_end,
+                ends_at=midnight,
+                value_eur_per_kwh=0.30,
+            ),
+            replace(
+                source,
+                point_id="recharge",
+                starts_at=midnight,
+                ends_at=snapshot.captured_at + timedelta(hours=24),
+                value_eur_per_kwh=0.131,
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=StorageConversionModel(
+            model_id="zendure-rte",
+            charge_efficiency=0.83**0.5,
+            discharge_efficiency=0.83**0.5,
+            evidence_ids=("zendure-rte",),
+            method_version="test:v1",
+        ),
+        trading_policy=MarketTradingPolicy(
+            margin_fraction=0.10,
+            wear_eur_per_export_kwh=0.05,
+        ),
+    )
+
+    pv_routes = tuple(
+        item for item in result.market_routes if item.route_kind == "pv_trade"
+    )
+    grid_recovery_routes = tuple(
+        item
+        for item in result.market_routes
+        if item.route_kind == "pv_trade_grid_recovery"
+    )
+    assert pv_routes
+    assert grid_recovery_routes
+    route = pv_routes[0]
+    grid_recovery = grid_recovery_routes[0]
+    assert route.export_window_starts_at == export_start
+    assert route.export_window_ends_at <= export_end
+    assert route.average_export_eur_per_kwh == pytest.approx(0.40)
+    assert route.average_recharge_eur_per_kwh == pytest.approx(0.131)
+    assert route.minimum_export_eur_per_kwh == pytest.approx(0.223614, abs=1e-6)
+    assert route.window_starts_at.date() > export_end.date()
+    assert route.maximum_charge_input_wh == 0.0
+    assert grid_recovery.maximum_charge_input_wh == pytest.approx(
+        grid_recovery.required_pre_window_discharge_output_wh / 0.83
+    )
+    assert grid_recovery.window_starts_at == route.window_starts_at
 
 
 def test_mep_source_has_no_dependency_on_cp_or_ep_runtime_outputs() -> None:

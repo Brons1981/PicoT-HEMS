@@ -602,6 +602,32 @@ class StoragePhysicalLimits:
 
 
 @dataclass(frozen=True, slots=True)
+class StorageRoundTripEfficiencyEvidence:
+    status: str
+    round_trip_efficiency: float | None
+    observed_at: datetime | None
+    source_entity_id: str | None
+    evidence_id: str
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if self.status not in {"available", "unavailable"}:
+            raise ValueError("storage RTE status must be available or unavailable")
+        if self.status == "available":
+            if (
+                self.round_trip_efficiency is None
+                or not 0.5 <= self.round_trip_efficiency <= 1.0
+                or self.observed_at is None
+                or self.source_entity_id is None
+            ):
+                raise ValueError("available storage RTE evidence must be complete")
+        elif self.round_trip_efficiency is not None:
+            raise ValueError("unavailable storage RTE must not carry a value")
+        if not self.evidence_id.strip() or not self.method_version.strip():
+            raise ValueError("storage RTE evidence lineage must be explicit")
+
+
+@dataclass(frozen=True, slots=True)
 class PlanningInputSnapshot:
     run_id: str
     snapshot_id: str
@@ -622,6 +648,7 @@ class PlanningInputSnapshot:
     bms_calibration_evidence: BMSCalibrationEvidence | None = None
     capability_snapshot_set: CapabilitySnapshotSet | None = None
     storage_physical_limits: tuple[StoragePhysicalLimits, ...] = ()
+    storage_round_trip_efficiency: StorageRoundTripEfficiencyEvidence | None = None
     active_plan_commitments: tuple[ActivePlanCommitment, ...] = ()
 
     def __post_init__(self) -> None:

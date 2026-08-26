@@ -141,6 +141,9 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
         "winning_source": plan.winning_source,
         "reason": plan.reason,
         "dispatch_authority": plan.dispatch_authority,
+        "round_trip_efficiency": plan.round_trip_efficiency,
+        "trading_margin_percent": plan.trading_margin_fraction * 100.0,
+        "wear_eur_per_export_kwh": plan.wear_eur_per_export_kwh,
         "current_intent": (plan.current_intent.value if plan.current_intent is not None else None),
         "current_interval_ends_at": (
             plan.current_interval_ends_at.isoformat()
@@ -174,6 +177,9 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
                 ),
                 "reason": route.reason,
                 "route_kind": route.route_kind,
+                "average_export_eur_per_kwh": route.average_export_eur_per_kwh,
+                "average_recharge_eur_per_kwh": route.average_recharge_eur_per_kwh,
+                "minimum_export_eur_per_kwh": route.minimum_export_eur_per_kwh,
                 "export_window_starts_at": (
                     route.export_window_starts_at.isoformat()
                     if route.export_window_starts_at is not None
@@ -199,6 +205,7 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
                             item.minimum_incremental_result_eur_per_exported_kwh
                         ),
                         "admitted": item.admitted,
+                        "admission_reason": item.admission_reason,
                     }
                     for item in assessments_by_route[route.route_id]
                 ],

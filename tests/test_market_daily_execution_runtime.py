@@ -1,11 +1,13 @@
 from dataclasses import replace
 from datetime import timedelta
 
+import pytest
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
 from picot.domain.daily_reference_intent import DailyStorageIntent
 from picot.planner.market_daily_planner import MarketDailyPlanner
 from picot.v2.canonical_execution_runtime import CanonicalDispatchOutcome
+from picot.v2.contracts import StorageRoundTripEfficiencyEvidence
 from picot.v2.live_runtime import _validate_live_execution_authority
 from picot.v2.market_daily_runtime import (
     MarketDailyExecutionRuntime,
@@ -204,6 +206,39 @@ def test_live_mep_cannot_start_without_its_execution_boundary() -> None:
         assert str(exc) == "live MEP requires an execution runtime"
     else:
         raise AssertionError("live MEP without execution runtime must be rejected")
+
+
+def test_mep_uses_current_zendure_rte_for_its_private_conversion_model() -> None:
+    snapshot = _snapshot(maximum_soc=0.7)
+    evidence = StorageRoundTripEfficiencyEvidence(
+        status="available",
+        round_trip_efficiency=0.83,
+        observed_at=snapshot.captured_at,
+        source_entity_id="sensor.zendure_2400_ac_rte_totaal",
+        evidence_id="ha-rte-83",
+        method_version="test:v1",
+    )
+    runtime = MarketDailyPlannerRuntime(_conversion())
+
+    conversion, policy = runtime._planning_configuration(
+        replace(snapshot, storage_round_trip_efficiency=evidence)
+    )
+
+    assert conversion.charge_efficiency * conversion.discharge_efficiency == pytest.approx(0.83)
+    assert conversion.evidence_ids == ("ha-rte-83",)
+    assert policy.market_routes_enabled is True
+
+
+def test_mep_disables_trading_but_keeps_physical_planning_without_valid_rte() -> None:
+    snapshot = _snapshot(maximum_soc=0.7)
+    runtime = MarketDailyPlannerRuntime(_conversion())
+
+    outcome = runtime.plan(snapshot)
+
+    assert outcome.status == "completed"
+    assert outcome.plan is not None
+    assert outcome.plan.market_routes == ()
+    assert outcome.plan.winning_source == "mep_native_plan"
 
 
 def test_mep_boundary_executes_retained_nom_instead_of_replanning_it_later() -> None:

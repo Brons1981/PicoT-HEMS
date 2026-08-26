@@ -8,6 +8,8 @@ import pytest
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
 from picot.v2.independent_daily_tariff_adapter import (
     ENERGY_TAX_EX_VAT_EUR_PER_KWH,
+    EXPORT_ADDITION_EUR_PER_KWH,
+    SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH,
     VAT_FACTOR,
     DailyReferenceTariffInputError,
     IndependentDailyTariffAdapter,
@@ -48,15 +50,19 @@ def test_2026_import_and_export_use_same_all_in_sensor_price() -> None:
     assert "nl-net-metering-through-2026" in result.intervals[0].evidence_ids
 
 
-def test_2027_export_removes_energy_tax_including_vat() -> None:
+def test_2027_export_is_bare_market_price_plus_exact_contract_addition() -> None:
     result = IndependentDailyTariffAdapter().build(
         _snapshot(datetime(2027, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=1))))
     )
 
-    expected = 0.30 - ENERGY_TAX_EX_VAT_EUR_PER_KWH * VAT_FACTOR
+    bare_market_price = 0.30 - (
+        ENERGY_TAX_EX_VAT_EUR_PER_KWH
+        + SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH
+    ) * VAT_FACTOR
+    expected = bare_market_price + EXPORT_ADDITION_EUR_PER_KWH
     assert result.intervals[0].import_eur_per_kwh == pytest.approx(0.30)
     assert result.intervals[0].export_eur_per_kwh == pytest.approx(expected)
-    assert "nl-export-energy-tax-removed-2027" in result.intervals[0].evidence_ids
+    assert "nl-export-bare-market-plus-0.02-2027" in result.intervals[0].evidence_ids
 
 
 def test_transition_is_split_exactly_at_2027_boundary() -> None:

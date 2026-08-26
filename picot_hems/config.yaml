@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.167"
+version: "2.0.0-dev.168"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -59,10 +59,13 @@ options:
   household_minimum_conservative_pv_storage_margin_wh: 500.0
   daily_reference_charge_efficiency: 1.0
   daily_reference_discharge_efficiency: 1.0
+  market_daily_charge_efficiency: 0.9110433579
+  market_daily_discharge_efficiency: 0.9110433579
   grid_power_observation_interval_seconds: 1
   live_poll_interval_seconds: 60
   live_pv_canary_mode: "observer"
   canonical_execution_mode: "observer"
+  market_daily_execution_mode: "live"
   
 schema:
   p1_power_entity: str
@@ -110,7 +113,10 @@ schema:
   household_minimum_conservative_pv_storage_margin_wh: float(0,)
   daily_reference_charge_efficiency: float(0,1)
   daily_reference_discharge_efficiency: float(0,1)
+  market_daily_charge_efficiency: float(0,1)
+  market_daily_discharge_efficiency: float(0,1)
   grid_power_observation_interval_seconds: int(1,60)
   live_poll_interval_seconds: int(5,3600)
   live_pv_canary_mode: list(observer|live)
   canonical_execution_mode: list(observer|live)
+  market_daily_execution_mode: list(observer|live)

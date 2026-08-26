@@ -650,8 +650,17 @@ def test_dashboard_contains_48_hour_price_window_chart() -> None:
     assert "const nowMs = Date.now();" in DASHBOARD_HTML
     assert "pointEnd <= nowMs" in DASHBOARD_HTML
     assert "Nog niet gepubliceerd" in DASHBOARD_HTML
-    assert "LOWEST_PRICE_WINDOW" in DASHBOARD_HTML
-    assert "HIGH_EXPORT_VALUE_WINDOW" in DASHBOARD_HTML
+
+
+def test_price_chart_only_colors_current_planner_windows() -> None:
+    assert ".price-bar.low" not in DASHBOARD_HTML
+    assert ".price-bar.high" not in DASHBOARD_HTML
+    assert '["low", "Laagste-prijsvenster"]' not in DASHBOARD_HTML
+    assert '["high", "Hoogste-teruglevervenster"]' not in DASHBOARD_HTML
+    assert ".planner-window.canonical-plan" in DASHBOARD_HTML
+    assert ".planner-window.daily-plan" in DASHBOARD_HTML
+    assert ".price-bar.mep-charge" in DASHBOARD_HTML
+    assert ".price-bar.mep-export" in DASHBOARD_HTML
 
 
 def test_dashboard_preserves_open_daily_measure_details_by_stable_key() -> None:

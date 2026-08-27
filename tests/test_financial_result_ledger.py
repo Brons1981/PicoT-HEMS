@@ -159,6 +159,9 @@ def test_missing_measured_role_never_produces_estimated_money(tmp_path) -> None:
     assert view["status"] == "incomplete"
     assert view["today"]["reason"] == "missing_measured_series"
     assert view["today"]["missing_roles"] == ["battery_discharge"]
+    assert view["today"]["coverage_by_role"]["battery_charge"][
+        "start_anchor_available"
+    ] is True
 
 
 def test_dashboard_contract_is_passive_and_persists_purchase_progress(tmp_path) -> None:

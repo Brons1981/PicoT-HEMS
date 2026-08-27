@@ -109,6 +109,11 @@ def test_dashboard_visually_separates_daily_observer_from_canonical_plan() -> No
 
 
 def test_dashboard_explains_daily_observer_result_in_user_language() -> None:
+    assert "formatMoney(" not in DASHBOARD_HTML
+    assert "formatCurrency(Number(mep.minimum_total_route_profit_eur))" in (
+        DASHBOARD_HTML
+    )
+    assert "formatCurrency(route.inventory_acquisition_cost_eur)" in DASHBOARD_HTML
     assert "PV-only is bewezen voldoende; netladen is daarom uitgesloten." in (
         DASHBOARD_HTML
     )

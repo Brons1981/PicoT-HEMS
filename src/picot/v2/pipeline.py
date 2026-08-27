@@ -175,9 +175,15 @@ class CanonicalPipeline:
         *,
         opportunity_engine: OpportunityEngine | None = None,
         candidate_engine: CandidateEngine | None = None,
+        micro_charge_suppression_fraction: float = 0.01,
     ) -> None:
+        if not 0.0 <= micro_charge_suppression_fraction <= 1.0:
+            raise ValueError("Micro-charge suppression fraction is invalid.")
         self._opportunity_engine = opportunity_engine or OpportunityEngine()
         self._candidate_engine = candidate_engine or CandidateEngine()
+        self._micro_charge_suppression_fraction = (
+            micro_charge_suppression_fraction
+        )
 
     def run(
         self,
@@ -458,6 +464,13 @@ class CanonicalPipeline:
         def is_micro_charge(
             outcome: DelegatedStorageCandidateOutcome,
         ) -> bool:
+            mode_evidence = snapshot.storage_mode_capability_evidence
+            if (
+                mode_evidence is not None
+                and mode_evidence.current_vendor_mode
+                in {"Nul op de meter", "Snel opladen"}
+            ):
+                return False
             requirement = requirements_by_id.get(outcome.storage_requirement_id)
             if requirement is None:
                 return False
@@ -469,13 +482,22 @@ class CanonicalPipeline:
                 ),
                 None,
             )
-            contribution = (
-                outcome.pv_storage_contribution_wh
-                + outcome.grid_storage_contribution_wh
+            target_gap_wh = (
+                max(
+                    0.0,
+                    requirement.required_energy_wh
+                    - storage.current_soc * storage.usable_capacity_wh,
+                )
+                if storage is not None
+                else 0.0
             )
             return (
                 storage is not None
-                and contribution <= storage.usable_capacity_wh * 0.01 + 1e-6
+                and target_gap_wh > 0.0
+                and target_gap_wh
+                <= storage.usable_capacity_wh
+                * self._micro_charge_suppression_fraction
+                + 1e-6
             )
 
         delegated_evaluation_engine = DelegatedStorageEvaluationEngine()
@@ -606,7 +628,8 @@ class CanonicalPipeline:
                 if has_actionable_alternatives
                 else (
                     (
-                        "remaining storage gap is at or below one percent; "
+                        "remaining storage gap is within the configured "
+                        "micro-charge limit; "
                         "reserve remains sufficient until the next charge opportunity"
                         if micro_charge_suppressed
                         else "storage requirement already satisfied; "

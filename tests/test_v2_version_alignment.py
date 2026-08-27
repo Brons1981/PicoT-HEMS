@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_183() -> None:
-    assert __version__ == "2.0.0-dev.184"
+def test_v2_release_version_is_dev_185() -> None:
+    assert __version__ == "2.0.0-dev.185"
 
 
 def test_mep_has_83_percent_rte_without_changing_ep_defaults() -> None:
@@ -31,10 +31,12 @@ def test_mep_has_83_percent_rte_without_changing_ep_defaults() -> None:
     assert '  market_daily_rte_entity: "sensor.zendure_2400_ac_rte_totaal"' in text
     assert "  market_daily_trading_margin_percent: 10.0" in text
     assert "  market_daily_wear_eur_per_kwh: 0.05" in text
+    assert "  micro_charge_suppression_percent: 2.0" in text
     assert "  battery_purchase_eur: 2407.40" in text
     assert "  market_daily_rte_entity: str" in text
     assert "  market_daily_trading_margin_percent: float(0,100)" in text
     assert "  market_daily_wear_eur_per_kwh: float(0,1)" in text
+    assert "  micro_charge_suppression_percent: float(0,100)" in text
     assert "  battery_purchase_eur: float(0,)" in text
 
 

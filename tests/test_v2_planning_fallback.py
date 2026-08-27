@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
 from test_v2_delegated_storage_pipeline_integration import _snapshot
 
 from picot.domain.execution_primitive import ExecutionPrimitive
@@ -118,13 +119,13 @@ def test_full_storage_without_charge_action_is_valid_plan() -> None:
     assert status["alternatives"][0]["confidence"] is None
 
 
-def test_one_percent_gap_does_not_create_charge_session_when_reserve_is_safe() -> None:
+def test_configured_two_percent_gap_does_not_create_charge_session_when_safe() -> None:
     source = _snapshot()
     assert source.capability_snapshot_set is not None
     near_full = replace(
         source,
         current_storage_states=tuple(
-            replace(state, current_soc=0.99)
+            replace(state, current_soc=0.98)
             for state in source.current_storage_states
         ),
         capability_snapshot_set=replace(
@@ -143,20 +144,21 @@ def test_one_percent_gap_does_not_create_charge_session_when_reserve_is_safe() -
         ),
     )
 
-    run = CanonicalPipeline().run(
+    run = CanonicalPipeline(
+        micro_charge_suppression_fraction=0.02,
+    ).run(
         planning_input=near_full,
         control_change_allowed=True,
     )
 
     assert run.outcomes.outcomes
-    assert all(
-        outcome.pv_storage_contribution_wh
-        <= near_full.current_storage_states[0].usable_capacity_wh * 0.01 + 1e-6
-        for outcome in run.outcomes.outcomes
+    storage = near_full.current_storage_states[0]
+    assert (1.0 - storage.current_soc) * storage.usable_capacity_wh == pytest.approx(
+        storage.usable_capacity_wh * 0.02
     )
     assert run.evaluation.status == "winner_selected"
     assert run.evaluation.reason == (
-        "remaining storage gap is at or below one percent; "
+        "remaining storage gap is within the configured micro-charge limit; "
         "reserve remains sufficient until the next charge opportunity"
     )
     assert run.evaluation.decisive_step == (

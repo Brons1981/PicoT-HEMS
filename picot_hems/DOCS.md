@@ -49,3 +49,11 @@ Start de add-on na een wijziging opnieuw. In **PicoT Pipeline → Strategie** to
 iedere onderzochte marktroute de herstelprijs, RTE-correctie, handelsmarge,
 slijtage en de daaruit volgende minimale exportprijs. Zo blijft zichtbaar waarom
 de gewijzigde instelling een route wel of niet toelaat.
+
+## Kleine topsessies
+
+`micro_charge_suppression_percent` bepaalt vanaf welk resterend percentage PicoT
+geen nieuwe afzonderlijke laadsessie meer start. De standaardwaarde is `2.0`.
+De grens geldt voor CP, de etmaalsimulatie en MEP. Onderdrukking is alleen
+toegestaan wanneer de minimumreserve zonder die topsessie in alle doorgerekende
+scenario's veilig blijft. Een al lopende laadsessie wordt niet afgebroken.

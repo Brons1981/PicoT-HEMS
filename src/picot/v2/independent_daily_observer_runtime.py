@@ -301,9 +301,11 @@ class IndependentDailyObserverRuntime:
         *,
         conversion_model: StorageConversionModel,
         store: DailyObserverResultStore,
+        micro_charge_suppression_fraction: float = 0.01,
     ) -> None:
         self.conversion_model = conversion_model
         self.store = store
+        self.micro_charge_suppression_fraction = micro_charge_suppression_fraction
 
     def observe(self, snapshot: PlanningInputSnapshot) -> DailyObserverRuntimeOutcome:
         started = perf_counter()
@@ -314,6 +316,9 @@ class IndependentDailyObserverRuntime:
             observation = IndependentDailyReferenceAdapter().observe(
                 snapshot=snapshot,
                 conversion_model=self.conversion_model,
+                micro_charge_suppression_fraction=(
+                    self.micro_charge_suppression_fraction
+                ),
             )
         except Exception as exc:
             status = "blocked"

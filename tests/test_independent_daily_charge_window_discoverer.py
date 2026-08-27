@@ -13,7 +13,13 @@ from picot.planner.independent_daily_charge_window_discoverer import (
 )
 
 
-def _discover(*, soc: float = 0.5, deplete_after_pv: bool = False):
+def _discover(
+    *,
+    soc: float = 0.5,
+    deplete_after_pv: bool = False,
+    micro_charge_suppression_fraction: float = 0.01,
+    charge_session_active: bool = False,
+):
     scenarios = tuple(_timeline(scenario) for scenario in PVScenario)
     if deplete_after_pv:
         scenarios = tuple(
@@ -49,6 +55,8 @@ def _discover(*, soc: float = 0.5, deplete_after_pv: bool = False):
         target_storage_energy_wh=8160.0,
         maximum_charge_input_power_w=2400.0,
         maximum_discharge_output_power_w=2400.0,
+        micro_charge_suppression_fraction=micro_charge_suppression_fraction,
+        charge_session_active=charge_session_active,
     )
 
 
@@ -150,6 +158,27 @@ def test_discoverer_recovers_target_after_full_storage_is_later_depleted() -> No
         item.conservative_target_reached_at > item.starts_at
         for item in result.windows
     )
+
+
+def test_configured_two_percent_gap_does_not_create_a_new_charge_window() -> None:
+    result = _discover(
+        soc=0.98,
+        micro_charge_suppression_fraction=0.02,
+    )
+
+    assert result.discovery_status == "not_required"
+    assert result.windows == ()
+
+
+def test_configured_limit_does_not_interrupt_an_active_charge_session() -> None:
+    result = _discover(
+        soc=0.98,
+        micro_charge_suppression_fraction=0.02,
+        charge_session_active=True,
+    )
+
+    assert result.discovery_status == "discovered"
+    assert result.windows
 
 
 def test_discoverer_does_not_import_current_pipeline_selection_types() -> None:

@@ -390,6 +390,18 @@ DASHBOARD_HTML = """<!doctype html>
       background: #151b23;
     }
     .metric { padding: 12px; }
+    .financial-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+    }
+    .financial-positive { color: #8de5ae; }
+    .financial-negative { color: #ffadb8; }
+    .payback-track {
+      height: 14px; overflow: hidden; border-radius: 999px;
+      background: #27313d;
+    }
+    .payback-fill { height: 100%; background: #35a862; }
     .daily-comparison-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -842,6 +854,10 @@ DASHBOARD_HTML = """<!doctype html>
         aria-selected="false"
       >Historie</button>
       <button
+        class="tab-button" type="button" data-tab="financial"
+        aria-selected="false"
+      >Financieel</button>
+      <button
         class="tab-button" type="button" data-tab="strategy"
         aria-selected="false"
       >Strategie</button>
@@ -919,6 +935,18 @@ DASHBOARD_HTML = """<!doctype html>
       >
         Nog geen gesloten PV-intervallen beschikbaar.
       </section>
+    </section>
+    <section
+      id="tab-financial" class="tab-panel" data-tab-panel="financial" hidden
+    >
+      <h2>Financieel resultaat</h2>
+      <p class="muted">
+        Achteraf berekend uit gemeten energiestromen en werkelijke
+        kwartierprijzen. Deze administratie beïnvloedt geen PicoT-beslissing.
+      </p>
+      <div id="financial-results" aria-live="polite">
+        Nog geen volledige financiële meetperiode beschikbaar.
+      </div>
     </section>
     <section
       id="tab-strategy" class="tab-panel" data-tab-panel="strategy" hidden
@@ -3900,6 +3928,104 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
+    function financialValueClass(value) {
+      return Number(value) >= 0 ? "financial-positive" : "financial-negative";
+    }
+
+    function renderFinancialResults(financial) {
+      const container = element("financial-results");
+      container.replaceChildren();
+      const today = financial?.today;
+      if (!today || today.status !== "available") {
+        const empty = document.createElement("p");
+        empty.className = "empty-panel";
+        empty.textContent = today?.reason
+          ? `Nog geen volledig resultaat: ${displayValue(today.reason)}.`
+          : "Nog geen volledige financiële meetperiode beschikbaar.";
+        container.append(empty);
+        return;
+      }
+      const cards = document.createElement("section");
+      cards.className = "financial-grid";
+      const values = [
+        ["Netto energieresultaat vandaag", -Number(today.actual_energy_cost_eur)],
+        ["Kosten netinkoop", -Number(today.grid_import_cost_eur)],
+        ["Opbrengst teruglevering", Number(today.grid_export_revenue_eur)],
+        ["Totale energiebesparing netto", Number(today.net_total_energy_value_eur)],
+        ["Bruto batterijvoordeel", Number(today.gross_battery_value_eur)],
+        ["Slijtage batterij", -Number(today.battery_wear_eur)],
+        ["Netto batterijvoordeel", Number(today.net_battery_value_eur)],
+        ["Bruto extra PicoT-resultaat", Number(today.gross_picot_value_eur)],
+        ["Netto extra PicoT-resultaat", Number(today.net_picot_value_eur)],
+      ];
+      for (const [label, value] of values) {
+        const card = document.createElement("div");
+        card.className = "metric";
+        const title = document.createElement("span");
+        title.className = "muted";
+        title.textContent = label;
+        const amount = document.createElement("span");
+        amount.className = `value ${financialValueClass(value)}`;
+        amount.textContent = formatPrice(value);
+        card.append(title, amount);
+        cards.append(card);
+      }
+      container.append(cards);
+
+      const cumulative = financial.cumulative ?? {};
+      const payback = document.createElement("section");
+      payback.className = "timeline-panel";
+      const heading = document.createElement("h3");
+      heading.textContent = "Terugverdienen batterij";
+      const summary = document.createElement("p");
+      const percentage = Math.max(0, Math.min(100,
+        Number(cumulative.repaid_fraction ?? 0) * 100));
+      summary.textContent = [
+        `${formatPrice(cumulative.net_battery_value_eur)} netto terugverdiend`,
+        `${formatPrice(cumulative.remaining_eur)} resterend`,
+        `${formatDutchNumber(percentage)}% van ${formatPrice(cumulative.battery_purchase_eur)}`,
+      ].join(" · ");
+      const track = document.createElement("div");
+      track.className = "payback-track";
+      const fill = document.createElement("div");
+      fill.className = "payback-fill";
+      fill.style.width = `${percentage}%`;
+      track.append(fill);
+      payback.append(heading, summary, track);
+      container.append(payback);
+
+      const historyHeading = document.createElement("h3");
+      historyHeading.textContent = "Resultaat per dag";
+      container.append(historyHeading);
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const header = document.createElement("tr");
+      for (const label of ["Dag", "Energieresultaat", "Batterij netto", "PicoT netto"]) {
+        const cell = document.createElement("th");
+        cell.textContent = label;
+        header.append(cell);
+      }
+      head.append(header);
+      const body = document.createElement("tbody");
+      for (const day of [...(financial.days ?? [])].reverse()) {
+        if (day.status !== "available") continue;
+        const row = document.createElement("tr");
+        for (const value of [
+          day.day,
+          formatPrice(-Number(day.actual_energy_cost_eur)),
+          formatPrice(day.net_battery_value_eur),
+          formatPrice(day.net_picot_value_eur),
+        ]) {
+          const cell = document.createElement("td");
+          cell.textContent = value;
+          row.append(cell);
+        }
+        body.append(row);
+      }
+      table.append(head, body);
+      container.append(table);
+    }
+
     async function markPlannerStress() {
       const note = window.prompt(
         "Korte toelichting (optioneel)",
@@ -4038,6 +4164,7 @@ DASHBOARD_HTML = """<!doctype html>
         view.storage_mode_transition_history ?? []
       );
       renderPlannerComparisonHistory(view.planner_comparison_history ?? {});
+      renderFinancialResults(view.financial_results ?? {});
       loadPlanningIncidentHistory();
       renderPriceTimeline(
         view.price_timeline ?? {
@@ -4178,6 +4305,7 @@ class WebViewStore:
         self._daily_observer_comparison: dict[str, object] | None = None
         self._market_daily_planner: dict[str, object] | None = None
         self._planner_comparison_history: dict[str, object] | None = None
+        self._financial_results: dict[str, object] | None = None
         self._revision = 0
         self._reset_storage_mode_override: (
             Callable[[str], dict[str, object]] | None
@@ -4229,6 +4357,8 @@ class WebViewStore:
             view["planner_comparison_history"] = dict(
                 self._planner_comparison_history
             )
+        if self._financial_results is not None:
+            view["financial_results"] = dict(self._financial_results)
         self._latest_json = json.dumps(view, separators=(",", ":"))
         self._revision += 1
         self._condition.notify_all()
@@ -4367,6 +4497,28 @@ class WebViewStore:
             raise ValueError("planner comparison history must remain passive")
         with self._condition:
             self._planner_comparison_history = copied
+            if self._latest_json is None:
+                return
+            latest: object = json.loads(self._latest_json)
+            if isinstance(latest, dict):
+                self._replace_latest_locked(latest)
+
+    def publish_financial_results(
+        self,
+        financial_results: dict[str, object],
+    ) -> None:
+        """Overlay measured settlement without granting planner authority."""
+        copied: object = json.loads(json.dumps(financial_results))
+        if not isinstance(copied, dict):
+            raise TypeError("financial results must be an object")
+        if (
+            copied.get("observer_only") is not True
+            or copied.get("selection_permitted") is not False
+            or copied.get("commitment_permitted") is not False
+        ):
+            raise ValueError("financial results must remain passive")
+        with self._condition:
+            self._financial_results = copied
             if self._latest_json is None:
                 return
             latest: object = json.loads(self._latest_json)

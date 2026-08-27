@@ -457,8 +457,9 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
                 independent_daily_observer_worker: object,
                 independent_daily_snapshot: object,
                 daily_pv_basis_decision: object,
-                market_daily_planner_worker: object,
-                planner_comparison_ledger: object,
+                    market_daily_planner_worker: object,
+                    planner_comparison_ledger: object,
+                    financial_result_ledger: object,
         ) -> None:
         del (
                 price_config,
@@ -480,8 +481,9 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
                     independent_daily_observer_worker,
                     independent_daily_snapshot,
                     daily_pv_basis_decision,
-                    market_daily_planner_worker,
-                    planner_comparison_ledger,
+                        market_daily_planner_worker,
+                        planner_comparison_ledger,
+                        financial_result_ledger,
             )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))

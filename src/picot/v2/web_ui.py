@@ -397,6 +397,56 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .financial-positive { color: #8de5ae; }
     .financial-negative { color: #ffadb8; }
+    .financial-source-panel {
+      display: grid;
+      grid-template-columns: minmax(190px, 260px) minmax(260px, 1fr);
+      gap: 22px;
+      align-items: center;
+      margin-top: 12px;
+      padding: 16px;
+    }
+    .financial-donut {
+      position: relative;
+      width: min(220px, 70vw);
+      aspect-ratio: 1;
+      margin: 0 auto;
+      border-radius: 50%;
+    }
+    .financial-donut::after {
+      content: "";
+      position: absolute;
+      inset: 24%;
+      border-radius: 50%;
+      background: #151b23;
+    }
+    .financial-donut-center {
+      position: absolute;
+      inset: 30%;
+      z-index: 1;
+      display: grid;
+      place-content: center;
+      text-align: center;
+    }
+    .financial-source-legend { display: grid; gap: 10px; }
+    .financial-source-row {
+      display: grid;
+      grid-template-columns: 12px minmax(100px, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .financial-source-swatch {
+      width: 12px; height: 12px; border-radius: 3px;
+    }
+    .financial-equation {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      gap: 10px;
+      align-items: center;
+      margin-top: 12px;
+      padding: 14px;
+    }
+    .financial-equation-part { text-align: center; }
+    .financial-equation-symbol { color: #96a6b8; font-size: 1.4rem; }
     .payback-track {
       height: 14px; overflow: hidden; border-radius: 999px;
       background: #27313d;
@@ -427,6 +477,9 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .daily-lineage-warning { color: #ffd77a; }
     @media (max-width: 800px) {
+      .financial-source-panel { grid-template-columns: 1fr; }
+      .financial-equation { grid-template-columns: 1fr; }
+      .financial-equation-symbol { transform: rotate(90deg); }
       .daily-comparison-grid { grid-template-columns: 1fr; }
     }
     .metric span { display: block; }
@@ -1124,6 +1177,18 @@ DASHBOARD_HTML = """<!doctype html>
       const numeric = Number(value);
       return Number.isFinite(numeric)
         ? `${numeric.toFixed(3).replace(".", ",")} €/kWh`
+        : "—";
+    }
+
+    function formatCurrency(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric)
+        ? numeric.toLocaleString("nl-NL", {
+            style: "currency",
+            currency: "EUR",
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 3,
+          })
         : "—";
     }
 
@@ -3932,6 +3997,74 @@ DASHBOARD_HTML = """<!doctype html>
       return Number(value) >= 0 ? "financial-positive" : "financial-negative";
     }
 
+    function renderHouseholdEnergySources(breakdown) {
+      const panel = document.createElement("section");
+      panel.className = "timeline-panel financial-source-panel";
+      const sources = Array.isArray(breakdown?.sources)
+        ? breakdown.sources : [];
+      const sourceMeta = {
+        pv_direct: {label: "PV rechtstreeks", color: "#f5c542", value: "vermeden inkoop"},
+        battery: {label: "Batterij", color: "#35a862", value: "bruto vermeden inkoop"},
+        grid: {label: "Net", color: "#5db9f3", value: "kosten"},
+      };
+      let cursor = 0;
+      const stops = [];
+      for (const source of sources) {
+        const share = Math.max(0, Number(source.share) || 0) * 100;
+        const color = sourceMeta[source.source]?.color ?? "#64748b";
+        stops.push(`${color} ${cursor}% ${cursor + share}%`);
+        cursor += share;
+      }
+      const chartWrap = document.createElement("div");
+      const heading = document.createElement("h3");
+      heading.textContent = "Herkomst huishoudelijke energie vandaag";
+      const donut = document.createElement("div");
+      donut.className = "financial-donut";
+      donut.setAttribute("role", "img");
+      donut.setAttribute("aria-label", sources.map((source) => {
+        const meta = sourceMeta[source.source] ?? {label: source.source};
+        return `${meta.label}: ${formatDutchNumber(source.energy_kwh)} kWh, `
+          + `${formatDutchNumber(Number(source.share) * 100)}%`;
+      }).join("; "));
+      donut.style.background = stops.length
+        ? `conic-gradient(${stops.join(", ")})`
+        : "#27313d";
+      const center = document.createElement("div");
+      center.className = "financial-donut-center";
+      const total = document.createElement("strong");
+      total.textContent = `${formatDutchNumber(breakdown?.household_load_kwh)} kWh`;
+      const totalLabel = document.createElement("span");
+      totalLabel.className = "muted";
+      totalLabel.textContent = "huisverbruik";
+      center.append(total, totalLabel);
+      donut.append(center);
+      chartWrap.append(heading, donut);
+
+      const legend = document.createElement("div");
+      legend.className = "financial-source-legend";
+      for (const source of sources) {
+        const meta = sourceMeta[source.source] ?? {
+          label: displayValue(source.source), color: "#64748b", value: "waarde"
+        };
+        const row = document.createElement("div");
+        row.className = "financial-source-row";
+        const swatch = document.createElement("span");
+        swatch.className = "financial-source-swatch";
+        swatch.style.background = meta.color;
+        const description = document.createElement("span");
+        description.textContent = `${meta.label} · `
+          + `${formatDutchNumber(source.energy_kwh)} kWh · `
+          + `${formatDutchNumber(Number(source.share) * 100)}%`;
+        const amount = document.createElement("span");
+        amount.title = meta.value;
+        amount.textContent = formatCurrency(source.value_eur);
+        row.append(swatch, description, amount);
+        legend.append(row);
+      }
+      panel.append(chartWrap, legend);
+      return panel;
+    }
+
     function renderFinancialResults(financial) {
       const container = element("financial-results");
       container.replaceChildren();
@@ -3966,11 +4099,43 @@ DASHBOARD_HTML = """<!doctype html>
         title.textContent = label;
         const amount = document.createElement("span");
         amount.className = `value ${financialValueClass(value)}`;
-        amount.textContent = formatPrice(value);
+        amount.textContent = formatCurrency(value);
         card.append(title, amount);
         cards.append(card);
       }
       container.append(cards);
+      container.append(renderHouseholdEnergySources(today.household_energy_sources ?? {}));
+
+      const equation = document.createElement("section");
+      equation.className = "timeline-panel financial-equation";
+      equation.setAttribute(
+        "aria-label",
+        "Bruto batterijvoordeel − slijtage = netto batterijvoordeel"
+      );
+      for (const [label, value, symbol] of [
+        ["Bruto batterijvoordeel", today.gross_battery_value_eur, null],
+        [null, null, "−"],
+        ["Slijtage", today.battery_wear_eur, null],
+        [null, null, "="],
+        ["Netto batterijvoordeel", today.net_battery_value_eur, null],
+      ]) {
+        const part = document.createElement("div");
+        if (symbol) {
+          part.className = "financial-equation-symbol";
+          part.textContent = symbol;
+        } else {
+          part.className = "financial-equation-part";
+          const caption = document.createElement("span");
+          caption.className = "muted";
+          caption.textContent = label;
+          const amount = document.createElement("strong");
+          amount.className = "value";
+          amount.textContent = formatCurrency(value);
+          part.append(caption, amount);
+        }
+        equation.append(part);
+      }
+      container.append(equation);
 
       const cumulative = financial.cumulative ?? {};
       const payback = document.createElement("section");
@@ -3981,9 +4146,9 @@ DASHBOARD_HTML = """<!doctype html>
       const percentage = Math.max(0, Math.min(100,
         Number(cumulative.repaid_fraction ?? 0) * 100));
       summary.textContent = [
-        `${formatPrice(cumulative.net_battery_value_eur)} netto terugverdiend`,
-        `${formatPrice(cumulative.remaining_eur)} resterend`,
-        `${formatDutchNumber(percentage)}% van ${formatPrice(cumulative.battery_purchase_eur)}`,
+        `${formatCurrency(cumulative.net_battery_value_eur)} netto terugverdiend`,
+        `${formatCurrency(cumulative.remaining_eur)} resterend`,
+        `${formatDutchNumber(percentage)}% van ${formatCurrency(cumulative.battery_purchase_eur)}`,
       ].join(" · ");
       const track = document.createElement("div");
       track.className = "payback-track";
@@ -4012,9 +4177,9 @@ DASHBOARD_HTML = """<!doctype html>
         const row = document.createElement("tr");
         for (const value of [
           day.day,
-          formatPrice(-Number(day.actual_energy_cost_eur)),
-          formatPrice(day.net_battery_value_eur),
-          formatPrice(day.net_picot_value_eur),
+          formatCurrency(-Number(day.actual_energy_cost_eur)),
+          formatCurrency(day.net_battery_value_eur),
+          formatCurrency(day.net_picot_value_eur),
         ]) {
           const cell = document.createElement("td");
           cell.textContent = value;

@@ -1955,6 +1955,7 @@ def _execute_planning_bundle(
             web_view["financial_results"] = financial_result_ledger.update(
                 bundle.snapshot,
                 power_history,
+                price_points=display_price_points,
             )
         except Exception as exc:
             print(
@@ -2690,7 +2691,15 @@ def main() -> None:
         web_view_store.publish_power_history(power_history)
         try:
             web_view_store.publish_financial_results(
-                financial_result_ledger.update(bundle.snapshot, power_history)
+                financial_result_ledger.update(
+                    bundle.snapshot,
+                    power_history,
+                    price_points=tuple(
+                        point
+                        for evidence in bundle.evidence
+                        for point in evidence.price_points
+                    ),
+                )
             )
         except Exception as exc:
             report_daily_observer_error(bundle.snapshot, exc)

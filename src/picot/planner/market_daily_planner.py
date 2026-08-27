@@ -315,7 +315,7 @@ class MarketDailyPlanner:
         phase_started = perf_counter()
         market_wins = any(item.admitted for item in assessments)
         current_intent, current_interval_ends_at = self._current_decision(
-            captured_at=snapshot.captured_at,
+            snapshot=snapshot,
             native_observation=native_observation,
             assessments=assessments,
         )
@@ -851,7 +851,7 @@ class MarketDailyPlanner:
     @staticmethod
     def _current_decision(
         *,
-        captured_at: datetime,
+        snapshot: PlanningInputSnapshot,
         native_observation: DailyReferenceStrategyObservation,
         assessments: tuple[MarketRouteAssessment, ...],
     ) -> tuple[DailyStorageIntent | None, datetime | None]:
@@ -876,14 +876,21 @@ class MarketDailyPlanner:
                 item.intent_schedule.schedule_id: item.intent_schedule
                 for item in native_observation.observer_result.portfolio.strategy_results
             }
-            native_winner_id = sorted(native_observation.observer_result.best_observation_ids)[0]
-            schedules = (results[candidates[native_winner_id].intent_schedule_id],)
+            native_winner_ids = sorted(
+                native_observation.observer_result.best_observation_ids
+            )
+            if native_winner_ids:
+                schedules = (
+                    results[candidates[native_winner_ids[0]].intent_schedule_id],
+                )
+            else:
+                schedules = (native_observation.strategy_space.schedules[0],)
         due = tuple(
             next(
                 (
                     interval
                     for interval in schedule.intervals
-                    if interval.starts_at <= captured_at < interval.ends_at
+                    if interval.starts_at <= snapshot.captured_at < interval.ends_at
                 ),
                 None,
             )
@@ -894,7 +901,67 @@ class MarketDailyPlanner:
         decisions = {(item.intent, item.ends_at) for item in due if item is not None}
         if len(decisions) != 1:
             return None, None
-        return next(iter(decisions))
+        decision = next(iter(decisions))
+        if not admitted and decision[0] is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY:
+            solar_capture_end = MarketDailyPlanner._solar_capture_end(snapshot)
+            if solar_capture_end is not None:
+                # Without an admitted market route there is no proven reason to
+                # let forecast PV pass the battery while household-support mode
+                # is active. NOM remains bidirectional, so it still supports
+                # the house while capturing intermittent surplus. The trigger
+                # uses the midpoint of lower and central; physical charge-window
+                # admission above remains conservative across all scenarios.
+                return DailyStorageIntent.NOM, solar_capture_end
+        return decision
+
+    @staticmethod
+    def _solar_capture_end(snapshot: PlanningInputSnapshot) -> datetime | None:
+        """Return one stable current solar-capture window when storage has room."""
+
+        timeline = snapshot.pv_energy_timeline
+        if timeline is None or len(snapshot.current_storage_states) != 1:
+            return None
+        storage = snapshot.current_storage_states[0]
+        limits = next(
+            (
+                item
+                for item in snapshot.storage_physical_limits
+                if item.capability_id == storage.capability_id
+                and item.execution_scope_id == storage.execution_scope_id
+            ),
+            None,
+        )
+        if limits is None or storage.current_soc >= limits.maximum_soc - 1e-6:
+            return None
+
+        current_index = next(
+            (
+                index
+                for index, interval in enumerate(timeline.intervals)
+                if interval.starts_at <= snapshot.captured_at < interval.ends_at
+            ),
+            None,
+        )
+        if current_index is None:
+            return None
+
+        def midpoint_energy_wh(index: int) -> float:
+            interval = timeline.intervals[index]
+            lower = interval.forecast_lower_energy_wh
+            central = interval.forecast_central_energy_wh
+            if interval.forecast_range_status != "available" or lower is None or central is None:
+                return 0.0
+            return (lower + central) / 2.0
+
+        if midpoint_energy_wh(current_index) <= 0.0:
+            return None
+        end = timeline.intervals[current_index].ends_at
+        for index in range(current_index + 1, len(timeline.intervals)):
+            interval = timeline.intervals[index]
+            if interval.starts_at != end or midpoint_energy_wh(index) <= 0.0:
+                break
+            end = interval.ends_at
+        return end
 
     @staticmethod
     def _market_schedule(

@@ -699,7 +699,7 @@ class MarketDailyPlannerRuntime:
             return outcome
         current_intent, current_interval_ends_at = (
             MarketDailyPlanner._current_decision(
-                captured_at=snapshot.captured_at,
+                snapshot=snapshot,
                 native_observation=outcome.plan.native_observation,
                 assessments=outcome.plan.route_assessments,
             )

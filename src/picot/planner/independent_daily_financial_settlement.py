@@ -70,7 +70,9 @@ class IndependentDailyFinancialSettlement:
             or trajectory.horizon_end != tariffs.horizon_end
         ):
             raise ValueError("Daily tariff must cover the exact trajectory horizon.")
-        settled: list[DailyReferenceFinancialInterval] = []
+        physical_segments: list[
+            tuple[DailyReferenceInterval, DailyReferenceTariffInterval]
+        ] = []
         for physical in trajectory.intervals:
             physical_tariffs = tariffs_by_physical_interval.get(
                 (physical.starts_at, physical.ends_at)
@@ -79,8 +81,8 @@ class IndependentDailyFinancialSettlement:
                 raise ValueError(
                     "Daily settlement requires complete interval tariff coverage."
                 )
-            settled.extend(
-                self._settle_interval(
+            physical_segments.extend(
+                (
                     self._physical_segment(
                         physical,
                         starts_at=max(physical.starts_at, tariff.starts_at),
@@ -90,6 +92,36 @@ class IndependentDailyFinancialSettlement:
                 )
                 for tariff in physical_tariffs
             )
+        saldering_import_wh = sum(
+            max(0.0, self._grid_import_wh(physical) - self._grid_export_wh(physical))
+            for physical, tariff in physical_segments
+            if tariff.saldering_tax_eur_per_kwh > 0.0
+        )
+        saldering_export_wh = sum(
+            max(0.0, self._grid_export_wh(physical) - self._grid_import_wh(physical))
+            for physical, tariff in physical_segments
+            if tariff.saldering_tax_eur_per_kwh > 0.0
+        )
+        remaining_saldering_wh = min(saldering_import_wh, saldering_export_wh)
+        settled: list[DailyReferenceFinancialInterval] = []
+        for physical, tariff in physical_segments:
+            interval_export_wh = max(
+                0.0,
+                self._grid_export_wh(physical) - self._grid_import_wh(physical),
+            )
+            interval_saldering_wh = (
+                min(remaining_saldering_wh, interval_export_wh)
+                if tariff.saldering_tax_eur_per_kwh > 0.0
+                else 0.0
+            )
+            settled.append(
+                self._settle_interval(
+                    physical,
+                    tariff,
+                    saldering_export_wh=interval_saldering_wh,
+                )
+            )
+            remaining_saldering_wh -= interval_saldering_wh
         intervals = tuple(settled)
         duration_hours = tuple(
             (item.ends_at - item.starts_at).total_seconds() / 3600.0
@@ -237,17 +269,46 @@ class IndependentDailyFinancialSettlement:
         )
 
     @staticmethod
+    def _grid_import_wh(physical: DailyReferenceInterval) -> float:
+        return physical.grid_to_household_wh + physical.grid_to_storage_input_wh
+
+    @staticmethod
+    def _grid_export_wh(physical: DailyReferenceInterval) -> float:
+        return physical.pv_to_grid_wh + physical.storage_to_grid_output_wh
+
+    @staticmethod
     def _settle_interval(
         physical: DailyReferenceInterval,
         tariff: DailyReferenceTariffInterval,
+        *,
+        saldering_export_wh: float = 0.0,
     ) -> DailyReferenceFinancialInterval:
-        grid_import_wh = physical.grid_to_household_wh + physical.grid_to_storage_input_wh
+        grid_import_wh = IndependentDailyFinancialSettlement._grid_import_wh(physical)
+        grid_export_wh = IndependentDailyFinancialSettlement._grid_export_wh(physical)
         grid_import_cost_eur = grid_import_wh * tariff.import_eur_per_kwh / 1000.0
-        grid_export_result_eur = (
-            (physical.pv_to_grid_wh + physical.storage_to_grid_output_wh)
-            * tariff.export_eur_per_kwh
-            / 1000.0
-        )
+        if tariff.cross_interval_export_eur_per_kwh is None:
+            grid_export_result_eur = (
+                grid_export_wh * tariff.export_eur_per_kwh / 1000.0
+            )
+        else:
+            same_interval_wh = (
+                min(grid_import_wh, grid_export_wh)
+                if tariff.same_interval_offset_eur_per_kwh is not None
+                else 0.0
+            )
+            cross_interval_export_wh = grid_export_wh - same_interval_wh
+            grid_export_result_eur = (
+                same_interval_wh
+                * (
+                    tariff.same_interval_offset_eur_per_kwh
+                    if tariff.same_interval_offset_eur_per_kwh is not None
+                    else 0.0
+                )
+                + cross_interval_export_wh
+                * tariff.cross_interval_export_eur_per_kwh
+                + min(saldering_export_wh, cross_interval_export_wh)
+                * tariff.saldering_tax_eur_per_kwh
+            ) / 1000.0
         avoided_import_value_eur = (
             physical.storage_to_household_output_wh
             * tariff.import_eur_per_kwh

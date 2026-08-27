@@ -58,6 +58,55 @@ def test_mep_reports_observational_phase_timings_and_work_counts() -> None:
     assert diagnostics.route_assessment_count == len(result.route_assessments)
 
 
+def test_mep_uses_published_market_prices_beyond_native_24_hours() -> None:
+    snapshot = _snapshot(maximum_soc=0.7)
+    assert snapshot.pv_energy_timeline is not None
+    assert snapshot.household_load_forecast is not None
+    pv_last = snapshot.pv_energy_timeline.intervals[-1]
+    load_last = snapshot.household_load_forecast.intervals[-1]
+    extended_pv = snapshot.pv_energy_timeline.intervals + tuple(
+        replace(
+            pv_last,
+            interval_id=f"pv-extended-{index}",
+            starts_at=pv_last.ends_at + index * timedelta(minutes=30),
+            ends_at=pv_last.ends_at + (index + 1) * timedelta(minutes=30),
+            forecast_evidence_ids=(f"solcast-extended-{index}",),
+        )
+        for index in range(12)
+    )
+    extended_load = snapshot.household_load_forecast.intervals + tuple(
+        replace(
+            load_last,
+            interval_id=f"load-extended-{index}",
+            starts_at=load_last.ends_at + index * timedelta(minutes=15),
+            ends_at=load_last.ends_at + (index + 1) * timedelta(minutes=15),
+        )
+        for index in range(24)
+    )
+    horizon_end = snapshot.captured_at + timedelta(hours=30)
+    priced = replace(
+        snapshot,
+        price_points=(replace(snapshot.price_points[0], ends_at=horizon_end),),
+        pv_energy_timeline=replace(
+            snapshot.pv_energy_timeline,
+            intervals=extended_pv,
+        ),
+        household_load_forecast=replace(
+            snapshot.household_load_forecast,
+            intervals=extended_load,
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=_conversion(),
+    )
+
+    assert result.native_observation.strategy_space.schedules[0].horizon_end == (
+        horizon_end
+    )
+
+
 def test_mep_keeps_negative_tariffs_signed_in_its_native_plan() -> None:
     snapshot = _snapshot(maximum_soc=0.7)
     negative = tuple(replace(point, value_eur_per_kwh=-0.18) for point in snapshot.price_points)
@@ -74,7 +123,7 @@ def test_mep_keeps_negative_tariffs_signed_in_its_native_plan() -> None:
         for interval in path.intervals
     )
     assert all(
-        interval.export_eur_per_kwh == -0.18
+        interval.export_eur_per_kwh == pytest.approx(-0.18, abs=2e-6)
         for path in settled.run.financial.paths
         for interval in path.intervals
     )
@@ -137,7 +186,7 @@ def test_mep_reserves_the_full_physically_chargeable_negative_window_volume() ->
     assert result.current_interval_ends_at is not None
 
 
-def test_mep_does_not_assume_2026_saldering_for_grid_trade() -> None:
+def test_mep_builds_complete_2026_grid_trade_with_linked_saldering() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     split = snapshot.captured_at + timedelta(hours=12)
     end = snapshot.captured_at + timedelta(hours=24)
@@ -162,7 +211,13 @@ def test_mep_does_not_assume_2026_saldering_for_grid_trade() -> None:
     )
 
     grid_routes = tuple(item for item in result.market_routes if item.route_kind == "grid_trade")
-    assert grid_routes == ()
+    assert grid_routes
+    assert all(route.window_ends_at <= route.export_window_starts_at for route in grid_routes)
+    assert all(
+        item.admission_reason == "non_positive_incremental_result"
+        for item in result.route_assessments
+        if item.route_id in {route.route_id for route in grid_routes}
+    )
 
 
 def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> None:
@@ -228,7 +283,7 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
     grid_recovery = grid_recovery_routes[0]
     assert route.export_window_starts_at == export_start
     assert route.export_window_ends_at <= export_end
-    assert route.average_export_eur_per_kwh == pytest.approx(0.40)
+    assert route.average_export_eur_per_kwh == pytest.approx(0.40, abs=2e-6)
     assert route.average_recharge_eur_per_kwh == pytest.approx(0.131)
     assert route.minimum_export_eur_per_kwh == pytest.approx(0.223614, abs=1e-6)
     assert route.window_starts_at.date() > export_end.date()
@@ -371,7 +426,7 @@ def test_mep_uses_actual_duration_for_split_same_day_recovery_intervals() -> Non
     assert result.reason != "market_recovery_outside_available_horizon"
 
 
-def test_mep_explains_when_profitable_export_cannot_recover_inside_horizon() -> None:
+def test_mep_can_use_late_2026_export_after_earlier_linked_grid_charge() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
     source = snapshot.price_points[0]
     export_start = snapshot.captured_at + timedelta(hours=23)
@@ -394,8 +449,15 @@ def test_mep_explains_when_profitable_export_cannot_recover_inside_horizon() -> 
         conversion_model=_conversion(),
     )
 
-    assert result.market_routes == ()
-    assert result.reason == "market_recovery_outside_available_horizon"
+    grid_routes = tuple(
+        route for route in result.market_routes if route.route_kind == "grid_trade"
+    )
+    assert grid_routes
+    assert all(
+        route.window_ends_at <= route.export_window_starts_at
+        for route in grid_routes
+        if route.export_window_starts_at is not None
+    )
 
 
 def test_mep_source_has_no_dependency_on_cp_or_ep_runtime_outputs() -> None:

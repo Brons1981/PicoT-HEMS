@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from time import perf_counter
 
 from picot.domain.daily_reference_intent import (
@@ -28,12 +28,10 @@ from picot.v2.contracts import PlanningInputSnapshot
 from picot.v2.independent_daily_reference_adapter import (
     IndependentDailyReferenceAdapter,
 )
-from picot.v2.independent_daily_tariff_adapter import (
-    EXPORT_TAX_TRANSITION,
-    IndependentDailyTariffAdapter,
-)
+from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
 
 METHOD_VERSION = "market-daily-planner:v1"
+MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +257,7 @@ class MarketDailyPlanner:
         native_observation = IndependentDailyReferenceAdapter().observe(
             snapshot=snapshot,
             conversion_model=conversion_model,
+            maximum_duration=MARKET_DAILY_MAXIMUM_DURATION,
         )
         native_plan_ms = (perf_counter() - phase_started) * 1000.0
         horizon_end = native_observation.strategy_space.schedules[0].horizon_end
@@ -508,23 +507,26 @@ class MarketDailyPlanner:
             key=lambda item: item[0],
             reverse=True,
         )[:6]:
-            # Through 2026 a grid-imported kWh only receives saldering value
-            # when origin and remaining entitlement are proven. Planning Input
-            # has no such evidence contract yet, so ordinary grid arbitrage
-            # fails closed. Negative-price capacity routes remain separately
-            # settled as complete linked routes.
-            if charge_window[0].starts_at < EXPORT_TAX_TRANSITION:
-                continue
+            charge_start = charge_window[0].starts_at
+            charge_end = charge_window[-1].ends_at
+            export_start = export_window[0].starts_at
+            export_end = export_window[-1].ends_at
+            charge_rate = sum(
+                item.import_eur_per_kwh
+                * (item.ends_at - item.starts_at).total_seconds()
+                for item in charge_window
+            ) / ((charge_end - charge_start).total_seconds())
+            export_rate = sum(
+                item.export_eur_per_kwh
+                * (item.ends_at - item.starts_at).total_seconds()
+                for item in export_window
+            ) / ((export_end - export_start).total_seconds())
             minimum_export_rate = trading_policy.minimum_export_rate(
                 charge_rate,
                 conversion_model.charge_efficiency * conversion_model.discharge_efficiency,
             )
             if export_rate < minimum_export_rate:
                 continue
-            charge_start = charge_window[0].starts_at
-            charge_end = charge_window[-1].ends_at
-            export_start = export_window[0].starts_at
-            export_end = export_window[-1].ends_at
             result.append(
                 MarketCapacityRoute(
                     route_id=(
@@ -747,7 +749,11 @@ class MarketDailyPlanner:
         native_winner_id = sorted(native_observation.observer_result.best_observation_ids)[0]
         baseline_results = (results[candidates[native_winner_id].intent_schedule_id],)
         adapter = IndependentDailyReferenceAdapter()
-        inputs = adapter.build_inputs(snapshot, horizon_end=tariffs.horizon_end)
+        inputs = adapter.build_inputs(
+            snapshot,
+            horizon_end=tariffs.horizon_end,
+            maximum_duration=MARKET_DAILY_MAXIMUM_DURATION,
+        )
         assessments: list[MarketRouteAssessment] = []
         for route in routes:
             for baseline_result in baseline_results:
@@ -932,26 +938,18 @@ class MarketDailyPlanner:
         for scenario in PVScenario:
             baseline_flow = baseline_assessment[scenario]
             market_flow = market_assessment[scenario]
-            baseline_output_wh = (
-                baseline_flow.storage_to_household_output_wh
-                + baseline_flow.storage_to_grid_output_wh
-            )
-            market_output_wh = (
-                market_flow.storage_to_household_output_wh + market_flow.storage_to_grid_output_wh
-            )
-            extra_output_kwh = max(0.0, market_output_wh - baseline_output_wh) / 1000.0
-            wear_eur = extra_output_kwh * wear_eur_per_export_kwh
-            incremental_eur = (
-                market_financial[scenario].net_financial_result_eur
-                - baseline_financial[scenario].net_financial_result_eur
-                - wear_eur
-            )
             extra_export_kwh = (
                 max(
                     0.0,
                     market_flow.storage_to_grid_output_wh - baseline_flow.storage_to_grid_output_wh,
                 )
                 / 1000.0
+            )
+            wear_eur = extra_export_kwh * wear_eur_per_export_kwh
+            incremental_eur = (
+                market_financial[scenario].net_financial_result_eur
+                - baseline_financial[scenario].net_financial_result_eur
+                - wear_eur
             )
             incremental_results.append(incremental_eur)
             wear_values.append(wear_eur)

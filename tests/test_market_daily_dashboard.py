@@ -66,6 +66,9 @@ def test_mep_dashboard_exposes_baseline_market_and_authority_separately() -> Non
     assert route["reserved_storage_room_kwh"] == 4.8
     assert route["assessment_count"] >= 1
     assert route["admitted"] is True
+    assert "rte_adjusted_recharge_eur_per_kwh" in route
+    assert "trading_margin_eur_per_kwh" in route
+    assert route["wear_eur_per_export_kwh"] == 0.05
     assert route["assessments"][0]["admission_reason"] == (
         "admitted_profitable_complete_route"
     )
@@ -128,5 +131,8 @@ def test_dashboard_renders_mep_as_a_third_visually_distinct_planner() -> None:
     assert "MEP eigen etmaalplan" in DASHBOARD_HTML
     assert "MEP marktroutes simuleren" in DASHBOARD_HTML
     assert "Verkoop met PV-herstel" in DASHBOARD_HTML
+    assert "Na RTE" in DASHBOARD_HTML
+    assert "Marge ${formatPrice(route.trading_margin_eur_per_kwh)}" in DASHBOARD_HTML
+    assert "Slijtage ${formatPrice(route.wear_eur_per_export_kwh)}" in DASHBOARD_HTML
     assert "Verkoop met netherstel" in DASHBOARD_HTML
     assert "scenario.target_shortfall_kwh" in DASHBOARD_HTML

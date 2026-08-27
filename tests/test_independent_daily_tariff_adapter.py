@@ -40,14 +40,32 @@ def _snapshot(starts_at: datetime, *, hours: int = 2) -> PlanningInputSnapshot:
     )
 
 
-def test_2026_import_and_export_use_same_all_in_sensor_price() -> None:
+def test_2026_tariff_separates_quarter_offset_and_cross_quarter_saldering() -> None:
     result = IndependentDailyTariffAdapter().build(
         _snapshot(datetime(2026, 12, 31, 20, 0, tzinfo=timezone(timedelta(hours=1))))
     )
 
     assert result.intervals[0].import_eur_per_kwh == pytest.approx(0.30)
-    assert result.intervals[0].export_eur_per_kwh == pytest.approx(0.30)
-    assert "nl-net-metering-through-2026" in result.intervals[0].evidence_ids
+    interval = result.intervals[0]
+    energy_tax = ENERGY_TAX_EX_VAT_EUR_PER_KWH * VAT_FACTOR
+    bare_market_price = 0.30 - (
+        ENERGY_TAX_EX_VAT_EUR_PER_KWH
+        + SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH
+    ) * VAT_FACTOR
+    cross_quarter_export = bare_market_price + EXPORT_ADDITION_EUR_PER_KWH
+
+    assert interval.import_eur_per_kwh == pytest.approx(0.30)
+    assert interval.same_interval_offset_eur_per_kwh == pytest.approx(0.30)
+    assert interval.cross_interval_export_eur_per_kwh == pytest.approx(
+        cross_quarter_export
+    )
+    assert interval.saldering_tax_eur_per_kwh == pytest.approx(energy_tax)
+    assert interval.export_eur_per_kwh == pytest.approx(
+        cross_quarter_export + energy_tax
+    )
+    assert "nl-quarter-netting-and-energy-tax-saldering-through-2026" in (
+        interval.evidence_ids
+    )
 
 
 def test_2027_export_is_bare_market_price_plus_exact_contract_addition() -> None:
@@ -62,6 +80,11 @@ def test_2027_export_is_bare_market_price_plus_exact_contract_addition() -> None
     expected = bare_market_price + EXPORT_ADDITION_EUR_PER_KWH
     assert result.intervals[0].import_eur_per_kwh == pytest.approx(0.30)
     assert result.intervals[0].export_eur_per_kwh == pytest.approx(expected)
+    assert result.intervals[0].same_interval_offset_eur_per_kwh is None
+    assert result.intervals[0].cross_interval_export_eur_per_kwh == pytest.approx(
+        expected
+    )
+    assert result.intervals[0].saldering_tax_eur_per_kwh == 0.0
     assert "nl-export-bare-market-plus-0.02-2027" in result.intervals[0].evidence_ids
 
 
@@ -73,8 +96,9 @@ def test_transition_is_split_exactly_at_2027_boundary() -> None:
     )
 
     assert len(result.intervals) == 2
-    assert result.intervals[0].export_eur_per_kwh == pytest.approx(0.30)
+    assert result.intervals[0].saldering_tax_eur_per_kwh > 0.0
     assert result.intervals[1].export_eur_per_kwh < 0.30
+    assert result.intervals[1].saldering_tax_eur_per_kwh == 0.0
 
 
 def test_missing_price_coverage_blocks_schedule() -> None:

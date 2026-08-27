@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -33,6 +34,15 @@ REQUIRED_ROLES = frozenset({
     "battery_charge",
     "battery_discharge",
 })
+
+
+@dataclass(slots=True)
+class _MutableStorageEnergyLot:
+    source: str
+    stored_energy_wh: float
+    acquisition_cost_eur: float | None
+    acquired_at: datetime
+    evidence_ids: tuple[str, ...]
 
 
 class FinancialResultLedger:
@@ -383,14 +393,14 @@ class FinancialResultLedger:
         value the cheapest *known* lots, but may never assign a price to unknown
         opening or reconciliation energy.
         """
-        lots: list[dict[str, object]] = [
-            {
-                "source": item.source,
-                "stored_energy_wh": item.stored_energy_wh,
-                "acquisition_cost_eur": item.acquisition_cost_eur,
-                "acquired_at": item.acquired_at,
-                "evidence_ids": item.evidence_ids,
-            }
+        lots = [
+            _MutableStorageEnergyLot(
+                source=item.source,
+                stored_energy_wh=item.stored_energy_wh,
+                acquisition_cost_eur=item.acquisition_cost_eur,
+                acquired_at=item.acquired_at,
+                evidence_ids=item.evidence_ids,
+            )
             for item in (opening_inventory.lots if opening_inventory is not None else ())
         ]
 
@@ -398,31 +408,29 @@ class FinancialResultLedger:
             remaining = max(0.0, stored_energy_wh)
             while remaining > 1e-9 and lots:
                 lot = lots[0]
-                available = float(lot["stored_energy_wh"])
+                available = lot.stored_energy_wh
                 taken = min(remaining, available)
-                cost = lot["acquisition_cost_eur"]
+                cost = lot.acquisition_cost_eur
                 if cost is not None:
-                    lot["acquisition_cost_eur"] = (
-                        float(cost) * (available - taken) / available
-                    )
-                lot["stored_energy_wh"] = available - taken
+                    lot.acquisition_cost_eur = cost * (available - taken) / available
+                lot.stored_energy_wh = available - taken
                 remaining -= taken
-                if float(lot["stored_energy_wh"]) <= 1e-9:
+                if lot.stored_energy_wh <= 1e-9:
                     lots.pop(0)
 
         opening_delta_wh = initial_stored_energy_wh - sum(
-            float(item["stored_energy_wh"]) for item in lots
+            item.stored_energy_wh for item in lots
         )
         if opening_delta_wh < -1.0:
             consume(-opening_delta_wh)
         elif opening_delta_wh > 1.0:
-            lots.append({
-                "source": "unknown",
-                "stored_energy_wh": opening_delta_wh,
-                "acquisition_cost_eur": None,
-                "acquired_at": starts_at,
-                "evidence_ids": ("opening-storage-balance",),
-            })
+            lots.append(_MutableStorageEnergyLot(
+                source="unknown",
+                stored_energy_wh=opening_delta_wh,
+                acquisition_cost_eur=None,
+                acquired_at=starts_at,
+                evidence_ids=("opening-storage-balance",),
+            ))
 
         for start, end, import_rate, export_rate, values in segments:
             consume(values["battery_discharge"] / self.discharge_efficiency)
@@ -444,32 +452,30 @@ class FinancialResultLedger:
                 stored_wh = input_wh * self.charge_efficiency
                 if stored_wh <= 1e-9:
                     continue
-                lots.append({
-                    "source": source,
-                    "stored_energy_wh": stored_wh,
-                    "acquisition_cost_eur": input_wh * rate / 1000.0,
-                    "acquired_at": end,
-                    "evidence_ids": evidence,
-                })
+                lots.append(_MutableStorageEnergyLot(
+                    source=source,
+                    stored_energy_wh=stored_wh,
+                    acquisition_cost_eur=input_wh * rate / 1000.0,
+                    acquired_at=end,
+                    evidence_ids=evidence,
+                ))
 
-        accounted_wh = sum(float(item["stored_energy_wh"]) for item in lots)
+        accounted_wh = sum(item.stored_energy_wh for item in lots)
         delta_wh = measured_stored_energy_wh - accounted_wh
         if delta_wh < -1.0:
             consume(-delta_wh)
         elif delta_wh > 1.0:
-            lots.append({
-                "source": "unknown",
-                "stored_energy_wh": delta_wh,
-                "acquisition_cost_eur": None,
-                "acquired_at": captured_at,
-                "evidence_ids": ("measured-storage-reconciliation",),
-            })
-        reconciled_wh = sum(float(item["stored_energy_wh"]) for item in lots)
+            lots.append(_MutableStorageEnergyLot(
+                source="unknown",
+                stored_energy_wh=delta_wh,
+                acquisition_cost_eur=None,
+                acquired_at=captured_at,
+                evidence_ids=("measured-storage-reconciliation",),
+            ))
+        reconciled_wh = sum(item.stored_energy_wh for item in lots)
         final_delta_wh = measured_stored_energy_wh - reconciled_wh
         if abs(final_delta_wh) > 1e-9 and lots:
-            lots[-1]["stored_energy_wh"] = (
-                float(lots[-1]["stored_energy_wh"]) + final_delta_wh
-            )
+            lots[-1].stored_energy_wh += final_delta_wh
 
         return StorageEnergyInventory(
             execution_scope_id=execution_scope_id,
@@ -477,18 +483,14 @@ class FinancialResultLedger:
             measured_stored_energy_wh=measured_stored_energy_wh,
             lots=tuple(
                 StorageEnergyLot(
-                    source=str(item["source"]),
-                    stored_energy_wh=float(item["stored_energy_wh"]),
-                    acquisition_cost_eur=(
-                        float(item["acquisition_cost_eur"])
-                        if item["acquisition_cost_eur"] is not None
-                        else None
-                    ),
-                    acquired_at=item["acquired_at"],  # type: ignore[arg-type]
-                    evidence_ids=item["evidence_ids"],  # type: ignore[arg-type]
+                    source=item.source,
+                    stored_energy_wh=item.stored_energy_wh,
+                    acquisition_cost_eur=item.acquisition_cost_eur,
+                    acquired_at=item.acquired_at,
+                    evidence_ids=item.evidence_ids,
                 )
                 for item in lots
-                if float(item["stored_energy_wh"]) > 1e-9
+                if item.stored_energy_wh > 1e-9
             ),
         )
 
@@ -520,12 +522,16 @@ class FinancialResultLedger:
     @staticmethod
     def _inventory_from_view(value: dict[str, object]) -> StorageEnergyInventory | None:
         raw_lots = value.get("lots")
-        if not isinstance(raw_lots, list):
+        measured_stored_energy_wh = value.get("measured_stored_energy_wh")
+        if not isinstance(raw_lots, list) or not isinstance(
+            measured_stored_energy_wh,
+            int | float | str,
+        ):
             return None
         return StorageEnergyInventory(
             execution_scope_id=str(value["execution_scope_id"]),
             captured_at=datetime.fromisoformat(str(value["captured_at"])),
-            measured_stored_energy_wh=float(value["measured_stored_energy_wh"]),
+            measured_stored_energy_wh=float(measured_stored_energy_wh),
             lots=tuple(
                 StorageEnergyLot(
                     source=str(item["source"]),

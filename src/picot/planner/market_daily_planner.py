@@ -700,23 +700,21 @@ class MarketDailyPlanner:
                 for item in recovery_window
             ) / ((recovery_end - recovery_start).total_seconds())
             recharge_input_wh = export_output_wh / rte
-            inventory_fields = {
-                "inventory_deliverable_energy_wh": (
-                    inventory_allocation.deliverable_energy_wh
-                    if inventory_allocation is not None
-                    else None
-                ),
-                "inventory_acquisition_cost_eur": (
-                    inventory_allocation.acquisition_cost_eur
-                    if inventory_allocation is not None
-                    else None
-                ),
-                "inventory_sources": (
-                    inventory_allocation.sources
-                    if inventory_allocation is not None
-                    else ()
-                ),
-            }
+            inventory_deliverable_energy_wh = (
+                inventory_allocation.deliverable_energy_wh
+                if inventory_allocation is not None
+                else None
+            )
+            inventory_acquisition_cost_eur = (
+                inventory_allocation.acquisition_cost_eur
+                if inventory_allocation is not None
+                else None
+            )
+            inventory_sources = (
+                inventory_allocation.sources
+                if inventory_allocation is not None
+                else ()
+            )
             # First assess whether MEP's native PV/NOM schedule restores the
             # sold energy without buying it back.  The cheapest next-day grid
             # price is still the policy reference: it is the proven fallback
@@ -742,7 +740,9 @@ class MarketDailyPlanner:
                     average_export_eur_per_kwh=export_rate,
                     average_recharge_eur_per_kwh=recharge_rate,
                     minimum_export_eur_per_kwh=minimum_export_rate,
-                    **inventory_fields,
+                    inventory_deliverable_energy_wh=inventory_deliverable_energy_wh,
+                    inventory_acquisition_cost_eur=inventory_acquisition_cost_eur,
+                    inventory_sources=inventory_sources,
                     method_version=METHOD_VERSION,
                 )
             )
@@ -772,7 +772,9 @@ class MarketDailyPlanner:
                     average_export_eur_per_kwh=export_rate,
                     average_recharge_eur_per_kwh=recharge_rate,
                     minimum_export_eur_per_kwh=minimum_export_rate,
-                    **inventory_fields,
+                    inventory_deliverable_energy_wh=inventory_deliverable_energy_wh,
+                    inventory_acquisition_cost_eur=inventory_acquisition_cost_eur,
+                    inventory_sources=inventory_sources,
                     method_version=METHOD_VERSION,
                 )
             )

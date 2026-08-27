@@ -8,10 +8,9 @@ from zoneinfo import ZoneInfo
 from picot.v2.contracts import PlanningInputSnapshot
 from picot.v2.live_pv_actual import LivePVActualDiagnostics
 
-METHOD_VERSION = "daily-measured-pv-basis:v1"
+METHOD_VERSION = "daily-measured-pv-basis:v2"
 MINIMUM_ACTUAL_INTERVALS = 4
 MINIMUM_CENTRAL_EVIDENCE_WH = 500.0
-CENTRAL_TRACKING_RATIO = 0.9
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,44 +31,58 @@ def apply_daily_measured_pv_basis(
     diagnostics: LivePVActualDiagnostics | None,
     local_timezone: ZoneInfo,
 ) -> tuple[PlanningInputSnapshot, DailyPVBasisDecision]:
-    """Use central for remaining today only when closed actuals prove it.
+    """Plan from the lower/central midpoint and adapt today's basis to actuals.
 
     The returned snapshot is intended exclusively for EP/MEP. The canonical
     planner keeps the unmodified snapshot and therefore retains its existing
-    conservative basis.
+    conservative basis. Future dates remain on the midpoint; complete closed
+    actual evidence may move only the remaining current day to lower or central.
     """
 
     decision = _select_basis(diagnostics)
     timeline = snapshot.pv_energy_timeline
-    if decision.basis != "central" or timeline is None:
+    if timeline is None:
         return snapshot, decision
 
     local_date = snapshot.captured_at.astimezone(local_timezone).date()
     adjusted_count = 0
     adjusted_intervals = []
     for interval in timeline.intervals:
-        is_remaining_today = (
+        lower_wh = interval.forecast_lower_energy_wh
+        central_wh = interval.forecast_central_energy_wh
+        is_remaining_forecast = (
             interval.ends_at > snapshot.captured_at
-            and interval.starts_at.astimezone(local_timezone).date() == local_date
             and interval.evidence_type == "FORECAST"
             and interval.forecast_range_status == "available"
-            and interval.forecast_central_energy_wh is not None
+            and lower_wh is not None
+            and central_wh is not None
         )
-        if is_remaining_today:
+        if is_remaining_forecast:
+            assert lower_wh is not None
+            assert central_wh is not None
+            is_remaining_today = (
+                interval.starts_at.astimezone(local_timezone).date() == local_date
+            )
+            midpoint_wh = (lower_wh + central_wh) / 2.0
+            selected_lower_wh = midpoint_wh
+            if is_remaining_today and decision.basis == "lower":
+                selected_lower_wh = lower_wh
+            elif is_remaining_today and decision.basis == "central":
+                selected_lower_wh = central_wh
             adjusted_intervals.append(
                 replace(
                     interval,
-                    forecast_lower_energy_wh=(interval.forecast_central_energy_wh),
+                    forecast_lower_energy_wh=selected_lower_wh,
                 )
             )
-            adjusted_count += 1
+            adjusted_count += selected_lower_wh != lower_wh
         else:
             adjusted_intervals.append(interval)
 
     if adjusted_count == 0:
         return snapshot, replace(
             decision,
-            reason="central_supported_no_remaining_today_intervals",
+            reason=f"{decision.basis}_selected_no_adjustable_intervals",
         )
     return (
         replace(
@@ -87,13 +100,14 @@ def _select_basis(
     diagnostics: LivePVActualDiagnostics | None,
 ) -> DailyPVBasisDecision:
     if diagnostics is None or diagnostics.cumulative_evidence is None:
-        return _lower("actual_evidence_unavailable")
+        return _decision("midpoint", "actual_evidence_unavailable")
     evidence = diagnostics.cumulative_evidence
     if (
         evidence.coverage_status != "complete"
         or diagnostics.actual_interval_count != diagnostics.closed_forecast_count
     ):
-        return _lower(
+        return _decision(
+            "midpoint",
             "actual_coverage_incomplete",
             assessed=evidence.assessed_interval_count,
             evidence_id=evidence.evidence_id,
@@ -104,43 +118,67 @@ def _select_basis(
         if (item.forecast_central_energy_wh is not None and item.forecast_central_energy_wh > 0.0)
     )
     if len(daylight) < MINIMUM_ACTUAL_INTERVALS:
-        return _lower(
+        return _decision(
+            "midpoint",
             "actual_duration_insufficient",
             assessed=len(daylight),
             evidence_id=evidence.evidence_id,
         )
     if evidence.forecast_central_energy_wh < MINIMUM_CENTRAL_EVIDENCE_WH:
-        return _lower(
+        return _decision(
+            "midpoint",
             "actual_energy_evidence_insufficient",
             assessed=len(daylight),
             evidence_id=evidence.evidence_id,
         )
 
-    tracking_ratio = evidence.actual_energy_wh / evidence.forecast_central_energy_wh
+    central_wh = evidence.forecast_central_energy_wh
+    lower_wh = evidence.forecast_lower_energy_wh
+    if lower_wh is None:
+        return _decision(
+            "midpoint",
+            "actual_forecast_range_unavailable",
+            assessed=len(daylight),
+            evidence_id=evidence.evidence_id,
+        )
+    midpoint_wh = (lower_wh + central_wh) / 2.0
+    tracking_ratio = evidence.actual_energy_wh / central_wh
     recent = daylight[-MINIMUM_ACTUAL_INTERVALS:]
     recent_central_wh = sum(item.forecast_central_energy_wh or 0.0 for item in recent)
+    recent_lower_wh = sum(item.forecast_lower_energy_wh or 0.0 for item in recent)
+    recent_actual_wh = sum(item.actual_energy_wh for item in recent)
     recent_tracking_ratio = (
-        sum(item.actual_energy_wh for item in recent) / recent_central_wh
+        recent_actual_wh / recent_central_wh
         if recent_central_wh > 0.0
         else None
     )
+    recent_midpoint_wh = (recent_lower_wh + recent_central_wh) / 2.0
     if (
-        tracking_ratio < CENTRAL_TRACKING_RATIO
-        or recent_tracking_ratio is None
-        or recent_tracking_ratio < CENTRAL_TRACKING_RATIO
+        evidence.actual_energy_wh < midpoint_wh
+        or recent_actual_wh < recent_midpoint_wh
     ):
         return DailyPVBasisDecision(
             basis="lower",
-            reason="actual_tracking_below_central_threshold",
+            reason="actual_tracking_below_midpoint",
             tracking_ratio=tracking_ratio,
             recent_tracking_ratio=recent_tracking_ratio,
             assessed_interval_count=len(daylight),
             adjusted_interval_count=0,
             evidence_id=evidence.evidence_id,
         )
+    basis = (
+        "central"
+        if evidence.actual_energy_wh >= central_wh
+        and recent_actual_wh >= recent_central_wh
+        else "midpoint"
+    )
     return DailyPVBasisDecision(
-        basis="central",
-        reason="actual_tracking_supports_central",
+        basis=basis,
+        reason=(
+            "actual_tracking_supports_central"
+            if basis == "central"
+            else "actual_tracking_supports_midpoint"
+        ),
         tracking_ratio=tracking_ratio,
         recent_tracking_ratio=recent_tracking_ratio,
         assessed_interval_count=len(daylight),
@@ -149,14 +187,15 @@ def _select_basis(
     )
 
 
-def _lower(
+def _decision(
+    basis: str,
     reason: str,
     *,
     assessed: int = 0,
     evidence_id: str | None = None,
 ) -> DailyPVBasisDecision:
     return DailyPVBasisDecision(
-        basis="lower",
+        basis=basis,
         reason=reason,
         tracking_ratio=None,
         recent_tracking_ratio=None,

@@ -3608,7 +3608,7 @@ DASHBOARD_HTML = """<!doctype html>
           )) ? formatPrice(Number(mep.wear_eur_per_export_kwh)) : null],
           ["Minimale routewinst", Number.isFinite(Number(
             mep.minimum_total_route_profit_eur
-          )) ? formatMoney(Number(mep.minimum_total_route_profit_eur)) : null],
+          )) ? formatCurrency(Number(mep.minimum_total_route_profit_eur)) : null],
           ["Exportvenster vanaf", mepRoute?.export_window_starts_at],
           ["Exportvenster tot", mepRoute?.export_window_ends_at],
           ["Herstelvenster vanaf", mepRoute?.window_starts_at],
@@ -3732,7 +3732,7 @@ DASHBOARD_HTML = """<!doctype html>
           `Na RTE ${formatPrice(route.rte_adjusted_recharge_eur_per_kwh)}`,
           `Marge ${formatPrice(route.trading_margin_eur_per_kwh)}`,
           `Slijtage ${formatPrice(route.wear_eur_per_export_kwh)}`,
-          `Voorraadkost ${formatMoney(route.inventory_acquisition_cost_eur)}`,
+          `Voorraadkost ${formatCurrency(route.inventory_acquisition_cost_eur)}`,
           `Voorraadbron ${(route.inventory_sources ?? []).join(" + ") || "onbekend"}`,
           `Minimum ${formatPrice(route.minimum_export_eur_per_kwh)}`,
         ].join(" · ");

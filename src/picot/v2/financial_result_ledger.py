@@ -9,6 +9,10 @@ from threading import Lock
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from picot.domain.storage_energy_inventory import (
+    StorageEnergyInventory,
+    StorageEnergyLot,
+)
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
 from picot.v2.independent_daily_tariff_adapter import (
     ENERGY_TAX_EX_VAT_EUR_PER_KWH,
@@ -97,6 +101,24 @@ class FinancialResultLedger:
     def dashboard_view(self) -> dict[str, object]:
         with self._lock:
             return self._dashboard_view_locked()
+
+    def storage_energy_inventory(self) -> StorageEnergyInventory | None:
+        """Return the latest measured cost basis without granting planner authority."""
+        with self._lock:
+            days = self._state.get("days", {})
+            if not isinstance(days, dict):
+                return None
+            latest = max(
+                (item for item in days.values() if isinstance(item, dict)),
+                key=lambda item: str(item.get("day", "")),
+                default=None,
+            )
+            if latest is None or latest.get("status") != "available":
+                return None
+            value = latest.get("storage_energy_inventory")
+            if not isinstance(value, dict):
+                return None
+            return self._inventory_from_view(value)
 
     def _dashboard_view_locked(self) -> dict[str, object]:
         days = self._state.get("days", {})
@@ -190,6 +212,9 @@ class FinancialResultLedger:
             "battery": 0.0,
             "grid": 0.0,
         }
+        inventory_segments: list[
+            tuple[datetime, datetime, float, float, dict[str, float]]
+        ] = []
         for start, end, import_rate, export_rate in segments:
             values = {role: self._integrate(series, start, end) for role, series in by_role.items()}
             if any(value is None for value in values.values()):
@@ -198,6 +223,9 @@ class FinancialResultLedger:
             complete_values = {
                 role: value for role, value in values.items() if value is not None
             }
+            inventory_segments.append(
+                (start, end, import_rate, export_rate, complete_values)
+            )
             interval_import_cost = (
                 complete_values["grid_import"] * import_rate / 1000.0
             )
@@ -255,6 +283,15 @@ class FinancialResultLedger:
             state.usable_capacity_wh * limit.minimum_soc,
             min(state.usable_capacity_wh * limit.maximum_soc, initial_energy),
         )
+        inventory = self._build_storage_inventory(
+            execution_scope_id=state.execution_scope_id,
+            captured_at=snapshot.captured_at,
+            measured_stored_energy_wh=state.current_stored_energy_wh,
+            initial_stored_energy_wh=initial_energy,
+            starts_at=history.starts_at,
+            segments=inventory_segments,
+            opening_inventory=self._prior_storage_inventory(local_day),
+        )
         nom_cost, nom_discharge = self._simulate_nom(
             by_role=by_role,
             segments=segments,
@@ -300,6 +337,7 @@ class FinancialResultLedger:
                 key: round(value / 1000.0, 4)
                 for key, value in complete_energy_by_role.items()
             },
+            "storage_energy_inventory": self._inventory_view(inventory),
             "household_energy_sources": {
                 "household_load_kwh": round(household_load_wh / 1000.0, 4),
                 "sources": [
@@ -323,6 +361,229 @@ class FinancialResultLedger:
             ),
         })
         return result
+
+    def _build_storage_inventory(
+        self,
+        *,
+        execution_scope_id: str,
+        captured_at: datetime,
+        measured_stored_energy_wh: float,
+        initial_stored_energy_wh: float,
+        starts_at: datetime,
+        segments: list[
+            tuple[datetime, datetime, float, float, dict[str, float]]
+        ],
+        opening_inventory: StorageEnergyInventory | None,
+    ) -> StorageEnergyInventory:
+        """Replay measured flows into auditable source-and-cost lots.
+
+        The opening balance is deliberately unknown. New PV energy is valued at
+        foregone export revenue and grid energy at its measured import tariff.
+        Discharge consumes the oldest physical lots; route selection may later
+        value the cheapest *known* lots, but may never assign a price to unknown
+        opening or reconciliation energy.
+        """
+        lots: list[dict[str, object]] = [
+            {
+                "source": item.source,
+                "stored_energy_wh": item.stored_energy_wh,
+                "acquisition_cost_eur": item.acquisition_cost_eur,
+                "acquired_at": item.acquired_at,
+                "evidence_ids": item.evidence_ids,
+            }
+            for item in (opening_inventory.lots if opening_inventory is not None else ())
+        ]
+
+        def consume(stored_energy_wh: float) -> None:
+            remaining = max(0.0, stored_energy_wh)
+            while remaining > 1e-9 and lots:
+                lot = lots[0]
+                available = float(lot["stored_energy_wh"])
+                taken = min(remaining, available)
+                cost = lot["acquisition_cost_eur"]
+                if cost is not None:
+                    lot["acquisition_cost_eur"] = (
+                        float(cost) * (available - taken) / available
+                    )
+                lot["stored_energy_wh"] = available - taken
+                remaining -= taken
+                if float(lot["stored_energy_wh"]) <= 1e-9:
+                    lots.pop(0)
+
+        opening_delta_wh = initial_stored_energy_wh - sum(
+            float(item["stored_energy_wh"]) for item in lots
+        )
+        if opening_delta_wh < -1.0:
+            consume(-opening_delta_wh)
+        elif opening_delta_wh > 1.0:
+            lots.append({
+                "source": "unknown",
+                "stored_energy_wh": opening_delta_wh,
+                "acquisition_cost_eur": None,
+                "acquired_at": starts_at,
+                "evidence_ids": ("opening-storage-balance",),
+            })
+
+        for start, end, import_rate, export_rate, values in segments:
+            consume(values["battery_discharge"] / self.discharge_efficiency)
+            charge_input_wh = values["battery_charge"]
+            pv_surplus_wh = max(
+                0.0,
+                values["pv_generation"] - values["household_load"],
+            )
+            pv_input_wh = min(charge_input_wh, pv_surplus_wh)
+            grid_input_wh = max(0.0, charge_input_wh - pv_input_wh)
+            evidence = (
+                f"measured-storage-flow:{start.astimezone(UTC).isoformat()}",
+                f"tariff:{start.astimezone(UTC).isoformat()}",
+            )
+            for source, input_wh, rate in (
+                ("pv", pv_input_wh, export_rate),
+                ("grid", grid_input_wh, import_rate),
+            ):
+                stored_wh = input_wh * self.charge_efficiency
+                if stored_wh <= 1e-9:
+                    continue
+                lots.append({
+                    "source": source,
+                    "stored_energy_wh": stored_wh,
+                    "acquisition_cost_eur": input_wh * rate / 1000.0,
+                    "acquired_at": end,
+                    "evidence_ids": evidence,
+                })
+
+        accounted_wh = sum(float(item["stored_energy_wh"]) for item in lots)
+        delta_wh = measured_stored_energy_wh - accounted_wh
+        if delta_wh < -1.0:
+            consume(-delta_wh)
+        elif delta_wh > 1.0:
+            lots.append({
+                "source": "unknown",
+                "stored_energy_wh": delta_wh,
+                "acquisition_cost_eur": None,
+                "acquired_at": captured_at,
+                "evidence_ids": ("measured-storage-reconciliation",),
+            })
+        reconciled_wh = sum(float(item["stored_energy_wh"]) for item in lots)
+        final_delta_wh = measured_stored_energy_wh - reconciled_wh
+        if abs(final_delta_wh) > 1e-9 and lots:
+            lots[-1]["stored_energy_wh"] = (
+                float(lots[-1]["stored_energy_wh"]) + final_delta_wh
+            )
+
+        return StorageEnergyInventory(
+            execution_scope_id=execution_scope_id,
+            captured_at=captured_at,
+            measured_stored_energy_wh=measured_stored_energy_wh,
+            lots=tuple(
+                StorageEnergyLot(
+                    source=str(item["source"]),
+                    stored_energy_wh=float(item["stored_energy_wh"]),
+                    acquisition_cost_eur=(
+                        float(item["acquisition_cost_eur"])
+                        if item["acquisition_cost_eur"] is not None
+                        else None
+                    ),
+                    acquired_at=item["acquired_at"],  # type: ignore[arg-type]
+                    evidence_ids=item["evidence_ids"],  # type: ignore[arg-type]
+                )
+                for item in lots
+                if float(item["stored_energy_wh"]) > 1e-9
+            ),
+        )
+
+    def _prior_storage_inventory(
+        self,
+        local_day: str,
+    ) -> StorageEnergyInventory | None:
+        days = self._state.get("days", {})
+        if not isinstance(days, dict):
+            return None
+        previous = max(
+            (
+                item
+                for day, item in days.items()
+                if str(day) < local_day
+                and isinstance(item, dict)
+                and item.get("status") == "available"
+                and isinstance(item.get("storage_energy_inventory"), dict)
+            ),
+            key=lambda item: str(item.get("day", "")),
+            default=None,
+        )
+        if previous is None:
+            return None
+        value = previous["storage_energy_inventory"]
+        assert isinstance(value, dict)
+        return self._inventory_from_view(value)
+
+    @staticmethod
+    def _inventory_from_view(value: dict[str, object]) -> StorageEnergyInventory | None:
+        raw_lots = value.get("lots")
+        if not isinstance(raw_lots, list):
+            return None
+        return StorageEnergyInventory(
+            execution_scope_id=str(value["execution_scope_id"]),
+            captured_at=datetime.fromisoformat(str(value["captured_at"])),
+            measured_stored_energy_wh=float(value["measured_stored_energy_wh"]),
+            lots=tuple(
+                StorageEnergyLot(
+                    source=str(item["source"]),
+                    stored_energy_wh=float(item["stored_energy_wh"]),
+                    acquisition_cost_eur=(
+                        float(item["acquisition_cost_eur"])
+                        if item.get("acquisition_cost_eur") is not None
+                        else None
+                    ),
+                    acquired_at=datetime.fromisoformat(str(item["acquired_at"])),
+                    evidence_ids=tuple(str(entry) for entry in item["evidence_ids"]),
+                )
+                for item in raw_lots
+                if isinstance(item, dict)
+            ),
+        )
+
+    @staticmethod
+    def _inventory_view(inventory: StorageEnergyInventory) -> dict[str, object]:
+        known_cost_eur = sum(
+            float(item.acquisition_cost_eur or 0.0)
+            for item in inventory.lots
+            if item.acquisition_cost_eur is not None
+        )
+        return {
+            "execution_scope_id": inventory.execution_scope_id,
+            "captured_at": inventory.captured_at.isoformat(),
+            "measured_stored_energy_wh": round(
+                inventory.measured_stored_energy_wh, 6
+            ),
+            "known_stored_energy_wh": round(inventory.known_stored_energy_wh, 6),
+            "unknown_stored_energy_wh": round(
+                inventory.measured_stored_energy_wh
+                - inventory.known_stored_energy_wh,
+                6,
+            ),
+            "known_acquisition_cost_eur": round(known_cost_eur, 6),
+            "method_version": inventory.method_version,
+            "lots": [
+                {
+                    "source": item.source,
+                    "stored_energy_wh": round(item.stored_energy_wh, 6),
+                    "acquisition_cost_eur": (
+                        round(item.acquisition_cost_eur, 6)
+                        if item.acquisition_cost_eur is not None
+                        else None
+                    ),
+                    "cost_eur_per_stored_kwh": (
+                        round(item.cost_eur_per_stored_kwh, 6)
+                        if item.cost_eur_per_stored_kwh is not None
+                        else None
+                    ),
+                    "acquired_at": item.acquired_at.isoformat(),
+                    "evidence_ids": list(item.evidence_ids),
+                }
+                for item in inventory.lots
+            ],
+        }
 
     @staticmethod
     def _coverage_by_role(

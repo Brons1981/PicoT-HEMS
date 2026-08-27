@@ -5,6 +5,10 @@ import pytest
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
 from picot.domain.storage_conversion_model import StorageConversionModel
+from picot.domain.storage_energy_inventory import (
+    StorageEnergyInventory,
+    StorageEnergyLot,
+)
 from picot.planner.market_daily_planner import MarketDailyPlanner, MarketTradingPolicy
 
 
@@ -214,7 +218,11 @@ def test_mep_builds_complete_2026_grid_trade_with_linked_saldering() -> None:
     assert grid_routes
     assert all(route.window_ends_at <= route.export_window_starts_at for route in grid_routes)
     assert all(
-        item.admission_reason == "non_positive_incremental_result"
+        item.admission_reason
+        in {
+            "minimum_total_route_profit_not_met",
+            "physical_baseline_or_reserve_not_restored",
+        }
         for item in result.route_assessments
         if item.route_id in {route.route_id for route in grid_routes}
     )
@@ -288,7 +296,7 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
     assert route.minimum_export_eur_per_kwh == pytest.approx(0.223614, abs=1e-6)
     assert route.window_starts_at.date() > export_end.date()
     assert route.maximum_charge_input_wh == 0.0
-    assert grid_recovery.maximum_charge_input_wh > (
+    assert grid_recovery.maximum_charge_input_wh == pytest.approx(
         grid_recovery.required_pre_window_discharge_output_wh / 0.83
     )
     assert grid_recovery.window_starts_at == route.window_starts_at
@@ -317,10 +325,102 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
     )
     assert pv_assessment.physically_admissible is True
     assert all(
-        scenario.target_held_at_horizon_end
+        scenario.storage_energy_at_horizon_end_wh
+        >= scenario.baseline_storage_energy_at_horizon_end_wh
+        for scenario in grid_assessment.scenario_evidence
+    )
+    assert all(
+        not scenario.target_held_at_horizon_end
         for scenario in grid_assessment.scenario_evidence
     )
     assert grid_assessment.physically_admissible is True
+
+
+def test_mep_values_only_known_inventory_and_keeps_one_contiguous_export_window() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
+    source = snapshot.price_points[0]
+    export_start = snapshot.captured_at + timedelta(hours=4)
+    export_end = export_start + timedelta(hours=1)
+    recovery_end = export_end + timedelta(hours=4)
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(source, point_id="before", ends_at=export_start, value_eur_per_kwh=0.30),
+            replace(
+                source,
+                point_id="export",
+                starts_at=export_start,
+                ends_at=export_end,
+                value_eur_per_kwh=0.40,
+            ),
+            replace(
+                source,
+                point_id="recovery",
+                starts_at=export_end,
+                ends_at=recovery_end,
+                value_eur_per_kwh=0.131,
+            ),
+            replace(
+                source,
+                point_id="after",
+                starts_at=recovery_end,
+                ends_at=snapshot.captured_at + timedelta(hours=24),
+                value_eur_per_kwh=0.30,
+            ),
+        ),
+    )
+    measured_wh = snapshot.current_storage_states[0].current_stored_energy_wh
+    inventory = StorageEnergyInventory(
+        execution_scope_id="battery",
+        captured_at=snapshot.captured_at,
+        measured_stored_energy_wh=measured_wh,
+        lots=(
+            StorageEnergyLot(
+                source="pv",
+                stored_energy_wh=2000.0,
+                acquisition_cost_eur=0.04,
+                acquired_at=snapshot.captured_at - timedelta(hours=2),
+                evidence_ids=("measured-pv-charge",),
+            ),
+            StorageEnergyLot(
+                source="unknown",
+                stored_energy_wh=measured_wh - 2000.0,
+                acquisition_cost_eur=None,
+                acquired_at=snapshot.captured_at,
+                evidence_ids=("opening-balance",),
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=StorageConversionModel(
+            model_id="zendure-rte",
+            charge_efficiency=0.83**0.5,
+            discharge_efficiency=0.83**0.5,
+            evidence_ids=("zendure-rte",),
+            method_version="test:v1",
+        ),
+        storage_inventory=inventory,
+    )
+
+    routes = tuple(
+        route for route in result.market_routes if route.route_kind == "pv_trade"
+    )
+    assert routes
+    assert all(route.inventory_sources == ("pv",) for route in routes)
+    assert all(
+        route.inventory_deliverable_energy_wh is not None
+        and route.required_pre_window_discharge_output_wh
+        <= route.inventory_deliverable_energy_wh
+        for route in routes
+    )
+    assert all(
+        route.export_window_starts_at < route.export_window_ends_at
+        for route in routes
+        if route.export_window_starts_at is not None
+        and route.export_window_ends_at is not None
+    )
 
 
 def test_mep_accepts_cheaper_recovery_later_on_same_day() -> None:

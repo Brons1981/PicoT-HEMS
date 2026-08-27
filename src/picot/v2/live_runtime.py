@@ -2371,6 +2371,9 @@ def main() -> None:
             market_daily_conversion_model,
             trading_policy=market_daily_trading_policy,
             micro_charge_suppression_fraction=micro_charge_suppression_fraction,
+            storage_inventory_provider=(
+                financial_result_ledger.storage_energy_inventory
+            ),
             live_enabled=market_daily_execution_enabled,
             execution_runtime=MarketDailyExecutionRuntime(
                 dispatch=HomeAssistantCanonicalModeAdapter(

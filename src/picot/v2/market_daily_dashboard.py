@@ -152,6 +152,9 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
         "round_trip_efficiency": plan.round_trip_efficiency,
         "trading_margin_percent": plan.trading_margin_fraction * 100.0,
         "wear_eur_per_export_kwh": plan.wear_eur_per_export_kwh,
+        "minimum_total_route_profit_eur": (
+            plan.minimum_total_route_profit_eur
+        ),
         "current_intent": (plan.current_intent.value if plan.current_intent is not None else None),
         "current_interval_ends_at": (
             plan.current_interval_ends_at.isoformat()
@@ -188,6 +191,15 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
                 "average_export_eur_per_kwh": route.average_export_eur_per_kwh,
                 "average_recharge_eur_per_kwh": route.average_recharge_eur_per_kwh,
                 "minimum_export_eur_per_kwh": route.minimum_export_eur_per_kwh,
+                "inventory_deliverable_energy_kwh": (
+                    route.inventory_deliverable_energy_wh / 1000.0
+                    if route.inventory_deliverable_energy_wh is not None
+                    else None
+                ),
+                "inventory_acquisition_cost_eur": (
+                    route.inventory_acquisition_cost_eur
+                ),
+                "inventory_sources": list(route.inventory_sources),
                 "rte_adjusted_recharge_eur_per_kwh": (
                     route.average_recharge_eur_per_kwh / plan.round_trip_efficiency
                     if route.average_recharge_eur_per_kwh is not None
@@ -227,6 +239,9 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
                         ),
                         "admitted": item.admitted,
                         "admission_reason": item.admission_reason,
+                        "minimum_total_route_profit_eur": (
+                            item.minimum_total_route_profit_eur
+                        ),
                         "scenarios": [
                             {
                                 "scenario": evidence.scenario.value,

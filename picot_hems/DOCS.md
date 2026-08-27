@@ -66,3 +66,18 @@ met hetzelfde scenario zonder handel. De route is fysiek toegestaan wanneer de
 batterij minstens tot dat baseline-niveau wordt hersteld en de minimumreserve
 gewaarborgd blijft. Daarna moet de volledige route, inclusief RTE, handelsmarge
 en slijtage, nog steeds financieel positief zijn.
+
+## Kostprijs van opgeslagen energie
+
+PicoT houdt gemeten laadenergie als afzonderlijke voorraadloten bij. Netenergie
+krijgt de werkelijke inkoopprijs; PV-energie krijgt de gemiste terugleverwaarde.
+Een onbekende beginvoorraad krijgt bewust geen verzonnen kostprijs. De loten
+blijven over de daggrens behouden, zodat vandaag goedkoop geladen energie morgen
+nog tegen de juiste kostprijs kan worden beoordeeld.
+
+MEP onderzoekt één aaneengesloten exportvenster en reserveert daarna zo nodig een
+volledig herstelvenster. Het herstel hoeft alleen het scenario-baselineverloop te
+herstellen en de complete route moet in het slechtste scenario minimaal vijf cent
+netto opleveren. Zodra de exportsessie is gestart, blijft die sessie vastgelegd tot
+het venster of het energiedoel eindigt; een nieuwe 60-secondenpoll start geen losse
+kwartierhandel.

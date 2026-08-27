@@ -18,6 +18,7 @@ from picot.domain.execution import ExecutionPrimitiveRequest
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.home_assistant import HomeAssistantCommandMapping
 from picot.domain.storage_conversion_model import StorageConversionModel
+from picot.domain.storage_energy_inventory import StorageEnergyInventory
 from picot.planner.market_daily_planner import (
     MarketDailyPlan,
     MarketDailyPlanner,
@@ -214,8 +215,11 @@ class MarketDailyExecutionRuntime:
         if evidence.current_vendor_mode == requested_mode:
             self._pending_vendor_mode = None
             saved = None
-            if plan.current_intent is DailyStorageIntent.NOM:
-                saved = self._persist_nom_commitment(
+            if plan.current_intent in {
+                DailyStorageIntent.NOM,
+                DailyStorageIntent.STORAGE_EXPORT,
+            }:
+                saved = self._persist_action_commitment(
                     plan=plan,
                     snapshot=snapshot,
                     execution_scope_id=evidence.execution_scope_id,
@@ -277,10 +281,11 @@ class MarketDailyExecutionRuntime:
         if result.status == "dispatched":
             self._pending_vendor_mode = requested_mode
         if (
-            plan.current_intent is DailyStorageIntent.NOM
+            plan.current_intent
+            in {DailyStorageIntent.NOM, DailyStorageIntent.STORAGE_EXPORT}
             and result.status in {"dispatched", "already_active"}
         ):
-            saved = self._persist_nom_commitment(
+            saved = self._persist_action_commitment(
                 plan=plan,
                 snapshot=snapshot,
                 execution_scope_id=evidence.execution_scope_id,
@@ -326,6 +331,20 @@ class MarketDailyExecutionRuntime:
         if executed_at < commitment.starts_at:
             return plan, "future", commitment.schedule_id, None, None
 
+        if commitment.primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value:
+            preserved = replace(
+                plan,
+                current_intent=DailyStorageIntent.STORAGE_EXPORT,
+                current_interval_ends_at=commitment.ends_at,
+            )
+            return (
+                preserved,
+                "preserved",
+                commitment.schedule_id,
+                "active_export_window_committed",
+                0.0,
+            )
+
         profile = _native_plan_profile(plan, captured_at=executed_at)
         better, reason, delta = self._challenger_is_better(profile, commitment)
         if better:
@@ -357,9 +376,11 @@ class MarketDailyExecutionRuntime:
             ),
             None,
         )
-        return state is not None and (
-            state.current_stored_energy_wh >= commitment.target_energy_wh
-        )
+        if state is None:
+            return False
+        if commitment.primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value:
+            return state.current_stored_energy_wh <= commitment.target_energy_wh
+        return state.current_stored_energy_wh >= commitment.target_energy_wh
 
     @staticmethod
     def _challenger_is_better(
@@ -404,7 +425,7 @@ class MarketDailyExecutionRuntime:
             return True, "challenger_financially_proven_better", round(delta, 4)
         return False, "challenger_not_strictly_better", round(delta, 4)
 
-    def _persist_nom_commitment(
+    def _persist_action_commitment(
         self,
         *,
         plan: MarketDailyPlan,
@@ -417,6 +438,79 @@ class MarketDailyExecutionRuntime:
         existing = self.commitment_store.load(execution_scope_id)
         if existing is not None and existing.planner_id == "mep":
             return existing
+        if plan.current_intent is DailyStorageIntent.STORAGE_EXPORT:
+            admitted = tuple(
+                item for item in plan.route_assessments if item.admitted
+            )
+            if not admitted or plan.current_interval_ends_at is None:
+                return None
+            winner = max(
+                admitted,
+                key=lambda item: (
+                    item.worst_case_incremental_result_eur,
+                    item.minimum_incremental_result_eur_per_exported_kwh,
+                    item.market_schedule_id,
+                ),
+            )
+            route = next(
+                (item for item in plan.market_routes if item.route_id == winner.route_id),
+                None,
+            )
+            state = next(
+                (
+                    item
+                    for item in snapshot.current_storage_states
+                    if item.execution_scope_id == execution_scope_id
+                ),
+                None,
+            )
+            limit = next(
+                (
+                    item
+                    for item in snapshot.storage_physical_limits
+                    if item.execution_scope_id == execution_scope_id
+                ),
+                None,
+            )
+            if state is None or limit is None or route is None:
+                return None
+            directional_efficiency = sqrt(plan.round_trip_efficiency)
+            target_energy_wh = max(
+                state.usable_capacity_wh * limit.minimum_soc,
+                state.current_stored_energy_wh
+                - route.required_pre_window_discharge_output_wh
+                / directional_efficiency,
+            )
+            commitment = ActivePlanCommitment(
+                execution_scope_id=execution_scope_id,
+                plan_id=f"mep-plan:{snapshot.snapshot_id}",
+                plan_revision=1,
+                primitive=ExecutionPrimitive.DISCHARGE_AT_POWER.value,
+                source_policy="market_inventory_export",
+                starts_at=captured_at,
+                ends_at=plan.current_interval_ends_at,
+                target_energy_wh=target_energy_wh,
+                selection_method_version=MEP_COMMITMENT_METHOD_VERSION,
+                planner_id="mep",
+                schedule_id=winner.market_schedule_id,
+                worst_case_financial_result_eur=(
+                    winner.worst_case_incremental_result_eur
+                ),
+                reserve_respected_across_scenarios=all(
+                    item.reserve_respected for item in winner.scenario_evidence
+                ),
+                target_held_across_scenarios=all(
+                    item.target_held_at_horizon_end
+                    for item in winner.scenario_evidence
+                ),
+                minimum_storage_energy_at_horizon_end_wh=min(
+                    item.storage_energy_at_horizon_end_wh
+                    for item in winner.scenario_evidence
+                ),
+            )
+            self.commitment_store.save(commitment)
+            return commitment
+
         profile = _native_plan_profile(plan, captured_at=captured_at)
         if (
             profile is None
@@ -515,6 +609,7 @@ class MarketDailyPlannerRuntime:
         execution_runtime: MarketDailyExecutionRuntime | None = None,
         trading_policy: MarketTradingPolicy | None = None,
         micro_charge_suppression_fraction: float = 0.01,
+        storage_inventory_provider: Callable[[], StorageEnergyInventory | None] | None = None,
     ) -> None:
         if live_enabled and execution_runtime is None:
             raise ValueError("live MEP requires an execution runtime")
@@ -523,6 +618,7 @@ class MarketDailyPlannerRuntime:
         self.execution_runtime = execution_runtime
         self.trading_policy = trading_policy or MarketTradingPolicy()
         self.micro_charge_suppression_fraction = micro_charge_suppression_fraction
+        self.storage_inventory_provider = storage_inventory_provider
 
     def _planning_configuration(
         self,
@@ -564,6 +660,11 @@ class MarketDailyPlannerRuntime:
                 dispatch_authority=self.live_enabled,
                 micro_charge_suppression_fraction=(
                     self.micro_charge_suppression_fraction
+                ),
+                storage_inventory=(
+                    self.storage_inventory_provider()
+                    if self.storage_inventory_provider is not None
+                    else None
                 ),
             )
         except Exception as exc:

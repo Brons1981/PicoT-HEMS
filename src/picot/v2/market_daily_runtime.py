@@ -37,7 +37,10 @@ from picot.v2.plan_commitment_store import (
 METHOD_VERSION = "v2-market-daily-runtime:v2"
 MAXIMUM_MODE_EVIDENCE_AGE = timedelta(minutes=2)
 MEP_COMMITMENT_METHOD_VERSION = "mep-active-plan-commitment:v1"
-MEP_CHALLENGER_FINANCIAL_EPSILON_EUR = 0.005
+# An active MEP action may incur a real relay transition when it is replaced.
+# Require a material five-cent plan improvement; sub-cent calculation noise is
+# not sufficient authority to interrupt an executing plan.
+MEP_CHALLENGER_FINANCIAL_SWITCH_MARGIN_EUR = 0.05
 INTENT_MODE_MAPPING = {
     DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY: (
         "Alleen slim ontladen",
@@ -397,7 +400,7 @@ class MarketDailyExecutionRuntime:
         if previous is None:
             return False, "commitment_financial_evidence_missing", None
         delta = candidate.worst_case_financial_result_eur - previous
-        if delta > MEP_CHALLENGER_FINANCIAL_EPSILON_EUR:
+        if delta > MEP_CHALLENGER_FINANCIAL_SWITCH_MARGIN_EUR:
             return True, "challenger_financially_proven_better", round(delta, 4)
         return False, "challenger_not_strictly_better", round(delta, 4)
 

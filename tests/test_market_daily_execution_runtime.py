@@ -204,6 +204,57 @@ def test_live_mep_preserves_active_nom_across_rolling_quarter_horizon(
     assert calls == []
 
 
+def test_live_mep_preserves_active_export_for_the_full_contiguous_window(
+    tmp_path,
+) -> None:
+    initial = _live_snapshot(current_soc=0.6)
+    plan = MarketDailyPlanner().plan(
+        snapshot=initial,
+        conversion_model=_conversion(),
+        dispatch_authority=True,
+    )
+    captured_at = initial.captured_at + timedelta(minutes=2)
+    snapshot = _fresh_mode_snapshot(
+        initial,
+        captured_at=captured_at,
+        current_mode="Snel ontladen",
+    )
+    plan = replace(
+        plan,
+        current_intent=DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
+        current_interval_ends_at=captured_at + timedelta(minutes=13),
+    )
+    scope_id = snapshot.current_storage_states[0].execution_scope_id
+    store = ActivePlanCommitmentStore(tmp_path / "commitments.json")
+    store.save(ActivePlanCommitment(
+        execution_scope_id=scope_id,
+        plan_id="mep-export-plan",
+        plan_revision=1,
+        primitive="discharge_at_power",
+        source_policy="market_inventory_export",
+        starts_at=captured_at - timedelta(minutes=2),
+        ends_at=captured_at + timedelta(minutes=58),
+        target_energy_wh=2000.0,
+        selection_method_version="mep-active-plan-commitment:v1",
+        planner_id="mep",
+        schedule_id="one-contiguous-export-window",
+    ))
+    calls = []
+    runtime = MarketDailyExecutionRuntime(
+        dispatch=lambda request, mapping: calls.append((request, mapping)),
+        now=lambda: captured_at,
+        commitment_store=store,
+    )
+
+    result = runtime.apply(plan=plan, snapshot=snapshot)
+
+    assert result.status == "already_active"
+    assert result.requested_vendor_mode == "Snel ontladen"
+    assert result.commitment_status == "preserved"
+    assert result.challenger_reason == "active_export_window_committed"
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     ("financial_delta_eur", "expected_status", "expected_commitment_status"),
     (

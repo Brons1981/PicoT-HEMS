@@ -268,3 +268,123 @@ def test_full_source_prices_cover_history_removed_from_planning_snapshot(tmp_pat
     assert without_source_prices["today"]["reason"] == "price_coverage_incomplete"
     assert with_source_prices["status"] == "available"
     assert with_source_prices["today"]["grid_import_cost_eur"] == pytest.approx(0.25)
+
+
+def test_storage_inventory_values_pv_at_foregone_export_revenue(tmp_path) -> None:
+    snapshot = replace(
+        _snapshot(price=0.10),
+        current_storage_states=(
+            replace(_snapshot().current_storage_states[0], current_soc=0.25),
+        ),
+    )
+    ledger = _ledger(tmp_path)
+
+    ledger.update(
+        snapshot,
+        _history(
+            pv_generation=2000.0,
+            household_load=0.0,
+            grid_import=0.0,
+            grid_export=1000.0,
+            battery_charge=1000.0,
+            battery_discharge=0.0,
+        ),
+    )
+
+    inventory = ledger.storage_energy_inventory()
+    assert inventory is not None
+    pv_lot = next(item for item in inventory.lots if item.source == "pv")
+    assert pv_lot.stored_energy_wh == pytest.approx(1000.0)
+    assert pv_lot.acquisition_cost_eur == pytest.approx(0.10)
+    assert inventory.measured_stored_energy_wh == pytest.approx(2040.0)
+
+
+def test_storage_inventory_keeps_unproven_opening_energy_unknown(tmp_path) -> None:
+    ledger = _ledger(tmp_path)
+    ledger.update(
+        _snapshot(),
+        _history(
+            pv_generation=0.0,
+            household_load=0.0,
+            grid_import=0.0,
+            grid_export=0.0,
+            battery_charge=0.0,
+            battery_discharge=0.0,
+        ),
+    )
+
+    inventory = ledger.storage_energy_inventory()
+    assert inventory is not None
+    assert inventory.known_stored_energy_wh == pytest.approx(0.0)
+    assert inventory.lots[0].source == "unknown"
+    assert inventory.lots[0].acquisition_cost_eur is None
+
+
+def test_storage_inventory_cost_basis_survives_the_day_boundary(tmp_path) -> None:
+    ledger = _ledger(tmp_path)
+    first = replace(
+        _snapshot(price=0.10),
+        current_storage_states=(
+            replace(_snapshot().current_storage_states[0], current_soc=0.25),
+        ),
+    )
+    ledger.update(
+        first,
+        _history(
+            pv_generation=2000.0,
+            household_load=0.0,
+            grid_import=0.0,
+            grid_export=1000.0,
+            battery_charge=1000.0,
+            battery_discharge=0.0,
+        ),
+    )
+    shift = timedelta(days=1)
+    second = replace(
+        first,
+        captured_at=first.captured_at + shift,
+        horizon_end=first.horizon_end + shift,
+        price_points=tuple(
+            replace(
+                item,
+                starts_at=item.starts_at + shift,
+                ends_at=item.ends_at + shift,
+            )
+            for item in first.price_points
+        ),
+        current_storage_states=tuple(
+            replace(item, measured_at=item.measured_at + shift)
+            for item in first.current_storage_states
+        ),
+    )
+    first_history = _history(
+        pv_generation=0.0,
+        household_load=0.0,
+        grid_import=0.0,
+        grid_export=0.0,
+        battery_charge=0.0,
+        battery_discharge=0.0,
+    )
+    second_history = replace(
+        first_history,
+        starts_at=first_history.starts_at + shift,
+        ends_at=first_history.ends_at + shift,
+        series=tuple(
+            replace(
+                series,
+                points=tuple(
+                    replace(point, sampled_at=point.sampled_at + shift)
+                    for point in series.points
+                ),
+            )
+            for series in first_history.series
+        ),
+    )
+
+    ledger.update(second, second_history)
+
+    inventory = ledger.storage_energy_inventory()
+    assert inventory is not None
+    pv_lot = next(item for item in inventory.lots if item.source == "pv")
+    assert pv_lot.stored_energy_wh == pytest.approx(1000.0)
+    assert pv_lot.acquisition_cost_eur == pytest.approx(0.10)

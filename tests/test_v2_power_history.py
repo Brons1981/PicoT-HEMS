@@ -9,12 +9,57 @@ from picot.v2.power_history import (
     PowerHistorySeries,
     PowerHistorySnapshot,
     PowerSeriesSpec,
+    rebase_power_history,
 )
 
 START = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 END = START + timedelta(hours=12)
 P1 = "sensor.p1_power"
 PV = "sensor.pv_power"
+
+
+def test_rebase_keeps_only_latest_proven_pre_midnight_anchor() -> None:
+    requested_start = START - timedelta(minutes=15)
+    snapshot = PowerHistorySnapshot(
+        starts_at=requested_start,
+        ends_at=START + timedelta(minutes=15),
+        status="available",
+        error=None,
+        series=(
+            PowerHistorySeries(
+                series_id="pv",
+                role="pv_generation",
+                source_entity_id=PV,
+                transform="positive",
+                points=(
+                    PowerHistoryPoint(
+                        requested_start,
+                        0.0,
+                        "old-anchor",
+                    ),
+                    PowerHistoryPoint(
+                        START - timedelta(minutes=1),
+                        10.0,
+                        "latest-anchor",
+                    ),
+                    PowerHistoryPoint(
+                        START + timedelta(minutes=5),
+                        20.0,
+                        "today",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    rebased = rebase_power_history(snapshot, starts_at=START)
+
+    assert rebased.starts_at == START
+    assert [point.evidence_id for point in rebased.series[0].points] == [
+        "latest-anchor",
+        "today",
+    ]
+    assert rebased.method_version.endswith("+midnight-anchor:v1")
 
 
 def test_reader_builds_canonical_directional_series_in_one_request(

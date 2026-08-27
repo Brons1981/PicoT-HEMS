@@ -97,12 +97,14 @@ from picot.v2.planning_input import (
     load_options,
 )
 from picot.v2.power_history import (
+    FINANCIAL_ANCHOR_LOOKBACK,
     HomeAssistantPowerHistoryReader,
     PowerHistoryCache,
     PowerHistoryPoint,
     PowerHistorySeries,
     PowerHistorySnapshot,
     PowerSeriesSpec,
+    rebase_power_history,
 )
 from picot.v2.projection import Card, Projection, project
 from picot.v2.pv_actual_history import HomeAssistantPVHistoryReader
@@ -2649,8 +2651,12 @@ def main() -> None:
         power_history = power_history_cache.update(
             power_history_reader,
             specs=dashboard_power_history_specs,
-            starts_at=history_starts_at,
+            starts_at=history_starts_at - FINANCIAL_ANCHOR_LOOKBACK,
             ends_at=captured_at,
+        )
+        power_history = rebase_power_history(
+            power_history,
+            starts_at=history_starts_at,
         )
         power_history = _attach_household_power_history(
             power_history,

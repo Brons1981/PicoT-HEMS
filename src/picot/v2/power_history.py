@@ -168,6 +168,7 @@ class HomeAssistantPowerHistoryReader:
 
 
 HISTORY_BOOTSTRAP_CHUNK = timedelta(hours=2)
+FINANCIAL_ANCHOR_LOOKBACK = timedelta(minutes=15)
 
 
 class PowerHistoryCache:
@@ -295,6 +296,43 @@ def replace_snapshot_error(
         error=error,
         series=snapshot.series,
         method_version=snapshot.method_version,
+    )
+
+
+def rebase_power_history(
+    snapshot: PowerHistorySnapshot,
+    *,
+    starts_at: datetime,
+) -> PowerHistorySnapshot:
+    """Keep one proven pre-start state per series as an integration anchor."""
+    if not snapshot.starts_at <= starts_at <= snapshot.ends_at:
+        raise ValueError("rebased history start must fall inside the snapshot")
+    rebased_series = []
+    for series in snapshot.series:
+        ordered = tuple(sorted(series.points, key=lambda point: point.sampled_at))
+        anchor = next(
+            (point for point in reversed(ordered) if point.sampled_at <= starts_at),
+            None,
+        )
+        visible = tuple(point for point in ordered if point.sampled_at > starts_at)
+        points = (*((anchor,) if anchor is not None else ()), *visible)
+        rebased_series.append(
+            PowerHistorySeries(
+                series_id=series.series_id,
+                role=series.role,
+                source_entity_id=series.source_entity_id,
+                transform=series.transform,
+                points=points,
+                history_semantics=series.history_semantics,
+            )
+        )
+    return PowerHistorySnapshot(
+        starts_at=starts_at,
+        ends_at=snapshot.ends_at,
+        status=snapshot.status,
+        error=snapshot.error,
+        series=tuple(rebased_series),
+        method_version=f"{snapshot.method_version}+midnight-anchor:v1",
     )
 
 

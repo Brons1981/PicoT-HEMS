@@ -79,6 +79,7 @@ def test_mep_dashboard_exposes_baseline_market_and_authority_separately() -> Non
         "upper",
     }
     assert all("storage_energy_at_horizon_end_kwh" in item for item in scenarios)
+    assert all("baseline_recovery_margin_kwh" in item for item in scenarios)
     assert all("target_shortfall_kwh" in item for item in scenarios)
     assert all("reserve_margin_kwh" in item for item in scenarios)
     assert all("grid_to_storage_input_kwh" in item for item in scenarios)
@@ -136,3 +137,5 @@ def test_dashboard_renders_mep_as_a_third_visually_distinct_planner() -> None:
     assert "Slijtage ${formatPrice(route.wear_eur_per_export_kwh)}" in DASHBOARD_HTML
     assert "Verkoop met netherstel" in DASHBOARD_HTML
     assert "scenario.target_shortfall_kwh" in DASHBOARD_HTML
+    assert "scenario.baseline_recovery_margin_kwh" in DASHBOARD_HTML
+    assert "baseline hersteld" in DASHBOARD_HTML

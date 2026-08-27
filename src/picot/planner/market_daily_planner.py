@@ -1004,12 +1004,8 @@ class MarketDailyPlanner:
         physically_admissible = all(
             item.physically_complete
             and item.reserve_respected
-            and (
-                item.target_held_at_horizon_end
-                if route.route_kind in {"pv_trade", "pv_trade_grid_recovery"}
-                else item.storage_energy_at_horizon_end_wh
-                >= baseline_assessment[scenario].storage_energy_at_horizon_end_wh
-            )
+            and item.storage_energy_at_horizon_end_wh + 1e-6
+            >= baseline_assessment[scenario].storage_energy_at_horizon_end_wh
             for scenario, item in market_assessment.items()
         )
         worst_result = min(incremental_results)
@@ -1029,7 +1025,7 @@ class MarketDailyPlanner:
                 "admitted_profitable_complete_route"
                 if admitted
                 else (
-                    "physical_target_or_reserve_not_restored"
+                    "physical_baseline_or_reserve_not_restored"
                     if not physically_admissible
                     else "non_positive_incremental_result"
                 )

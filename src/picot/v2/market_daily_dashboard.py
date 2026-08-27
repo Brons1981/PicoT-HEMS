@@ -254,6 +254,11 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
                                     evidence.baseline_storage_energy_at_horizon_end_wh
                                     / 1000.0
                                 ),
+                                "baseline_recovery_margin_kwh": (
+                                    evidence.storage_energy_at_horizon_end_wh
+                                    - evidence.baseline_storage_energy_at_horizon_end_wh
+                                )
+                                / 1000.0,
                                 "target_shortfall_kwh": (
                                     evidence.target_shortfall_wh / 1000.0
                                 ),

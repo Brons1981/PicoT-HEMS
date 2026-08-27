@@ -292,6 +292,11 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
         grid_recovery.required_pre_window_discharge_output_wh / 0.83
     )
     assert grid_recovery.window_starts_at == route.window_starts_at
+    pv_assessment = next(
+        item
+        for item in result.route_assessments
+        if item.route_id == route.route_id
+    )
     grid_assessment = next(
         item
         for item in result.route_assessments
@@ -301,6 +306,16 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
         scenario.grid_to_storage_input_wh > 0.0
         for scenario in grid_assessment.scenario_evidence
     )
+    assert all(
+        scenario.storage_energy_at_horizon_end_wh
+        >= scenario.baseline_storage_energy_at_horizon_end_wh
+        for scenario in pv_assessment.scenario_evidence
+    )
+    assert all(
+        not scenario.target_held_at_horizon_end
+        for scenario in pv_assessment.scenario_evidence
+    )
+    assert pv_assessment.physically_admissible is True
     assert all(
         scenario.target_held_at_horizon_end
         for scenario in grid_assessment.scenario_evidence

@@ -3726,6 +3726,9 @@ DASHBOARD_HTML = """<!doctype html>
           )}`,
           `Exportprijs ${formatPrice(route.average_export_eur_per_kwh)}`,
           `Herstelprijs ${formatPrice(route.average_recharge_eur_per_kwh)}`,
+          `Na RTE ${formatPrice(route.rte_adjusted_recharge_eur_per_kwh)}`,
+          `Marge ${formatPrice(route.trading_margin_eur_per_kwh)}`,
+          `Slijtage ${formatPrice(route.wear_eur_per_export_kwh)}`,
           `Minimum ${formatPrice(route.minimum_export_eur_per_kwh)}`,
         ].join(" · ");
         details.append(routeFacts);

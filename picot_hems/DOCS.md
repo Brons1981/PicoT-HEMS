@@ -34,3 +34,18 @@ interval_seconds: 60
 ```
 
 De Home Assistant Supervisor-token wordt tijdens runtime geleverd en wordt niet opgeslagen in de repository of add-onconfiguratie.
+
+## MEP-marktinstellingen
+
+Onder **Instellingen → Add-ons → PicoT HEMS → Configuratie** zijn de twee
+financiële toelatingswaarden rechtstreeks door de gebruiker instelbaar:
+
+- `market_daily_trading_margin_percent`: gewenste extra handelsmarge in procenten;
+  standaard `10.0`.
+- `market_daily_wear_eur_per_kwh`: toegerekende batterijslijtage per geëxporteerde
+  kWh; standaard `0.05` euro.
+
+Start de add-on na een wijziging opnieuw. In **PicoT Pipeline → Strategie** toont
+iedere onderzochte marktroute de herstelprijs, RTE-correctie, handelsmarge,
+slijtage en de daaruit volgende minimale exportprijs. Zo blijft zichtbaar waarom
+de gewijzigde instelling een route wel of niet toelaat.

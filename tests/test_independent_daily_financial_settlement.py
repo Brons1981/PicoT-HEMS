@@ -189,3 +189,60 @@ def test_settlement_does_not_import_current_evaluation_or_commitment() -> None:
     imported_names = set(vars(module))
     assert "EvaluationRecord" not in imported_names
     assert "ActivePlanCommitment" not in imported_names
+
+
+def test_2026_cross_quarter_energy_tax_credit_is_capped_by_grid_import() -> None:
+    source = _simulate()
+    trajectories = []
+    for trajectory in source.trajectories:
+        energy_wh = 1000.0
+        intervals = []
+        for index, interval in enumerate(trajectory.intervals):
+            grid_input_wh = 1000.0 if index == 0 else 0.0
+            storage_export_wh = 1200.0 if index == 1 else 0.0
+            end_energy_wh = energy_wh + grid_input_wh - storage_export_wh
+            intervals.append(replace(
+                interval,
+                household_demand_wh=0.0,
+                usable_pv_wh=0.0,
+                pv_to_household_wh=0.0,
+                pv_to_storage_input_wh=0.0,
+                pv_to_grid_wh=0.0,
+                grid_to_household_wh=0.0,
+                grid_to_storage_input_wh=grid_input_wh,
+                storage_to_household_output_wh=0.0,
+                storage_to_grid_output_wh=storage_export_wh,
+                storage_charge_loss_wh=0.0,
+                storage_discharge_loss_wh=0.0,
+                storage_energy_at_start_wh=energy_wh,
+                storage_energy_at_end_wh=end_energy_wh,
+            ))
+            energy_wh = end_energy_wh
+        trajectories.append(replace(trajectory, intervals=tuple(intervals)))
+    simulation = replace(source, trajectories=tuple(trajectories))
+    tariffs = replace(
+        _tariffs(),
+        intervals=tuple(
+            replace(
+                tariff,
+                import_eur_per_kwh=0.10,
+                export_eur_per_kwh=0.41,
+                same_interval_offset_eur_per_kwh=0.10,
+                cross_interval_export_eur_per_kwh=0.30,
+                saldering_tax_eur_per_kwh=0.11,
+            )
+            for tariff in _tariffs().intervals
+        ),
+    )
+
+    result = IndependentDailyFinancialSettlement().settle(
+        simulation=simulation,
+        tariffs=tariffs,
+    )
+
+    for path in result.paths:
+        # 1.2 kWh export receives bare price + addition; only the 1.0 kWh
+        # proven grid import receives the energy-tax saldering credit.
+        assert path.grid_import_cost_eur == pytest.approx(0.10)
+        assert path.grid_export_result_eur == pytest.approx(1.2 * 0.30 + 1.0 * 0.11)
+        assert path.net_financial_result_eur == pytest.approx(0.37)

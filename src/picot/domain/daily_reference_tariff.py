@@ -21,6 +21,9 @@ class DailyReferenceTariffInterval:
     export_eur_per_kwh: float
     confidence: float
     evidence_ids: tuple[str, ...]
+    same_interval_offset_eur_per_kwh: float | None = None
+    cross_interval_export_eur_per_kwh: float | None = None
+    saldering_tax_eur_per_kwh: float = 0.0
 
     def __post_init__(self) -> None:
         _aware(self.starts_at, "Daily tariff start")
@@ -33,6 +36,8 @@ class DailyReferenceTariffInterval:
             raise ValueError("Daily tariff evidence must be explicit.")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
             raise ValueError("Daily tariff evidence IDs must be unique.")
+        if self.saldering_tax_eur_per_kwh < 0.0:
+            raise ValueError("Daily tariff saldering tax must not be negative.")
 
 
 @dataclass(frozen=True, slots=True)

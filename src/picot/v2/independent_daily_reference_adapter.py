@@ -104,10 +104,11 @@ class IndependentDailyReferenceAdapter:
         snapshot: PlanningInputSnapshot,
         conversion_model: StorageConversionModel,
         tariffs: DailyReferenceTariffSchedule | None = None,
+        maximum_duration: timedelta = DAILY_REFERENCE_DURATION,
     ) -> DailyReferenceStrategyObservation:
         """Run the complete observer chain from one immutable Planning Input."""
 
-        maximum_horizon_end = snapshot.captured_at + DAILY_REFERENCE_DURATION
+        maximum_horizon_end = snapshot.captured_at + maximum_duration
         if tariffs is None:
             tariff_adapter = IndependentDailyTariffAdapter()
             published_horizon_end = tariff_adapter.published_horizon_end(
@@ -117,13 +118,18 @@ class IndependentDailyReferenceAdapter:
             inputs = self._inputs(
                 snapshot,
                 horizon_end=published_horizon_end,
+                maximum_duration=maximum_duration,
             )
             tariffs = tariff_adapter.build(
                 snapshot,
                 horizon_end=published_horizon_end,
             )
         else:
-            inputs = self._inputs(snapshot, horizon_end=tariffs.horizon_end)
+            inputs = self._inputs(
+                snapshot,
+                horizon_end=tariffs.horizon_end,
+                maximum_duration=maximum_duration,
+            )
         self._validate_tariffs(snapshot, inputs.household, tariffs)
         charge_windows = IndependentDailyChargeWindowDiscoverer().discover(
             snapshot_id=snapshot.snapshot_id,
@@ -160,16 +166,22 @@ class IndependentDailyReferenceAdapter:
         snapshot: PlanningInputSnapshot,
         *,
         horizon_end: datetime | None = None,
+        maximum_duration: timedelta = DAILY_REFERENCE_DURATION,
     ) -> _DailyReferenceInputs:
         """Expose the validated simulator inputs to composition-only planners."""
 
-        return self._inputs(snapshot, horizon_end=horizon_end)
+        return self._inputs(
+            snapshot,
+            horizon_end=horizon_end,
+            maximum_duration=maximum_duration,
+        )
 
     def _inputs(
         self,
         snapshot: PlanningInputSnapshot,
         *,
         horizon_end: datetime | None = None,
+        maximum_duration: timedelta = DAILY_REFERENCE_DURATION,
     ) -> _DailyReferenceInputs:
         if snapshot.horizon_end is None:
             raise DailyReferenceInputError("daily_reference_horizon_missing")
@@ -217,9 +229,7 @@ class IndependentDailyReferenceAdapter:
         if len(physical_limits) != 1:
             raise DailyReferenceInputError("daily_reference_physical_limits_missing")
         limits = physical_limits[0]
-        maximum_reference_horizon_end = (
-            snapshot.captured_at + DAILY_REFERENCE_DURATION
-        )
+        maximum_reference_horizon_end = snapshot.captured_at + maximum_duration
         reference_horizon_end = horizon_end or maximum_reference_horizon_end
         if snapshot.horizon_end < reference_horizon_end:
             raise DailyReferenceInputError("daily_reference_horizon_too_short")

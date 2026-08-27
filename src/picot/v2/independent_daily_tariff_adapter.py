@@ -10,7 +10,7 @@ from picot.domain.daily_reference_tariff import (
 )
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
 
-METHOD_VERSION = "v2-daily-tariff-policy-nl-2027:v2"
+METHOD_VERSION = "v2-daily-tariff-policy-nl-2026-quarter-netting:v3"
 VAT_FACTOR = 1.21
 ENERGY_TAX_EX_VAT_EUR_PER_KWH = 0.09161
 SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH = 0.01653
@@ -149,14 +149,19 @@ class IndependentDailyTariffAdapter:
             if item.starts_at <= starts_at and item.ends_at >= ends_at
         )
         import_rate = point.value_eur_per_kwh
-        export_rate = import_rate
-        policy_evidence = "nl-net-metering-through-2026"
+        bare_market_rate = import_rate - (
+            ENERGY_TAX_EX_VAT_EUR_PER_KWH
+            + SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH
+        ) * VAT_FACTOR
+        cross_interval_export_rate = bare_market_rate + EXPORT_ADDITION_EUR_PER_KWH
+        same_interval_offset_rate: float | None = import_rate
+        saldering_tax_rate = ENERGY_TAX_EX_VAT_EUR_PER_KWH * VAT_FACTOR
+        export_rate = cross_interval_export_rate + saldering_tax_rate
+        policy_evidence = "nl-quarter-netting-and-energy-tax-saldering-through-2026"
         if starts_at >= EXPORT_TAX_TRANSITION:
-            bare_market_rate = import_rate - (
-                ENERGY_TAX_EX_VAT_EUR_PER_KWH
-                + SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH
-            ) * VAT_FACTOR
-            export_rate = bare_market_rate + EXPORT_ADDITION_EUR_PER_KWH
+            same_interval_offset_rate = None
+            saldering_tax_rate = 0.0
+            export_rate = cross_interval_export_rate
             policy_evidence = "nl-export-bare-market-plus-0.02-2027"
         return DailyReferenceTariffInterval(
             starts_at=starts_at,
@@ -165,4 +170,7 @@ class IndependentDailyTariffAdapter:
             export_eur_per_kwh=export_rate,
             confidence=point.confidence,
             evidence_ids=(point.point_id, point.evidence_id, policy_evidence),
+            same_interval_offset_eur_per_kwh=same_interval_offset_rate,
+            cross_interval_export_eur_per_kwh=cross_interval_export_rate,
+            saldering_tax_eur_per_kwh=saldering_tax_rate,
         )

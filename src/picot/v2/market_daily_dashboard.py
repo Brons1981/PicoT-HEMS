@@ -188,6 +188,19 @@ def build_market_daily_dashboard_view(plan: MarketDailyPlan) -> dict[str, object
                 "average_export_eur_per_kwh": route.average_export_eur_per_kwh,
                 "average_recharge_eur_per_kwh": route.average_recharge_eur_per_kwh,
                 "minimum_export_eur_per_kwh": route.minimum_export_eur_per_kwh,
+                "rte_adjusted_recharge_eur_per_kwh": (
+                    route.average_recharge_eur_per_kwh / plan.round_trip_efficiency
+                    if route.average_recharge_eur_per_kwh is not None
+                    else None
+                ),
+                "trading_margin_eur_per_kwh": (
+                    route.average_recharge_eur_per_kwh
+                    / plan.round_trip_efficiency
+                    * plan.trading_margin_fraction
+                    if route.average_recharge_eur_per_kwh is not None
+                    else None
+                ),
+                "wear_eur_per_export_kwh": plan.wear_eur_per_export_kwh,
                 "export_window_starts_at": (
                     route.export_window_starts_at.isoformat()
                     if route.export_window_starts_at is not None

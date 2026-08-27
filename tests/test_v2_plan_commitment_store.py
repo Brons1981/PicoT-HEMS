@@ -25,6 +25,34 @@ def test_active_commitment_survives_store_restart(tmp_path) -> None:
     assert ActivePlanCommitmentStore(path).load("home-battery") == commitment
 
 
+def test_mep_challenger_evidence_survives_store_restart(tmp_path) -> None:
+    path = tmp_path / "commitments.json"
+    starts_at = datetime(2026, 8, 27, 10, 30, tzinfo=UTC)
+    commitment = ActivePlanCommitment(
+        execution_scope_id="home-battery",
+        plan_id="mep-plan:snapshot-before-boundary",
+        plan_revision=1,
+        primitive="balance_bidirectional",
+        source_policy="pv_only",
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(hours=2),
+        target_energy_wh=8160.0,
+        selection_method_version="mep-active-plan-commitment:v1",
+        planner_id="mep",
+        schedule_id="mep-window-12:30-14:30",
+        worst_case_financial_result_eur=1.33,
+        average_charge_window_price_eur_per_kwh=0.134,
+        minimum_confidence=0.19,
+        reserve_respected_across_scenarios=True,
+        target_held_across_scenarios=False,
+        minimum_storage_energy_at_horizon_end_wh=6470.0,
+    )
+
+    ActivePlanCommitmentStore(path).save(commitment)
+
+    assert ActivePlanCommitmentStore(path).load("home-battery") == commitment
+
+
 def test_clearing_one_scope_preserves_another(tmp_path) -> None:
     path = tmp_path / "commitments.json"
     store = ActivePlanCommitmentStore(path)

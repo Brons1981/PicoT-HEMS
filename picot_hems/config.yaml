@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.188"
+version: "2.0.0-dev.189"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS

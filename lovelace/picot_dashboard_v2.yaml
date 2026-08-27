@@ -241,10 +241,9 @@ views:
               show: true
               title: Solcast forecast versus GoodWe
               show_states: false
-            graph_span: 19h
+            graph_span: 48h
             span:
               start: day
-              offset: +4h
             now:
               show: true
               label: Nu
@@ -286,7 +285,20 @@ views:
                 shared: true
                 intersect: false
             series:
-              - entity: sensor.picot_solcast_today
+              - entity: sensor.picot_solcast_expected_power
+                name: Solcast lower (P10)
+                type: line
+                color: "#ef6c00"
+                curve: smooth
+                stroke_width: 1.5
+                extend_to: false
+                data_generator: |-
+                  const points = entity.attributes.detailedForecast || [];
+                  return points.map((point) => [
+                    new Date(point.period_start).getTime(),
+                    Number(point.pv_estimate10) * 1000
+                  ]);
+              - entity: sensor.picot_solcast_expected_power
                 name: Solcast verwacht
                 type: area
                 color: "#ff9800"
@@ -299,6 +311,19 @@ views:
                   return points.map((point) => [
                     new Date(point.period_start).getTime(),
                     Number(point.pv_estimate) * 1000
+                  ]);
+              - entity: sensor.picot_solcast_expected_power
+                name: Solcast upper (P90)
+                type: line
+                color: "#ffb74d"
+                curve: smooth
+                stroke_width: 1.5
+                extend_to: false
+                data_generator: |-
+                  const points = entity.attributes.detailedForecast || [];
+                  return points.map((point) => [
+                    new Date(point.period_start).getTime(),
+                    Number(point.pv_estimate90) * 1000
                   ]);
               - entity: sensor.picot_goodwe_power
                 name: GoodWe werkelijk

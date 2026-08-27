@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from picot.addon.dashboard import dashboard_states
 
 
@@ -110,6 +112,14 @@ def test_dashboard_states_expose_runtime_price_grid_and_solcast_data() -> None:
     assert isinstance(tomorrow_attributes, dict)
     assert tomorrow_attributes["detailedForecast"] == event["solcast_tomorrow_forecast_points"]
 
+    power_attributes = states["sensor.picot_solcast_expected_power"]["attributes"]
+    assert isinstance(power_attributes, dict)
+    today_points = event["solcast_today_forecast_points"]
+    tomorrow_points = event["solcast_tomorrow_forecast_points"]
+    assert isinstance(today_points, list)
+    assert isinstance(tomorrow_points, list)
+    assert power_attributes["detailedForecast"] == today_points + tomorrow_points
+
 
 def test_dashboard_states_keep_solcast_unavailable_explicit() -> None:
     states = dashboard_states(
@@ -130,3 +140,13 @@ def test_dashboard_states_keep_solcast_unavailable_explicit() -> None:
     today_attributes = states["sensor.picot_solcast_today"]["attributes"]
     assert isinstance(today_attributes, dict)
     assert today_attributes["detailedForecast"] == []
+
+
+def test_lovelace_solar_chart_shows_two_day_solcast_range() -> None:
+    dashboard = Path("lovelace/picot_dashboard_v2.yaml").read_text(encoding="utf-8")
+
+    assert "graph_span: 48h" in dashboard
+    assert "Solcast lower (P10)" in dashboard
+    assert "Number(point.pv_estimate10) * 1000" in dashboard
+    assert "Solcast upper (P90)" in dashboard
+    assert "Number(point.pv_estimate90) * 1000" in dashboard

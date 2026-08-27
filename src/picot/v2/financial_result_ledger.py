@@ -149,6 +149,10 @@ class FinancialResultLedger:
         if history.status != "available" or missing:
             result["reason"] = "missing_measured_series"
             result["missing_roles"] = missing
+            result["coverage_by_role"] = self._coverage_by_role(
+                by_role,
+                starts_at=history.starts_at,
+            )
             return result
         states = snapshot.current_storage_states
         limits = snapshot.storage_physical_limits
@@ -170,6 +174,10 @@ class FinancialResultLedger:
         }
         if any(value is None for value in energy_by_role.values()):
             result["reason"] = "measurement_coverage_incomplete"
+            result["coverage_by_role"] = self._coverage_by_role(
+                by_role,
+                starts_at=history.starts_at,
+            )
             return result
         actual_cost = 0.0
         actual_import_cost = 0.0
@@ -264,8 +272,42 @@ class FinancialResultLedger:
                 for key, value in complete_energy_by_role.items()
             },
             "baseline": "same_measured_pv_and_household_with_nom_battery_control",
+            "coverage_by_role": self._coverage_by_role(
+                by_role,
+                starts_at=history.starts_at,
+            ),
         })
         return result
+
+    @staticmethod
+    def _coverage_by_role(
+        by_role: dict[str, PowerHistorySeries],
+        *,
+        starts_at: datetime,
+    ) -> dict[str, object]:
+        return {
+            role: {
+                "point_count": len(series.points),
+                "first_point_at": (
+                    min(point.sampled_at for point in series.points)
+                    .astimezone(UTC)
+                    .isoformat()
+                    if series.points
+                    else None
+                ),
+                "last_point_at": (
+                    max(point.sampled_at for point in series.points)
+                    .astimezone(UTC)
+                    .isoformat()
+                    if series.points
+                    else None
+                ),
+                "start_anchor_available": any(
+                    point.sampled_at <= starts_at for point in series.points
+                ),
+            }
+            for role, series in sorted(by_role.items())
+        }
 
     @staticmethod
     def _price_segments(

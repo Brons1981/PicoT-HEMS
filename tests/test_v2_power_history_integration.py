@@ -28,7 +28,7 @@ def test_runtime_maps_configured_sources_to_explicit_canonical_roles() -> None:
     ]
 
 
-def test_runtime_adds_only_bounded_canonical_household_observations() -> None:
+def test_runtime_keeps_latest_pre_start_household_observation_as_anchor() -> None:
     snapshot = PowerHistorySnapshot(
         starts_at=START,
         ends_at=END,
@@ -40,7 +40,13 @@ def test_runtime_adds_only_bounded_canonical_household_observations() -> None:
         HouseholdLoadObservation(
             power_w=400.0,
             sampled_at=START - timedelta(minutes=1),
-            evidence_ids=("outside",),
+            evidence_ids=("anchor",),
+            method_version="household-load:v1",
+        ),
+        HouseholdLoadObservation(
+            power_w=300.0,
+            sampled_at=START - timedelta(minutes=2),
+            evidence_ids=("older-anchor",),
             method_version="household-load:v1",
         ),
         HouseholdLoadObservation(
@@ -57,7 +63,8 @@ def test_runtime_adds_only_bounded_canonical_household_observations() -> None:
     assert len(enriched.series) == 1
     assert enriched.series[0].role == "household_load"
     assert enriched.series[0].history_semantics == "sampled_linear"
-    assert [point.power_w for point in enriched.series[0].points] == [650.0]
+    assert [point.power_w for point in enriched.series[0].points] == [400.0, 650.0]
     assert [point.evidence_id for point in enriched.series[0].points] == [
+        "anchor",
         "inside"
     ]

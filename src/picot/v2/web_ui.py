@@ -623,8 +623,16 @@ DASHBOARD_HTML = """<!doctype html>
     .energy-chart .forecast-line {
       fill: none;
       stroke: #ff9800;
-      stroke-width: 0.1;
+      stroke-width: 1.4;
     }
+    .energy-chart .forecast-lower-line,
+    .energy-chart .forecast-upper-line {
+      fill: none;
+      stroke-width: 1;
+      stroke-dasharray: 6 4;
+    }
+    .energy-chart .forecast-lower-line { stroke: #ef6c00; }
+    .energy-chart .forecast-upper-line { stroke: #ffb74d; }
     .energy-chart .actual-line {
       fill: none;
       stroke: #ffd600;
@@ -735,7 +743,12 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .energy-chart-swatch.forecast {
       background: #ff9800;
-      opacity: 0.24;
+    }
+    .energy-chart-swatch.forecast-lower {
+      background: #ef6c00;
+    }
+    .energy-chart-swatch.forecast-upper {
+      background: #ffb74d;
     }
     .price-panel { padding: 14px; overflow: hidden; }
     .price-legend {
@@ -2172,18 +2185,26 @@ DASHBOARD_HTML = """<!doctype html>
       const container = element("pv-forecast-actual-chart");
       container.replaceChildren();
       const forecastByStart = new Map();
+      const optionalEnergyWh = (value) =>
+        value === null || value === undefined ? null : Number(value);
       for (const item of Array.isArray(deviations) ? deviations : []) {
         const startsAt = new Date(item.starts_at).getTime();
         const endsAt = new Date(item.ends_at).getTime();
-        const energyWh = Number(item.forecast_central_energy_wh);
+        const centralEnergyWh = Number(item.forecast_central_energy_wh);
+        const lowerEnergyWh = optionalEnergyWh(item.forecast_lower_energy_wh);
+        const upperEnergyWh = optionalEnergyWh(item.forecast_upper_energy_wh);
         const durationHours = (endsAt - startsAt) / 3_600_000;
         if (
           Number.isFinite(startsAt) && Number.isFinite(endsAt) &&
-          Number.isFinite(energyWh) && durationHours > 0
+          Number.isFinite(centralEnergyWh) && durationHours > 0
         ) {
           forecastByStart.set(startsAt, {
             sampledAt: startsAt + (endsAt - startsAt) / 2,
-            powerW: energyWh / durationHours,
+            centralPowerW: centralEnergyWh / durationHours,
+            lowerPowerW: Number.isFinite(lowerEnergyWh)
+              ? lowerEnergyWh / durationHours : centralEnergyWh / durationHours,
+            upperPowerW: Number.isFinite(upperEnergyWh)
+              ? upperEnergyWh / durationHours : centralEnergyWh / durationHours,
           });
         }
       }
@@ -2192,15 +2213,23 @@ DASHBOARD_HTML = """<!doctype html>
         if (item.evidence_type !== "FORECAST") continue;
         const startsAt = new Date(item.starts_at).getTime();
         const endsAt = new Date(item.ends_at).getTime();
-        const energyWh = Number(item.pv_energy_wh);
+        const centralEnergyWh = Number(
+          item.forecast_central_energy_wh ?? item.pv_energy_wh
+        );
+        const lowerEnergyWh = optionalEnergyWh(item.forecast_lower_energy_wh);
+        const upperEnergyWh = optionalEnergyWh(item.forecast_upper_energy_wh);
         const durationHours = (endsAt - startsAt) / 3_600_000;
         if (
           Number.isFinite(startsAt) && Number.isFinite(endsAt) &&
-          Number.isFinite(energyWh) && durationHours > 0
+          Number.isFinite(centralEnergyWh) && durationHours > 0
         ) {
           forecastByStart.set(startsAt, {
             sampledAt: startsAt + (endsAt - startsAt) / 2,
-            powerW: energyWh / durationHours,
+            centralPowerW: centralEnergyWh / durationHours,
+            lowerPowerW: Number.isFinite(lowerEnergyWh)
+              ? lowerEnergyWh / durationHours : centralEnergyWh / durationHours,
+            upperPowerW: Number.isFinite(upperEnergyWh)
+              ? upperEnergyWh / durationHours : centralEnergyWh / durationHours,
           });
         }
       }
@@ -2224,7 +2253,9 @@ DASHBOARD_HTML = """<!doctype html>
       const legend = document.createElement("div");
       legend.className = "energy-chart-legend";
       for (const [kind, label] of [
-        ["forecast", "Solcast verwacht"],
+        ["forecast-lower", "Solcast lower (P10)"],
+        ["forecast", "Solcast verwacht (centraal)"],
+        ["forecast-upper", "Solcast upper (P90)"],
         ["actual", "GoodWe werkelijk"],
       ]) {
         const item = document.createElement("span");
@@ -2250,7 +2281,9 @@ DASHBOARD_HTML = """<!doctype html>
         ? new Date(sourceStartMs) : new Date(firstMs);
       dayStart.setHours(0, 0, 0, 0);
       const startMs = dayStart.getTime();
-      const fullEndMs = startMs + 24 * 60 * 60 * 1000;
+      const fullEnd = new Date(startMs);
+      fullEnd.setDate(fullEnd.getDate() + 2);
+      const fullEndMs = fullEnd.getTime();
       const validZoom = pvForecastZoomWindow &&
         pvForecastZoomWindow.startsAt >= startMs &&
         pvForecastZoomWindow.endsAt <= fullEndMs &&
@@ -2262,8 +2295,12 @@ DASHBOARD_HTML = """<!doctype html>
         point.sampledAt >= windowStartMs && point.sampledAt <= windowEndMs;
       const visibleForecast = forecastPoints.filter(inWindow);
       const visibleActual = actualPoints.filter(inWindow);
-      const values = [...visibleForecast, ...visibleActual]
-        .map((point) => point.powerW);
+      const values = [
+        ...visibleForecast.flatMap((point) => [
+          point.lowerPowerW, point.centralPowerW, point.upperPowerW,
+        ]),
+        ...visibleActual.map((point) => point.powerW),
+      ];
       const maximum = Math.max(1, ...values) * 1.05;
       const x = (value) => plot.left +
         (value - windowStartMs) / (windowEndMs - windowStartMs) * plotWidth;
@@ -2355,6 +2392,7 @@ DASHBOARD_HTML = """<!doctype html>
         appendSvgText(
           svg,
           tick.toLocaleTimeString("nl-NL", {
+            weekday: "short",
             hour: "2-digit",
             minute: "2-digit",
           }),
@@ -2379,18 +2417,42 @@ DASHBOARD_HTML = """<!doctype html>
         const last = points.at(-1);
         return `${path} L ${last.x} ${last.y}`;
       };
-      const forecastChartPoints = chartPoints(visibleForecast);
-      const forecastPath = smoothPath(forecastChartPoints);
-      if (forecastPath) {
-        const area = `${forecastPath} L ${forecastChartPoints.at(-1).x}` +
-          ` ${y(0)} L ${forecastChartPoints[0].x} ${y(0)} Z`;
+      const forecastCentralPoints = visibleForecast.map((point) => ({
+        x: x(point.sampledAt), y: y(point.centralPowerW),
+      }));
+      const forecastLowerPoints = visibleForecast.map((point) => ({
+        x: x(point.sampledAt), y: y(point.lowerPowerW),
+      }));
+      const forecastUpperPoints = visibleForecast.map((point) => ({
+        x: x(point.sampledAt), y: y(point.upperPowerW),
+      }));
+      const forecastPath = smoothPath(forecastCentralPoints);
+      const lowerPath = smoothPath(forecastLowerPoints);
+      const upperPath = smoothPath(forecastUpperPoints);
+      if (lowerPath && upperPath) {
+        const reversedLowerPath = smoothPath([...forecastLowerPoints].reverse())
+          .replace(/^M/, "L");
         svg.appendChild(createSvgElement("path", {
-          d: area,
+          d: `${upperPath} ${reversedLowerPath} Z`,
           class: "forecast-range",
         }));
+      }
+      if (lowerPath) {
+        svg.appendChild(createSvgElement("path", {
+          d: lowerPath,
+          class: "forecast-lower-line",
+        }));
+      }
+      if (forecastPath) {
         svg.appendChild(createSvgElement("path", {
           d: forecastPath,
           class: "forecast-line",
+        }));
+      }
+      if (upperPath) {
+        svg.appendChild(createSvgElement("path", {
+          d: upperPath,
+          class: "forecast-upper-line",
         }));
       }
       const actualPath = smoothPath(chartPoints(visibleActual));
@@ -6041,6 +6103,16 @@ def build_web_view(
                 "starts_at": interval.starts_at.isoformat(),
                 "ends_at": interval.ends_at.isoformat(),
                 "pv_energy_wh": interval.pv_energy_wh,
+                "forecast_lower_energy_wh": (
+                    interval.forecast_lower_energy_wh
+                ),
+                "forecast_central_energy_wh": (
+                    interval.forecast_central_energy_wh
+                ),
+                "forecast_upper_energy_wh": (
+                    interval.forecast_upper_energy_wh
+                ),
+                "forecast_range_status": interval.forecast_range_status,
                 "evidence_type": interval.evidence_type,
                 "confidence": interval.confidence,
                 "actual_evidence_ids": list(

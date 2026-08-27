@@ -189,12 +189,6 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
         "PicoT Solcast resterend vandaag",
         event,
     )
-    today_forecast = event.get("solcast_today_forecast_points")
-    tomorrow_forecast = event.get("solcast_tomorrow_forecast_points")
-    combined_forecast = [
-        *(today_forecast if isinstance(today_forecast, list) else []),
-        *(tomorrow_forecast if isinstance(tomorrow_forecast, list) else []),
-    ]
     solcast_power_attributes: dict[str, object] = {
         "friendly_name": "PicoT Solcast verwacht vermogen",
         "device_class": "power",
@@ -205,7 +199,6 @@ def dashboard_states(event: dict[str, object]) -> DashboardStates:
         "source_status": event.get("solcast_status"),
         "observed_at": event.get("solcast_observed_at"),
         "last_api_update": event.get("solcast_last_api_update"),
-        "detailedForecast": combined_forecast,
     }
     solcast_confidence_attributes: dict[str, object] = {
         "friendly_name": "PicoT Solcast confidence",

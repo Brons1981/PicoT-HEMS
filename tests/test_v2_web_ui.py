@@ -58,6 +58,12 @@ def test_web_view_serializes_nine_stages_and_full_pv_timeline() -> None:
             starts_at=starts_at,
             ends_at=starts_at + timedelta(minutes=30),
             pv_energy_wh=1200.0,
+            forecast_lower_energy_wh=900.0,
+            forecast_central_energy_wh=1200.0,
+            forecast_upper_energy_wh=1500.0,
+            forecast_range_status="available",
+            forecast_range_source_fields=("pv_estimate10", "pv_estimate90"),
+            forecast_range_method_version="solcast-range:v1",
             evidence_type="FORECAST",
             confidence=0.90,
             actual_evidence_ids=(),
@@ -69,6 +75,12 @@ def test_web_view_serializes_nine_stages_and_full_pv_timeline() -> None:
             starts_at=starts_at + timedelta(minutes=30),
             ends_at=starts_at + timedelta(minutes=60),
             pv_energy_wh=1350.0,
+            forecast_lower_energy_wh=1000.0,
+            forecast_central_energy_wh=1350.0,
+            forecast_upper_energy_wh=1700.0,
+            forecast_range_status="available",
+            forecast_range_source_fields=("pv_estimate10", "pv_estimate90"),
+            forecast_range_method_version="solcast-range:v1",
             evidence_type="FORECAST",
             confidence=0.85,
             actual_evidence_ids=(),
@@ -122,6 +134,10 @@ def test_web_view_serializes_nine_stages_and_full_pv_timeline() -> None:
                 "starts_at": "2026-08-14T10:30:00+00:00",
                 "ends_at": "2026-08-14T11:00:00+00:00",
                 "pv_energy_wh": 1200.0,
+                "forecast_lower_energy_wh": 900.0,
+                "forecast_central_energy_wh": 1200.0,
+                "forecast_upper_energy_wh": 1500.0,
+                "forecast_range_status": "available",
                 "evidence_type": "FORECAST",
                 "confidence": 0.90,
                 "actual_evidence_ids": [],
@@ -133,6 +149,10 @@ def test_web_view_serializes_nine_stages_and_full_pv_timeline() -> None:
                 "starts_at": "2026-08-14T11:00:00+00:00",
                 "ends_at": "2026-08-14T11:30:00+00:00",
                 "pv_energy_wh": 1350.0,
+                "forecast_lower_energy_wh": 1000.0,
+                "forecast_central_energy_wh": 1350.0,
+                "forecast_upper_energy_wh": 1700.0,
+                "forecast_range_status": "available",
                 "evidence_type": "FORECAST",
                 "confidence": 0.85,
                 "actual_evidence_ids": [],
@@ -282,9 +302,13 @@ def test_dashboard_contains_canonical_pv_forecast_actual_history_chart() -> None
     assert "planningInput?.attributes?.pv_interval_deviations" in DASHBOARD_HTML
     assert 'view.pv_energy_timeline ?? { intervals: [] }' in DASHBOARD_HTML
     assert 'view.power_history ?? { pv_actual_display_points: [] }' in DASHBOARD_HTML
+    assert "Solcast lower (P10)" in DASHBOARD_HTML
+    assert "Solcast verwacht (centraal)" in DASHBOARD_HTML
+    assert "Solcast upper (P90)" in DASHBOARD_HTML
+    assert "fullEnd.setDate(fullEnd.getDate() + 2)" in DASHBOARD_HTML
     assert "Solcast verwacht" in DASHBOARD_HTML
     assert "GoodWe werkelijk" in DASHBOARD_HTML
-    assert "energyWh / durationHours" in DASHBOARD_HTML
+    assert "centralEnergyWh / durationHours" in DASHBOARD_HTML
     assert "pvForecastZoomWindow" in DASHBOARD_HTML
     assert "pvForecastInteractionMode" in DASHBOARD_HTML
     assert 'class: "forecast-range"' in DASHBOARD_HTML

@@ -17,7 +17,7 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
 
 
 def test_v2_release_version_is_dev_189() -> None:
-    assert __version__ == "2.0.0-dev.189"
+    assert __version__ == "2.0.0-dev.190"
 
 
 def test_mep_has_83_percent_rte_without_changing_ep_defaults() -> None:

@@ -232,12 +232,14 @@ class MarketDailyPlanner:
         conversion_model: StorageConversionModel,
         trading_policy: MarketTradingPolicy | None = None,
         dispatch_authority: bool = False,
+        micro_charge_suppression_fraction: float = 0.01,
     ) -> MarketDailyPlan:
         plan, _ = self.plan_with_diagnostics(
             snapshot=snapshot,
             conversion_model=conversion_model,
             trading_policy=trading_policy,
             dispatch_authority=dispatch_authority,
+            micro_charge_suppression_fraction=micro_charge_suppression_fraction,
         )
         return plan
 
@@ -248,6 +250,7 @@ class MarketDailyPlanner:
         conversion_model: StorageConversionModel,
         trading_policy: MarketTradingPolicy | None = None,
         dispatch_authority: bool = False,
+        micro_charge_suppression_fraction: float = 0.01,
     ) -> tuple[MarketDailyPlan, MarketDailyPlannerDiagnostics]:
         planner_started = perf_counter()
         trading_policy = trading_policy or MarketTradingPolicy()
@@ -258,6 +261,7 @@ class MarketDailyPlanner:
             snapshot=snapshot,
             conversion_model=conversion_model,
             maximum_duration=MARKET_DAILY_MAXIMUM_DURATION,
+            micro_charge_suppression_fraction=micro_charge_suppression_fraction,
         )
         native_plan_ms = (perf_counter() - phase_started) * 1000.0
         horizon_end = native_observation.strategy_space.schedules[0].horizon_end

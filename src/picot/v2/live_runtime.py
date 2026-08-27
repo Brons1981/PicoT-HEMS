@@ -1699,6 +1699,7 @@ def _execute_planning_bundle(
     market_daily_planner_worker: MarketDailyPlannerWorker | None = None,
     planner_comparison_ledger: PlannerComparisonLedger | None = None,
     financial_result_ledger: FinancialResultLedger | None = None,
+    micro_charge_suppression_fraction: float = 0.01,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -1706,7 +1707,9 @@ def _execute_planning_bundle(
         3,
     )
 
-    run, stage_timings = CanonicalPipeline().run_timed(
+    run, stage_timings = CanonicalPipeline(
+        micro_charge_suppression_fraction=micro_charge_suppression_fraction,
+    ).run_timed(
         planning_input=bundle.snapshot,
         price_opportunity_config=price_config,
         control_change_allowed=canonical_execution_enabled,
@@ -2228,8 +2231,12 @@ def main() -> None:
             options.get("market_daily_wear_eur_per_kwh", 0.05)
         ),
     )
+    micro_charge_suppression_fraction = (
+        float(options.get("micro_charge_suppression_percent", 2.0)) / 100.0
+    )
     independent_daily_observer_runtime = IndependentDailyObserverRuntime(
         conversion_model=daily_conversion_model,
+        micro_charge_suppression_fraction=micro_charge_suppression_fraction,
         store=DailyObserverResultStore(
             latest_path=DAILY_OBSERVER_LATEST_PATH,
             history_path=DAILY_OBSERVER_HISTORY_PATH,
@@ -2363,6 +2370,7 @@ def main() -> None:
         MarketDailyPlannerRuntime(
             market_daily_conversion_model,
             trading_policy=market_daily_trading_policy,
+            micro_charge_suppression_fraction=micro_charge_suppression_fraction,
             live_enabled=market_daily_execution_enabled,
             execution_runtime=MarketDailyExecutionRuntime(
                 dispatch=HomeAssistantCanonicalModeAdapter(
@@ -2818,6 +2826,9 @@ def main() -> None:
             ),
             canonical_execution_runtime=canonical_execution_runtime,
             canonical_execution_enabled=canonical_execution_enabled,
+            micro_charge_suppression_fraction=(
+                micro_charge_suppression_fraction
+            ),
             planning_fallback_notifier=planning_fallback_notifier,
             planning_incident_history=planning_incident_history,
             independent_daily_observer_worker=(

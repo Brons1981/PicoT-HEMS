@@ -105,6 +105,7 @@ class IndependentDailyReferenceAdapter:
         conversion_model: StorageConversionModel,
         tariffs: DailyReferenceTariffSchedule | None = None,
         maximum_duration: timedelta = DAILY_REFERENCE_DURATION,
+        micro_charge_suppression_fraction: float = 0.01,
     ) -> DailyReferenceStrategyObservation:
         """Run the complete observer chain from one immutable Planning Input."""
 
@@ -141,6 +142,12 @@ class IndependentDailyReferenceAdapter:
             target_storage_energy_wh=inputs.target_storage_energy_wh,
             maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
             maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+            micro_charge_suppression_fraction=micro_charge_suppression_fraction,
+            charge_session_active=(
+                snapshot.storage_mode_capability_evidence is not None
+                and snapshot.storage_mode_capability_evidence.current_vendor_mode
+                in {"Nul op de meter", "Snel opladen"}
+            ),
         )
         if charge_windows.discovery_status == "no_feasible_window":
             raise DailyReferenceInputError("daily_reference_charge_windows_unavailable")

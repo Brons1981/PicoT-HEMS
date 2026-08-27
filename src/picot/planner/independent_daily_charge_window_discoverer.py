@@ -50,10 +50,54 @@ class IndependentDailyChargeWindowDiscoverer:
         maximum_charge_input_power_w: float,
         maximum_discharge_output_power_w: float,
         intents: tuple[DailyStorageIntent, ...] = CHARGE_INTENTS,
+        micro_charge_suppression_fraction: float = 0.01,
+        charge_session_active: bool = False,
     ) -> DailyReferenceChargeWindowSet:
+        if not 0.0 <= micro_charge_suppression_fraction <= 1.0:
+            raise ValueError("Daily micro-charge suppression fraction is invalid.")
         starts_at_target = (
             storage_state.current_stored_energy_wh >= target_storage_energy_wh
         )
+        target_gap_wh = max(
+            0.0,
+            target_storage_energy_wh - storage_state.current_stored_energy_wh,
+        )
+        if (
+            not charge_session_active
+            and target_gap_wh > 0.0
+            and target_gap_wh
+            <= storage_state.usable_capacity_wh * micro_charge_suppression_fraction
+        ):
+            baseline = self._schedule(
+                snapshot_id=snapshot_id,
+                household=household,
+                intent=DailyStorageIntent.NOM,
+                start_index=len(household.intervals),
+                end_index=len(household.intervals),
+                label="micro-charge-suppression-baseline",
+            )
+            baseline_result = self._simulate(
+                snapshot_id=snapshot_id,
+                household=household,
+                pv_scenarios=pv_scenarios,
+                storage_state=storage_state,
+                conversion_model=conversion_model,
+                schedule=baseline,
+                minimum_storage_energy_wh=minimum_storage_energy_wh,
+                target_storage_energy_wh=target_storage_energy_wh,
+                maximum_charge_input_power_w=maximum_charge_input_power_w,
+                maximum_discharge_output_power_w=maximum_discharge_output_power_w,
+            )
+            reserve_safe = all(
+                all(
+                    interval.storage_energy_at_end_wh + 1e-6
+                    >= minimum_storage_energy_wh
+                    for interval in trajectory.intervals
+                )
+                for trajectory in baseline_result.trajectories
+            )
+            if reserve_safe:
+                return self._window_set(snapshot_id, (), status="not_required")
         if starts_at_target:
             baseline = self._schedule(
                 snapshot_id=snapshot_id,

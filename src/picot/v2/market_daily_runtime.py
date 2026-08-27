@@ -514,6 +514,7 @@ class MarketDailyPlannerRuntime:
         live_enabled: bool = False,
         execution_runtime: MarketDailyExecutionRuntime | None = None,
         trading_policy: MarketTradingPolicy | None = None,
+        micro_charge_suppression_fraction: float = 0.01,
     ) -> None:
         if live_enabled and execution_runtime is None:
             raise ValueError("live MEP requires an execution runtime")
@@ -521,6 +522,7 @@ class MarketDailyPlannerRuntime:
         self.live_enabled = live_enabled
         self.execution_runtime = execution_runtime
         self.trading_policy = trading_policy or MarketTradingPolicy()
+        self.micro_charge_suppression_fraction = micro_charge_suppression_fraction
 
     def _planning_configuration(
         self,
@@ -560,6 +562,9 @@ class MarketDailyPlannerRuntime:
                 conversion_model=conversion_model,
                 trading_policy=trading_policy,
                 dispatch_authority=self.live_enabled,
+                micro_charge_suppression_fraction=(
+                    self.micro_charge_suppression_fraction
+                ),
             )
         except Exception as exc:
             status = "blocked"

@@ -57,3 +57,12 @@ geen nieuwe afzonderlijke laadsessie meer start. De standaardwaarde is `2.0`.
 De grens geldt voor CP, de etmaalsimulatie en MEP. Onderdrukking is alleen
 toegestaan wanneer de minimumreserve zonder die topsessie in alle doorgerekende
 scenario's veilig blijft. Een al lopende laadsessie wordt niet afgebroken.
+
+## Herstel na export-eerst
+
+Een export-eerst-marktroute hoeft de batterij na normaal huisverbruik niet
+absoluut op 100% te laten eindigen. MEP vergelijkt het einde van ieder scenario
+met hetzelfde scenario zonder handel. De route is fysiek toegestaan wanneer de
+batterij minstens tot dat baseline-niveau wordt hersteld en de minimumreserve
+gewaarborgd blijft. Daarna moet de volledige route, inclusief RTE, handelsmarge
+en slijtage, nog steeds financieel positief zijn.

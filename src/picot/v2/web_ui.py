@@ -3745,6 +3745,9 @@ DASHBOARD_HTML = """<!doctype html>
             `reservemarge ${formatDutchNumber(
               scenario.reserve_margin_kwh
             )} kWh`,
+            `baselineherstel ${formatDutchNumber(
+              scenario.baseline_recovery_margin_kwh
+            )} kWh`,
             `net naar batterij ${formatDutchNumber(
               scenario.grid_to_storage_input_kwh
             )} kWh`,
@@ -3758,6 +3761,9 @@ DASHBOARD_HTML = """<!doctype html>
               scenario.incremental_financial_result_eur
             )}`,
             `reserve ${scenario.reserve_respected ? "ja" : "nee"}`,
+            `baseline hersteld ${
+              scenario.baseline_recovery_margin_kwh >= -0.000001 ? "ja" : "nee"
+            }`,
             `doel einde ${scenario.target_held_at_horizon_end ? "ja" : "nee"}`,
           ].join(" · ");
           details.append(scenarioFacts);

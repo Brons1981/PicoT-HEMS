@@ -40,6 +40,74 @@ def test_mep_builds_native_plan_when_no_market_extension_applies() -> None:
     assert result.reason == "no_admitted_market_route"
 
 
+def test_mep_uses_one_stable_nom_window_to_capture_forecast_solar_surplus() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.995)
+
+    result = MarketDailyPlanner().plan(
+        snapshot=snapshot,
+        conversion_model=_conversion(),
+    )
+
+    assert result.winning_source == "mep_native_plan"
+    assert result.current_intent is not None
+    assert result.current_intent.value == "nom"
+    assert result.current_interval_ends_at == snapshot.captured_at + timedelta(hours=1)
+
+
+def test_mep_midpoint_solar_trigger_does_not_require_positive_lower() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.995)
+    assert snapshot.pv_energy_timeline is not None
+    uncertain = replace(
+        snapshot,
+        pv_energy_timeline=replace(
+            snapshot.pv_energy_timeline,
+            intervals=tuple(
+                replace(item, forecast_lower_energy_wh=0.0)
+                for item in snapshot.pv_energy_timeline.intervals
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=uncertain,
+        conversion_model=_conversion(),
+    )
+
+    assert result.current_intent is not None
+    assert result.current_intent.value == "nom"
+    assert result.current_interval_ends_at == snapshot.captured_at + timedelta(hours=1)
+
+
+def test_mep_does_not_invent_nom_capture_without_forecast_solar() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.995)
+    assert snapshot.pv_energy_timeline is not None
+    dark = replace(
+        snapshot,
+        pv_energy_timeline=replace(
+            snapshot.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    item,
+                    pv_energy_wh=0.0,
+                    forecast_lower_energy_wh=0.0,
+                    forecast_central_energy_wh=0.0,
+                    forecast_upper_energy_wh=0.0,
+                )
+                for item in snapshot.pv_energy_timeline.intervals
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=dark,
+        conversion_model=_conversion(),
+    )
+
+    assert result.current_intent is not None
+    assert result.current_intent.value == "household_support_only"
+    assert result.current_interval_ends_at == snapshot.captured_at + timedelta(minutes=15)
+
+
 def test_mep_reports_observational_phase_timings_and_work_counts() -> None:
     snapshot = _snapshot(maximum_soc=0.7)
 

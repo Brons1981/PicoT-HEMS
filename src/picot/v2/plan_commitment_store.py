@@ -25,6 +25,14 @@ class ActivePlanCommitment:
     ends_at: datetime
     target_energy_wh: float
     selection_method_version: str = COMMITMENT_METHOD_VERSION
+    planner_id: str = "canonical"
+    schedule_id: str | None = None
+    worst_case_financial_result_eur: float | None = None
+    average_charge_window_price_eur_per_kwh: float | None = None
+    minimum_confidence: float | None = None
+    reserve_respected_across_scenarios: bool | None = None
+    target_held_across_scenarios: bool | None = None
+    minimum_storage_energy_at_horizon_end_wh: float | None = None
 
     def __post_init__(self) -> None:
         if any(
@@ -35,6 +43,7 @@ class ActivePlanCommitment:
                 self.primitive,
                 self.source_policy,
                 self.selection_method_version,
+                self.planner_id,
             )
         ):
             raise ValueError("active plan commitment fields must be explicit")
@@ -47,6 +56,17 @@ class ActivePlanCommitment:
                 raise ValueError("commitment timestamps must be timezone-aware")
         if self.starts_at >= self.ends_at:
             raise ValueError("commitment start must precede end")
+        if self.schedule_id is not None and not self.schedule_id.strip():
+            raise ValueError("commitment schedule id must be explicit")
+        if self.minimum_confidence is not None and not (
+            0.0 <= self.minimum_confidence <= 1.0
+        ):
+            raise ValueError("commitment confidence must be bounded")
+        if (
+            self.minimum_storage_energy_at_horizon_end_wh is not None
+            and self.minimum_storage_energy_at_horizon_end_wh < 0.0
+        ):
+            raise ValueError("commitment horizon energy must be non-negative")
 
 
 class ActivePlanCommitmentStore:
@@ -194,5 +214,41 @@ def _deserialize(payload: dict[str, Any]) -> ActivePlanCommitment:
                 "selection_method_version",
                 LEGACY_COMMITMENT_METHOD_VERSION,
             )
+        ),
+        planner_id=str(payload.get("planner_id", "canonical")),
+        schedule_id=(
+            str(payload["schedule_id"])
+            if payload.get("schedule_id") is not None
+            else None
+        ),
+        worst_case_financial_result_eur=(
+            float(payload["worst_case_financial_result_eur"])
+            if payload.get("worst_case_financial_result_eur") is not None
+            else None
+        ),
+        average_charge_window_price_eur_per_kwh=(
+            float(payload["average_charge_window_price_eur_per_kwh"])
+            if payload.get("average_charge_window_price_eur_per_kwh") is not None
+            else None
+        ),
+        minimum_confidence=(
+            float(payload["minimum_confidence"])
+            if payload.get("minimum_confidence") is not None
+            else None
+        ),
+        reserve_respected_across_scenarios=(
+            bool(payload["reserve_respected_across_scenarios"])
+            if payload.get("reserve_respected_across_scenarios") is not None
+            else None
+        ),
+        target_held_across_scenarios=(
+            bool(payload["target_held_across_scenarios"])
+            if payload.get("target_held_across_scenarios") is not None
+            else None
+        ),
+        minimum_storage_energy_at_horizon_end_wh=(
+            float(payload["minimum_storage_energy_at_horizon_end_wh"])
+            if payload.get("minimum_storage_energy_at_horizon_end_wh") is not None
+            else None
         ),
     )

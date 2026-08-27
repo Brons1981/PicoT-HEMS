@@ -301,6 +301,23 @@ def _attach_household_power_history(
     snapshot: PowerHistorySnapshot,
     observations: tuple[HouseholdLoadObservation, ...],
 ) -> PowerHistorySnapshot:
+    ordered = tuple(sorted(observations, key=lambda item: item.sampled_at))
+    anchor = next(
+        (
+            observation
+            for observation in reversed(ordered)
+            if observation.sampled_at <= snapshot.starts_at
+        ),
+        None,
+    )
+    bounded = (
+        *((anchor,) if anchor is not None else ()),
+        *(
+            observation
+            for observation in ordered
+            if snapshot.starts_at < observation.sampled_at <= snapshot.ends_at
+        ),
+    )
     points = tuple(
         PowerHistoryPoint(
             sampled_at=observation.sampled_at,
@@ -311,8 +328,7 @@ def _attach_household_power_history(
                 else f"household-load:{observation.sampled_at.isoformat()}"
             ),
         )
-        for observation in observations
-        if snapshot.starts_at <= observation.sampled_at <= snapshot.ends_at
+        for observation in bounded
     )
     household = PowerHistorySeries(
         series_id="household-load",

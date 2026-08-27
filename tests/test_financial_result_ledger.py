@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -182,3 +183,31 @@ def test_dashboard_contract_is_passive_and_persists_purchase_progress(tmp_path) 
     assert restored["commitment_permitted"] is False
     assert restored["cumulative"]["battery_purchase_eur"] == 2407.40
     assert restored["cumulative"]["net_battery_value_eur"] == pytest.approx(0.20)
+
+
+def test_full_source_prices_cover_history_removed_from_planning_snapshot(tmp_path) -> None:
+    snapshot = _snapshot()
+    history = _history(
+        pv_generation=0.0,
+        household_load=1000.0,
+        grid_import=1000.0,
+        grid_export=0.0,
+        battery_charge=0.0,
+        battery_discharge=0.0,
+    )
+    future_only_snapshot = replace(snapshot, price_points=())
+
+    without_source_prices = _ledger(tmp_path).update(
+        future_only_snapshot,
+        history,
+    )
+    with_source_prices = _ledger(tmp_path).update(
+        future_only_snapshot,
+        history,
+        price_points=snapshot.price_points,
+    )
+
+    assert without_source_prices["status"] == "incomplete"
+    assert without_source_prices["today"]["reason"] == "price_coverage_incomplete"
+    assert with_source_prices["status"] == "available"
+    assert with_source_prices["today"]["grid_import_cost_eur"] == pytest.approx(0.25)

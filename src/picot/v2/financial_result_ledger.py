@@ -77,9 +77,15 @@ class FinancialResultLedger:
         self,
         snapshot: PlanningInputSnapshot,
         history: PowerHistorySnapshot,
+        *,
+        price_points: tuple[PriceForecastPoint, ...] | None = None,
     ) -> dict[str, object]:
         """Replace today's partial settlement from canonical measured history."""
-        result = self._evaluate(snapshot, history)
+        result = self._evaluate(
+            snapshot,
+            history,
+            price_points=(snapshot.price_points if price_points is None else price_points),
+        )
         local_day = snapshot.captured_at.astimezone(self.local_timezone).date().isoformat()
         with self._lock:
             days = self._state.setdefault("days", {})
@@ -126,6 +132,8 @@ class FinancialResultLedger:
         self,
         snapshot: PlanningInputSnapshot,
         history: PowerHistorySnapshot,
+        *,
+        price_points: tuple[PriceForecastPoint, ...],
     ) -> dict[str, object]:
         local_day = snapshot.captured_at.astimezone(self.local_timezone).date().isoformat()
         result: dict[str, object] = {
@@ -148,7 +156,7 @@ class FinancialResultLedger:
             result["reason"] = "storage_physical_state_missing"
             return result
         segments = self._price_segments(
-            snapshot.price_points,
+            price_points,
             history.starts_at,
             history.ends_at,
         )

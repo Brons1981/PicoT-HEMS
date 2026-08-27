@@ -35,6 +35,7 @@ from picot.v2.daily_pv_basis import (
     apply_daily_measured_pv_basis,
 )
 from picot.v2.fast_grid_power_observation import FastGridPowerObserver
+from picot.v2.financial_result_ledger import FinancialResultLedger
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
 from picot.v2.household_objective_input import attach_household_objectives
@@ -183,6 +184,7 @@ PLANNER_COMPARISON_STATE_PATH = Path(
 PLANNER_COMPARISON_HISTORY_PATH = Path(
     "/data/picot_v2_planner_comparison_history.jsonl"
 )
+FINANCIAL_RESULT_STATE_PATH = Path("/data/picot_v2_financial_results.json")
 MARKET_DAILY_LATEST_PATH = Path(
     "/data/picot_v2_market_daily_latest.json"
 )
@@ -1678,6 +1680,7 @@ def _execute_planning_bundle(
     daily_pv_basis_decision: DailyPVBasisDecision | None = None,
     market_daily_planner_worker: MarketDailyPlannerWorker | None = None,
     planner_comparison_ledger: PlannerComparisonLedger | None = None,
+    financial_result_ledger: FinancialResultLedger | None = None,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -1947,6 +1950,24 @@ def _execute_planning_bundle(
                 ),
                 flush=True,
             )
+    if financial_result_ledger is not None and power_history is not None:
+        try:
+            web_view["financial_results"] = financial_result_ledger.update(
+                bundle.snapshot,
+                power_history,
+            )
+        except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_financial_result_error",
+                        "snapshot_id": bundle.snapshot.snapshot_id,
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
     web_view_build_ms = round(
         (perf_counter() - web_view_build_started) * 1000.0,
         3,
@@ -2201,6 +2222,14 @@ def main() -> None:
         charge_efficiency=daily_conversion_model.charge_efficiency,
         discharge_efficiency=daily_conversion_model.discharge_efficiency,
     )
+    financial_result_ledger = FinancialResultLedger(
+        state_path=FINANCIAL_RESULT_STATE_PATH,
+        wear_eur_per_discharge_kwh=market_daily_trading_policy.wear_eur_per_export_kwh,
+        battery_purchase_eur=float(options.get("battery_purchase_eur", 2407.40)),
+        charge_efficiency=market_daily_conversion_model.charge_efficiency,
+        discharge_efficiency=market_daily_conversion_model.discharge_efficiency,
+        local_timezone_name=str(options.get("pv_local_timezone", "Europe/Amsterdam")),
+    )
 
     def publish_daily_observer_outcome(
         outcome: DailyObserverRuntimeOutcome,
@@ -2348,6 +2377,7 @@ def main() -> None:
             PLANNER_COMPARISON_STATE_PATH,
             PLANNER_COMPARISON_HISTORY_PATH,
             MARKET_DAILY_LATEST_PATH,
+            FINANCIAL_RESULT_STATE_PATH,
         ),
         incident_history_path=PLANNING_INCIDENT_HISTORY_PATH,
     )
@@ -2659,6 +2689,12 @@ def main() -> None:
             report_daily_observer_error(bundle.snapshot, exc)
         web_view_store.publish_power_history(power_history)
         try:
+            web_view_store.publish_financial_results(
+                financial_result_ledger.update(bundle.snapshot, power_history)
+            )
+        except Exception as exc:
+            report_daily_observer_error(bundle.snapshot, exc)
+        try:
             web_view_store.publish_planner_comparison_history(
                 planner_comparison_ledger.dashboard_view()
             )
@@ -2759,6 +2795,7 @@ def main() -> None:
             daily_pv_basis_decision=latest_daily_pv_basis_decision,
             market_daily_planner_worker=market_daily_planner_worker,
             planner_comparison_ledger=planner_comparison_ledger,
+            financial_result_ledger=financial_result_ledger,
         )
 
     previous_signature: str | None = None

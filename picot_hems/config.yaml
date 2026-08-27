@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.175"
+version: "2.0.0-dev.176"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -64,6 +64,7 @@ options:
   market_daily_discharge_efficiency: 0.9110433579
   market_daily_trading_margin_percent: 10.0
   market_daily_wear_eur_per_kwh: 0.05
+  battery_purchase_eur: 2407.40
   grid_power_observation_interval_seconds: 1
   live_poll_interval_seconds: 60
   live_pv_canary_mode: "observer"
@@ -121,6 +122,7 @@ schema:
   market_daily_discharge_efficiency: float(0,1)
   market_daily_trading_margin_percent: float(0,100)
   market_daily_wear_eur_per_kwh: float(0,1)
+  battery_purchase_eur: float(0,)
   grid_power_observation_interval_seconds: int(1,60)
   live_poll_interval_seconds: int(5,3600)
   live_pv_canary_mode: list(observer|live)

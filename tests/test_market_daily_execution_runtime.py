@@ -13,6 +13,10 @@ from picot.v2.market_daily_runtime import (
     MarketDailyExecutionRuntime,
     MarketDailyPlannerRuntime,
 )
+from picot.v2.plan_commitment_store import (
+    ActivePlanCommitment,
+    ActivePlanCommitmentStore,
+)
 from picot.v2.storage_mode_provenance import (
     initial_storage_mode_provenance,
     observe_storage_mode,
@@ -126,6 +130,154 @@ def test_live_mep_dispatches_its_unambiguous_current_intent() -> None:
     assert mapping.fixed_value == result.requested_vendor_mode
     assert mapping.entity_id == MODE_ENTITY
     assert request.request_id.startswith(f"mep:{snapshot.snapshot_id}:")
+
+
+def test_live_mep_preserves_active_nom_across_rolling_quarter_horizon(
+    tmp_path,
+) -> None:
+    initial = _live_snapshot()
+    plan = MarketDailyPlanner().plan(
+        snapshot=initial,
+        conversion_model=_conversion(),
+        dispatch_authority=True,
+    )
+    captured_at = initial.captured_at + timedelta(minutes=2)
+    snapshot = _fresh_mode_snapshot(
+        initial,
+        captured_at=captured_at,
+        current_mode="Nul op de meter",
+    )
+    plan = replace(
+        plan,
+        current_intent=DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
+        current_interval_ends_at=captured_at + timedelta(minutes=13),
+    )
+    selected_id = sorted(
+        plan.native_observation.observer_result.best_observation_ids
+    )[0]
+    candidate = next(
+        item
+        for item in plan.native_observation.observer_result.candidate_set.candidates
+        if item.candidate_id == selected_id
+    )
+    scope_id = snapshot.current_storage_states[0].execution_scope_id
+    store = ActivePlanCommitmentStore(tmp_path / "commitments.json")
+    store.save(ActivePlanCommitment(
+        execution_scope_id=scope_id,
+        plan_id="mep-plan:before-quarter-boundary",
+        plan_revision=1,
+        primitive="balance_bidirectional",
+        source_policy="pv_only",
+        starts_at=captured_at - timedelta(minutes=2),
+        ends_at=captured_at + timedelta(hours=1),
+        target_energy_wh=snapshot.current_storage_states[0].usable_capacity_wh,
+        selection_method_version="mep-active-plan-commitment:v1",
+        planner_id="mep",
+        schedule_id="mep-window-12:30-14:15",
+        worst_case_financial_result_eur=(
+            candidate.worst_case_financial_result_eur + 0.02
+        ),
+        minimum_confidence=candidate.minimum_confidence,
+        reserve_respected_across_scenarios=(
+            candidate.reserve_respected_across_scenarios
+        ),
+        target_held_across_scenarios=candidate.target_held_across_scenarios,
+        minimum_storage_energy_at_horizon_end_wh=min(
+            item.storage_energy_at_horizon_end_wh
+            for item in candidate.scenario_outcomes
+        ),
+    ))
+    calls = []
+    runtime = MarketDailyExecutionRuntime(
+        dispatch=lambda request, mapping: calls.append((request, mapping)),
+        now=lambda: captured_at,
+        commitment_store=store,
+    )
+
+    result = runtime.apply(plan=plan, snapshot=snapshot)
+
+    assert result.status == "already_active"
+    assert result.requested_vendor_mode == "Nul op de meter"
+    assert result.commitment_status == "preserved"
+    assert result.challenger_reason == "challenger_not_strictly_better"
+    assert result.challenger_financial_delta_eur == pytest.approx(-0.02)
+    assert calls == []
+
+
+def test_live_mep_allows_strictly_better_challenger_to_replace_commitment(
+    tmp_path,
+) -> None:
+    initial = _live_snapshot()
+    plan = MarketDailyPlanner().plan(
+        snapshot=initial,
+        conversion_model=_conversion(),
+        dispatch_authority=True,
+    )
+    captured_at = initial.captured_at + timedelta(minutes=2)
+    snapshot = _fresh_mode_snapshot(
+        initial,
+        captured_at=captured_at,
+        current_mode="Nul op de meter",
+    )
+    plan = replace(
+        plan,
+        current_intent=DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
+        current_interval_ends_at=captured_at + timedelta(minutes=13),
+    )
+    selected_id = sorted(
+        plan.native_observation.observer_result.best_observation_ids
+    )[0]
+    candidate = next(
+        item
+        for item in plan.native_observation.observer_result.candidate_set.candidates
+        if item.candidate_id == selected_id
+    )
+    scope_id = snapshot.current_storage_states[0].execution_scope_id
+    store = ActivePlanCommitmentStore(tmp_path / "commitments.json")
+    store.save(ActivePlanCommitment(
+        execution_scope_id=scope_id,
+        plan_id="mep-plan:inferior-active-plan",
+        plan_revision=1,
+        primitive="balance_bidirectional",
+        source_policy="pv_only",
+        starts_at=captured_at - timedelta(minutes=2),
+        ends_at=captured_at + timedelta(hours=1),
+        target_energy_wh=snapshot.current_storage_states[0].usable_capacity_wh,
+        selection_method_version="mep-active-plan-commitment:v1",
+        planner_id="mep",
+        schedule_id="inferior-active-schedule",
+        worst_case_financial_result_eur=(
+            candidate.worst_case_financial_result_eur - 0.02
+        ),
+        minimum_confidence=candidate.minimum_confidence,
+        reserve_respected_across_scenarios=(
+            candidate.reserve_respected_across_scenarios
+        ),
+        target_held_across_scenarios=candidate.target_held_across_scenarios,
+        minimum_storage_energy_at_horizon_end_wh=min(
+            item.storage_energy_at_horizon_end_wh
+            for item in candidate.scenario_outcomes
+        ),
+    ))
+    calls = []
+    runtime = MarketDailyExecutionRuntime(
+        dispatch=lambda request, mapping: (
+            calls.append((request, mapping))
+            or CanonicalDispatchOutcome(status="dispatched", command_id="replace")
+        ),
+        now=lambda: captured_at,
+        commitment_store=store,
+    )
+
+    result = runtime.apply(plan=plan, snapshot=snapshot)
+
+    assert result.status == "dispatched"
+    assert result.requested_vendor_mode == "Alleen slim ontladen"
+    assert result.commitment_status == "replaced"
+    assert result.challenger_reason == "challenger_financially_proven_better"
+    assert result.challenger_financial_delta_eur == pytest.approx(0.02)
+    assert store.load(scope_id) is None
+    assert len(calls) == 1
 
 
 def test_live_mep_never_bypasses_a_manual_override() -> None:

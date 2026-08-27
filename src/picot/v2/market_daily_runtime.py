@@ -9,7 +9,11 @@ from math import sqrt
 from threading import Lock, Thread
 from time import perf_counter
 
-from picot.domain.daily_reference_intent import DailyStorageIntent
+from picot.domain.daily_reference_candidate import DailyReferenceCandidate
+from picot.domain.daily_reference_intent import (
+    DailyReferenceIntentSchedule,
+    DailyStorageIntent,
+)
 from picot.domain.execution import ExecutionPrimitiveRequest
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.home_assistant import HomeAssistantCommandMapping
@@ -25,9 +29,15 @@ from picot.v2.canonical_execution_runtime import (
     DispatchCanonicalMode,
 )
 from picot.v2.contracts import PlanningInputSnapshot
+from picot.v2.plan_commitment_store import (
+    ActivePlanCommitment,
+    ActivePlanCommitmentStore,
+)
 
-METHOD_VERSION = "v2-market-daily-runtime:v1"
+METHOD_VERSION = "v2-market-daily-runtime:v2"
 MAXIMUM_MODE_EVIDENCE_AGE = timedelta(minutes=2)
+MEP_COMMITMENT_METHOD_VERSION = "mep-active-plan-commitment:v1"
+MEP_CHALLENGER_FINANCIAL_EPSILON_EUR = 0.005
 INTENT_MODE_MAPPING = {
     DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY: (
         "Alleen slim ontladen",
@@ -59,6 +69,64 @@ class MarketDailyExecutionOutcome:
     reason: str
     command_id: str | None = None
     evaluated_at: datetime | None = None
+    commitment_status: str | None = None
+    commitment_schedule_id: str | None = None
+    challenger_reason: str | None = None
+    challenger_financial_delta_eur: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _MepPlanProfile:
+    candidate: DailyReferenceCandidate
+    schedule: DailyReferenceIntentSchedule
+    nom_starts_at: datetime | None
+    nom_ends_at: datetime | None
+
+
+def _native_plan_profile(
+    plan: MarketDailyPlan,
+    *,
+    captured_at: datetime,
+) -> _MepPlanProfile | None:
+    if plan.winning_source != "mep_native_plan":
+        return None
+    result = plan.native_observation.observer_result
+    if not result.best_observation_ids:
+        return None
+    candidates = {item.candidate_id: item for item in result.candidate_set.candidates}
+    candidate = candidates.get(sorted(result.best_observation_ids)[0])
+    if candidate is None:
+        return None
+    schedules = {
+        item.intent_schedule.schedule_id: item.intent_schedule
+        for item in result.portfolio.strategy_results
+    }
+    schedule = schedules.get(candidate.intent_schedule_id)
+    if schedule is None:
+        return None
+    nom_indexes = tuple(
+        index
+        for index, interval in enumerate(schedule.intervals)
+        if interval.intent is DailyStorageIntent.NOM
+        and interval.ends_at > captured_at
+    )
+    if not nom_indexes:
+        return _MepPlanProfile(candidate, schedule, None, None)
+    first_index = next(
+        (
+            index
+            for index in nom_indexes
+            if schedule.intervals[index].starts_at <= captured_at
+        ),
+        nom_indexes[0],
+    )
+    phase_start = schedule.intervals[first_index].starts_at
+    phase_end = schedule.intervals[first_index].ends_at
+    for interval in schedule.intervals[first_index + 1:]:
+        if interval.intent is not DailyStorageIntent.NOM or interval.starts_at != phase_end:
+            break
+        phase_end = interval.ends_at
+    return _MepPlanProfile(candidate, schedule, phase_start, phase_end)
 
 
 @dataclass(slots=True)
@@ -67,6 +135,7 @@ class MarketDailyExecutionRuntime:
 
     dispatch: DispatchCanonicalMode
     now: Callable[[], datetime] = lambda: datetime.now(UTC)
+    commitment_store: ActivePlanCommitmentStore | None = None
     _pending_vendor_mode: str | None = None
 
     def apply(
@@ -75,25 +144,20 @@ class MarketDailyExecutionRuntime:
         plan: MarketDailyPlan,
         snapshot: PlanningInputSnapshot,
     ) -> MarketDailyExecutionOutcome:
-        selected = (
-            INTENT_MODE_MAPPING.get(plan.current_intent)
-            if plan.current_intent is not None
-            else None
-        )
-        requested_mode = selected[0] if selected is not None else None
         if not plan.dispatch_authority:
+            selected = (
+                INTENT_MODE_MAPPING.get(plan.current_intent)
+                if plan.current_intent is not None
+                else None
+            )
             return MarketDailyExecutionOutcome(
                 status="observer_only",
-                requested_vendor_mode=requested_mode,
+                requested_vendor_mode=(selected[0] if selected is not None else None),
                 reason="mep_live_authority_disabled",
             )
-        if selected is None or plan.current_interval_ends_at is None:
-            return self._blocked("mep_current_intent_ambiguous")
         executed_at = self.now()
         if executed_at.tzinfo is None or executed_at.utcoffset() is None:
             raise ValueError("MEP execution clock must be timezone-aware")
-        if executed_at >= plan.current_interval_ends_at:
-            return self._blocked("mep_current_interval_expired", executed_at)
         evidence = snapshot.storage_mode_capability_evidence
         provenance = snapshot.storage_mode_control_provenance
         if evidence is None or evidence.status != "available":
@@ -118,17 +182,54 @@ class MarketDailyExecutionRuntime:
         calibration = snapshot.bms_calibration_evidence
         if calibration is not None and calibration.active:
             return self._blocked("bms_soc_calibration_active", executed_at)
+        (
+            plan,
+            commitment_status,
+            commitment_schedule_id,
+            challenger_reason,
+            challenger_delta,
+        ) = self._resolve_commitment(
+            plan=plan,
+            snapshot=snapshot,
+            executed_at=executed_at,
+            execution_scope_id=evidence.execution_scope_id,
+        )
+        selected = (
+            INTENT_MODE_MAPPING.get(plan.current_intent)
+            if plan.current_intent is not None
+            else None
+        )
+        requested_mode = selected[0] if selected is not None else None
+        if selected is None or plan.current_interval_ends_at is None:
+            return self._blocked("mep_current_intent_ambiguous", executed_at)
+        if executed_at >= plan.current_interval_ends_at:
+            return self._blocked("mep_current_interval_expired", executed_at)
         if requested_mode not in evidence.usable_vendor_modes:
             return self._blocked("requested_vendor_mode_unavailable", executed_at)
         if evidence.current_vendor_mode != provenance.observed_vendor_mode:
             return self._blocked("storage_mode_evidence_conflict", executed_at)
         if evidence.current_vendor_mode == requested_mode:
             self._pending_vendor_mode = None
+            saved = None
+            if plan.current_intent is DailyStorageIntent.NOM:
+                saved = self._persist_nom_commitment(
+                    plan=plan,
+                    snapshot=snapshot,
+                    execution_scope_id=evidence.execution_scope_id,
+                    captured_at=executed_at,
+                )
+                if saved is not None:
+                    commitment_status = commitment_status or "created"
+                    commitment_schedule_id = saved.schedule_id
             return MarketDailyExecutionOutcome(
                 status="already_active",
                 requested_vendor_mode=requested_mode,
                 reason="requested_vendor_mode_already_active",
                 evaluated_at=executed_at,
+                commitment_status=commitment_status,
+                commitment_schedule_id=commitment_schedule_id,
+                challenger_reason=challenger_reason,
+                challenger_financial_delta_eur=challenger_delta,
             )
         if self._pending_vendor_mode == requested_mode:
             return MarketDailyExecutionOutcome(
@@ -136,6 +237,10 @@ class MarketDailyExecutionRuntime:
                 requested_vendor_mode=requested_mode,
                 reason="duplicate_request_blocked",
                 evaluated_at=executed_at,
+                commitment_status=commitment_status,
+                commitment_schedule_id=commitment_schedule_id,
+                challenger_reason=challenger_reason,
+                challenger_financial_delta_eur=challenger_delta,
             )
 
         primitive = selected[1]
@@ -168,13 +273,196 @@ class MarketDailyExecutionRuntime:
         result: CanonicalDispatchOutcome = self.dispatch(request, mapping)
         if result.status == "dispatched":
             self._pending_vendor_mode = requested_mode
+        if (
+            plan.current_intent is DailyStorageIntent.NOM
+            and result.status in {"dispatched", "already_active"}
+        ):
+            saved = self._persist_nom_commitment(
+                plan=plan,
+                snapshot=snapshot,
+                execution_scope_id=evidence.execution_scope_id,
+                captured_at=executed_at,
+            )
+            if saved is not None:
+                commitment_status = commitment_status or "created"
+                commitment_schedule_id = saved.schedule_id
         return MarketDailyExecutionOutcome(
             status=result.status,
             requested_vendor_mode=requested_mode,
             reason="mep_current_interval_dispatched",
             command_id=result.command_id,
             evaluated_at=executed_at,
+            commitment_status=commitment_status,
+            commitment_schedule_id=commitment_schedule_id,
+            challenger_reason=challenger_reason,
+            challenger_financial_delta_eur=challenger_delta,
         )
+
+    def _resolve_commitment(
+        self,
+        *,
+        plan: MarketDailyPlan,
+        snapshot: PlanningInputSnapshot,
+        executed_at: datetime,
+        execution_scope_id: str,
+    ) -> tuple[
+        MarketDailyPlan,
+        str | None,
+        str | None,
+        str | None,
+        float | None,
+    ]:
+        if self.commitment_store is None:
+            return plan, None, None, None, None
+        commitment = self.commitment_store.load(execution_scope_id)
+        if commitment is None or commitment.planner_id != "mep":
+            return plan, None, None, None, None
+        if executed_at >= commitment.ends_at or self._target_reached(snapshot, commitment):
+            self.commitment_store.clear(execution_scope_id)
+            return plan, "completed", commitment.schedule_id, None, None
+        if executed_at < commitment.starts_at:
+            return plan, "future", commitment.schedule_id, None, None
+
+        profile = _native_plan_profile(plan, captured_at=executed_at)
+        better, reason, delta = self._challenger_is_better(profile, commitment)
+        if better:
+            self.commitment_store.clear(execution_scope_id)
+            return plan, "replaced", commitment.schedule_id, reason, delta
+        preserved = replace(
+            plan,
+            current_intent=DailyStorageIntent.NOM,
+            current_interval_ends_at=commitment.ends_at,
+        )
+        return (
+            preserved,
+            "preserved",
+            commitment.schedule_id,
+            reason,
+            delta,
+        )
+
+    @staticmethod
+    def _target_reached(
+        snapshot: PlanningInputSnapshot,
+        commitment: ActivePlanCommitment,
+    ) -> bool:
+        state = next(
+            (
+                item
+                for item in snapshot.current_storage_states
+                if item.execution_scope_id == commitment.execution_scope_id
+            ),
+            None,
+        )
+        return state is not None and (
+            state.current_stored_energy_wh >= commitment.target_energy_wh
+        )
+
+    @staticmethod
+    def _challenger_is_better(
+        profile: _MepPlanProfile | None,
+        commitment: ActivePlanCommitment,
+    ) -> tuple[bool, str, float | None]:
+        if profile is None:
+            return False, "challenger_evidence_incomplete", None
+        candidate = profile.candidate
+        if not candidate.complete_across_scenarios:
+            return False, "challenger_not_complete", None
+        if (
+            commitment.reserve_respected_across_scenarios is True
+            and not candidate.reserve_respected_across_scenarios
+        ):
+            return False, "challenger_reserve_worse", None
+        if (
+            commitment.target_held_across_scenarios is True
+            and not candidate.target_held_across_scenarios
+        ):
+            return False, "challenger_target_worse", None
+        if (
+            commitment.target_held_across_scenarios is False
+            and candidate.target_held_across_scenarios
+        ):
+            return True, "challenger_target_proven_better", None
+        challenger_energy = min(
+            item.storage_energy_at_horizon_end_wh
+            for item in candidate.scenario_outcomes
+        )
+        committed_energy = commitment.minimum_storage_energy_at_horizon_end_wh
+        if committed_energy is not None:
+            if challenger_energy < committed_energy - 1.0:
+                return False, "challenger_storage_progress_worse", None
+            if challenger_energy > committed_energy + 1.0:
+                return True, "challenger_storage_progress_proven_better", None
+        previous = commitment.worst_case_financial_result_eur
+        if previous is None:
+            return False, "commitment_financial_evidence_missing", None
+        delta = candidate.worst_case_financial_result_eur - previous
+        if delta > MEP_CHALLENGER_FINANCIAL_EPSILON_EUR:
+            return True, "challenger_financially_proven_better", round(delta, 4)
+        return False, "challenger_not_strictly_better", round(delta, 4)
+
+    def _persist_nom_commitment(
+        self,
+        *,
+        plan: MarketDailyPlan,
+        snapshot: PlanningInputSnapshot,
+        execution_scope_id: str,
+        captured_at: datetime,
+    ) -> ActivePlanCommitment | None:
+        if self.commitment_store is None:
+            return None
+        existing = self.commitment_store.load(execution_scope_id)
+        if existing is not None:
+            return existing
+        profile = _native_plan_profile(plan, captured_at=captured_at)
+        if (
+            profile is None
+            or profile.nom_starts_at is None
+            or profile.nom_ends_at is None
+        ):
+            return None
+        state = next(
+            (
+                item
+                for item in snapshot.current_storage_states
+                if item.execution_scope_id == execution_scope_id
+            ),
+            None,
+        )
+        if state is None:
+            return None
+        commitment = ActivePlanCommitment(
+            execution_scope_id=execution_scope_id,
+            plan_id=f"mep-plan:{snapshot.snapshot_id}",
+            plan_revision=1,
+            primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+            source_policy="pv_only",
+            starts_at=min(profile.nom_starts_at, captured_at),
+            ends_at=profile.nom_ends_at,
+            target_energy_wh=state.usable_capacity_wh,
+            selection_method_version=MEP_COMMITMENT_METHOD_VERSION,
+            planner_id="mep",
+            schedule_id=profile.schedule.schedule_id,
+            worst_case_financial_result_eur=(
+                profile.candidate.worst_case_financial_result_eur
+            ),
+            average_charge_window_price_eur_per_kwh=(
+                profile.candidate.average_charge_window_price_eur_per_kwh
+            ),
+            minimum_confidence=profile.candidate.minimum_confidence,
+            reserve_respected_across_scenarios=(
+                profile.candidate.reserve_respected_across_scenarios
+            ),
+            target_held_across_scenarios=(
+                profile.candidate.target_held_across_scenarios
+            ),
+            minimum_storage_energy_at_horizon_end_wh=min(
+                item.storage_energy_at_horizon_end_wh
+                for item in profile.candidate.scenario_outcomes
+            ),
+        )
+        self.commitment_store.save(commitment)
+        return commitment
 
     @staticmethod
     def _blocked(

@@ -90,6 +90,14 @@ def build_market_daily_runtime_view(
                     if outcome.execution.evaluated_at is not None
                     else None
                 ),
+                "commitment_status": outcome.execution.commitment_status,
+                "commitment_schedule_id": (
+                    outcome.execution.commitment_schedule_id
+                ),
+                "challenger_reason": outcome.execution.challenger_reason,
+                "challenger_financial_delta_eur": (
+                    outcome.execution.challenger_financial_delta_eur
+                ),
             }
             if outcome.execution is not None
             else None

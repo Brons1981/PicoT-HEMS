@@ -2370,6 +2370,7 @@ def main() -> None:
                     requested_at=lambda: datetime.now(UTC),
                 ),
                 now=lambda: datetime.now(UTC),
+                commitment_store=active_plan_commitment_store,
             ),
         ),
         on_outcome=publish_market_daily_outcome,

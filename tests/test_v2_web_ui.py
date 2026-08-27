@@ -269,6 +269,13 @@ def test_dashboard_contains_passive_financial_result_tab() -> None:
     assert "Bruto batterijvoordeel − slijtage = netto batterijvoordeel" in DASHBOARD_HTML
 
 
+def test_dashboard_exposes_mep_commitment_and_challenger_evidence() -> None:
+    assert "MEP-commitment" in DASHBOARD_HTML
+    assert "Vastgelegd schema" in DASHBOARD_HTML
+    assert "Beoordeling uitdager" in DASHBOARD_HTML
+    assert "Financieel verschil uitdager" in DASHBOARD_HTML
+
+
 def test_dashboard_contains_canonical_pv_forecast_actual_history_chart() -> None:
     assert 'id="pv-forecast-actual-chart"' in DASHBOARD_HTML
     assert "renderPvForecastActualChart" in DASHBOARD_HTML

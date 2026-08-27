@@ -26,7 +26,7 @@ from picot.planner.independent_daily_intent_simulator import (
 )
 from picot.planner.independent_daily_simulator import ScenarioTimeline
 
-METHOD_VERSION = "independent-daily-charge-window-discoverer:v2"
+METHOD_VERSION = "independent-daily-charge-window-discoverer:v3"
 BASELINE_INTENT = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
 CHARGE_INTENTS = (
     DailyStorageIntent.NOM,
@@ -89,7 +89,11 @@ class IndependentDailyChargeWindowDiscoverer:
             if intent not in CHARGE_INTENTS:
                 raise ValueError("Daily window discovery accepts only charge intents.")
             for start_index in range(len(household.intervals)):
-                if not self._is_market_quarter(
+                # The first interval starts at the immutable snapshot time and may
+                # therefore be the remaining part of an already-running market
+                # quarter. It is a valid immediate-start option. Future starts
+                # remain aligned to exact market-quarter boundaries.
+                if start_index != 0 and not self._is_market_quarter(
                     household.intervals[start_index].starts_at
                 ):
                     continue

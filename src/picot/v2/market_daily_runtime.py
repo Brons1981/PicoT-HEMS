@@ -412,7 +412,7 @@ class MarketDailyExecutionRuntime:
         if self.commitment_store is None:
             return None
         existing = self.commitment_store.load(execution_scope_id)
-        if existing is not None:
+        if existing is not None and existing.planner_id == "mep":
             return existing
         profile = _native_plan_profile(plan, captured_at=captured_at)
         if (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 
 from test_independent_daily_simulator import _household, _storage, _timeline
 
@@ -81,6 +82,64 @@ def test_discovered_window_ends_at_conservative_physical_target_interval() -> No
             if item.starts_at < window.conservative_target_reached_at <= item.ends_at
         )
         assert window.ends_at == target_interval.ends_at
+
+
+def test_discoverer_can_start_now_inside_an_already_running_quarter() -> None:
+    original_household = _household()
+    captured_at = original_household.horizon_start + timedelta(minutes=7)
+    household = replace(
+        original_household,
+        created_at=captured_at,
+        horizon_start=captured_at,
+        intervals=(
+            replace(original_household.intervals[0], starts_at=captured_at),
+            *original_household.intervals[1:],
+        ),
+    )
+    scenarios = tuple(
+        replace(
+            item,
+            timeline=replace(
+                item.timeline,
+                created_at=captured_at,
+                horizon_start=captured_at,
+                intervals=(
+                    replace(item.timeline.intervals[0], starts_at=captured_at),
+                    *item.timeline.intervals[1:],
+                ),
+            ),
+        )
+        for item in (_timeline(scenario) for scenario in PVScenario)
+    )
+
+    result = IndependentDailyChargeWindowDiscoverer().discover(
+        snapshot_id="snapshot-running-window",
+        household=household,
+        pv_scenarios=scenarios,
+        storage_state=replace(_storage(0.5), measured_at=captured_at),
+        conversion_model=StorageConversionModel(
+            model_id="conversion",
+            charge_efficiency=1.0,
+            discharge_efficiency=1.0,
+            evidence_ids=("conversion",),
+            method_version="test:v1",
+        ),
+        minimum_storage_energy_wh=816.0,
+        target_storage_energy_wh=8160.0,
+        maximum_charge_input_power_w=2400.0,
+        maximum_discharge_output_power_w=2400.0,
+    )
+
+    immediate = tuple(
+        window for window in result.windows if window.starts_at == captured_at
+    )
+    assert immediate
+    assert all(
+        window.schedule.intervals[0].intent is window.intent
+        for window in immediate
+    )
+    assert all(window.ends_at.second == 0 for window in immediate)
+    assert all(window.ends_at.minute % 15 == 0 for window in immediate)
 
 
 def test_discoverer_recovers_target_after_full_storage_is_later_depleted() -> None:

@@ -29,8 +29,8 @@ from picot.v2.zendure_mode_capabilities import (
 MODE_ENTITY = "input_select.zendure_2400_ac_modus_selecteren"
 
 
-def _live_snapshot():
-    snapshot = _snapshot(maximum_soc=0.7)
+def _live_snapshot(*, current_soc: float = 0.5):
+    snapshot = _snapshot(maximum_soc=0.7, current_soc=current_soc)
     current_mode = "Standby"
     evidence = derive_zendure_mode_capability_evidence(
         {
@@ -278,6 +278,50 @@ def test_live_mep_allows_strictly_better_challenger_to_replace_commitment(
     assert result.challenger_financial_delta_eur == pytest.approx(0.02)
     assert store.load(scope_id) is None
     assert len(calls) == 1
+
+
+def test_live_mep_replaces_passive_canonical_commitment_when_nom_starts(
+    tmp_path,
+) -> None:
+    initial = _live_snapshot(current_soc=0.6)
+    plan = MarketDailyPlanner().plan(
+        snapshot=initial,
+        conversion_model=_conversion(),
+        dispatch_authority=True,
+    )
+    captured_at = initial.captured_at
+    snapshot = _fresh_mode_snapshot(
+        initial,
+        captured_at=captured_at,
+        current_mode="Nul op de meter",
+    )
+    assert plan.current_intent is DailyStorageIntent.NOM
+    scope_id = snapshot.current_storage_states[0].execution_scope_id
+    store = ActivePlanCommitmentStore(tmp_path / "commitments.json")
+    store.save(ActivePlanCommitment(
+        execution_scope_id=scope_id,
+        plan_id="passive-canonical-plan",
+        plan_revision=1,
+        primitive="balance_bidirectional",
+        source_policy="pv_only",
+        starts_at=captured_at,
+        ends_at=captured_at + timedelta(hours=1),
+        target_energy_wh=snapshot.current_storage_states[0].usable_capacity_wh,
+    ))
+    runtime = MarketDailyExecutionRuntime(
+        dispatch=lambda request, mapping: pytest.fail("mode is already active"),
+        now=lambda: captured_at,
+        commitment_store=store,
+    )
+
+    result = runtime.apply(plan=plan, snapshot=snapshot)
+
+    commitment = store.load(scope_id)
+    assert result.status == "already_active"
+    assert result.commitment_status == "created"
+    assert commitment is not None
+    assert commitment.planner_id == "mep"
+    assert commitment.schedule_id is not None
 
 
 def test_live_mep_never_bypasses_a_manual_override() -> None:

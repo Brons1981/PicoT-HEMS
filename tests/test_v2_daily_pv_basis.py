@@ -128,7 +128,7 @@ def _snapshot() -> PlanningInputSnapshot:
     )
 
 
-def test_daily_observer_promotes_only_remaining_today_to_central() -> None:
+def test_daily_observer_promotes_today_to_central_and_keeps_tomorrow_midpoint() -> None:
     snapshot, decision = apply_daily_measured_pv_basis(
         _snapshot(),
         diagnostics=_diagnostics(actual_ratio=1.02),
@@ -138,11 +138,11 @@ def test_daily_observer_promotes_only_remaining_today_to_central() -> None:
     assert decision.basis == "central"
     assert decision.reason == "actual_tracking_supports_central"
     assert decision.tracking_ratio == 1.02
-    assert decision.adjusted_interval_count == 1
+    assert decision.adjusted_interval_count == 2
     assert snapshot.pv_energy_timeline is not None
     today, tomorrow = snapshot.pv_energy_timeline.intervals
     assert today.forecast_lower_energy_wh == today.forecast_central_energy_wh == 600.0
-    assert tomorrow.forecast_lower_energy_wh == 200.0
+    assert tomorrow.forecast_lower_energy_wh == 350.0
     assert tomorrow.forecast_central_energy_wh == 500.0
 
 
@@ -154,10 +154,14 @@ def test_daily_observer_keeps_lower_when_actual_underperforms() -> None:
         local_timezone=LOCAL_TIMEZONE,
     )
 
-    assert snapshot == original
+    assert snapshot != original
     assert decision.basis == "lower"
-    assert decision.reason == "actual_tracking_below_central_threshold"
-    assert decision.adjusted_interval_count == 0
+    assert decision.reason == "actual_tracking_below_midpoint"
+    assert decision.adjusted_interval_count == 1
+    assert snapshot.pv_energy_timeline is not None
+    today, tomorrow = snapshot.pv_energy_timeline.intervals
+    assert today.forecast_lower_energy_wh == 300.0
+    assert tomorrow.forecast_lower_energy_wh == 350.0
 
 
 def test_daily_observer_requires_sufficient_closed_actual_evidence() -> None:
@@ -173,6 +177,40 @@ def test_daily_observer_requires_sufficient_closed_actual_evidence() -> None:
         local_timezone=LOCAL_TIMEZONE,
     )
 
-    assert snapshot == _snapshot()
-    assert decision.basis == "lower"
+    assert snapshot != _snapshot()
+    assert decision.basis == "midpoint"
     assert decision.reason == "actual_coverage_incomplete"
+    assert snapshot.pv_energy_timeline is not None
+    today, tomorrow = snapshot.pv_energy_timeline.intervals
+    assert today.forecast_lower_energy_wh == 450.0
+    assert tomorrow.forecast_lower_energy_wh == 350.0
+
+
+def test_daily_observer_uses_midpoint_before_actual_evidence_exists() -> None:
+    snapshot, decision = apply_daily_measured_pv_basis(
+        _snapshot(),
+        diagnostics=None,
+        local_timezone=LOCAL_TIMEZONE,
+    )
+
+    assert decision.basis == "midpoint"
+    assert decision.reason == "actual_evidence_unavailable"
+    assert snapshot.pv_energy_timeline is not None
+    today, tomorrow = snapshot.pv_energy_timeline.intervals
+    assert today.forecast_lower_energy_wh == 450.0
+    assert tomorrow.forecast_lower_energy_wh == 350.0
+
+
+def test_daily_observer_keeps_midpoint_when_actual_tracks_between_it_and_central() -> None:
+    snapshot, decision = apply_daily_measured_pv_basis(
+        _snapshot(),
+        diagnostics=_diagnostics(actual_ratio=0.85),
+        local_timezone=LOCAL_TIMEZONE,
+    )
+
+    assert decision.basis == "midpoint"
+    assert decision.reason == "actual_tracking_supports_midpoint"
+    assert snapshot.pv_energy_timeline is not None
+    today, tomorrow = snapshot.pv_energy_timeline.intervals
+    assert today.forecast_lower_energy_wh == 450.0
+    assert tomorrow.forecast_lower_energy_wh == 350.0

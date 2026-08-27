@@ -256,6 +256,15 @@ def test_dashboard_contains_readable_household_load_forecast_panel() -> None:
     assert "view.household_load_forecast" in DASHBOARD_HTML
 
 
+def test_dashboard_contains_passive_financial_result_tab() -> None:
+    assert 'data-tab="financial"' in DASHBOARD_HTML
+    assert 'id="tab-financial"' in DASHBOARD_HTML
+    assert 'id="financial-results"' in DASHBOARD_HTML
+    assert "renderFinancialResults(view.financial_results ?? {})" in DASHBOARD_HTML
+    assert "Netto extra PicoT-resultaat" in DASHBOARD_HTML
+    assert "Terugverdienen batterij" in DASHBOARD_HTML
+
+
 def test_dashboard_contains_canonical_pv_forecast_actual_history_chart() -> None:
     assert 'id="pv-forecast-actual-chart"' in DASHBOARD_HTML
     assert "renderPvForecastActualChart" in DASHBOARD_HTML

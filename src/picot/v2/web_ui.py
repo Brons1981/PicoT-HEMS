@@ -3639,6 +3639,14 @@ DASHBOARD_HTML = """<!doctype html>
           ["Aangevraagde Zendure-modus",
             mep.execution?.requested_vendor_mode],
           ["Uitvoerreden", mep.execution?.reason],
+          ["MEP-commitment", mep.execution?.commitment_status],
+          ["Vastgelegd schema", mep.execution?.commitment_schedule_id],
+          ["Beoordeling uitdager", mep.execution?.challenger_reason],
+          ["Financieel verschil uitdager", Number.isFinite(Number(
+            mep.execution?.challenger_financial_delta_eur
+          )) ? formatCurrency(Number(
+              mep.execution.challenger_financial_delta_eur
+            )) : null],
           ["Rekentijd", Number.isFinite(Number(mep.duration_ms))
             ? `${formatDutchNumber(Number(mep.duration_ms))} ms`
             : null],

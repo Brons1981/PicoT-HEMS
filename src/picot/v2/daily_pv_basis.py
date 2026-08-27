@@ -48,33 +48,34 @@ def apply_daily_measured_pv_basis(
     adjusted_count = 0
     adjusted_intervals = []
     for interval in timeline.intervals:
+        lower_wh = interval.forecast_lower_energy_wh
+        central_wh = interval.forecast_central_energy_wh
         is_remaining_forecast = (
             interval.ends_at > snapshot.captured_at
             and interval.evidence_type == "FORECAST"
             and interval.forecast_range_status == "available"
-            and interval.forecast_lower_energy_wh is not None
-            and interval.forecast_central_energy_wh is not None
+            and lower_wh is not None
+            and central_wh is not None
         )
         if is_remaining_forecast:
+            assert lower_wh is not None
+            assert central_wh is not None
             is_remaining_today = (
                 interval.starts_at.astimezone(local_timezone).date() == local_date
             )
-            midpoint_wh = (
-                interval.forecast_lower_energy_wh
-                + interval.forecast_central_energy_wh
-            ) / 2.0
+            midpoint_wh = (lower_wh + central_wh) / 2.0
             selected_lower_wh = midpoint_wh
             if is_remaining_today and decision.basis == "lower":
-                selected_lower_wh = interval.forecast_lower_energy_wh
+                selected_lower_wh = lower_wh
             elif is_remaining_today and decision.basis == "central":
-                selected_lower_wh = interval.forecast_central_energy_wh
+                selected_lower_wh = central_wh
             adjusted_intervals.append(
                 replace(
                     interval,
                     forecast_lower_energy_wh=selected_lower_wh,
                 )
             )
-            adjusted_count += selected_lower_wh != interval.forecast_lower_energy_wh
+            adjusted_count += selected_lower_wh != lower_wh
         else:
             adjusted_intervals.append(interval)
 

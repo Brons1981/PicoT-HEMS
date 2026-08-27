@@ -204,8 +204,18 @@ def test_live_mep_preserves_active_nom_across_rolling_quarter_horizon(
     assert calls == []
 
 
-def test_live_mep_allows_strictly_better_challenger_to_replace_commitment(
+@pytest.mark.parametrize(
+    ("financial_delta_eur", "expected_status", "expected_commitment_status"),
+    (
+        (0.02, "already_active", "preserved"),
+        (0.06, "dispatched", "replaced"),
+    ),
+)
+def test_live_mep_requires_five_cent_margin_to_replace_commitment(
     tmp_path,
+    financial_delta_eur: float,
+    expected_status: str,
+    expected_commitment_status: str,
 ) -> None:
     initial = _live_snapshot()
     plan = MarketDailyPlanner().plan(
@@ -247,7 +257,7 @@ def test_live_mep_allows_strictly_better_challenger_to_replace_commitment(
         planner_id="mep",
         schedule_id="inferior-active-schedule",
         worst_case_financial_result_eur=(
-            candidate.worst_case_financial_result_eur - 0.02
+            candidate.worst_case_financial_result_eur - financial_delta_eur
         ),
         minimum_confidence=candidate.minimum_confidence,
         reserve_respected_across_scenarios=(
@@ -271,13 +281,19 @@ def test_live_mep_allows_strictly_better_challenger_to_replace_commitment(
 
     result = runtime.apply(plan=plan, snapshot=snapshot)
 
-    assert result.status == "dispatched"
-    assert result.requested_vendor_mode == "Alleen slim ontladen"
-    assert result.commitment_status == "replaced"
-    assert result.challenger_reason == "challenger_financially_proven_better"
-    assert result.challenger_financial_delta_eur == pytest.approx(0.02)
-    assert store.load(scope_id) is None
-    assert len(calls) == 1
+    assert result.status == expected_status
+    assert result.commitment_status == expected_commitment_status
+    assert result.challenger_financial_delta_eur == pytest.approx(financial_delta_eur)
+    if financial_delta_eur > 0.05:
+        assert result.requested_vendor_mode == "Alleen slim ontladen"
+        assert result.challenger_reason == "challenger_financially_proven_better"
+        assert store.load(scope_id) is None
+        assert len(calls) == 1
+    else:
+        assert result.requested_vendor_mode == "Nul op de meter"
+        assert result.challenger_reason == "challenger_not_strictly_better"
+        assert store.load(scope_id) is not None
+        assert calls == []
 
 
 def test_live_mep_replaces_passive_canonical_commitment_when_nom_starts(

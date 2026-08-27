@@ -11,7 +11,10 @@ from picot.v2.canonical_execution_runtime import (
 from picot.v2.contracts import BMSCalibrationEvidence, CanonicalPipelineRun
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.pipeline import CanonicalPipeline
-from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
+from picot.v2.plan_commitment_store import (
+    ActivePlanCommitment,
+    ActivePlanCommitmentStore,
+)
 from picot.v2.storage_capability_snapshot import (
     build_storage_capability_snapshot_set,
 )
@@ -310,183 +313,43 @@ def test_canonical_runtime_does_not_repeat_request_before_feedback() -> None:
     assert duplicate.vendor_result.status == "awaiting_mode_feedback"
 
 
-def test_active_pv_plan_is_not_interrupted_by_a_forecast_replan(tmp_path) -> None:
-    calls: list[str] = []
-    commitment_path = tmp_path / "commitment.json"
-    runtime = CanonicalExecutionRuntime(
-        dispatch=lambda request, mapping: (
-            calls.append(mapping.fixed_value or "")
-            or CanonicalDispatchOutcome("dispatched", "ha-command-test")
-        ),
-        commitment_store=ActivePlanCommitmentStore(commitment_path),
-    )
+def test_canonical_runtime_neither_creates_nor_changes_commitments(tmp_path) -> None:
+    store = ActivePlanCommitmentStore(tmp_path / "commitment.json")
     active = _live_run()
-    runtime.apply(active)
-
-    # A fresh runtime instance models an add-on restart. The execution
-    # commitment must come from durable plan context, not process memory.
-    runtime = CanonicalExecutionRuntime(
-        dispatch=lambda request, mapping: (
-            calls.append(mapping.fixed_value or "")
-            or CanonicalDispatchOutcome("dispatched", "ha-command-after-restart")
-        ),
-        commitment_store=ActivePlanCommitmentStore(commitment_path),
-    )
-
-    commitment = ActivePlanCommitmentStore(commitment_path).load("home-battery")
-    assert commitment is not None
-    future = _future_pv_run(
-        replace(
-            active,
-            planning_input=replace(
-                active.planning_input,
-                active_plan_commitments=(commitment,),
-            ),
-        )
-    )
-    future = replace(
-        future,
-        primitive_boundary=replace(
-            future.primitive_boundary,
-            current_vendor_mode="Nul op de meter",
-        ),
-    )
-    held = runtime.apply(future)
-
-    assert calls == ["Nul op de meter"]
-    assert held.vendor_result.status == (
-        "active_plan_preserved_after_blocked_replan"
-    )
-    assert held.vendor_result.planned_vendor_mode == "Nul op de meter"
-
-
-def test_selected_future_pv_plan_is_persisted_before_window_start(tmp_path) -> None:
-    commitment_path = tmp_path / "commitment.json"
     runtime = CanonicalExecutionRuntime(
         dispatch=lambda request, mapping: CanonicalDispatchOutcome(
             "dispatched", "ha-command-test"
         ),
-        commitment_store=ActivePlanCommitmentStore(commitment_path),
-    )
-    active = _live_run()
-    shift = timedelta(hours=1)
-    plan = active.execution_plan_set.plans[0]
-    scheduled = replace(
-        active,
-        execution_plan_set=replace(
-            active.execution_plan_set,
-            plans=(
-                replace(
-                    plan,
-                    valid_from=plan.valid_from + shift,
-                    valid_until=plan.valid_until + shift,
-                    segments=tuple(
-                        replace(
-                            segment,
-                            starts_at=segment.starts_at + shift,
-                            ends_at=segment.ends_at + shift,
-                        )
-                        for segment in plan.segments
-                    ),
-                ),
-            ),
-        ),
+        commitment_store=store,
     )
 
-    runtime.apply(scheduled)
-
-    commitment = ActivePlanCommitmentStore(commitment_path).load("home-battery")
-    assert commitment is not None
-    assert commitment.starts_at > scheduled.planning_input.captured_at
-    assert commitment.plan_id == scheduled.execution_plan_set.plans[0].plan_id
-
-
-def test_future_commitment_does_not_preserve_nom_before_window_start(
-    tmp_path,
-) -> None:
-    calls: list[str] = []
-    runtime = CanonicalExecutionRuntime(
-        dispatch=lambda request, mapping: (
-            calls.append(mapping.fixed_value or "")
-            or CanonicalDispatchOutcome("dispatched", "ha-command-test")
-        ),
-        commitment_store=ActivePlanCommitmentStore(tmp_path / "commitment.json"),
-    )
-    active = _live_run()
-    plan = active.execution_plan_set.plans[0]
-    pv_segment = next(
-        item for item in plan.segments if item.charge_source_policy == "pv_only"
-    )
-    baseline_segment = next(
-        item for item in plan.segments if item.charge_source_policy is None
-    )
-    future = _future_pv_run(active)
-    future = replace(
-        future,
-        execution_plan_set=replace(
-            active.execution_plan_set,
-            plans=(
-                replace(
-                    plan,
-                    segments=(
-                        replace(
-                            baseline_segment,
-                            starts_at=active.planning_input.captured_at,
-                            ends_at=pv_segment.ends_at,
-                        ),
-                        replace(
-                            pv_segment,
-                            starts_at=pv_segment.ends_at,
-                            ends_at=baseline_segment.ends_at,
-                        ),
-                    ),
-                ),
-            ),
-        ),
-        primitive_boundary=replace(
-            future.primitive_boundary,
-            current_vendor_mode="Nul op de meter",
-        ),
-    )
-    assert future.primitive_boundary.planned_vendor_mode == "Alleen slim ontladen"
-
-    result = runtime.apply(future)
-
-    commitment = runtime.commitment_store.load("home-battery")
-    assert commitment is not None
-    assert future.planning_input.captured_at < commitment.starts_at
-    assert calls == ["Alleen slim ontladen"]
-    assert result.vendor_result.status == "dispatched"
-
-
-def test_completed_storage_target_may_end_committed_pv_plan(tmp_path) -> None:
-    calls: list[str] = []
-    runtime = CanonicalExecutionRuntime(
-        dispatch=lambda request, mapping: (
-            calls.append(mapping.fixed_value or "")
-            or CanonicalDispatchOutcome("dispatched", "ha-command-test")
-        ),
-        commitment_store=ActivePlanCommitmentStore(tmp_path / "commitment.json"),
-    )
-    active = _live_run()
     runtime.apply(active)
-    future = _future_pv_run(active)
+
+    assert store.load("home-battery") is None
+    mep_commitment = ActivePlanCommitment(
+        execution_scope_id="home-battery",
+        plan_id="mep-plan",
+        plan_revision=1,
+        primitive="balance_bidirectional",
+        source_policy="pv_only",
+        starts_at=active.planning_input.captured_at,
+        ends_at=active.planning_input.captured_at + timedelta(hours=1),
+        target_energy_wh=8160.0,
+        planner_id="mep",
+        schedule_id="mep-schedule",
+    )
+    store.save(mep_commitment)
     completed = replace(
-        future,
+        _future_pv_run(active),
         evaluation=replace(
-            future.evaluation,
+            active.evaluation,
             decisive_step="hard_constraint:storage_requirement_already_satisfied",
         ),
-        primitive_boundary=replace(
-            future.primitive_boundary,
-            current_vendor_mode="Nul op de meter",
-        ),
     )
 
-    result = runtime.apply(completed)
+    runtime.apply(completed)
 
-    assert calls == ["Nul op de meter", "Alleen slim ontladen"]
-    assert result.vendor_result.status == "dispatched"
+    assert store.load("home-battery") == mep_commitment
 
 
 def _future_pv_run(active: CanonicalPipelineRun) -> CanonicalPipelineRun:

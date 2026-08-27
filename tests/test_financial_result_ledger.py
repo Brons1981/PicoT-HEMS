@@ -122,6 +122,60 @@ def test_normal_self_consumption_is_battery_value_but_not_picot_value(tmp_path) 
     assert today["battery_wear_eur"] == pytest.approx(0.05)
     assert today["net_battery_value_eur"] == pytest.approx(0.20)
     assert today["net_picot_value_eur"] == pytest.approx(0.0)
+    assert today["household_energy_sources"] == {
+        "household_load_kwh": 1.0,
+        "sources": [
+            {
+                "source": "pv_direct",
+                "energy_kwh": 0.0,
+                "share": 0.0,
+                "value_eur": 0.0,
+                "value_kind": "avoided_grid_import",
+            },
+            {
+                "source": "battery",
+                "energy_kwh": 1.0,
+                "share": 1.0,
+                "value_eur": 0.25,
+                "value_kind": "avoided_grid_import_gross",
+            },
+            {
+                "source": "grid",
+                "energy_kwh": 0.0,
+                "share": 0.0,
+                "value_eur": 0.0,
+                "value_kind": "energy_cost",
+            },
+        ],
+    }
+
+
+def test_household_energy_sources_reconcile_energy_and_source_value(tmp_path) -> None:
+    view = _ledger(tmp_path).update(
+        _snapshot(price=0.25),
+        _history(
+            pv_generation=500.0,
+            household_load=1000.0,
+            grid_import=250.0,
+            grid_export=0.0,
+            battery_charge=0.0,
+            battery_discharge=250.0,
+        ),
+    )
+
+    today = view["today"]
+    assert isinstance(today, dict)
+    breakdown = today["household_energy_sources"]
+    assert isinstance(breakdown, dict)
+    assert breakdown["household_load_kwh"] == pytest.approx(1.0)
+    sources = {item["source"]: item for item in breakdown["sources"]}
+    assert sources["pv_direct"]["energy_kwh"] == pytest.approx(0.5)
+    assert sources["battery"]["energy_kwh"] == pytest.approx(0.25)
+    assert sources["grid"]["energy_kwh"] == pytest.approx(0.25)
+    assert sum(item["share"] for item in sources.values()) == pytest.approx(1.0)
+    assert sources["pv_direct"]["value_eur"] == pytest.approx(0.125)
+    assert sources["battery"]["value_eur"] == pytest.approx(0.0625)
+    assert sources["grid"]["value_eur"] == pytest.approx(0.0625)
 
 
 def test_profitable_picot_export_is_net_of_incremental_wear(tmp_path) -> None:

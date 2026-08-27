@@ -184,6 +184,12 @@ class FinancialResultLedger:
         actual_export_revenue = 0.0
         no_battery_cost = 0.0
         load_only_cost = 0.0
+        household_source_wh = {"pv_direct": 0.0, "battery": 0.0, "grid": 0.0}
+        household_source_value_eur = {
+            "pv_direct": 0.0,
+            "battery": 0.0,
+            "grid": 0.0,
+        }
         for start, end, import_rate, export_rate in segments:
             values = {role: self._integrate(series, start, end) for role, series in by_role.items()}
             if any(value is None for value in values.values()):
@@ -203,6 +209,23 @@ class FinancialResultLedger:
             actual_cost += interval_import_cost - interval_export_revenue
             pv = complete_values["pv_generation"]
             load = complete_values["household_load"]
+            direct_pv = min(pv, load)
+            remaining_load = max(0.0, load - direct_pv)
+            battery_to_load = min(
+                complete_values["battery_discharge"],
+                remaining_load,
+            )
+            grid_to_load = max(0.0, remaining_load - battery_to_load)
+            source_energy = {
+                "pv_direct": direct_pv,
+                "battery": battery_to_load,
+                "grid": grid_to_load,
+            }
+            for source, energy_wh in source_energy.items():
+                household_source_wh[source] += energy_wh
+                household_source_value_eur[source] += (
+                    energy_wh * import_rate / 1000.0
+                )
             no_battery_cost += (
                 max(0.0, load - pv) * import_rate
                 - max(0.0, pv - load) * export_rate
@@ -249,6 +272,12 @@ class FinancialResultLedger:
         net_total_energy = gross_total_energy - actual_wear
         gross_picot = nom_cost - actual_cost
         net_picot = gross_picot + nom_wear - actual_wear
+        household_load_wh = sum(household_source_wh.values())
+        source_value_kinds = {
+            "pv_direct": "avoided_grid_import",
+            "battery": "avoided_grid_import_gross",
+            "grid": "energy_cost",
+        }
         result.update({
             "status": "available",
             "reason": None,
@@ -270,6 +299,22 @@ class FinancialResultLedger:
             "energy_kwh": {
                 key: round(value / 1000.0, 4)
                 for key, value in complete_energy_by_role.items()
+            },
+            "household_energy_sources": {
+                "household_load_kwh": round(household_load_wh / 1000.0, 4),
+                "sources": [
+                    {
+                        "source": source,
+                        "energy_kwh": round(household_source_wh[source] / 1000.0, 4),
+                        "share": round(
+                            household_source_wh[source] / household_load_wh,
+                            6,
+                        ) if household_load_wh > 0.0 else 0.0,
+                        "value_eur": round(household_source_value_eur[source], 4),
+                        "value_kind": source_value_kinds[source],
+                    }
+                    for source in ("pv_direct", "battery", "grid")
+                ],
             },
             "baseline": "same_measured_pv_and_household_with_nom_battery_control",
             "coverage_by_role": self._coverage_by_role(

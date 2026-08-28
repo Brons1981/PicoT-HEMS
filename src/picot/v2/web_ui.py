@@ -1237,9 +1237,7 @@ DASHBOARD_HTML = """<!doctype html>
           const chip = document.createElement("span");
           chip.className = `planner-window-chip ${window.kind}`;
           chip.textContent = [
-            window.label === "huidige planner"
-              ? "Huidige planner"
-              : "Etmaalsimulatie",
+            window.label,
             `${formatTimestamp(window.starts_at)} – ` +
               formatTimestamp(window.ends_at),
           ].join(": ");
@@ -3005,67 +3003,97 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
-    function renderStorageEnergySourceNeeds(needs) {
+    function executionPlanActionLabel(primitive) {
+      return {
+        balance_discharge_only: "Huishouden ondersteunen",
+        charge_at_power: "Batterij laden",
+        discharge_at_power: "Naar het net ontladen",
+        standby: "Stand-by",
+      }[primitive] ?? displayValue(primitive);
+    }
+
+    function executionPlanSourceLabel(sourcePolicy) {
+      return {
+        pv_only: "Alleen PV",
+        pv_preferred_grid_allowed: "PV heeft voorkeur; net toegestaan",
+        grid_only: "Alleen net",
+      }[sourcePolicy] ?? displayValue(sourcePolicy);
+    }
+
+    function executionPlanDayLabel(value) {
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return "—";
+      return parsed.toLocaleDateString("nl-NL", {
+        timeZone: "Europe/Amsterdam",
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      });
+    }
+
+    function renderBatteryEnergyPlan(plans, execution) {
       const container = element("storage-energy-source-needs");
       container.replaceChildren();
 
-      if (!Array.isArray(needs) || needs.length === 0) {
+      if (!Array.isArray(plans) || plans.length === 0) {
         container.textContent =
           "Nog geen energieplan voor de batterij beschikbaar.";
         return;
       }
 
-      for (const need of needs) {
+      const blockers = Array.isArray(execution?.blockers)
+        ? execution.blockers : [];
+      if (blockers.includes("manual_override_active")) {
+        const notice = document.createElement("p");
+        notice.className = "planning-attention";
+        notice.textContent =
+          "Handmatige instelling actief: PicoT toont dit plan, maar stuurt " +
+          "het niet naar de batterij.";
+        container.appendChild(notice);
+      }
+
+      for (const plan of plans) {
         const article = document.createElement("article");
-        const summary = document.createElement("p");
-        const deadline = formatTimestamp(need.required_by);
-
-        if (need.status === "target_already_met") {
-          summary.textContent =
-            "Zendure batterij heeft het geplande doel van " +
-            formatEnergyKwh(need.target_energy_wh) +
-            " al bereikt; aanvullende laadenergie is niet nodig.";
-        } else if (need.status === "pv_only_feasible") {
-          summary.textContent =
-            "Zendure batterij mist " +
-            formatEnergyKwh(need.energy_to_target_wh) +
-            " om het geplande doel van " +
-            formatEnergyKwh(need.target_energy_wh) +
-            " te bereiken. De verwachte PV kan dit vóór " +
-            deadline +
-            " zonder netladen bereiken.";
-        } else {
-          summary.textContent =
-            "Zendure batterij mist " +
-            formatEnergyKwh(need.energy_to_target_wh) +
-            " om het geplande doel van " +
-            formatEnergyKwh(need.target_energy_wh) +
-            " te bereiken. Van de verwachte " +
-            formatEnergyKwh(need.expected_usable_pv_energy_wh) +
-            " PV blijft na " +
-            formatEnergyKwh(need.household_load_forecast_energy_wh) +
-            " huishoudverbruik " +
-            formatEnergyKwh(need.pv_storage_contribution_wh) +
-            " beschikbaar voor opslag. Daardoor resteert " +
-            formatEnergyKwh(need.grid_energy_required_wh) +
-            " mogelijke netlaadbehoefte vóór " +
-            deadline +
-            ".";
-        }
-
+        const heading = document.createElement("h3");
+        heading.textContent = "MEP-uitvoeringsplan";
         const attributes = document.createElement("dl");
-        appendAttribute(
-          attributes,
-          "PV-only haalbaar",
-          need.pv_only_feasible ? "Ja" : "Nee"
-        );
-        appendAttribute(
-          attributes,
-          "Confidence",
-          formatConfidence(need.confidence)
-        );
-        article.append(summary, attributes);
-        appendTechnicalDetails(article, need);
+        appendAttribute(attributes, "Plan", plan.plan_id);
+        appendAttribute(attributes, "Status", plan.lifecycle_status);
+        appendAttribute(attributes, "Geldig vanaf", formatTimestamp(plan.valid_from));
+        appendAttribute(attributes, "Geldig tot", formatTimestamp(plan.valid_until));
+        article.append(heading, attributes);
+
+        const table = document.createElement("table");
+        const head = document.createElement("thead");
+        const headRow = document.createElement("tr");
+        for (const label of [
+          "Dag", "Vanaf", "Tot", "Actie", "Vermogen", "Laadbron", "Doel"
+        ]) {
+          const cell = document.createElement("th");
+          cell.textContent = label;
+          headRow.append(cell);
+        }
+        head.append(headRow);
+        const body = document.createElement("tbody");
+        for (const segment of plan.segments ?? []) {
+          const row = document.createElement("tr");
+          for (const value of [
+            executionPlanDayLabel(segment.starts_at),
+            formatTimestamp(segment.starts_at),
+            formatTimestamp(segment.ends_at),
+            executionPlanActionLabel(segment.primitive),
+            formatMeasurement(segment.requested_power_w, "W"),
+            executionPlanSourceLabel(segment.charge_source_policy),
+            segment.purpose,
+          ]) {
+            const cell = document.createElement("td");
+            cell.textContent = displayValue(value);
+            row.append(cell);
+          }
+          body.append(row);
+        }
+        table.append(head, body);
+        article.append(table);
         container.appendChild(article);
       }
     }
@@ -3261,16 +3289,23 @@ DASHBOARD_HTML = """<!doctype html>
       ].join(" ")).join(" | ");
     }
 
-    function selectedPlannerWindows(view) {
+    function selectedExecutionPlanWindows(view) {
       const windows = [];
-      const canonical = view.planning_status?.chosen_plan ?? {};
-      if (canonical.charge_window_starts_at && canonical.charge_window_ends_at) {
-        windows.push({
-          starts_at: canonical.charge_window_starts_at,
-          ends_at: canonical.charge_window_ends_at,
-          kind: "canonical-plan",
-          label: "huidige planner",
-        });
+      const plans = view.planning_status?.execution_plans ?? [];
+      for (const plan of plans) {
+        for (const segment of plan.segments ?? []) {
+          if (!["charge_at_power", "discharge_at_power"].includes(
+            segment.primitive
+          )) continue;
+          windows.push({
+            starts_at: segment.starts_at,
+            ends_at: segment.ends_at,
+            kind: "canonical-plan",
+            label: segment.primitive === "charge_at_power"
+              ? "MEP laden"
+              : "MEP ontladen",
+          });
+        }
       }
       return windows;
     }
@@ -3770,7 +3805,6 @@ DASHBOARD_HTML = """<!doctype html>
       element("captured-at").textContent = displayValue(view.captured_at);
       const pipeline = Array.isArray(view.pipeline) ? view.pipeline : [];
       const planningInput = pipeline.find((item) => item.stage === 1);
-      const candidateEngine = pipeline.find((item) => item.stage === 3);
       const primitiveBoundary = pipeline.find((item) => item.stage === 7);
       const execution = pipeline.find((item) => item.stage === 6);
       const observerOnly = execution?.attributes?.observer_only !== false;
@@ -3818,7 +3852,7 @@ DASHBOARD_HTML = """<!doctype html>
           opportunities: []
         },
         view.captured_at,
-        selectedPlannerWindows(view)
+        selectedExecutionPlanWindows(view)
       );
       renderPipeline(pipeline);
       renderPipelineHealth(view.pipeline_health);
@@ -3826,8 +3860,9 @@ DASHBOARD_HTML = """<!doctype html>
       renderPlanningStatus(view.planning_status);
       renderPlanExplanation(view.plan_explanation);
       renderStorageModeOverride(primitiveBoundary);
-      renderStorageEnergySourceNeeds(
-        candidateEngine?.attributes?.storage_source_needs ?? []
+      renderBatteryEnergyPlan(
+        view.planning_status?.execution_plans ?? [],
+        view.planning_status?.execution ?? {}
       );
       renderTimeline(view.pv_energy_timeline ?? {
         available: false,
@@ -5099,6 +5134,34 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "primitive_status": run.primitive_boundary.status,
             "blockers": list(run.primitive_boundary.blockers),
         },
+        "execution_plans": [
+            {
+                "plan_id": plan.plan_id,
+                "execution_scope_id": plan.execution_scope_id,
+                "valid_from": plan.valid_from.isoformat(),
+                "valid_until": plan.valid_until.isoformat(),
+                "planned_primitive": plan.planned_primitive.value,
+                "planned_vendor_mode": plan.planned_vendor_mode,
+                "lifecycle_status": plan.lifecycle_status,
+                "observer_only": plan.observer_only,
+                "segments": [
+                    {
+                        "starts_at": segment.starts_at.isoformat(),
+                        "ends_at": segment.ends_at.isoformat(),
+                        "primitive": segment.primitive.value,
+                        "purpose": segment.purpose,
+                        "requested_power_w": segment.requested_power_w,
+                        "charge_source_policy": (
+                            segment.charge_source_policy.value
+                            if segment.charge_source_policy is not None
+                            else None
+                        ),
+                    }
+                    for segment in plan.segments
+                ],
+            }
+            for plan in winning_execution_plans
+        ] if not fallback_active else [],
         "chosen_plan": {
             "candidate_id": (
                 winning_candidate.candidate_id

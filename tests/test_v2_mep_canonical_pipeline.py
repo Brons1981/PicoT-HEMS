@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
@@ -7,6 +7,8 @@ from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
+from picot.v2.projection import project
+from picot.v2.web_ui import DASHBOARD_HTML, build_web_view
 
 
 def _pipeline(tmp_path, *, switching_margin_eur: float = 0.05):
@@ -45,6 +47,46 @@ def test_mep_winner_flows_through_canonical_path_and_plan_store(tmp_path) -> Non
     assert len(commitment.segments) == len(winning_path.segments)
     assert commitment.segments[0].starts_at == winning_path.segments[0].starts_at
     assert commitment.segments[-1].ends_at == winning_path.segments[-1].ends_at
+
+
+def test_dashboard_presents_mep_execution_plan_without_legacy_outcomes(
+    tmp_path,
+) -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.51)
+    pipeline, _store = _pipeline(tmp_path)
+
+    run = pipeline.run(planning_input=snapshot)
+    view = build_web_view(run, project(run))
+
+    assert run.outcomes.outcomes == ()
+    plans = view["planning_status"]["execution_plans"]
+    assert len(plans) == 1
+    assert plans[0]["plan_id"] == run.execution_plan_set.plans[0].plan_id
+    assert plans[0]["execution_scope_id"] == (
+        run.execution_plan_set.plans[0].execution_scope_id
+    )
+    assert plans[0]["segments"] == [
+        {
+            "starts_at": segment.starts_at.isoformat(),
+            "ends_at": segment.ends_at.isoformat(),
+            "primitive": segment.primitive.value,
+            "purpose": segment.purpose,
+            "requested_power_w": segment.requested_power_w,
+            "charge_source_policy": (
+                segment.charge_source_policy.value
+                if segment.charge_source_policy is not None
+                else None
+            ),
+        }
+        for segment in run.execution_plan_set.plans[0].segments
+    ]
+    assert any(
+        datetime.fromisoformat(segment["starts_at"]) > snapshot.captured_at
+        for segment in plans[0]["segments"]
+    )
+    assert "renderBatteryEnergyPlan(" in DASHBOARD_HTML
+    assert "view.planning_status?.execution_plans" in DASHBOARD_HTML
+    assert "selectedExecutionPlanWindows(view)" in DASHBOARD_HTML
 
 
 def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:

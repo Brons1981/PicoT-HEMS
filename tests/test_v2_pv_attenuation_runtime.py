@@ -5,7 +5,7 @@ from picot.v2.contracts import (
     PVEnergyTimelineInterval,
     PVForecastAttenuationProfile,
 )
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.projection import project
 from picot.v2.pv_attenuation_range import (
     derive_pv_attenuated_forecast_range,

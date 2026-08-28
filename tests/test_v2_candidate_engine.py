@@ -16,7 +16,7 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.projection import project
 
 BASE = datetime(2026, 8, 15, 8, 0, tzinfo=UTC)

@@ -6,7 +6,7 @@ from test_v2_delegated_storage_pipeline_integration import BASE, _snapshot
 
 from picot.v2.contracts import PriceForecastPoint
 from picot.v2.opportunity_engine import PriceOpportunityConfig
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.projection import project
 from picot.v2.web_ui import build_web_view, pipeline_result_nl
 

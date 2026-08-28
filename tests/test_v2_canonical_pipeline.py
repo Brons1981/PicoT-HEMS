@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, __version__
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 
 
 def test_v2_bootstrap_pipeline_keeps_one_run_and_snapshot() -> None:

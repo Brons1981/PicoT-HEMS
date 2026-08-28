@@ -9,7 +9,7 @@ from picot.v2.opportunity_engine import (
     OpportunityEngine,
     PriceOpportunityConfig,
 )
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.projection import project
 
 BASE = datetime(2026, 8, 13, 8, 0, tzinfo=UTC)

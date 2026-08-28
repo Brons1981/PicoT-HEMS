@@ -14,7 +14,7 @@ from test_v2_delegated_storage_pipeline_integration import (
 )
 
 from picot.v2.contracts import ProjectedHouseholdEnergyBalanceInterval
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 
 
 def _interval(

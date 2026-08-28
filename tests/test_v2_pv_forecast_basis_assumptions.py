@@ -10,7 +10,7 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.projection import project
 
 CAPTURED_AT = datetime(2026, 8, 16, 9, 0, tzinfo=UTC)
@@ -222,4 +222,3 @@ def test_candidate_card_exposes_bounded_future_pv_assumptions() -> None:
             }
         ],
     }
-

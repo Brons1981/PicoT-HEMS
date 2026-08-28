@@ -261,14 +261,17 @@ def test_mep_builds_complete_2026_grid_trade_with_linked_saldering() -> None:
     grid_routes = tuple(item for item in result.market_routes if item.route_kind == "grid_trade")
     assert grid_routes
     assert all(route.window_ends_at <= route.export_window_starts_at for route in grid_routes)
-    assert all(
-        item.admission_reason
-        in {
-            "minimum_total_route_profit_not_met",
-            "physical_baseline_or_reserve_not_restored",
-        }
+    grid_assessments = tuple(
+        item
         for item in result.route_assessments
         if item.route_id in {route.route_id for route in grid_routes}
+    )
+    assert grid_assessments
+    assert all(item.admitted for item in grid_assessments)
+    assert all(
+        item.worst_case_incremental_result_eur
+        >= item.minimum_total_route_profit_eur
+        for item in grid_assessments
     )
 
 
@@ -374,7 +377,7 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
         for scenario in grid_assessment.scenario_evidence
     )
     assert all(
-        not scenario.target_held_at_horizon_end
+        scenario.target_held_at_horizon_end
         for scenario in grid_assessment.scenario_evidence
     )
     assert grid_assessment.physically_admissible is True
@@ -634,6 +637,35 @@ def test_mep_source_has_no_dependency_on_cp_or_ep_runtime_outputs() -> None:
         "planner_comparison_ledger",
     )
     assert all(name not in source for name in forbidden)
+
+
+def test_market_routes_consume_opportunity_evidence_without_top_n_selection() -> None:
+    source = __import__("inspect").getsource(
+        __import__(
+            "picot.planner.market_daily_planner",
+            fromlist=["MarketDailyPlanner"],
+        )
+    )
+
+    assert "opportunities: OpportunitySet" in source
+    assert ")[:6]" not in source
+    assert ")[:8]" not in source
+
+
+def test_every_market_route_retains_opportunity_lineage() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
+    negative = tuple(
+        replace(point, value_eur_per_kwh=-0.10)
+        for point in snapshot.price_points
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=replace(snapshot, price_points=negative),
+        conversion_model=_conversion(),
+    )
+
+    assert result.market_routes
+    assert all(route.opportunity_ids for route in result.market_routes)
 
 
 def test_mep_does_not_create_capacity_route_for_merely_low_positive_import() -> None:

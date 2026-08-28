@@ -12,7 +12,7 @@ from picot.v2.contracts import (
     PVEnergyTimelineInterval,
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.power_history import (
     PowerHistoryPoint,
     PowerHistorySeries,
@@ -289,11 +289,11 @@ def test_dashboard_contains_passive_financial_result_tab() -> None:
     assert "Bruto batterijvoordeel − slijtage = netto batterijvoordeel" in DASHBOARD_HTML
 
 
-def test_dashboard_exposes_mep_commitment_and_challenger_evidence() -> None:
-    assert "MEP-commitment" in DASHBOARD_HTML
-    assert "Vastgelegd schema" in DASHBOARD_HTML
-    assert "Beoordeling uitdager" in DASHBOARD_HTML
-    assert "Financieel verschil uitdager" in DASHBOARD_HTML
+def test_dashboard_uses_only_canonical_plan_and_evaluation_evidence() -> None:
+    assert "MEP-commitment" not in DASHBOARD_HTML
+    assert "view.market_daily_planner" not in DASHBOARD_HTML
+    assert "view.independent_daily_observer" not in DASHBOARD_HTML
+    assert "planner_comparison_history" not in DASHBOARD_HTML
 
 
 def test_dashboard_contains_canonical_pv_forecast_actual_history_chart() -> None:
@@ -702,29 +702,13 @@ def test_price_chart_only_colors_current_planner_windows() -> None:
     assert '["low", "Laagste-prijsvenster"]' not in DASHBOARD_HTML
     assert '["high", "Hoogste-teruglevervenster"]' not in DASHBOARD_HTML
     assert ".planner-window.canonical-plan" in DASHBOARD_HTML
-    assert ".planner-window.daily-plan" in DASHBOARD_HTML
-    assert ".price-bar.mep-charge" in DASHBOARD_HTML
-    assert ".price-bar.mep-export" in DASHBOARD_HTML
-
-
-def test_dashboard_preserves_open_daily_measure_details_by_stable_key() -> None:
-    assert "details.dataset.technicalKey" in DASHBOARD_HTML
-    assert "openTechnicalDetailsByKey" in DASHBOARD_HTML
-    assert "route.route_id" not in DASHBOARD_HTML[
-        DASHBOARD_HTML.index('details.dataset.technicalKey = [\n          "market-route"'):
-        DASHBOARD_HTML.index("const summary = document.createElement", DASHBOARD_HTML.index(
-            'details.dataset.technicalKey = [\n          "market-route"'
-        ))
-    ]
-
-
-def test_dashboard_explains_market_recovery_outside_available_horizon() -> None:
-    assert "Geen volledige marktroute: herstel na export valt buiten" in DASHBOARD_HTML
+    assert ".planner-window.daily-plan" not in DASHBOARD_HTML
+    assert ".price-bar.mep-charge" not in DASHBOARD_HTML
+    assert ".price-bar.mep-export" not in DASHBOARD_HTML
 
 
 def test_dashboard_shows_plan_calculation_time_and_soc() -> None:
-    assert '["Plan berekend", view.planning_status?.captured_at]' in DASHBOARD_HTML
-    assert '["Plan berekend", observer.captured_at]' in DASHBOARD_HTML
+    assert '["Plan berekend", formatTimestamp(status.captured_at)]' in DASHBOARD_HTML
     assert "SoC bij berekening" in DASHBOARD_HTML
 
 

@@ -19,6 +19,7 @@ def _discover(
     deplete_after_pv: bool = False,
     micro_charge_suppression_fraction: float = 0.01,
     charge_session_active: bool = False,
+    required_by=None,
 ):
     scenarios = tuple(_timeline(scenario) for scenario in PVScenario)
     if deplete_after_pv:
@@ -57,6 +58,7 @@ def _discover(
         maximum_discharge_output_power_w=2400.0,
         micro_charge_suppression_fraction=micro_charge_suppression_fraction,
         charge_session_active=charge_session_active,
+        required_by=required_by,
     )
 
 
@@ -188,3 +190,18 @@ def test_discoverer_does_not_import_current_pipeline_selection_types() -> None:
     assert "Candidate" not in imported_names
     assert "EvaluationRecord" not in imported_names
     assert "ActivePlanCommitment" not in imported_names
+
+
+def test_discoverer_excludes_windows_that_miss_required_by() -> None:
+    required_by = _household().horizon_start + timedelta(minutes=90)
+
+    # At 75% SoC the physical target is reachable before this deadline, while
+    # later start alternatives still exist and must be excluded.
+    result = _discover(soc=0.75, required_by=required_by)
+
+    assert result.windows
+    assert all(item.ends_at <= required_by for item in result.windows)
+    assert all(
+        item.conservative_target_reached_at <= required_by
+        for item in result.windows
+    )

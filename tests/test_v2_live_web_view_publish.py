@@ -1,17 +1,12 @@
 import json
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import cast
 from urllib.error import HTTPError
 
 import pytest
 
 import picot.v2.live_runtime as live_runtime
-from picot.v2.independent_daily_observer_runtime import (
-    IndependentDailyObserverWorker,
-)
 from picot.v2.opportunity_engine import PriceOpportunityConfig
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.planning_input import PlanningInputBundle
 from picot.v2.projection import Card
 from picot.v2.web_ui import WebViewStore
@@ -37,13 +32,7 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
         config_version="test:v1",
     )
     published_cards: list[Card] = []
-    submitted_snapshot_ids: list[str] = []
     store = WebViewStore()
-    daily_snapshot = replace(snapshot, snapshot_id="snapshot-daily-central")
-
-    class FakeDailyObserverWorker:
-        def submit(self, submitted_snapshot) -> None:
-            submitted_snapshot_ids.append(submitted_snapshot.snapshot_id)
 
     class FakeSink:
         def __init__(self, token: str) -> None:
@@ -60,15 +49,11 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
     )
     live_runtime._execute_planning_bundle(
         token="test-token",
+        canonical_pipeline=CanonicalPipeline(),
         price_config=price_config,
         bundle=bundle,
         web_view_store=store,
         power_history_read_ms=12.5,
-        independent_daily_observer_worker=cast(
-            IndependentDailyObserverWorker,
-            FakeDailyObserverWorker(),
-        ),
-        independent_daily_snapshot=daily_snapshot,
     )
 
     latest_json = store.latest_json()
@@ -79,7 +64,6 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
     assert view["observer_only"] is True
     assert view["run_id"] == snapshot.run_id
     assert view["snapshot_id"] == snapshot.snapshot_id
-    assert submitted_snapshot_ids == [daily_snapshot.snapshot_id]
     assert len(view["pipeline"]) == 9
     assert [item["stage"] for item in view["pipeline"]] == list(
         range(1, 10)
@@ -127,6 +111,7 @@ def test_temporary_home_assistant_publish_failure_does_not_stop_runtime(
 
     live_runtime._execute_planning_bundle(
         token="test-token",
+        canonical_pipeline=CanonicalPipeline(),
         price_config=PriceOpportunityConfig(
             low_price_margin_eur_per_kwh=0.02,
             high_price_margin_eur_per_kwh=0.02,

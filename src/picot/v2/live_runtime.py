@@ -44,39 +44,18 @@ from picot.v2.household_planning_regime import (
     HouseholdPlanningRegime,
     UserObjectiveProfile,
 )
-from picot.v2.independent_daily_dashboard import (
-    build_daily_observer_dashboard_view,
-)
-from picot.v2.independent_daily_observer_runtime import (
-    DailyObserverResultStore,
-    DailyObserverRuntimeOutcome,
-    IndependentDailyObserverRuntime,
-    IndependentDailyObserverWorker,
-)
 from picot.v2.live_pv_actual import (
     LivePVActualCache,
     LivePVActualDiagnostics,
     apply_latest_closed_actual_pv,
-)
-from picot.v2.live_pv_canary_runtime import (
-    HomeAssistantLivePVModeAdapter,
-    LivePVCanaryResult,
-    LivePVCanaryRuntime,
-    build_live_pv_mode_input,
-    live_pv_runtime_evidence,
-    project_live_pv_canary_result,
 )
 from picot.v2.live_storage_mode_provenance import (
     LiveStorageModeProvenanceRuntime,
     StorageModeProvenanceStore,
     attach_storage_mode_provenance,
 )
-from picot.v2.market_daily_dashboard import build_market_daily_runtime_view
 from picot.v2.market_daily_runtime import (
-    MarketDailyExecutionRuntime,
     MarketDailyPlannerRuntime,
-    MarketDailyPlannerWorker,
-    MarketDailyRuntimeOutcome,
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
@@ -85,7 +64,6 @@ from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
 )
-from picot.v2.planner_comparison_ledger import PlannerComparisonLedger
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import (
@@ -173,18 +151,6 @@ ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH = Path(
 )
 PLANNING_INCIDENT_HISTORY_PATH = Path(
     "/data/picot_v2_planning_incident_history.jsonl"
-)
-DAILY_OBSERVER_LATEST_PATH = Path(
-    "/data/picot_v2_daily_observer_latest.json"
-)
-DAILY_OBSERVER_HISTORY_PATH = Path(
-    "/data/picot_v2_daily_observer_history.jsonl"
-)
-PLANNER_COMPARISON_STATE_PATH = Path(
-    "/data/picot_v2_planner_comparison_state.json"
-)
-PLANNER_COMPARISON_HISTORY_PATH = Path(
-    "/data/picot_v2_planner_comparison_history.jsonl"
 )
 FINANCIAL_RESULT_STATE_PATH = Path("/data/picot_v2_financial_results.json")
 MARKET_DAILY_LATEST_PATH = Path(
@@ -1660,6 +1626,7 @@ def _start_fast_grid_power_observer(
 def _execute_planning_bundle(
     *,
     token: str,
+    canonical_pipeline: CanonicalPipeline,
     price_config: PriceOpportunityConfig,
     bundle: PlanningInputBundle,
     web_view_store: WebViewStore,
@@ -1678,9 +1645,6 @@ def _execute_planning_bundle(
     pv_attenuation_learning_result: (
         PVAttenuationLearningResult | None
     ) = None,
-    live_pv_canary_runtime: LivePVCanaryRuntime | None = None,
-    live_pv_canary_enabled: bool = False,
-    live_pv_canary_target_entity: str = "",
     storage_mode_provenance_runtime: (
         LiveStorageModeProvenanceRuntime | None
     ) = None,
@@ -1688,18 +1652,11 @@ def _execute_planning_bundle(
         StorageModeTransitionHistoryStore | None
     ) = None,
     canonical_execution_runtime: CanonicalExecutionRuntime | None = None,
-    canonical_execution_enabled: bool = False,
+    execution_enabled: bool = False,
     planning_fallback_notifier: PlanningFallbackNotifier | None = None,
     planning_incident_history: PlanningIncidentHistory | None = None,
-    independent_daily_observer_worker: (
-        IndependentDailyObserverWorker | None
-    ) = None,
-    independent_daily_snapshot: PlanningInputSnapshot | None = None,
     daily_pv_basis_decision: DailyPVBasisDecision | None = None,
-    market_daily_planner_worker: MarketDailyPlannerWorker | None = None,
-    planner_comparison_ledger: PlannerComparisonLedger | None = None,
     financial_result_ledger: FinancialResultLedger | None = None,
-    micro_charge_suppression_fraction: float = 0.01,
 ) -> None:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -1707,17 +1664,11 @@ def _execute_planning_bundle(
         3,
     )
 
-    run, stage_timings = CanonicalPipeline(
-        micro_charge_suppression_fraction=micro_charge_suppression_fraction,
-    ).run_timed(
+    run, stage_timings = canonical_pipeline.run_timed(
         planning_input=bundle.snapshot,
         price_opportunity_config=price_config,
-        control_change_allowed=canonical_execution_enabled,
+        control_change_allowed=execution_enabled,
     )
-    if independent_daily_observer_worker is not None:
-        independent_daily_observer_worker.submit(
-            independent_daily_snapshot or bundle.snapshot
-        )
     if canonical_execution_runtime is not None:
         run = canonical_execution_runtime.apply(run)
         if (
@@ -1856,80 +1807,6 @@ def _execute_planning_bundle(
         planning_input_ms=planning_input_ms,
         timings=stage_timings,
     )
-    if live_pv_canary_runtime is not None:
-        canary_evidence = live_pv_runtime_evidence(
-            bundle,
-            sampled_at=bundle.snapshot.captured_at,
-        )
-        if canary_evidence is None:
-            canary_result = LivePVCanaryResult(
-                status="blocked",
-                requested_vendor_mode=None,
-                reason="live_evidence_unavailable",
-                normal_result=(
-                    "PicoT stuurt niet omdat actuele Zendure-modus- "
-                    "of batterijvermogensgegevens ontbreken."
-                ),
-            )
-        else:
-            canary_input = build_live_pv_mode_input(
-                run,
-                evidence=canary_evidence,
-                at=bundle.snapshot.captured_at,
-                live_enabled=live_pv_canary_enabled,
-            )
-            canary_result = live_pv_canary_runtime.apply(
-                canary_input,
-                target_entity=live_pv_canary_target_entity,
-            )
-            if (
-                canary_result.status == "dispatched"
-                and canary_result.requested_vendor_mode is not None
-                and storage_mode_provenance_runtime is not None
-            ):
-                application_id = (
-                    "live-pv-canary:"
-                    f"{run.planning_input.run_id}:"
-                    f"{bundle.snapshot.captured_at.isoformat()}"
-                )
-                provenance = storage_mode_provenance_runtime.record_planner_application(
-                    canary_result.requested_vendor_mode,
-                    applied_at=bundle.snapshot.captured_at,
-                    application_id=application_id,
-                )
-                _append_storage_mode_transition(
-                    storage_mode_transition_history,
-                    previous_vendor_mode=provenance.observed_vendor_mode,
-                    requested_vendor_mode=canary_result.requested_vendor_mode,
-                    source="live_pv_canary",
-                    reason=canary_result.reason,
-                    confidence=(
-                        bundle.snapshot.household_planning_regime.forecast_confidence
-                        if bundle.snapshot.household_planning_regime is not None
-                        else None
-                    ),
-                    run_id=run.planning_input.run_id,
-                    snapshot_id=run.planning_input.snapshot_id,
-                    evaluation_id=run.evaluation.evaluation_id,
-                    plan_id=(
-                        run.execution_plan_set.plans[0].plan_id
-                        if run.execution_plan_set.plans
-                        else None
-                    ),
-                    application_id=application_id,
-                    occurred_at=bundle.snapshot.captured_at,
-                )
-        projection = Projection(
-            cards=(
-                *projection.cards,
-                project_live_pv_canary_result(
-                    canary_result,
-                    captured_at=bundle.snapshot.captured_at,
-                    live_enabled=live_pv_canary_enabled,
-                ),
-            ),
-            projection_ms=projection.projection_ms,
-        )
     serialization_started = perf_counter()
     json.dumps([asdict(card) for card in projection.cards], separators=(",", ":"))
     serialization_ms = round((perf_counter() - serialization_started) * 1000.0, 3)
@@ -1951,26 +1828,6 @@ def _execute_planning_bundle(
             else ()
         ),
     )
-    if planner_comparison_ledger is not None:
-        try:
-            planner_comparison_ledger.register_canonical(bundle.snapshot, web_view)
-            if power_history is not None:
-                planner_comparison_ledger.ingest(bundle.snapshot, power_history)
-            web_view["planner_comparison_history"] = (
-                planner_comparison_ledger.dashboard_view()
-            )
-        except Exception as exc:
-            print(
-                json.dumps(
-                    {
-                        "event": "picot_v2_planner_comparison_error",
-                        "snapshot_id": bundle.snapshot.snapshot_id,
-                        "error": str(exc) or exc.__class__.__name__,
-                    },
-                    separators=(",", ":"),
-                ),
-                flush=True,
-            )
     if financial_result_ledger is not None and power_history is not None:
         try:
             web_view["financial_results"] = financial_result_ledger.update(
@@ -2098,22 +1955,6 @@ def _execute_planning_bundle(
     )
 
 
-def _validate_live_execution_authority(
-    *,
-    canonical_execution_enabled: bool,
-    live_pv_canary_enabled: bool,
-    market_daily_execution_enabled: bool,
-) -> None:
-    if sum((
-        canonical_execution_enabled,
-        live_pv_canary_enabled,
-        market_daily_execution_enabled,
-    )) > 1:
-        raise ValueError(
-            "canonical, live PV canary and MEP execution cannot share live authority"
-        )
-
-
 def main() -> None:
     token = os.environ.get("SUPERVISOR_TOKEN", "")
     if not token:
@@ -2143,50 +1984,10 @@ def main() -> None:
         ACTIVE_PLAN_COMMITMENT_PATH,
         incident_path=ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
     )
-    live_pv_canary_mode = str(
-        options.get("live_pv_canary_mode", "observer")
-    )
-    if live_pv_canary_mode not in {"observer", "live"}:
-        raise ValueError(
-            "live_pv_canary_mode must be observer or live"
-        )
-    live_pv_canary_enabled = live_pv_canary_mode == "live"
-    canonical_execution_mode = str(
-        options.get("canonical_execution_mode", "observer")
-    )
-    if canonical_execution_mode not in {"observer", "live"}:
-        raise ValueError(
-            "canonical_execution_mode must be observer or live"
-        )
-    canonical_execution_enabled = canonical_execution_mode == "live"
-    market_daily_execution_mode = str(
-        options.get("market_daily_execution_mode", "live")
-    )
-    if market_daily_execution_mode not in {"observer", "live"}:
-        raise ValueError(
-            "market_daily_execution_mode must be observer or live"
-        )
-    market_daily_execution_enabled = market_daily_execution_mode == "live"
-    _validate_live_execution_authority(
-        canonical_execution_enabled=canonical_execution_enabled,
-        live_pv_canary_enabled=live_pv_canary_enabled,
-        market_daily_execution_enabled=market_daily_execution_enabled,
-    )
-    live_pv_canary_target_entity = str(
-        options.get("zendure_mode_entity", "")
-    ).strip()
-    if live_pv_canary_enabled and not live_pv_canary_target_entity:
-        raise ValueError("zendure_mode_entity must be explicit")
-    if not live_pv_canary_target_entity:
-        live_pv_canary_target_entity = (
-            "input_select.unconfigured_observer_only"
-        )
-    live_pv_canary_runtime = LivePVCanaryRuntime(
-        dispatch=HomeAssistantLivePVModeAdapter(
-            token=token,
-            requested_at=lambda: datetime.now(UTC),
-        )
-    )
+    execution_mode = str(options.get("execution_mode", "live"))
+    if execution_mode not in {"observer", "live"}:
+        raise ValueError("execution_mode must be observer or live")
+    execution_enabled = execution_mode == "live"
     canonical_execution_runtime = CanonicalExecutionRuntime(
         dispatch=HomeAssistantCanonicalModeAdapter(
             token=token,
@@ -2200,17 +2001,6 @@ def main() -> None:
         local_timezone_name=str(
             options.get("pv_local_timezone", "Europe/Amsterdam")
         ).strip(),
-    )
-    daily_conversion_model = StorageConversionModel(
-        model_id="live-observer-configured-conversion",
-        charge_efficiency=float(
-            options.get("daily_reference_charge_efficiency", 1.0)
-        ),
-        discharge_efficiency=float(
-            options.get("daily_reference_discharge_efficiency", 1.0)
-        ),
-        evidence_ids=("addon-options:daily-reference-efficiency",),
-        method_version="live-observer-configured-conversion:v1",
     )
     market_daily_conversion_model = StorageConversionModel(
         model_id="live-mep-configured-conversion",
@@ -2234,20 +2024,6 @@ def main() -> None:
     micro_charge_suppression_fraction = (
         float(options.get("micro_charge_suppression_percent", 2.0)) / 100.0
     )
-    independent_daily_observer_runtime = IndependentDailyObserverRuntime(
-        conversion_model=daily_conversion_model,
-        micro_charge_suppression_fraction=micro_charge_suppression_fraction,
-        store=DailyObserverResultStore(
-            latest_path=DAILY_OBSERVER_LATEST_PATH,
-            history_path=DAILY_OBSERVER_HISTORY_PATH,
-        ),
-    )
-    planner_comparison_ledger = PlannerComparisonLedger(
-        state_path=PLANNER_COMPARISON_STATE_PATH,
-        history_path=PLANNER_COMPARISON_HISTORY_PATH,
-        charge_efficiency=daily_conversion_model.charge_efficiency,
-        discharge_efficiency=daily_conversion_model.discharge_efficiency,
-    )
     financial_result_ledger = FinancialResultLedger(
         state_path=FINANCIAL_RESULT_STATE_PATH,
         wear_eur_per_discharge_kwh=market_daily_trading_policy.wear_eur_per_export_kwh,
@@ -2257,141 +2033,18 @@ def main() -> None:
         local_timezone_name=str(options.get("pv_local_timezone", "Europe/Amsterdam")),
     )
 
-    def publish_daily_observer_outcome(
-        outcome: DailyObserverRuntimeOutcome,
-    ) -> None:
-        observer_view = build_daily_observer_dashboard_view(outcome)
-        planner_comparison_ledger.attach_observer(observer_view)
-        web_view_store.publish_daily_observer_comparison(
-            observer_view
-        )
-        web_view_store.publish_planner_comparison_history(
-            planner_comparison_ledger.dashboard_view()
-        )
-
-    def report_daily_observer_error(
-        snapshot: PlanningInputSnapshot,
-        exc: Exception,
-    ) -> None:
-        print(
-            json.dumps(
-                {
-                    "event": "picot_v2_daily_observer_runtime_error",
-                    "run_id": snapshot.run_id,
-                    "snapshot_id": snapshot.snapshot_id,
-                    "error": str(exc) or exc.__class__.__name__,
-                },
-                separators=(",", ":"),
-            ),
-            flush=True,
-        )
-
-    market_daily_refresh_at: datetime | None = None
-
-    def publish_market_daily_outcome(
-        outcome: MarketDailyRuntimeOutcome,
-    ) -> None:
-        nonlocal market_daily_refresh_at
-        market_daily_refresh_at = (
-            outcome.plan.current_interval_ends_at
-            if outcome.plan is not None
-            else None
-        )
-        execution = outcome.execution
-        if (
-            execution is not None
-            and execution.status == "dispatched"
-            and execution.requested_vendor_mode is not None
-        ):
-            application_id = (
-                f"mep-execution:{outcome.run_id}:"
-                f"{execution.command_id or outcome.captured_at.isoformat()}"
-            )
-            provenance = storage_mode_provenance_runtime.record_planner_application(
-                execution.requested_vendor_mode,
-                applied_at=execution.evaluated_at or outcome.captured_at,
-                application_id=application_id,
-            )
-            _append_storage_mode_transition(
-                storage_mode_transition_history,
-                previous_vendor_mode=provenance.observed_vendor_mode,
-                requested_vendor_mode=execution.requested_vendor_mode,
-                source="mep_execution",
-                reason=execution.reason,
-                confidence=None,
-                run_id=outcome.run_id,
-                snapshot_id=outcome.snapshot_id,
-                evaluation_id=None,
-                plan_id=(
-                    f"mep-plan:{outcome.snapshot_id}"
-                ),
-                application_id=application_id,
-                occurred_at=execution.evaluated_at or outcome.captured_at,
-            )
-        market_view = build_market_daily_runtime_view(outcome)
-        try:
-            _save_market_daily_diagnostics(
-                MARKET_DAILY_LATEST_PATH,
-                market_view,
-            )
-        except Exception as exc:
-            print(
-                json.dumps(
-                    {
-                        "event": "picot_v2_market_daily_diagnostics_error",
-                        "run_id": outcome.run_id,
-                        "snapshot_id": outcome.snapshot_id,
-                        "error": str(exc) or exc.__class__.__name__,
-                    },
-                    separators=(",", ":"),
-                ),
-                flush=True,
-            )
-        web_view_store.publish_market_daily_planner(market_view)
-
-    def report_market_daily_error(
-        snapshot: PlanningInputSnapshot,
-        exc: Exception,
-    ) -> None:
-        print(
-            json.dumps(
-                {
-                    "event": "picot_v2_market_daily_runtime_error",
-                    "run_id": snapshot.run_id,
-                    "snapshot_id": snapshot.snapshot_id,
-                    "error": str(exc) or exc.__class__.__name__,
-                },
-                separators=(",", ":"),
-            ),
-            flush=True,
-        )
-
-    market_daily_planner_worker = MarketDailyPlannerWorker(
-        MarketDailyPlannerRuntime(
-            market_daily_conversion_model,
-            trading_policy=market_daily_trading_policy,
-            micro_charge_suppression_fraction=micro_charge_suppression_fraction,
-            storage_inventory_provider=(
-                financial_result_ledger.storage_energy_inventory
-            ),
-            live_enabled=market_daily_execution_enabled,
-            execution_runtime=MarketDailyExecutionRuntime(
-                dispatch=HomeAssistantCanonicalModeAdapter(
-                    token=token,
-                    requested_at=lambda: datetime.now(UTC),
-                ),
-                now=lambda: datetime.now(UTC),
-                commitment_store=active_plan_commitment_store,
-            ),
-        ),
-        on_outcome=publish_market_daily_outcome,
-        on_error=report_market_daily_error,
+    market_daily_planner_runtime = MarketDailyPlannerRuntime(
+        market_daily_conversion_model,
+        trading_policy=market_daily_trading_policy,
+        micro_charge_suppression_fraction=micro_charge_suppression_fraction,
+        storage_inventory_provider=financial_result_ledger.storage_energy_inventory,
     )
-    independent_daily_observer_worker = IndependentDailyObserverWorker(
-        independent_daily_observer_runtime,
-        on_outcome=publish_daily_observer_outcome,
-        on_error=report_daily_observer_error,
-        on_settled=market_daily_planner_worker.process,
+    canonical_pipeline = CanonicalPipeline(
+        market_daily_planner_runtime=market_daily_planner_runtime,
+        commitment_store=active_plan_commitment_store,
+        plan_switching_margin_eur=float(
+            options.get("plan_switching_margin_eur", 0.05)
+        ),
     )
     web_view_store.set_diagnostic_paths(
         (
@@ -2403,21 +2056,9 @@ def main() -> None:
             STORAGE_MODE_TRANSITION_HISTORY_PATH,
             ACTIVE_PLAN_COMMITMENT_PATH,
             ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
-            DAILY_OBSERVER_LATEST_PATH,
-            DAILY_OBSERVER_HISTORY_PATH,
-            PLANNER_COMPARISON_STATE_PATH,
-            PLANNER_COMPARISON_HISTORY_PATH,
-            MARKET_DAILY_LATEST_PATH,
             FINANCIAL_RESULT_STATE_PATH,
         ),
         incident_history_path=PLANNING_INCIDENT_HISTORY_PATH,
-    )
-    web_view_store.set_planner_stress_marker(
-        lambda marker_id, note: planner_comparison_ledger.mark_stress(
-            marker_id=marker_id,
-            occurred_at=datetime.now(UTC),
-            note=note,
-        )
     )
 
     def reset_storage_mode_override(
@@ -2580,7 +2221,6 @@ def main() -> None:
 
     previous_household_regime: HouseholdPlanningRegime | None = None
     household_regime_started_at: datetime | None = None
-    latest_daily_observer_snapshot: PlanningInputSnapshot | None = None
     latest_daily_pv_basis_decision: DailyPVBasisDecision | None = None
 
     def prepare_bundle(
@@ -2591,7 +2231,6 @@ def main() -> None:
     ]:
         nonlocal previous_household_regime
         nonlocal household_regime_started_at
-        nonlocal latest_daily_observer_snapshot
         nonlocal latest_daily_pv_basis_decision
         bundle = attach_storage_mode_provenance(
             bundle,
@@ -2658,15 +2297,12 @@ def main() -> None:
         ):
             household_regime_started_at = captured_at
         previous_household_regime = current_regime
-        (
-            latest_daily_observer_snapshot,
-            latest_daily_pv_basis_decision,
-        ) = apply_daily_measured_pv_basis(
+        mep_snapshot, latest_daily_pv_basis_decision = apply_daily_measured_pv_basis(
             prepared_bundle.snapshot,
             diagnostics=diagnostics,
             local_timezone=pv_sunset_timezone,
         )
-        return prepared_bundle, diagnostics
+        return replace(prepared_bundle, snapshot=mep_snapshot), diagnostics
 
     def read_power_history(
         bundle: PlanningInputBundle,
@@ -2696,32 +2332,13 @@ def main() -> None:
         )
         return power_history, power_history_read_ms
 
-    previous_observer_signature: str | None = None
-
-    def observe_fresh_input(bundle: PlanningInputBundle) -> None:
-        nonlocal previous_observer_signature
+    def publish_input_sources(bundle: PlanningInputBundle) -> None:
         web_view_store.publish_planning_input_sources(
             _planning_input_sources(bundle)
-        )
-        signature = _observer_input_signature(bundle)
-        if _should_run_cycle(previous_signature, bundle):
-            # The canonical execution path submits this snapshot. Remember its
-            # observer signature to avoid queueing it again on the next poll.
-            previous_observer_signature = signature
-            return
-        if signature == previous_observer_signature:
-            return
-        previous_observer_signature = signature
-        independent_daily_observer_worker.submit(
-            latest_daily_observer_snapshot or bundle.snapshot
         )
 
     def refresh_unchanged(bundle: PlanningInputBundle) -> None:
         power_history, _ = read_power_history(bundle)
-        try:
-            planner_comparison_ledger.ingest(bundle.snapshot, power_history)
-        except Exception as exc:
-            report_daily_observer_error(bundle.snapshot, exc)
         web_view_store.publish_power_history(power_history)
         try:
             web_view_store.publish_financial_results(
@@ -2736,20 +2353,17 @@ def main() -> None:
                 )
             )
         except Exception as exc:
-            report_daily_observer_error(bundle.snapshot, exc)
-        try:
-            web_view_store.publish_planner_comparison_history(
-                planner_comparison_ledger.dashboard_view()
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_financial_result_error",
+                        "snapshot_id": bundle.snapshot.snapshot_id,
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
             )
-        except Exception as exc:
-            report_daily_observer_error(bundle.snapshot, exc)
-
-    def advance_market_daily_boundary(bundle: PlanningInputBundle) -> None:
-        if (
-            market_daily_refresh_at is not None
-            and bundle.snapshot.captured_at >= market_daily_refresh_at
-        ):
-            market_daily_planner_worker.advance(bundle.snapshot)
 
     def execute(
         bundle: PlanningInputBundle,
@@ -2803,6 +2417,7 @@ def main() -> None:
         )
         _execute_planning_bundle(
             token=token,
+            canonical_pipeline=canonical_pipeline,
             price_config=price_config,
             bundle=bundle,
             web_view_store=web_view_store,
@@ -2816,11 +2431,6 @@ def main() -> None:
             pv_attenuation_learning_result=(
                 pv_attenuation_learning_result
             ),
-            live_pv_canary_runtime=live_pv_canary_runtime,
-            live_pv_canary_enabled=live_pv_canary_enabled,
-            live_pv_canary_target_entity=(
-                live_pv_canary_target_entity
-            ),
             storage_mode_provenance_runtime=(
                 storage_mode_provenance_runtime
             ),
@@ -2828,19 +2438,10 @@ def main() -> None:
                 storage_mode_transition_history
             ),
             canonical_execution_runtime=canonical_execution_runtime,
-            canonical_execution_enabled=canonical_execution_enabled,
-            micro_charge_suppression_fraction=(
-                micro_charge_suppression_fraction
-            ),
+            execution_enabled=execution_enabled,
             planning_fallback_notifier=planning_fallback_notifier,
             planning_incident_history=planning_incident_history,
-            independent_daily_observer_worker=(
-                independent_daily_observer_worker
-            ),
-            independent_daily_snapshot=latest_daily_observer_snapshot,
             daily_pv_basis_decision=latest_daily_pv_basis_decision,
-            market_daily_planner_worker=market_daily_planner_worker,
-            planner_comparison_ledger=planner_comparison_ledger,
             financial_result_ledger=financial_result_ledger,
         )
 
@@ -2858,8 +2459,7 @@ def main() -> None:
                 execute=execute,
                 persist_observation=household_load_history.append,
                 refresh_unchanged=refresh_unchanged,
-                advance_clock_boundaries=advance_market_daily_boundary,
-                observe=observe_fresh_input,
+                observe=publish_input_sources,
             )
         )
         _wait_for_poll_or_reset(

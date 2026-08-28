@@ -22,7 +22,7 @@ from picot.v2.live_pv_actual import (
     apply_latest_closed_actual_pv,
 )
 from picot.v2.live_runtime import _with_planning_input_diagnostics
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.planning_input import PlanningInputBundle
 from picot.v2.projection import project
 from picot.v2.pv_actual_history import PVHistoryReadResult
@@ -434,6 +434,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     def capture_execution(
         *,
         token: str,
+        canonical_pipeline: object,
         price_config: object,
             bundle: PlanningInputBundle,
             web_view_store: object,
@@ -445,48 +446,33 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         pv_sunset_local_timezone: str,
         pv_sunset_offsets: dict[str, float],
         pv_attenuation_learning_result: object,
-        live_pv_canary_runtime: object,
-        live_pv_canary_enabled: bool,
-        live_pv_canary_target_entity: str,
         storage_mode_provenance_runtime: object,
         storage_mode_transition_history: object,
-                canonical_execution_runtime: object,
-                canonical_execution_enabled: bool,
-                micro_charge_suppression_fraction: float,
+        canonical_execution_runtime: object,
+        execution_enabled: bool,
             planning_fallback_notifier: object,
-                planning_incident_history: object,
-                independent_daily_observer_worker: object,
-                independent_daily_snapshot: object,
-                daily_pv_basis_decision: object,
-                    market_daily_planner_worker: object,
-                    planner_comparison_ledger: object,
-                    financial_result_ledger: object,
+        planning_incident_history: object,
+        daily_pv_basis_decision: object,
+        financial_result_ledger: object,
         ) -> None:
         del (
-                price_config,
-                web_view_store,
-                power_history,
+            canonical_pipeline,
+            price_config,
+            web_view_store,
+            power_history,
             pv_attenuated_ranges,
             pv_sunset_source,
             pv_sunset_local_timezone,
             pv_sunset_offsets,
             pv_attenuation_learning_result,
-            live_pv_canary_runtime,
-            live_pv_canary_enabled,
-            live_pv_canary_target_entity,
             storage_mode_provenance_runtime,
             storage_mode_transition_history,
-                    canonical_execution_runtime,
-                    canonical_execution_enabled,
-                        micro_charge_suppression_fraction,
-                    planning_fallback_notifier,
-                    independent_daily_observer_worker,
-                    independent_daily_snapshot,
-                    daily_pv_basis_decision,
-                        market_daily_planner_worker,
-                        planner_comparison_ledger,
-                        financial_result_ledger,
-            )
+            canonical_execution_runtime,
+            execution_enabled,
+            planning_fallback_notifier,
+            daily_pv_basis_decision,
+            financial_result_ledger,
+        )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))
         power_history_timings.append(power_history_read_ms)
@@ -552,7 +538,10 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     )
     assert actual.evidence_type == "ACTUAL"
     assert actual.pv_energy_wh == pytest.approx(300.0)
-    assert future == bundle.snapshot.pv_energy_timeline.intervals[1]
+    assert future == replace(
+        bundle.snapshot.pv_energy_timeline.intervals[1],
+        forecast_lower_energy_wh=675.0,
+    )
     assert diagnostics.history_status == "available"
     assert diagnostics.interval_status == "actual"
     assert diagnostics.entity_id == ENTITY_ID

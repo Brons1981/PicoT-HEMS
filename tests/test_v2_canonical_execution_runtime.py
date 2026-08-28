@@ -10,7 +10,7 @@ from picot.v2.canonical_execution_runtime import (
 )
 from picot.v2.contracts import BMSCalibrationEvidence, CanonicalPipelineRun
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
-from picot.v2.pipeline import CanonicalPipeline
+from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     ActivePlanCommitmentStore,

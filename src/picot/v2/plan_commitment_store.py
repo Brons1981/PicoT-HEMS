@@ -15,6 +15,27 @@ LEGACY_COMMITMENT_METHOD_VERSION = "legacy-pre-household-simulation"
 
 
 @dataclass(frozen=True, slots=True)
+class CommittedPlanSegment:
+    """Canonical segment retained as part of the durable incumbent path."""
+
+    starts_at: datetime
+    ends_at: datetime
+    primitive: str
+    source_policy: str | None
+
+    def __post_init__(self) -> None:
+        for value in (self.starts_at, self.ends_at):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("committed segment timestamps must be timezone-aware")
+        if self.starts_at >= self.ends_at:
+            raise ValueError("committed segment start must precede end")
+        if not self.primitive.strip():
+            raise ValueError("committed segment primitive must be explicit")
+        if self.source_policy is not None and not self.source_policy.strip():
+            raise ValueError("committed segment source policy must be explicit")
+
+
+@dataclass(frozen=True, slots=True)
 class ActivePlanCommitment:
     execution_scope_id: str
     plan_id: str
@@ -33,6 +54,9 @@ class ActivePlanCommitment:
     reserve_respected_across_scenarios: bool | None = None
     target_held_across_scenarios: bool | None = None
     minimum_storage_energy_at_horizon_end_wh: float | None = None
+    segments: tuple[CommittedPlanSegment, ...] = ()
+    selection_reason: str | None = None
+    replaced_plan_id: str | None = None
 
     def __post_init__(self) -> None:
         if any(
@@ -58,6 +82,14 @@ class ActivePlanCommitment:
             raise ValueError("commitment start must precede end")
         if self.schedule_id is not None and not self.schedule_id.strip():
             raise ValueError("commitment schedule id must be explicit")
+        for evidence_value in (self.selection_reason, self.replaced_plan_id):
+            if evidence_value is not None and not evidence_value.strip():
+                raise ValueError("commitment replacement evidence must be explicit")
+        if any(
+            left.ends_at > right.starts_at
+            for left, right in zip(self.segments, self.segments[1:], strict=False)
+        ):
+            raise ValueError("committed plan segments must not overlap")
         if self.minimum_confidence is not None and not (
             0.0 <= self.minimum_confidence <= 1.0
         ):
@@ -93,6 +125,15 @@ class ActivePlanCommitmentStore:
         serialized = asdict(commitment)
         serialized["starts_at"] = commitment.starts_at.isoformat()
         serialized["ends_at"] = commitment.ends_at.isoformat()
+        serialized["segments"] = [
+            {
+                "starts_at": segment.starts_at.isoformat(),
+                "ends_at": segment.ends_at.isoformat(),
+                "primitive": segment.primitive,
+                "source_policy": segment.source_policy,
+            }
+            for segment in commitment.segments
+        ]
         payload["commitments"][commitment.execution_scope_id] = serialized
         self._write(payload)
 
@@ -249,6 +290,29 @@ def _deserialize(payload: dict[str, Any]) -> ActivePlanCommitment:
         minimum_storage_energy_at_horizon_end_wh=(
             float(payload["minimum_storage_energy_at_horizon_end_wh"])
             if payload.get("minimum_storage_energy_at_horizon_end_wh") is not None
+            else None
+        ),
+        segments=tuple(
+            CommittedPlanSegment(
+                starts_at=datetime.fromisoformat(item["starts_at"]),
+                ends_at=datetime.fromisoformat(item["ends_at"]),
+                primitive=str(item["primitive"]),
+                source_policy=(
+                    str(item["source_policy"])
+                    if item.get("source_policy") is not None
+                    else None
+                ),
+            )
+            for item in payload.get("segments", ())
+        ),
+        selection_reason=(
+            str(payload["selection_reason"])
+            if payload.get("selection_reason") is not None
+            else None
+        ),
+        replaced_plan_id=(
+            str(payload["replaced_plan_id"])
+            if payload.get("replaced_plan_id") is not None
             else None
         ),
     )

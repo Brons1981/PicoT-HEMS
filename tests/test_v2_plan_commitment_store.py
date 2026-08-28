@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
+    CommittedPlanSegment,
 )
 
 
@@ -46,6 +47,22 @@ def test_mep_challenger_evidence_survives_store_restart(tmp_path) -> None:
         reserve_respected_across_scenarios=True,
         target_held_across_scenarios=False,
         minimum_storage_energy_at_horizon_end_wh=6470.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(hours=1),
+                primitive="balance_bidirectional",
+                source_policy="pv_only",
+            ),
+            CommittedPlanSegment(
+                starts_at=starts_at + timedelta(hours=1),
+                ends_at=starts_at + timedelta(hours=2),
+                primitive="balance_discharge_only",
+                source_policy=None,
+            ),
+        ),
+        selection_reason="material_change:test",
+        replaced_plan_id="mep-plan:previous",
     )
 
     ActivePlanCommitmentStore(path).save(commitment)

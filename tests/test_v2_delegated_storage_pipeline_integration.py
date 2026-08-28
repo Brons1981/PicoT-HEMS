@@ -30,7 +30,7 @@ from picot.v2.household_planning_regime import (
     UserObjectiveProfile,
     derive_household_planning_regime,
 )
-from picot.v2.pipeline import (
+from legacy_cp_pipeline import (
     CanonicalPipeline,
     _average_price_for_window,
     _balance_for_pv_forecast_basis,

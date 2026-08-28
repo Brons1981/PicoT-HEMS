@@ -16,27 +16,29 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_192() -> None:
-    assert __version__ == "2.0.0-dev.192"
+def test_v2_release_version_is_dev_193() -> None:
+    assert __version__ == "2.0.0-dev.193"
 
 
-def test_mep_has_83_percent_rte_without_changing_ep_defaults() -> None:
+def test_mep_has_one_fallback_rte_configuration() -> None:
     config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
     text = config_path.read_text(encoding="utf-8")
 
-    assert "  daily_reference_charge_efficiency: 1.0" in text
-    assert "  daily_reference_discharge_efficiency: 1.0" in text
+    assert "daily_reference_charge_efficiency" not in text
+    assert "daily_reference_discharge_efficiency" not in text
     assert "  market_daily_charge_efficiency: 0.9110433579" in text
     assert "  market_daily_discharge_efficiency: 0.9110433579" in text
     assert '  market_daily_rte_entity: "sensor.zendure_2400_ac_rte_totaal"' in text
     assert "  market_daily_trading_margin_percent: 10.0" in text
     assert "  market_daily_wear_eur_per_kwh: 0.05" in text
     assert "  micro_charge_suppression_percent: 2.0" in text
+    assert "  plan_switching_margin_eur: 0.05" in text
     assert "  battery_purchase_eur: 2407.40" in text
     assert "  market_daily_rte_entity: str" in text
     assert "  market_daily_trading_margin_percent: float(0,100)" in text
     assert "  market_daily_wear_eur_per_kwh: float(0,1)" in text
     assert "  micro_charge_suppression_percent: float(0,100)" in text
+    assert "  plan_switching_margin_eur: float(0,)" in text
     assert "  battery_purchase_eur: float(0,)" in text
 
 

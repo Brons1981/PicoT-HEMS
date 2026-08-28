@@ -1674,3 +1674,34 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Full repository suite: `1058 passed`.
 - Ruff on changed production and test files: `All checks passed!`.
 - Embedded dashboard JavaScript syntax check and `git diff --check` pass.
+
+
+## 2026-08-28 — 2.0.0-dev.197 present MEP commitment facts
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+### Live finding
+
+- The exact MEP execution segments and coloured price bars were visible in
+  dev.196, but the upper chosen-plan facts still depended on the removed CP
+  Candidate Outcome contract.
+- Missing confidence was rendered as `0%` because JavaScript converted `null`
+  to zero, even though no confidence value had been supplied.
+
+### Decision and implementation
+
+- Keep MEP, evaluation, the Plan Store and execution unchanged.
+- Project chosen-plan identity, validity, charge window and current storage
+  energy directly from the canonical Execution Plan and Planning Input.
+- Project target, source policy and scenario and financial facts only from the
+  matching active MEP commitment when that commitment is present in the run.
+- Hide unavailable legacy outcome facts instead of displaying rows of dashes.
+- Render absent confidence, price and currency facts as unavailable, never as
+  numeric zero.
+- Bumped add-on and Core version to `2.0.0-dev.197`.
+
+### Verification
+
+- Regression coverage proves a fresh MEP plan is presented without legacy
+  outcomes and a retained commitment exposes its exact stored facts.
+- Dashboard formatter coverage proves absent confidence is not shown as `0%`.

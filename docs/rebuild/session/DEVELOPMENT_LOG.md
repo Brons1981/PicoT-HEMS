@@ -1603,6 +1603,49 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - mypy: `Success: no issues found in 183 source files`.
 - `git diff --check`: passed.
 
+## 2026-08-28 — 2.0.0-dev.199 align grid-supported charging with PV
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+### Live finding
+
+- Inside the broad 08:45 through 16:45 low-price Opportunity, MEP selected the
+  final admissible 15:15 through 16:30 charge block even though the forecast PV
+  peak was around 12:00.
+- The exact financial comparison and remaining later-start tie-break allowed a
+  negligible sub-cent route difference to displace the PV-aligned timing.
+
+### Decision and implementation
+
+- Extended V2ADR-056 with an explicit EUR 0.01 complete-route financial
+  equivalence tolerance. A financially better route outside that tolerance
+  remains decisive.
+- Simulation evidence now records PV and grid input inside only the explicit
+  grid-supported charge phase for every scenario.
+- Evaluation uses the already selected canonical MEP planning-basis lane for
+  timing. For tomorrow that lane contains `(Solcast lower + central) / 2` from
+  the daily PV-basis stage; Evaluation does not average it again.
+- Within the financially equivalent cohort, Evaluation maximises useful PV in
+  the explicit charge phase, then minimises grid supplement in that phase. The
+  former later-start preference has been removed.
+- Advanced the market-planner evidence method to v3 and commitment contract to
+  v4. Future v3 commitments are replanned; already active v2 or v3 phases remain
+  fixed until their accepted end.
+- Bumped add-on and Core version to `2.0.0-dev.199`.
+
+### Verification
+
+- Regression first failed on dev.198 because a EUR 0.005 advantage selected the
+  last subwindow; it now selects the financially equivalent PV-aligned route.
+- The same regression proves a EUR 0.011 advantage remains financially
+  decisive.
+- Affected planner, PV-basis, canonical-pipeline, commitment and version suite:
+  `55 passed`.
+- Full repository suite: `1065 passed`.
+- Ruff on all changed production and test files: `All checks passed!`.
+- mypy: `Success: no issues found in 183 source files`.
+- `git diff --check`: passed.
+
 ### GitHub CI verification
 
 - PR #562: `fix: PicoT 2.0.0-dev.194 remove CP deadline authority`.

@@ -81,12 +81,30 @@ Simulation derives signed settlement, PV use, grid-to-storage input, reserve,
 target and recoverability for every complete timing alternative. Evaluation
 remains the only selection authority.
 
-Financial outcome remains the first comparison for optional market routes.
-When admitted routes have equal financial outcomes, ADR-037's PV-first boundary
-prefers the route with less worst-scenario grid-to-storage input. A remaining
-tie prefers the later recoverable explicit-power subwindow, then the stable
-route identifier. These values and the selected schedule remain reproducible
-from stored Candidate evidence.
+Financial outcome remains the first comparison for optional market routes. The
+objective-specific financial equivalence tolerance is EUR 0.01 over the complete
+route. Evaluation first determines the best worst-case incremental result and
+retains only admitted routes whose result is at most EUR 0.01 below that best
+result. A route outside that cohort cannot win through PV timing. This explicit
+tolerance extends ADR-032's exact-value rule and is not the plan-commitment
+switching margin.
+
+Within the financially equivalent cohort, ADR-037's PV-first boundary prefers
+the route with the most simulated PV-to-storage input during the exact
+grid-supported phase on the canonical MEP planning-basis scenario. The daily
+PV-basis stage projects the selected basis into the lower simulation lane:
+tomorrow initially uses `(source lower + source central) / 2`, while the
+remaining current day may explicitly adapt to lower, midpoint or central from
+complete actual evidence. Evaluation does not calculate another forecast
+average.
+
+If usable PV contribution is equal, Evaluation prefers less grid-to-storage
+input during that exact phase on the same MEP basis, then the better minimum
+incremental result per exported kWh, then the lexicographically smallest stable
+route identifier. Start time is not an objective or tie-break. Lower, central
+and upper simulations all remain mandatory for physical and financial
+admission. These values and the selected schedule remain reproducible from
+stored Candidate evidence.
 
 ## Boundaries
 
@@ -107,11 +125,12 @@ from stored Candidate evidence.
 
 ## Commitment migration
 
-Future commitments selected with the former full-Opportunity charge semantics
-are not valid incumbents for the new Candidate contract. The commitment method
-version is advanced and a not-yet-started previous-version commitment is
-cleared during restart recovery with an explicit incident reason. The next run
-uses a fresh atomic snapshot and selects through the normal canonical pipeline.
+Future commitments selected with either the former full-Opportunity charge
+semantics or the former later-subwindow tie-break are not valid incumbents for
+the new Candidate contract. The commitment method version is advanced and a
+not-yet-started previous-version commitment is cleared during restart recovery
+with an explicit incident reason. The next run uses a fresh atomic snapshot and
+selects through the normal canonical pipeline.
 
 An explicit-power phase that already started remains fixed under ADR-027 and
 V2ADR-052 until its normal end or an accepted hard abort reason. The migration
@@ -134,6 +153,10 @@ Tests must prove that:
 8. all three PV scenarios remain part of physical and financial admission;
 9. negative-price capacity routes retain their complete-window behaviour;
 10. plan commitment and adapter behaviour remain unchanged.
+11. routes within EUR 0.01 of the best complete financial result use explicit
+    MEP-basis PV contribution to select their charge timing;
+12. a route more than EUR 0.01 better remains financially decisive;
+13. no later-start preference remains after objective comparison.
 
 ## Core principle
 

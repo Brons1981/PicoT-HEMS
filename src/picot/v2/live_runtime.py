@@ -60,6 +60,7 @@ from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
+    EARLIER_COMMITMENT_METHOD_VERSION,
     LEGACY_COMMITMENT_METHOD_VERSION,
     PREVIOUS_COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
@@ -793,7 +794,11 @@ def _restore_active_plan_commitments(
             continue
         method_version = commitment.selection_method_version
         compatible_active_previous_plan = (
-            method_version == PREVIOUS_COMMITMENT_METHOD_VERSION
+            method_version
+            in {
+                PREVIOUS_COMMITMENT_METHOD_VERSION,
+                EARLIER_COMMITMENT_METHOD_VERSION,
+            }
             and commitment.starts_at <= snapshot.captured_at
         )
         if (

@@ -41,7 +41,7 @@ from picot.v2.opportunity_engine import (
     PriceOpportunityConfig,
 )
 
-METHOD_VERSION = "market-daily-planner:v1"
+METHOD_VERSION = "market-daily-planner:v2"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
@@ -79,6 +79,9 @@ class MarketCapacityRoute:
     reserved_storage_room_wh: float
     storage_energy_ceiling_before_window_wh: float
     required_pre_window_discharge_output_wh: float
+    opportunity_window_starts_at: datetime
+    opportunity_window_ends_at: datetime
+    charge_safety_margin_seconds: float
     reason: str
     method_version: str
     export_window_starts_at: datetime | None = None
@@ -98,6 +101,17 @@ class MarketCapacityRoute:
             raise ValueError("MEP market route opportunity lineage must be explicit.")
         if self.window_ends_at <= self.window_starts_at:
             raise ValueError("MEP market window must have positive duration.")
+        if self.opportunity_window_ends_at <= self.opportunity_window_starts_at:
+            raise ValueError("MEP source opportunity window must have positive duration.")
+        if not (
+            self.opportunity_window_starts_at
+            <= self.window_starts_at
+            < self.window_ends_at
+            <= self.opportunity_window_ends_at
+        ):
+            raise ValueError("MEP market window must remain inside its source opportunity.")
+        if self.charge_safety_margin_seconds < 0.0:
+            raise ValueError("MEP charge safety margin must not be negative.")
         if (
             min(
                 self.maximum_charge_input_wh,
@@ -134,6 +148,60 @@ class MarketCapacityRoute:
 class _MarketOpportunityWindow:
     opportunity_id: str
     intervals: tuple[DailyReferenceTariffInterval, ...]
+
+
+def _duration_hours(interval: DailyReferenceTariffInterval) -> float:
+    return (interval.ends_at - interval.starts_at).total_seconds() / 3600.0
+
+
+def _average_import_rate(
+    intervals: tuple[DailyReferenceTariffInterval, ...],
+) -> float:
+    seconds = sum((item.ends_at - item.starts_at).total_seconds() for item in intervals)
+    return sum(
+        item.import_eur_per_kwh * (item.ends_at - item.starts_at).total_seconds()
+        for item in intervals
+    ) / seconds
+
+
+def _minimal_charge_subwindows(
+    intervals: tuple[DailyReferenceTariffInterval, ...],
+    *,
+    required_charge_input_wh: float,
+    maximum_charge_input_power_w: float,
+) -> tuple[tuple[DailyReferenceTariffInterval, ...], ...]:
+    """Return one interval-minimal charge window for every feasible start.
+
+    The containing price Opportunity remains unchanged.  Candidate construction
+    branches only on canonical source intervals and keeps one trailing interval
+    as execution margin when the Opportunity has enough spare duration.
+    """
+
+    if required_charge_input_wh <= 0.0 or maximum_charge_input_power_w <= 0.0:
+        return ()
+    candidates: list[tuple[DailyReferenceTariffInterval, ...]] = []
+    for start_index in range(len(intervals)):
+        capacity_wh = 0.0
+        selected: list[DailyReferenceTariffInterval] = []
+        for interval in intervals[start_index:]:
+            if selected and selected[-1].ends_at != interval.starts_at:
+                break
+            selected.append(interval)
+            capacity_wh += maximum_charge_input_power_w * _duration_hours(interval)
+            if capacity_wh + 1e-6 >= required_charge_input_wh:
+                candidates.append(tuple(selected))
+                break
+    if not candidates:
+        return ()
+
+    opportunity_end = intervals[-1].ends_at
+    safety_duration = intervals[-1].ends_at - intervals[-1].starts_at
+    with_safety_margin = tuple(
+        candidate
+        for candidate in candidates
+        if candidate[-1].ends_at <= opportunity_end - safety_duration
+    )
+    return with_safety_margin or tuple(candidates)
 
 
 @dataclass(frozen=True, slots=True)
@@ -543,6 +611,9 @@ class MarketDailyPlanner:
                     required_pre_window_discharge_output_wh=(
                         required_stored_discharge_wh * conversion_model.discharge_efficiency
                     ),
+                    opportunity_window_starts_at=starts_at,
+                    opportunity_window_ends_at=ends_at,
+                    charge_safety_margin_seconds=0.0,
                     reason="negative_all_in_import_window",
                     method_version=METHOD_VERSION,
                 )
@@ -555,34 +626,25 @@ class MarketDailyPlanner:
             tuple[
                 float,
                 _MarketOpportunityWindow,
+                tuple[DailyReferenceTariffInterval, ...],
                 _MarketOpportunityWindow,
                 float,
                 float,
             ]
         ] = []
         for charge_opportunity in low_windows:
-            charge_window = charge_opportunity.intervals
-            charge_start = charge_window[0].starts_at
-            charge_end = charge_window[-1].ends_at
-            charge_hours = (charge_end - charge_start).total_seconds() / 3600
-            charge_rate = sum(
-                item.import_eur_per_kwh * (item.ends_at - item.starts_at).total_seconds()
-                for item in charge_window
-            ) / ((charge_end - charge_start).total_seconds())
+            opportunity_charge_window = charge_opportunity.intervals
+            opportunity_charge_hours = sum(
+                _duration_hours(item) for item in opportunity_charge_window
+            )
             for export_opportunity in high_windows:
                 export_window = export_opportunity.intervals
-                if export_window[0].starts_at < charge_end:
-                    continue
                 export_start = export_window[0].starts_at
                 export_end = export_window[-1].ends_at
                 export_hours = (export_end - export_start).total_seconds() / 3600
-                export_rate = sum(
-                    item.export_eur_per_kwh * (item.ends_at - item.starts_at).total_seconds()
-                    for item in export_window
-                ) / ((export_end - export_start).total_seconds())
                 charge_input_wh = min(
                     usable_storage_range_wh / conversion_model.charge_efficiency,
-                    limits.maximum_charge_input_power_w * charge_hours,
+                    limits.maximum_charge_input_power_w * opportunity_charge_hours,
                     limits.maximum_discharge_output_power_w
                     * export_hours
                     / (conversion_model.charge_efficiency * conversion_model.discharge_efficiency),
@@ -592,16 +654,36 @@ class MarketDailyPlanner:
                     * conversion_model.charge_efficiency
                     * conversion_model.discharge_efficiency
                 )
-                indicated_result = (
-                    export_output_wh / 1000 * export_rate
-                    - charge_input_wh / 1000 * charge_rate
-                    - export_output_wh / 1000 * trading_policy.wear_eur_per_export_kwh
+                charge_subwindows = _minimal_charge_subwindows(
+                    opportunity_charge_window,
+                    required_charge_input_wh=charge_input_wh,
+                    maximum_charge_input_power_w=(
+                        limits.maximum_charge_input_power_w
+                    ),
                 )
-                if export_output_wh > 0:
+                export_rate = sum(
+                    item.export_eur_per_kwh
+                    * (item.ends_at - item.starts_at).total_seconds()
+                    for item in export_window
+                ) / ((export_end - export_start).total_seconds())
+                for charge_window in charge_subwindows:
+                    charge_start = charge_window[0].starts_at
+                    charge_end = charge_window[-1].ends_at
+                    if export_start < charge_end:
+                        continue
+                    charge_rate = _average_import_rate(charge_window)
+                    indicated_result = (
+                        export_output_wh / 1000 * export_rate
+                        - charge_input_wh / 1000 * charge_rate
+                        - export_output_wh
+                        / 1000
+                        * trading_policy.wear_eur_per_export_kwh
+                    )
                     trade_candidates.append(
                         (
                             indicated_result,
                             charge_opportunity,
+                            charge_window,
                             export_opportunity,
                             charge_input_wh,
                             export_output_wh,
@@ -610,6 +692,7 @@ class MarketDailyPlanner:
         for (
             _indicated_result,
             charge_opportunity,
+            charge_window,
             export_opportunity,
             charge_input_wh,
             export_output_wh,
@@ -618,17 +701,12 @@ class MarketDailyPlanner:
             key=lambda item: item[0],
             reverse=True,
         ):
-            charge_window = charge_opportunity.intervals
             export_window = export_opportunity.intervals
             charge_start = charge_window[0].starts_at
             charge_end = charge_window[-1].ends_at
             export_start = export_window[0].starts_at
             export_end = export_window[-1].ends_at
-            charge_rate = sum(
-                item.import_eur_per_kwh
-                * (item.ends_at - item.starts_at).total_seconds()
-                for item in charge_window
-            ) / ((charge_end - charge_start).total_seconds())
+            charge_rate = _average_import_rate(charge_window)
             export_rate = sum(
                 item.export_eur_per_kwh
                 * (item.ends_at - item.starts_at).total_seconds()
@@ -644,7 +722,7 @@ class MarketDailyPlanner:
                 MarketCapacityRoute(
                     route_id=(
                         f"mep-grid-trade:{snapshot.snapshot_id}:"
-                        f"{charge_start.isoformat()}:"
+                        f"{charge_start.isoformat()}:{charge_end.isoformat()}:"
                         f"{export_start.isoformat()}"
                     ),
                     snapshot_id=snapshot.snapshot_id,
@@ -658,6 +736,15 @@ class MarketDailyPlanner:
                     reserved_storage_room_wh=(charge_input_wh * conversion_model.charge_efficiency),
                     storage_energy_ceiling_before_window_wh=maximum_energy_wh,
                     required_pre_window_discharge_output_wh=export_output_wh,
+                    opportunity_window_starts_at=(
+                        charge_opportunity.intervals[0].starts_at
+                    ),
+                    opportunity_window_ends_at=(
+                        charge_opportunity.intervals[-1].ends_at
+                    ),
+                    charge_safety_margin_seconds=(
+                        charge_opportunity.intervals[-1].ends_at - charge_end
+                    ).total_seconds(),
                     export_window_starts_at=export_start,
                     export_window_ends_at=export_end,
                     route_kind="grid_trade",
@@ -851,6 +938,9 @@ class MarketDailyPlanner:
                     reserved_storage_room_wh=0.0,
                     storage_energy_ceiling_before_window_wh=maximum_energy_wh,
                     required_pre_window_discharge_output_wh=export_output_wh,
+                    opportunity_window_starts_at=recovery_start,
+                    opportunity_window_ends_at=recovery_end,
+                    charge_safety_margin_seconds=0.0,
                     export_window_starts_at=export_start,
                     export_window_ends_at=export_end,
                     route_kind="pv_trade",
@@ -865,41 +955,67 @@ class MarketDailyPlanner:
                 )
             )
             # If PV cannot restore the full traded portion plus household
-            # consumption, assess the same export with the cheapest feasible
-            # later grid-recovery window inside the available horizon.
-            result.append(
-                MarketCapacityRoute(
-                    route_id=(
-                        f"mep-pv-trade-grid-recovery:{snapshot.snapshot_id}:"
-                        f"{export_start.isoformat()}:{export_end.isoformat()}:"
-                        f"{recovery_start.isoformat()}:{recovery_end.isoformat()}"
-                    ),
-                    snapshot_id=snapshot.snapshot_id,
-                    opportunity_ids=(
-                        export_opportunity.opportunity_id,
-                        recovery_opportunity.opportunity_id,
-                    ),
-                    window_starts_at=recovery_start,
-                    window_ends_at=recovery_end,
-                    maximum_charge_input_wh=recharge_input_wh,
-                    reserved_storage_room_wh=(
-                        recharge_input_wh * conversion_model.charge_efficiency
-                    ),
-                    storage_energy_ceiling_before_window_wh=maximum_energy_wh,
-                    required_pre_window_discharge_output_wh=export_output_wh,
-                    export_window_starts_at=export_start,
-                    export_window_ends_at=export_end,
-                    route_kind="pv_trade_grid_recovery",
-                    reason="export_then_restore_from_cheapest_next_day_grid_window",
-                    average_export_eur_per_kwh=export_rate,
-                    average_recharge_eur_per_kwh=recharge_rate,
-                    minimum_export_eur_per_kwh=minimum_export_rate,
-                    inventory_deliverable_energy_wh=inventory_deliverable_energy_wh,
-                    inventory_acquisition_cost_eur=inventory_acquisition_cost_eur,
-                    inventory_sources=inventory_sources,
-                    method_version=METHOD_VERSION,
+            # consumption, assess the same export with every interval-minimal
+            # explicit-power subwindow inside the selected recovery Opportunity.
+            for grid_recovery_window in _minimal_charge_subwindows(
+                recovery_window,
+                required_charge_input_wh=recharge_input_wh,
+                maximum_charge_input_power_w=(limits.maximum_charge_input_power_w),
+            ):
+                grid_recovery_start = grid_recovery_window[0].starts_at
+                grid_recovery_end = grid_recovery_window[-1].ends_at
+                grid_recharge_rate = _average_import_rate(grid_recovery_window)
+                grid_minimum_export_rate = trading_policy.minimum_export_rate(
+                    grid_recharge_rate,
+                    rte,
                 )
-            )
+                if export_rate < grid_minimum_export_rate:
+                    continue
+                result.append(
+                    MarketCapacityRoute(
+                        route_id=(
+                            f"mep-pv-trade-grid-recovery:{snapshot.snapshot_id}:"
+                            f"{export_start.isoformat()}:{export_end.isoformat()}:"
+                            f"{grid_recovery_start.isoformat()}:"
+                            f"{grid_recovery_end.isoformat()}"
+                        ),
+                        snapshot_id=snapshot.snapshot_id,
+                        opportunity_ids=(
+                            export_opportunity.opportunity_id,
+                            recovery_opportunity.opportunity_id,
+                        ),
+                        window_starts_at=grid_recovery_start,
+                        window_ends_at=grid_recovery_end,
+                        maximum_charge_input_wh=recharge_input_wh,
+                        reserved_storage_room_wh=(
+                            recharge_input_wh * conversion_model.charge_efficiency
+                        ),
+                        storage_energy_ceiling_before_window_wh=maximum_energy_wh,
+                        required_pre_window_discharge_output_wh=export_output_wh,
+                        opportunity_window_starts_at=recovery_start,
+                        opportunity_window_ends_at=recovery_end,
+                        charge_safety_margin_seconds=(
+                            recovery_end - grid_recovery_end
+                        ).total_seconds(),
+                        export_window_starts_at=export_start,
+                        export_window_ends_at=export_end,
+                        route_kind="pv_trade_grid_recovery",
+                        reason=(
+                            "export_then_restore_from_pv_preserving_grid_subwindow"
+                        ),
+                        average_export_eur_per_kwh=export_rate,
+                        average_recharge_eur_per_kwh=grid_recharge_rate,
+                        minimum_export_eur_per_kwh=grid_minimum_export_rate,
+                        inventory_deliverable_energy_wh=(
+                            inventory_deliverable_energy_wh
+                        ),
+                        inventory_acquisition_cost_eur=(
+                            inventory_acquisition_cost_eur
+                        ),
+                        inventory_sources=inventory_sources,
+                        method_version=METHOD_VERSION,
+                    )
+                )
         # Stable de-duplication: the same cheapest/highest pair can be reached
         # through overlapping rankings, but it must be simulated only once.
         return tuple({item.route_id: item for item in result}.values()), recovery_outside_horizon
@@ -1004,18 +1120,27 @@ class MarketDailyPlanner:
         schedule_id = f"mep-market:{route.route_id}:{baseline.schedule_id}"
         intervals_list: list[DailyReferenceIntentInterval] = []
         for item in baseline.intervals:
-            intent = (
-                DailyStorageIntent.GRID_REQUIREMENT
-                if route.route_kind
+            inside_explicit_charge = (
+                route.route_kind
                 in {"grid_trade", "negative_capacity", "pv_trade_grid_recovery"}
                 and route.maximum_charge_input_wh > 0.0
                 and item.starts_at < route.window_ends_at
                 and item.ends_at > route.window_starts_at
-                else (
-                    DailyStorageIntent.STORAGE_EXPORT
-                    if (item.starts_at, item.ends_at) in export_targets
-                    else item.intent
-                )
+            )
+            inside_pv_preference_window = (
+                route.route_kind
+                in {"grid_trade", "pv_trade", "pv_trade_grid_recovery"}
+                and item.starts_at < route.opportunity_window_ends_at
+                and item.ends_at > route.opportunity_window_starts_at
+            )
+            intent = (
+                DailyStorageIntent.GRID_REQUIREMENT
+                if inside_explicit_charge
+                else DailyStorageIntent.STORAGE_EXPORT
+                if (item.starts_at, item.ends_at) in export_targets
+                else DailyStorageIntent.NOM
+                if inside_pv_preference_window
+                else item.intent
             )
             intervals_list.append(DailyReferenceIntentInterval(
                 starts_at=item.starts_at,

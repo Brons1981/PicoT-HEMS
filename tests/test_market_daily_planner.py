@@ -275,6 +275,75 @@ def test_mep_builds_complete_2026_grid_trade_with_linked_saldering() -> None:
     )
 
 
+def test_mep_subdivides_broad_grid_trade_window_and_preserves_pv_room() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    cheap_window_end = snapshot.captured_at + timedelta(hours=12)
+    horizon_end = snapshot.captured_at + timedelta(hours=24)
+    source = snapshot.price_points[0]
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(
+                source,
+                point_id="broad-cheap-window",
+                ends_at=cheap_window_end,
+                value_eur_per_kwh=0.05,
+            ),
+            replace(
+                source,
+                point_id="later-export-window",
+                starts_at=cheap_window_end,
+                ends_at=horizon_end,
+                value_eur_per_kwh=0.55,
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=_conversion(),
+    )
+
+    grid_routes = tuple(
+        route for route in result.market_routes if route.route_kind == "grid_trade"
+    )
+    assert len(grid_routes) > 1
+    assert all(
+        route.opportunity_window_starts_at == snapshot.captured_at
+        and route.opportunity_window_ends_at == cheap_window_end
+        for route in grid_routes
+    )
+    assert all(
+        route.window_ends_at - route.window_starts_at
+        <= timedelta(
+            hours=route.maximum_charge_input_wh / 2400.0,
+            minutes=15,
+        )
+        for route in grid_routes
+    )
+    assert all(
+        route.window_ends_at <= cheap_window_end - timedelta(minutes=15)
+        for route in grid_routes
+    )
+
+    route_ids = {route.route_id for route in grid_routes}
+    grid_assessments = tuple(
+        assessment
+        for assessment in result.route_assessments
+        if assessment.route_id in route_ids
+    )
+    assert grid_assessments
+    assert all(
+        any(
+            interval.intent.value == "nom"
+            for interval in assessment.intent_schedule.intervals
+        )
+        for assessment in grid_assessments
+    )
+    assert result.current_intent is not None
+    assert result.current_intent.value == "nom"
+
+
 def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
     source = snapshot.price_points[0]
@@ -346,7 +415,14 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
     assert grid_recovery.maximum_charge_input_wh == pytest.approx(
         grid_recovery.required_pre_window_discharge_output_wh / 0.83
     )
-    assert grid_recovery.window_starts_at == route.window_starts_at
+    assert grid_recovery.opportunity_window_starts_at == route.window_starts_at
+    assert grid_recovery.opportunity_window_ends_at == route.window_ends_at
+    assert (
+        grid_recovery.opportunity_window_starts_at
+        <= grid_recovery.window_starts_at
+        < grid_recovery.window_ends_at
+        <= grid_recovery.opportunity_window_ends_at
+    )
     pv_assessment = next(
         item
         for item in result.route_assessments
@@ -376,9 +452,9 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
         >= scenario.baseline_storage_energy_at_horizon_end_wh
         for scenario in grid_assessment.scenario_evidence
     )
-    assert all(
-        scenario.target_held_at_horizon_end
-        for scenario in grid_assessment.scenario_evidence
+    assert any(
+        interval.intent.value == "nom"
+        for interval in grid_assessment.intent_schedule.intervals
     )
     assert grid_assessment.physically_admissible is True
 

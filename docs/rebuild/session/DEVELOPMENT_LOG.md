@@ -954,7 +954,7 @@ confirm NOM is applied at the committed charge-window start.
 
 ## 2026-08-22 — 2.0.0-dev.133
 
-Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
 
 - Live dev.132 selected a new PV-only window starting exactly at its 08:48:56
   capture time and immediately requested NOM, despite the intended favourable
@@ -1559,3 +1559,53 @@ canonical pipeline and no parallel production control route.
 
 Exact first next action: merge PR #561 and install dev.193 for controlled live
 verification of plan continuity and deadline-aware overnight charging.
+
+
+## 2026-08-28 — 2.0.0-dev.194 remove residual CP deadline authority
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+### Live incident
+
+- The first dev.193 live run at 2026-08-28 18:11:20 Europe/Amsterdam produced
+  zero MEP candidates with
+  `daily_reference_charge_windows_unavailable`.
+- The storage state was 41% and the residual CP requirement demanded 100% by
+  19:00. At the physical 2400 W charge limit this target was already
+  unreachable, even before conversion loss.
+- MEP correctly rejected the impossible hard deadline, but that deadline was
+  not MEP input: `live_runtime.py` still invoked the removed CP
+  `CandidateEngine().derive_storage_requirements()` and dev.193 forwarded its
+  result into MEP.
+
+### Decision and implementation
+
+- Confirmed the deadline was a historical CP measure that prevented CP from
+  moving a same-day charge window to tomorrow. It is not an MEP planning rule.
+- Removed CP Candidate Engine and remaining-PV feasibility invocation from the
+  live runtime.
+- Removed consumption of `household_planning_regime.storage_target_required_by`
+  from the canonical MEP composition.
+- MEP now derives its own physically feasible daily schedule. Evaluation and
+  the canonical Plan Store remain the sole owners of incumbent continuity and
+  replacement.
+- Added an architecture regression that forbids `CandidateEngine` and
+  `derive_storage_requirements` throughout the live runtime.
+- Added an incident regression proving a legacy 100%-within-49-minutes CP
+  deadline cannot block MEP candidate generation.
+- Bumped add-on and Core version to `2.0.0-dev.194`.
+
+### Local verification
+
+- Incident and affected integration suite: `61 passed`.
+- Full repository suite: `1056 passed`.
+- Ruff production package: `All checks passed!`.
+- mypy: `Success: no issues found in 183 source files`.
+- `git diff --check`: passed.
+
+### GitHub CI verification
+
+- PR #562: `fix: PicoT 2.0.0-dev.194 remove CP deadline authority`.
+- Tests run 1925: passed.
+- PicoT Core CI run 1870: passed.
+- PicoT v2 Rebuild run 797: passed.

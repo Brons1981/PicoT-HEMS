@@ -24,7 +24,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.market_daily_planner import MarketTradingPolicy
-from picot.v2.candidate_engine import CandidateEngine, CandidateInputError
 from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
     HomeAssistantCanonicalModeAdapter,
@@ -115,10 +114,6 @@ from picot.v2.pv_sunset_runtime import (
 from picot.v2.pv_sunset_source import (
     HomeAssistantSunsetReader,
     SunsetReadResult,
-)
-from picot.v2.remaining_pv_storage_feasibility import (
-    RemainingPVStorageFeasibility,
-    derive_remaining_pv_storage_feasibility,
 )
 from picot.v2.storage_mode_transition_history import (
     StorageModeTransitionEvent,
@@ -447,7 +442,6 @@ def _attach_live_household_objectives(
     policy: AdaptiveHouseholdObjectivePolicy,
     previous_regime: HouseholdPlanningRegime | None = None,
     previous_regime_duration_seconds: int = 0,
-    storage_feasibility: RemainingPVStorageFeasibility | None = None,
 ) -> PlanningInputBundle:
     cumulative = diagnostics.cumulative_evidence
     deviations = diagnostics.deviation_results
@@ -521,11 +515,6 @@ def _attach_live_household_objectives(
                 (
                     *evidence_ids,
                     *future_confidence_evidence_ids,
-                    *(
-                        storage_feasibility.evidence_ids
-                        if storage_feasibility is not None
-                        else ()
-                    ),
                 )
             )
         ),
@@ -535,26 +524,6 @@ def _attach_live_household_objectives(
         overperformance_duration_seconds=_rolling_pv_direction_seconds(
             deviations,
             direction="above_forecast",
-        ),
-        remaining_storage_need_wh=(
-            storage_feasibility.remaining_storage_need_wh
-            if storage_feasibility is not None
-            else None
-        ),
-        conservative_remaining_pv_surplus_wh=(
-            storage_feasibility.conservative_remaining_pv_surplus_wh
-            if storage_feasibility is not None
-            else None
-        ),
-        remaining_pv_storage_margin_wh=(
-            storage_feasibility.margin_wh
-            if storage_feasibility is not None
-            else None
-        ),
-        storage_target_required_by=(
-            storage_feasibility.required_by
-            if storage_feasibility is not None
-            else None
         ),
         forecast_confidence_method_version=(
             forecast_confidence_method_version
@@ -2257,24 +2226,6 @@ def main() -> None:
                 pv_telemetry_interval_seconds
             ),
         )
-        try:
-            requirement_derivation = CandidateEngine().derive_storage_requirements(
-                prepared_bundle.snapshot
-            )
-            storage_feasibility = derive_remaining_pv_storage_feasibility(
-                prepared_bundle.snapshot,
-                requirements=requirement_derivation.requirements,
-                balances=requirement_derivation.balances,
-            )
-        except CandidateInputError:
-            storage_feasibility = RemainingPVStorageFeasibility(
-                status="unavailable",
-                remaining_storage_need_wh=None,
-                conservative_remaining_pv_surplus_wh=None,
-                margin_wh=None,
-                required_by=None,
-                evidence_ids=(),
-            )
         captured_at = prepared_bundle.snapshot.captured_at
         previous_duration_seconds = (
             int((captured_at - household_regime_started_at).total_seconds())
@@ -2288,7 +2239,6 @@ def main() -> None:
             policy=adaptive_household_policy,
             previous_regime=previous_household_regime,
             previous_regime_duration_seconds=max(0, previous_duration_seconds),
-            storage_feasibility=storage_feasibility,
         )
         current_regime = prepared_bundle.snapshot.household_planning_regime
         if current_regime is not None and (

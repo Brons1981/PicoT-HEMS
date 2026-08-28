@@ -531,15 +531,8 @@ def build_mep_canonical_run(
     switching_margin_eur: float,
 ) -> tuple[CanonicalPipelineRun, MepCanonicalStageTimings, MarketDailyRuntimeOutcome]:
     stage_started = perf_counter()
-    regime = snapshot.household_planning_regime
-    required_by = (
-        datetime.fromisoformat(regime.storage_target_required_by)
-        if regime is not None and regime.storage_target_required_by is not None
-        else None
-    )
     planner_outcome = planner_runtime.generate(
         snapshot,
-        required_by=required_by,
         opportunities=opportunities,
     )
     evaluated_plan = (

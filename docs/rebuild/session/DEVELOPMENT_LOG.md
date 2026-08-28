@@ -954,7 +954,7 @@ confirm NOM is applied at the committed charge-window start.
 
 ## 2026-08-22 — 2.0.0-dev.133
 
-Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
 
 - Live dev.132 selected a new PV-only window starting exactly at its 08:48:56
   capture time and immediately requested NOM, despite the intended favourable
@@ -1602,3 +1602,10 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Ruff production package: `All checks passed!`.
 - mypy: `Success: no issues found in 183 source files`.
 - `git diff --check`: passed.
+
+### GitHub CI verification
+
+- PR #562: `fix: PicoT 2.0.0-dev.194 remove CP deadline authority`.
+- Tests run 1925: passed.
+- PicoT Core CI run 1870: passed.
+- PicoT v2 Rebuild run 797: passed.

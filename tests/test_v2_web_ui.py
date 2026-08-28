@@ -802,14 +802,14 @@ def test_web_view_store_refreshes_history_without_replacing_planner_run() -> Non
     assert latest["power_history"]["ends_at"] == ends_at.isoformat()
 
 
-def test_dashboard_exposes_plain_language_storage_source_need() -> None:
+def test_dashboard_exposes_canonical_mep_execution_plan() -> None:
     assert "Energieplan batterij" in DASHBOARD_HTML
     assert 'id="storage-energy-source-needs"' in DASHBOARD_HTML
-    assert "renderStorageEnergySourceNeeds" in DASHBOARD_HTML
-    assert "storage_source_needs" in DASHBOARD_HTML
-    assert "Zendure batterij mist" in DASHBOARD_HTML
-    assert "formatEnergyKwh" in DASHBOARD_HTML
-    assert " kWh" in DASHBOARD_HTML
+    assert "renderBatteryEnergyPlan" in DASHBOARD_HTML
+    assert "executionPlanDayLabel" in DASHBOARD_HTML
+    assert "MEP-uitvoeringsplan" in DASHBOARD_HTML
+    assert "Handmatige instelling actief" in DASHBOARD_HTML
+    assert "storage_source_needs" not in DASHBOARD_HTML
 
 
 def test_dashboard_preserves_interaction_state_during_refresh() -> None:

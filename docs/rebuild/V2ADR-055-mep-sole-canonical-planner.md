@@ -91,6 +91,11 @@ The promotion removes:
 Historical diagnostic data may remain readable, but no removed component may
 be instantiated in the live runtime.
 
+The dashboard projects the selected plan directly from the canonical
+`ExecutionPlanSet`. Optional or removed CP/EP outcome projections may enrich
+historical diagnostics, but their absence may not hide an available MEP plan or
+its exact future segments.
+
 ## Acceptance evidence
 
 Before live release, tests must prove:

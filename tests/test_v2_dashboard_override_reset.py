@@ -134,7 +134,7 @@ def test_pipeline_cards_are_compact_collapsible_and_preserve_open_state() -> Non
     assert 'const card = document.createElement("article")' not in (
         html[
             html.index("function renderPipeline") :
-            html.index("function renderStorageEnergySourceNeeds")
+            html.index("function renderBatteryEnergyPlan")
         ]
     )
 

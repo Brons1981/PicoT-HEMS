@@ -1609,3 +1609,43 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Tests run 1925: passed.
 - PicoT Core CI run 1870: passed.
 - PicoT v2 Rebuild run 797: passed.
+
+
+## 2026-08-28 — 2.0.0-dev.195 present canonical MEP plan
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+### Live incident
+
+- Diagnostics 54 proved that dev.194 generated and retained a five-segment MEP
+  plan for 29 August, while the dashboard did not present it as tomorrow's
+  battery plan.
+- The MEP run intentionally has no legacy delegated-storage Candidate Outcomes.
+  The dashboard still depended on those removed CP/EP projection fields for its
+  battery-plan summary and price-window overlay.
+- A manual override remains active. This release does not reset or bypass it;
+  @gielz retains control while the user is unavailable.
+
+### Decision and implementation
+
+- Project the selected plan directly from the canonical `ExecutionPlanSet`, as
+  required by ADR-016, ADR-033 and V2ADR-055.
+- Present every exact segment with local day, start, end, canonical action,
+  requested power, source policy and purpose.
+- Mark canonical MEP charge and export segments in the today/tomorrow price
+  chart instead of deriving one legacy charge window from Candidate Outcomes.
+- Show an explicit notice when manual authority blocks dispatch; presentation
+  never changes authority or execution state.
+- Removed the dashboard's dependency on CP-era `storage_source_needs` for the
+  battery-plan card.
+- Bumped add-on and Core version to `2.0.0-dev.195`.
+
+### Verification
+
+- Regression proves an MEP plan is projected when the legacy Outcome Set is
+  empty and preserves the exact Execution Plan segments.
+- Affected MEP, dashboard and version suite: `53 passed`.
+- Full repository suite: `1057 passed`.
+- Ruff on all changed production and test files: `All checks passed!`.
+- mypy: `Success: no issues found in 183 source files`.
+- Embedded dashboard JavaScript syntax check and `git diff --check` pass.

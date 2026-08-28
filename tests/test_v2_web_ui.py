@@ -941,9 +941,11 @@ def test_web_view_store_overlays_fresh_soc_without_replacing_plan() -> None:
 def test_dashboard_exposes_exact_chosen_execution_plan_facts() -> None:
     assert "Gekozen uitvoeringsplan" in DASHBOARD_HTML
     assert 'const chosenPlan = status.chosen_plan ?? {};' in DASHBOARD_HTML
+    assert '"Plan-ID"' in DASHBOARD_HTML
+    assert '"Planrevisie"' in DASHBOARD_HTML
     assert '"Laadvenster vanaf"' in DASHBOARD_HTML
     assert '"Totale doelenergie"' in DASHBOARD_HTML
-    assert '"Batterijenergie bij vastleggen"' in DASHBOARD_HTML
+    assert '"Batterijenergie bij berekening"' in DASHBOARD_HTML
     assert '"Verwacht accuverbruik tot laadstart"' in DASHBOARD_HTML
     assert '"Verwachte energie bij laadstart"' in DASHBOARD_HTML
     assert '"Benodigde toevoeging bij laadstart"' in DASHBOARD_HTML
@@ -953,6 +955,9 @@ def test_dashboard_exposes_exact_chosen_execution_plan_facts() -> None:
     assert '"Bijdrage PV"' in DASHBOARD_HTML
     assert '"Bijdrage net"' in DASHBOARD_HTML
     assert '"Planconfidence"' in DASHBOARD_HTML
+    assert '"Slechtste financiële uitkomst"' in DASHBOARD_HTML
+    assert '"Minimale energie einde horizon"' in DASHBOARD_HTML
+    assert 'availablePlanningRows([' in DASHBOARD_HTML
     assert 'chosenPlan.execution_segments' in DASHBOARD_HTML
     assert '"Batterijmodus"' in DASHBOARD_HTML
     assert '"Laadbron"' in DASHBOARD_HTML
@@ -968,6 +973,17 @@ def test_web_view_exposes_chosen_plan_contract_even_without_a_winner() -> None:
     ]
 
     assert set(chosen_plan) == {
+        "plan_id",
+        "plan_revision",
+        "execution_scope_id",
+        "valid_from",
+        "valid_until",
+        "source_policy",
+        "average_charge_window_price_eur_per_kwh",
+        "worst_case_financial_result_eur",
+        "minimum_storage_energy_at_horizon_end_wh",
+        "reserve_respected_across_scenarios",
+        "target_held_across_scenarios",
         "candidate_id",
         "energy_path_id",
         "family",
@@ -998,6 +1014,12 @@ def test_web_view_exposes_chosen_plan_contract_even_without_a_winner() -> None:
         "execution_segments",
     }
     assert isinstance(chosen_plan["execution_segments"], list)
+
+
+def test_dashboard_does_not_render_missing_confidence_as_zero_percent() -> None:
+    assert "if (value === null || value === undefined) return \"—\";" in (
+        DASHBOARD_HTML
+    )
 
 
 def test_dashboard_compares_chosen_and_rejected_candidate_facts() -> None:

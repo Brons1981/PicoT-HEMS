@@ -60,6 +60,7 @@ def test_dashboard_presents_mep_execution_plan_without_legacy_outcomes(
 
     assert run.outcomes.outcomes == ()
     plans = view["planning_status"]["execution_plans"]
+    chosen_plan = view["planning_status"]["chosen_plan"]
     assert len(plans) == 1
     assert plans[0]["plan_id"] == run.execution_plan_set.plans[0].plan_id
     assert plans[0]["execution_scope_id"] == (
@@ -83,6 +84,24 @@ def test_dashboard_presents_mep_execution_plan_without_legacy_outcomes(
     assert any(
         datetime.fromisoformat(segment["starts_at"]) > snapshot.captured_at
         for segment in plans[0]["segments"]
+    )
+    charge_segments = [
+        segment
+        for segment in run.execution_plan_set.plans[0].segments
+        if segment.primitive.value == "charge_at_power"
+    ]
+    assert chosen_plan["plan_id"] == run.execution_plan_set.plans[0].plan_id
+    assert chosen_plan["execution_scope_id"] == (
+        run.execution_plan_set.plans[0].execution_scope_id
+    )
+    assert chosen_plan["initial_storage_energy_wh"] == (
+        snapshot.current_storage_states[0].current_stored_energy_wh
+    )
+    assert chosen_plan["charge_window_starts_at"] == (
+        charge_segments[0].starts_at.isoformat()
+    )
+    assert chosen_plan["charge_window_ends_at"] == (
+        charge_segments[-1].ends_at.isoformat()
     )
     assert "renderBatteryEnergyPlan(" in DASHBOARD_HTML
     assert "view.planning_status?.execution_plans" in DASHBOARD_HTML
@@ -111,6 +130,27 @@ def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
         first.execution_plan_set.plans[0].plan_id
     )
     assert store.load(scope_id) == commitment
+
+    view = build_web_view(continued, project(continued))
+    chosen_plan = view["planning_status"]["chosen_plan"]
+    assert chosen_plan["plan_revision"] == commitment.plan_revision
+    assert chosen_plan["required_energy_wh"] == commitment.target_energy_wh
+    assert chosen_plan["source_policy"] == commitment.source_policy
+    assert chosen_plan["average_charge_window_price_eur_per_kwh"] == (
+        commitment.average_charge_window_price_eur_per_kwh
+    )
+    assert chosen_plan["worst_case_financial_result_eur"] == (
+        commitment.worst_case_financial_result_eur
+    )
+    assert chosen_plan["minimum_storage_energy_at_horizon_end_wh"] == (
+        commitment.minimum_storage_energy_at_horizon_end_wh
+    )
+    assert chosen_plan["reserve_respected_across_scenarios"] == (
+        commitment.reserve_respected_across_scenarios
+    )
+    assert chosen_plan["target_held_across_scenarios"] == (
+        commitment.target_held_across_scenarios
+    )
 
 
 def test_market_planner_generates_and_evaluation_selects() -> None:

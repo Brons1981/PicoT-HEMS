@@ -1158,6 +1158,7 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function formatPrice(value) {
+      if (value === null || value === undefined) return "—";
       const numeric = Number(value);
       return Number.isFinite(numeric)
         ? `${numeric.toFixed(3).replace(".", ",")} €/kWh`
@@ -1165,6 +1166,7 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function formatCurrency(value) {
+      if (value === null || value === undefined) return "—";
       const numeric = Number(value);
       return Number.isFinite(numeric)
         ? numeric.toLocaleString("nl-NL", {
@@ -1531,6 +1533,7 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function formatConfidence(value) {
+      if (value === null || value === undefined) return "—";
       const numeric = Number(value);
       return Number.isFinite(numeric)
         ? `${Math.round(numeric * 100)}%`
@@ -2744,6 +2747,9 @@ DASHBOARD_HTML = """<!doctype html>
         root.append(panel);
         return panel;
       };
+      const availablePlanningRows = (rows) => rows.filter(([, value]) => (
+        value !== null && value !== undefined && value !== "" && value !== "—"
+      ));
       const strategy = status.strategy ?? {};
       addCard("Huidige strategie", [
         ["Regime", strategy.status],
@@ -2802,16 +2808,25 @@ DASHBOARD_HTML = """<!doctype html>
       ]);
 
       const chosenPlan = status.chosen_plan ?? {};
-      const chosenCard = addCard("Gekozen uitvoeringsplan", [
+      const chosenCard = addCard("Gekozen uitvoeringsplan", availablePlanningRows([
+        ["Plan-ID", chosenPlan.plan_id],
+        ["Planrevisie", chosenPlan.plan_revision],
+        ["Uitvoeringsscope", chosenPlan.execution_scope_id],
         ["Kandidaat", chosenPlan.candidate_id],
         ["Energiepad", chosenPlan.energy_path_id],
         ["Planfamilie", chosenPlan.family],
         ["Beslisregel", chosenPlan.decisive_step],
         ["Beslisreden", chosenPlan.reason],
+        ["Plan geldig vanaf", formatTimestamp(chosenPlan.valid_from)],
+        ["Plan geldig tot", formatTimestamp(chosenPlan.valid_until)],
         ["Laadvenster vanaf", formatTimestamp(chosenPlan.charge_window_starts_at)],
         ["Laadvenster tot", formatTimestamp(chosenPlan.charge_window_ends_at)],
+        ["Laadbronbeleid", chosenPlan.source_policy],
+        ["Gemiddelde laadvensterprijs", formatPrice(
+          chosenPlan.average_charge_window_price_eur_per_kwh
+        )],
         ["Totale doelenergie", formatMeasurement(chosenPlan.required_energy_wh, "Wh")],
-        ["Batterijenergie bij vastleggen", formatMeasurement(
+        ["Batterijenergie bij berekening", formatMeasurement(
           chosenPlan.initial_storage_energy_wh, "Wh"
         )],
         ["Verwacht accuverbruik tot laadstart", formatMeasurement(
@@ -2830,8 +2845,15 @@ DASHBOARD_HTML = """<!doctype html>
         ["Energie bij deadline", formatMeasurement(
           chosenPlan.storage_energy_at_requirement_wh, "Wh"
         )],
+        ["Minimale energie einde horizon", formatMeasurement(
+          chosenPlan.minimum_storage_energy_at_horizon_end_wh, "Wh"
+        )],
         ["Laaddoel 100% gehaald", chosenPlan.charge_target_satisfied],
         ["Reserve bij deadline gehaald", chosenPlan.reserve_satisfied],
+        ["Reserve in alle scenario's",
+          chosenPlan.reserve_respected_across_scenarios],
+        ["Doel vastgehouden in alle scenario's",
+          chosenPlan.target_held_across_scenarios],
         ["Minimaal benodigde reserve", formatMeasurement(
           chosenPlan.reserve_energy_required_wh, "Wh"
         )],
@@ -2839,12 +2861,15 @@ DASHBOARD_HTML = """<!doctype html>
         ["Bijdrage net", formatMeasurement(chosenPlan.grid_contribution_wh, "Wh")],
         ["Conversieverlies", formatMeasurement(chosenPlan.conversion_losses_wh, "Wh")],
         ["Doel gehaald", chosenPlan.requirement_satisfied],
+        ["Slechtste financiële uitkomst", formatCurrency(
+          chosenPlan.worst_case_financial_result_eur
+        )],
         ["Herstelbaarheid", formatConfidence(chosenPlan.recoverability)],
         ["Planconfidence", formatConfidence(chosenPlan.confidence)],
         ["Confidence batterijdoel", formatConfidence(
           chosenPlan.requirement_confidence
         )],
-      ], true);
+      ]), true);
       const segments = Array.isArray(chosenPlan.execution_segments)
         ? chosenPlan.execution_segments : [];
       const segmentTable = document.createElement("table");
@@ -4968,6 +4993,31 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         ),
         key=lambda plan: (plan.valid_from, plan.valid_until, plan.plan_id),
     ))
+    winning_execution_plan = (
+        winning_execution_plans[0]
+        if len(winning_execution_plans) == 1
+        else None
+    )
+    winning_commitment = (
+        next(
+            (
+                commitment
+                for commitment in run.planning_input.active_plan_commitments
+                if commitment.plan_id == winning_execution_plan.plan_id
+                and commitment.execution_scope_id
+                == winning_execution_plan.execution_scope_id
+            ),
+            None,
+        )
+        if winning_execution_plan is not None
+        else None
+    )
+    charge_segments = tuple(
+        segment
+        for plan in winning_execution_plans
+        for segment in plan.segments
+        if segment.primitive.value == "charge_at_power"
+    )
     requirement = next(
         iter(run.candidate_set.storage_requirements),
         None,
@@ -4979,7 +5029,16 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
     initial_storage_state = (
         storage_states_by_id.get(requirement.storage_state_id)
         if requirement is not None
-        else None
+        else next(
+            (
+                state
+                for state in run.planning_input.current_storage_states
+                if winning_execution_plan is not None
+                and state.execution_scope_id
+                == winning_execution_plan.execution_scope_id
+            ),
+            None,
+        )
     )
     initial_storage_energy_wh = (
         initial_storage_state.current_stored_energy_wh
@@ -5178,6 +5237,67 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             for plan in winning_execution_plans
         ] if not fallback_active else [],
         "chosen_plan": {
+            "plan_id": (
+                winning_execution_plan.plan_id
+                if winning_execution_plan is not None and not fallback_active
+                else None
+            ),
+            "plan_revision": (
+                winning_commitment.plan_revision
+                if winning_commitment is not None and not fallback_active
+                else None
+            ),
+            "execution_scope_id": (
+                winning_execution_plan.execution_scope_id
+                if winning_execution_plan is not None and not fallback_active
+                else None
+            ),
+            "valid_from": (
+                winning_execution_plan.valid_from.isoformat()
+                if winning_execution_plan is not None and not fallback_active
+                else None
+            ),
+            "valid_until": (
+                winning_execution_plan.valid_until.isoformat()
+                if winning_execution_plan is not None and not fallback_active
+                else None
+            ),
+            "source_policy": (
+                winning_commitment.source_policy
+                if winning_commitment is not None and not fallback_active
+                else (
+                    charge_segments[0].charge_source_policy.value
+                    if len(charge_segments) == 1
+                    and charge_segments[0].charge_source_policy is not None
+                    and not fallback_active
+                    else None
+                )
+            ),
+            "average_charge_window_price_eur_per_kwh": (
+                winning_commitment.average_charge_window_price_eur_per_kwh
+                if winning_commitment is not None and not fallback_active
+                else None
+            ),
+            "worst_case_financial_result_eur": (
+                winning_commitment.worst_case_financial_result_eur
+                if winning_commitment is not None and not fallback_active
+                else None
+            ),
+            "minimum_storage_energy_at_horizon_end_wh": (
+                winning_commitment.minimum_storage_energy_at_horizon_end_wh
+                if winning_commitment is not None and not fallback_active
+                else None
+            ),
+            "reserve_respected_across_scenarios": (
+                winning_commitment.reserve_respected_across_scenarios
+                if winning_commitment is not None and not fallback_active
+                else None
+            ),
+            "target_held_across_scenarios": (
+                winning_commitment.target_held_across_scenarios
+                if winning_commitment is not None and not fallback_active
+                else None
+            ),
             "candidate_id": (
                 winning_candidate.candidate_id
                 if winning_candidate is not None and not fallback_active
@@ -5200,17 +5320,29 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "charge_window_starts_at": (
                 winning_outcome.charge_window_starts_at.isoformat()
                 if winning_outcome is not None and not fallback_active
-                else None
+                else (
+                    charge_segments[0].starts_at.isoformat()
+                    if len(charge_segments) == 1 and not fallback_active
+                    else None
+                )
             ),
             "charge_window_ends_at": (
                 winning_outcome.charge_window_ends_at.isoformat()
                 if winning_outcome is not None and not fallback_active
-                else None
+                else (
+                    charge_segments[-1].ends_at.isoformat()
+                    if len(charge_segments) == 1 and not fallback_active
+                    else None
+                )
             ),
             "required_energy_wh": (
                 winning_outcome.required_energy_wh
                 if winning_outcome is not None and not fallback_active
-                else None
+                else (
+                    winning_commitment.target_energy_wh
+                    if winning_commitment is not None and not fallback_active
+                    else None
+                )
             ),
             "initial_storage_energy_wh": (
                 initial_storage_energy_wh if not fallback_active else None
@@ -5236,7 +5368,11 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "pv_forecast_basis": (
                 winning_outcome.pv_forecast_basis
                 if winning_outcome is not None and not fallback_active
-                else None
+                else (
+                    winning_candidate.pv_forecast_basis
+                    if winning_candidate is not None and not fallback_active
+                    else None
+                )
             ),
             "storage_energy_at_window_end_wh": (
                 winning_outcome.storage_energy_at_window_end_wh
@@ -5251,12 +5387,20 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "charge_target_satisfied": (
                 winning_outcome.charge_target_satisfied
                 if winning_outcome is not None and not fallback_active
-                else None
+                else (
+                    winning_commitment.target_held_across_scenarios
+                    if winning_commitment is not None and not fallback_active
+                    else None
+                )
             ),
             "reserve_satisfied": (
                 winning_outcome.reserve_satisfied
                 if winning_outcome is not None and not fallback_active
-                else None
+                else (
+                    winning_commitment.reserve_respected_across_scenarios
+                    if winning_commitment is not None and not fallback_active
+                    else None
+                )
             ),
             "reserve_energy_required_wh": (
                 winning_outcome.reserve_energy_required_wh
@@ -5291,7 +5435,11 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "confidence": (
                 winning_outcome.confidence
                 if winning_outcome is not None and not fallback_active
-                else None
+                else (
+                    winning_commitment.minimum_confidence
+                    if winning_commitment is not None and not fallback_active
+                    else None
+                )
             ),
             "requirement_confidence": (
                 requirement.confidence

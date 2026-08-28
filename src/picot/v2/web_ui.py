@@ -772,7 +772,8 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.low { background: #35a862; }
     .price-swatch.high { background: #df6b57; }
     .price-swatch.missing { background: #2b3541; }
-    .price-swatch.canonical-plan { background: #38bdf8; }
+    .price-swatch.canonical-charge { background: #35a862; }
+    .price-swatch.canonical-trade { background: #aab2bd; }
     .planner-window-summary {
       display: flex;
       flex-wrap: wrap;
@@ -786,9 +787,13 @@ DASHBOARD_HTML = """<!doctype html>
       font-size: 12px;
       font-weight: 700;
     }
-    .planner-window-chip.canonical-plan {
-      border-color: #38bdf8;
-      color: #7dd3fc;
+    .planner-window-chip.canonical-charge {
+      border-color: #35a862;
+      color: #6fd68f;
+    }
+    .planner-window-chip.canonical-trade {
+      border-color: #aab2bd;
+      color: #d1d7de;
     }
     .price-chart-scroll { overflow-x: auto; }
     .price-chart {
@@ -814,13 +819,14 @@ DASHBOARD_HTML = """<!doctype html>
       fill: #477fa8;
       opacity: 0.85;
     }
+    .price-chart .price-bar.canonical-charge { fill: #35a862; }
+    .price-chart .price-bar.canonical-trade { fill: #aab2bd; }
     .price-chart .price-bar.past { opacity: 0.30; }
     .price-chart .planner-window {
       pointer-events: none;
     }
-    .price-chart .planner-window.canonical-plan {
-      fill: #38bdf8;
-    }
+    .price-chart .planner-window.canonical-charge { fill: #35a862; }
+    .price-chart .planner-window.canonical-trade { fill: #aab2bd; }
     .price-chart .now-line {
       stroke: #eef4fb;
       stroke-width: 1.5;
@@ -1219,7 +1225,8 @@ DASHBOARD_HTML = """<!doctype html>
       for (const [kind, label] of [
         ["normal", "Overige prijzen"],
         ["missing", "Nog niet gepubliceerd"],
-        ["canonical-plan", "Gekozen door MEP"]
+        ["canonical-charge", "MEP batterij laden"],
+        ["canonical-trade", "MEP handel / terugleveren"]
       ]) {
         const item = document.createElement("span");
         item.className = "price-legend-item";
@@ -1374,8 +1381,20 @@ DASHBOARD_HTML = """<!doctype html>
 
         const isPast = pointEnd <= nowMs;
         const valueY = yPosition(value);
+        const selectedWindows = plannerWindows.filter((window) => {
+          const windowStart = new Date(window.starts_at).getTime();
+          const windowEnd = new Date(window.ends_at).getTime();
+          return pointStart < windowEnd && pointEnd > windowStart;
+        });
+        const selectedWindowClasses = [
+          ...new Set(selectedWindows.map((window) => window.kind))
+        ].join(" ");
         const bar = createSvgElement("rect", {
-          class: `price-bar normal${isPast ? " past" : ""}`,
+          class: [
+            "price-bar",
+            selectedWindowClasses || "normal",
+            isPast ? "past" : "",
+          ].filter(Boolean).join(" "),
           x: xPosition(pointStart) + 0.5,
           y: Math.min(valueY, zeroY),
           width: Math.max(
@@ -1387,13 +1406,7 @@ DASHBOARD_HTML = """<!doctype html>
           tabindex: 0
         });
         const showDetail = () => {
-          const selectedBy = plannerWindows
-            .filter((window) => {
-              const windowStart = new Date(window.starts_at).getTime();
-              const windowEnd = new Date(window.ends_at).getTime();
-              return pointStart < windowEnd && pointEnd > windowStart;
-            })
-            .map((window) => window.label);
+          const selectedBy = selectedWindows.map((window) => window.label);
           detail.textContent = [
             `${formatTimestamp(point.starts_at)} – ` +
               formatTimestamp(point.ends_at),
@@ -3300,10 +3313,12 @@ DASHBOARD_HTML = """<!doctype html>
           windows.push({
             starts_at: segment.starts_at,
             ends_at: segment.ends_at,
-            kind: "canonical-plan",
+            kind: segment.primitive === "charge_at_power"
+              ? "canonical-charge"
+              : "canonical-trade",
             label: segment.primitive === "charge_at_power"
-              ? "MEP laden"
-              : "MEP ontladen",
+              ? "MEP batterij laden"
+              : "MEP handel / terugleveren",
           });
         }
       }

@@ -702,7 +702,8 @@ def test_price_chart_only_colors_current_planner_windows() -> None:
     assert ".price-bar.high" not in DASHBOARD_HTML
     assert '["low", "Laagste-prijsvenster"]' not in DASHBOARD_HTML
     assert '["high", "Hoogste-teruglevervenster"]' not in DASHBOARD_HTML
-    assert ".planner-window.canonical-plan" in DASHBOARD_HTML
+    assert ".planner-window.canonical-charge" in DASHBOARD_HTML
+    assert ".planner-window.canonical-trade" in DASHBOARD_HTML
     assert ".planner-window.daily-plan" not in DASHBOARD_HTML
     assert ".price-bar.mep-charge" not in DASHBOARD_HTML
     assert ".price-bar.mep-export" not in DASHBOARD_HTML
@@ -810,6 +811,21 @@ def test_dashboard_exposes_canonical_mep_execution_plan() -> None:
     assert "MEP-uitvoeringsplan" in DASHBOARD_HTML
     assert "Handmatige instelling actief" in DASHBOARD_HTML
     assert "storage_source_needs" not in DASHBOARD_HTML
+
+
+def test_price_bars_use_existing_energy_palette_for_mep_actions() -> None:
+    assert ".price-bar.canonical-charge" in DASHBOARD_HTML
+    assert ".price-bar.canonical-trade" in DASHBOARD_HTML
+    assert ".price-swatch.canonical-charge { background: #35a862; }" in (
+        DASHBOARD_HTML
+    )
+    assert ".price-swatch.canonical-trade { background: #aab2bd; }" in (
+        DASHBOARD_HTML
+    )
+    assert '["canonical-charge", "MEP batterij laden"]' in DASHBOARD_HTML
+    assert '["canonical-trade", "MEP handel / terugleveren"]' in DASHBOARD_HTML
+    assert '? "canonical-charge"' in DASHBOARD_HTML
+    assert ': "canonical-trade"' in DASHBOARD_HTML
 
 
 def test_dashboard_preserves_interaction_state_during_refresh() -> None:

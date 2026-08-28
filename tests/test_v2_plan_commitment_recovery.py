@@ -1,11 +1,13 @@
 from dataclasses import replace
 from datetime import timedelta
 
+import pytest
 from test_v2_delegated_storage_pipeline_integration import BASE, _snapshot
 
 from picot.domain.capability_snapshot import CapabilityAvailability
 from picot.v2.live_runtime import _restore_active_plan_commitments
 from picot.v2.plan_commitment_store import (
+    EARLIER_COMMITMENT_METHOD_VERSION,
     LEGACY_COMMITMENT_METHOD_VERSION,
     PREVIOUS_COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
@@ -109,13 +111,18 @@ def test_future_pre_subwindow_commitment_is_cleared_for_fresh_mep_plan(
     )
 
 
+@pytest.mark.parametrize(
+    "selection_method_version",
+    (PREVIOUS_COMMITMENT_METHOD_VERSION, EARLIER_COMMITMENT_METHOD_VERSION),
+)
 def test_active_pre_subwindow_commitment_remains_fixed_until_phase_end(
     tmp_path,
+    selection_method_version,
 ) -> None:
     store = ActivePlanCommitmentStore(tmp_path / "commitment.json")
     active = replace(
         _commitment(),
-        selection_method_version=PREVIOUS_COMMITMENT_METHOD_VERSION,
+        selection_method_version=selection_method_version,
     )
     store.save(active)
 

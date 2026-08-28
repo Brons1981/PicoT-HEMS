@@ -9,6 +9,7 @@ from picot.domain.daily_reference_intent import (
     DailyReferenceIntentSchedule,
     DailyStorageIntent,
 )
+from picot.domain.daily_reference_simulation import PVScenario
 from picot.domain.daily_reference_strategy_observation import (
     DailyReferenceStrategyObservation,
 )
@@ -17,9 +18,12 @@ from picot.planner.market_daily_planner import (
     MarketDailyCandidatePortfolio,
     MarketDailyPlan,
     MarketRouteAssessment,
+    MarketRouteScenarioEvidence,
 )
 from picot.v2.contracts import PlanningInputSnapshot
 from picot.v2.plan_commitment_store import ActivePlanCommitment
+
+FINANCIAL_EQUIVALENCE_EUR = 0.01
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,22 +52,21 @@ class MarketDailyEvaluationEngine:
             assessment.intent_schedule.horizon_start,
         )
 
-    @classmethod
-    def _market_assessment_key(
-        cls,
+    @staticmethod
+    def _mep_basis_evidence(
         assessment: MarketRouteAssessment,
-    ) -> tuple[float, float, float, datetime, str]:
-        """Apply the explicit financial, PV-first and timing comparison order."""
+    ) -> MarketRouteScenarioEvidence:
+        """Return evidence for the canonical MEP planning basis.
 
-        maximum_grid_input_wh = max(
-            item.grid_to_storage_input_wh for item in assessment.scenario_evidence
-        )
-        return (
-            assessment.worst_case_incremental_result_eur,
-            assessment.minimum_incremental_result_eur_per_exported_kwh,
-            -maximum_grid_input_wh,
-            cls._market_charge_starts_at(assessment),
-            assessment.market_schedule_id,
+        Before planning, the daily PV-basis stage projects tomorrow's explicit
+        lower/central midpoint into the lower simulation lane. The remaining
+        central and upper lanes stay available for complete route admission.
+        """
+
+        return next(
+            item
+            for item in assessment.scenario_evidence
+            if item.scenario is PVScenario.LOWER
         )
 
     @classmethod
@@ -74,7 +77,31 @@ class MarketDailyEvaluationEngine:
         """Select one admitted market Candidate through the Evaluation boundary."""
 
         admitted = tuple(item for item in assessments if item.admitted)
-        return max(admitted, key=cls._market_assessment_key) if admitted else None
+        if not admitted:
+            return None
+        best_financial_result_eur = max(
+            item.worst_case_incremental_result_eur for item in admitted
+        )
+        financially_equivalent = tuple(
+            item
+            for item in admitted
+            if best_financial_result_eur
+            - item.worst_case_incremental_result_eur
+            <= FINANCIAL_EQUIVALENCE_EUR
+        )
+        return min(
+            financially_equivalent,
+            key=lambda item: (
+                -cls._mep_basis_evidence(
+                    item
+                ).explicit_charge_pv_to_storage_input_wh,
+                cls._mep_basis_evidence(
+                    item
+                ).explicit_charge_grid_to_storage_input_wh,
+                -item.minimum_incremental_result_eur_per_exported_kwh,
+                item.market_schedule_id,
+            ),
+        )
 
     def evaluate(
         self,

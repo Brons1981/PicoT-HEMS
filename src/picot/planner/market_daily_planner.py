@@ -41,7 +41,7 @@ from picot.v2.opportunity_engine import (
     PriceOpportunityConfig,
 )
 
-METHOD_VERSION = "market-daily-planner:v2"
+METHOD_VERSION = "market-daily-planner:v3"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
@@ -221,9 +221,23 @@ class MarketRouteScenarioEvidence:
     target_shortfall_wh: float
     reserve_margin_wh: float
     grid_to_storage_input_wh: float
+    explicit_charge_pv_to_storage_input_wh: float
+    explicit_charge_grid_to_storage_input_wh: float
     household_demand_wh: float
     incremental_financial_result_eur: float
     exported_energy_kwh: float
+
+    def __post_init__(self) -> None:
+        if (
+            self.explicit_charge_pv_to_storage_input_wh < 0.0
+            or self.explicit_charge_grid_to_storage_input_wh < 0.0
+        ):
+            raise ValueError("MEP explicit-charge energy evidence must be non-negative.")
+        if (
+            self.explicit_charge_grid_to_storage_input_wh
+            > self.grid_to_storage_input_wh + 1e-6
+        ):
+            raise ValueError("MEP explicit grid input must reconcile with route input.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1184,6 +1198,11 @@ class MarketDailyPlanner:
         market_trajectories = {
             item.scenario: item for item in market_run.simulation.trajectories
         }
+        explicit_charge_intervals = {
+            (item.starts_at, item.ends_at)
+            for item in market_result.intent_schedule.intervals
+            if item.intent is DailyStorageIntent.GRID_REQUIREMENT
+        }
         for scenario in PVScenario:
             baseline_flow = baseline_assessment[scenario]
             market_flow = market_assessment[scenario]
@@ -1240,6 +1259,18 @@ class MarketDailyPlanner:
                     grid_to_storage_input_wh=sum(
                         interval.grid_to_storage_input_wh
                         for interval in trajectory.intervals
+                    ),
+                    explicit_charge_pv_to_storage_input_wh=sum(
+                        interval.pv_to_storage_input_wh
+                        for interval in trajectory.intervals
+                        if (interval.starts_at, interval.ends_at)
+                        in explicit_charge_intervals
+                    ),
+                    explicit_charge_grid_to_storage_input_wh=sum(
+                        interval.grid_to_storage_input_wh
+                        for interval in trajectory.intervals
+                        if (interval.starts_at, interval.ends_at)
+                        in explicit_charge_intervals
                     ),
                     household_demand_wh=market_flow.household_demand_wh,
                     incremental_financial_result_eur=incremental_eur,

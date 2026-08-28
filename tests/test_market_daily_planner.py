@@ -4,11 +4,13 @@ from datetime import timedelta
 import pytest
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
+from picot.domain.daily_reference_simulation import PVScenario
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.domain.storage_energy_inventory import (
     StorageEnergyInventory,
     StorageEnergyLot,
 )
+from picot.planner.market_daily_evaluation_engine import MarketDailyEvaluationEngine
 from picot.planner.market_daily_planner import MarketDailyPlanner, MarketTradingPolicy
 
 
@@ -342,6 +344,68 @@ def test_mep_subdivides_broad_grid_trade_window_and_preserves_pv_room() -> None:
     )
     assert result.current_intent is not None
     assert result.current_intent.value == "nom"
+
+
+def test_mep_treats_subcent_market_routes_as_equal_before_pv_timing() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    cheap_window_end = snapshot.captured_at + timedelta(hours=12)
+    horizon_end = snapshot.captured_at + timedelta(hours=24)
+    source = snapshot.price_points[0]
+    result = MarketDailyPlanner().plan(
+        snapshot=replace(
+            snapshot,
+            price_points=(
+                replace(
+                    source,
+                    point_id="broad-cheap-window",
+                    ends_at=cheap_window_end,
+                    value_eur_per_kwh=0.05,
+                ),
+                replace(
+                    source,
+                    point_id="later-export-window",
+                    starts_at=cheap_window_end,
+                    ends_at=horizon_end,
+                    value_eur_per_kwh=0.55,
+                ),
+            ),
+        ),
+        conversion_model=_conversion(),
+    )
+    admitted = tuple(item for item in result.route_assessments if item.admitted)
+    pv_aligned = max(
+        admitted,
+        key=lambda item: next(
+            evidence.explicit_charge_pv_to_storage_input_wh
+            for evidence in item.scenario_evidence
+            if evidence.scenario is PVScenario.LOWER
+        ),
+    )
+    latest = max(
+        admitted,
+        key=MarketDailyEvaluationEngine._market_charge_starts_at,
+    )
+    assert pv_aligned is not latest
+
+    assessments = (
+        replace(pv_aligned, worst_case_incremental_result_eur=0.495),
+        replace(latest, worst_case_incremental_result_eur=0.500),
+    )
+
+    winner = MarketDailyEvaluationEngine.select_market_assessment(assessments)
+
+    assert winner is not None
+    assert winner.market_schedule_id == pv_aligned.market_schedule_id
+
+    financially_better = MarketDailyEvaluationEngine.select_market_assessment(
+        (
+            replace(pv_aligned, worst_case_incremental_result_eur=0.489),
+            replace(latest, worst_case_incremental_result_eur=0.500),
+        )
+    )
+
+    assert financially_better is not None
+    assert financially_better.market_schedule_id == latest.market_schedule_id
 
 
 def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> None:

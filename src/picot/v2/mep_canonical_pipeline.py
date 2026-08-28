@@ -174,18 +174,8 @@ def _native_candidates(
 def _selected_market_assessment(
     plan: MarketDailyPlan,
 ) -> MarketRouteAssessment | None:
-    admitted = tuple(item for item in plan.route_assessments if item.admitted)
-    return (
-        max(
-            admitted,
-            key=lambda item: (
-                item.worst_case_incremental_result_eur,
-                item.minimum_incremental_result_eur_per_exported_kwh,
-                item.market_schedule_id,
-            ),
-        )
-        if admitted
-        else None
+    return MarketDailyEvaluationEngine.select_market_assessment(
+        plan.route_assessments
     )
 
 

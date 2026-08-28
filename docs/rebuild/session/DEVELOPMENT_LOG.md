@@ -1705,3 +1705,51 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Regression coverage proves a fresh MEP plan is presented without legacy
   outcomes and a retained commitment exposes its exact stored facts.
 - Dashboard formatter coverage proves absent confidence is not shown as `0%`.
+
+
+## 2026-08-28 — 2.0.0-dev.198 preserve PV room in broad charge windows
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+### Live finding
+
+- MEP retained a broad low-price Opportunity from 08:45 through 16:30 as one
+  explicit 2400 W grid-supported charge phase.
+- The linked energy requirement needed only part of that duration. Starting at
+  08:45 could therefore fill storage before the expected midday PV peak and
+  unnecessarily displace PV generation to grid export.
+
+### Decision and implementation
+
+- Accepted V2ADR-056. Opportunity Detection continues to preserve the complete
+  relative-price window and does not select device timing or power.
+- MEP Candidate construction now enumerates interval-minimal contiguous charge
+  subwindows inside that immutable Opportunity, with explicit source lineage
+  and one canonical trailing safety interval when spare duration permits.
+- Each complete market Candidate uses `BALANCE_BIDIRECTIONAL` around only the
+  exact `CHARGE_AT_POWER` phase. Its source policy remains
+  `PV_PREFERRED_GRID_ALLOWED` at 2400 W.
+- Evaluation remains the sole selector. It compares financial outcome first,
+  then lower worst-scenario grid-to-storage input, then the later recoverable
+  subwindow and finally the stable schedule identity.
+- Negative all-in import windows and the frozen native daily physical planner
+  remain unchanged.
+- Advanced the commitment contract to v3. A future v2 commitment is cleared at
+  restart for fresh MEP planning; an already active v2 phase remains fixed until
+  its normal end or an accepted hard abort.
+- Bumped add-on and Core version to `2.0.0-dev.198`.
+
+### Verification
+
+- Regression proves a broad cheap Opportunity produces multiple exact,
+  physically minimal alternatives and preserves NOM/PV acquisition around the
+  selected 2400 W subwindow.
+- Canonical pipeline coverage proves the Winning Energy Path reaches execution
+  unchanged with `PV_PREFERRED_GRID_ALLOWED` source policy.
+- Restart coverage proves future old-semantics commitments are replanned while
+  active phases remain continuous.
+- Affected planning, canonical pipeline and commitment suite: `49 passed`.
+- Full repository suite: `1063 passed`.
+- Ruff on all changed production and test files: `All checks passed!`.
+- mypy: `Success: no issues found in 183 source files`.
+- `git diff --check`: passed.

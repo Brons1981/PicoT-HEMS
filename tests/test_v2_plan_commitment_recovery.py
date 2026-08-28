@@ -7,6 +7,7 @@ from picot.domain.capability_snapshot import CapabilityAvailability
 from picot.v2.live_runtime import _restore_active_plan_commitments
 from picot.v2.plan_commitment_store import (
     LEGACY_COMMITMENT_METHOD_VERSION,
+    PREVIOUS_COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
 )
@@ -81,6 +82,49 @@ def test_legacy_commitment_is_cleared_for_household_replanning(tmp_path) -> None
     assert "legacy_commitment_requires_household_replan" in (
         incidents.read_text(encoding="utf-8")
     )
+
+
+def test_future_pre_subwindow_commitment_is_cleared_for_fresh_mep_plan(
+    tmp_path,
+) -> None:
+    incidents = tmp_path / "incidents.jsonl"
+    store = ActivePlanCommitmentStore(
+        tmp_path / "commitment.json",
+        incident_path=incidents,
+    )
+    future = replace(
+        _commitment(),
+        starts_at=BASE + timedelta(hours=1),
+        ends_at=BASE + timedelta(hours=2),
+        selection_method_version=PREVIOUS_COMMITMENT_METHOD_VERSION,
+    )
+    store.save(future)
+
+    restored = _restore_active_plan_commitments(_at(BASE), store)
+
+    assert restored.active_plan_commitments == ()
+    assert store.load("home-battery") is None
+    assert "superseded_future_commitment_requires_replan" in (
+        incidents.read_text(encoding="utf-8")
+    )
+
+
+def test_active_pre_subwindow_commitment_remains_fixed_until_phase_end(
+    tmp_path,
+) -> None:
+    store = ActivePlanCommitmentStore(tmp_path / "commitment.json")
+    active = replace(
+        _commitment(),
+        selection_method_version=PREVIOUS_COMMITMENT_METHOD_VERSION,
+    )
+    store.save(active)
+
+    restored = _restore_active_plan_commitments(
+        _at(BASE + timedelta(minutes=15)),
+        store,
+    )
+
+    assert restored.active_plan_commitments == (active,)
 
 
 def test_expired_commitment_is_cleared_and_reported_at_restart(tmp_path) -> None:

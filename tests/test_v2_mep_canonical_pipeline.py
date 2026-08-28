@@ -3,8 +3,10 @@ from datetime import datetime, timedelta
 
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
+from picot.v2.contracts import StorageRoundTripEfficiencyEvidence
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
+from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
 from picot.v2.projection import project
@@ -106,6 +108,88 @@ def test_dashboard_presents_mep_execution_plan_without_legacy_outcomes(
     assert "renderBatteryEnergyPlan(" in DASHBOARD_HTML
     assert "view.planning_status?.execution_plans" in DASHBOARD_HTML
     assert "selectedExecutionPlanWindows(view)" in DASHBOARD_HTML
+
+
+def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
+    tmp_path,
+) -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    cheap_window_end = snapshot.captured_at + timedelta(hours=12)
+    horizon_end = snapshot.captured_at + timedelta(hours=24)
+    source = snapshot.price_points[0]
+    assert snapshot.pv_energy_timeline is not None
+    midday_pv = replace(
+        snapshot.pv_energy_timeline,
+        intervals=tuple(
+            replace(
+                interval,
+                pv_energy_wh=1000.0 if 10 <= index < 14 else 0.0,
+                forecast_lower_energy_wh=800.0 if 10 <= index < 14 else 0.0,
+                forecast_central_energy_wh=1000.0 if 10 <= index < 14 else 0.0,
+                forecast_upper_energy_wh=1200.0 if 10 <= index < 14 else 0.0,
+            )
+            for index, interval in enumerate(snapshot.pv_energy_timeline.intervals)
+        ),
+    )
+    priced = replace(
+        snapshot,
+        pv_energy_timeline=midday_pv,
+        storage_round_trip_efficiency=StorageRoundTripEfficiencyEvidence(
+            status="available",
+            round_trip_efficiency=0.83,
+            observed_at=snapshot.captured_at,
+            source_entity_id="sensor.test_storage_rte",
+            evidence_id="test-storage-rte",
+            method_version="test-storage-rte:v1",
+        ),
+        price_points=(
+            replace(
+                source,
+                point_id="broad-cheap-window",
+                ends_at=cheap_window_end,
+                value_eur_per_kwh=0.05,
+            ),
+            replace(
+                source,
+                point_id="later-export-window",
+                starts_at=cheap_window_end,
+                ends_at=horizon_end,
+                value_eur_per_kwh=0.55,
+            ),
+        ),
+    )
+    pipeline, _store = _pipeline(tmp_path)
+
+    run = pipeline.run(
+        planning_input=priced,
+        price_opportunity_config=PriceOpportunityConfig(
+            low_price_margin_eur_per_kwh=0.10,
+            high_price_margin_eur_per_kwh=0.10,
+            config_version="test-price-opportunities:v1",
+            market_timezone="UTC",
+        ),
+    )
+
+    segments = run.execution_plan_set.plans[0].segments
+    charge_index = next(
+        index
+        for index, segment in enumerate(segments)
+        if segment.primitive.value == "charge_at_power"
+    )
+    charge = segments[charge_index]
+    pv_peak_starts_at = midday_pv.intervals[10].starts_at
+    pv_peak_ends_at = midday_pv.intervals[13].ends_at
+    assert charge.starts_at > snapshot.captured_at
+    assert segments[charge_index - 1].starts_at <= pv_peak_starts_at
+    assert pv_peak_ends_at <= segments[charge_index - 1].ends_at
+    assert charge.ends_at <= cheap_window_end - timedelta(minutes=15)
+    assert charge.ends_at - charge.starts_at < timedelta(hours=12)
+    assert charge.requested_power_w == 2400.0
+    assert charge.charge_source_policy is not None
+    assert charge.charge_source_policy.value == "pv_preferred_grid_allowed"
+    assert segments[charge_index - 1].primitive.value == "balance_bidirectional"
+    assert segments[charge_index + 1].primitive.value == "balance_bidirectional"
+    assert segments[charge_index + 1].ends_at == cheap_window_end
 
 
 def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:

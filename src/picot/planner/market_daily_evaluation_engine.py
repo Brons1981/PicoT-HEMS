@@ -35,6 +35,47 @@ class MarketDailyCommitmentDecision:
 class MarketDailyEvaluationEngine:
     """Select one MEP winner without generating or executing candidates."""
 
+    @staticmethod
+    def _market_charge_starts_at(
+        assessment: MarketRouteAssessment,
+    ) -> datetime:
+        return next(
+            (
+                interval.starts_at
+                for interval in assessment.intent_schedule.intervals
+                if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+            ),
+            assessment.intent_schedule.horizon_start,
+        )
+
+    @classmethod
+    def _market_assessment_key(
+        cls,
+        assessment: MarketRouteAssessment,
+    ) -> tuple[float, float, float, datetime, str]:
+        """Apply the explicit financial, PV-first and timing comparison order."""
+
+        maximum_grid_input_wh = max(
+            item.grid_to_storage_input_wh for item in assessment.scenario_evidence
+        )
+        return (
+            assessment.worst_case_incremental_result_eur,
+            assessment.minimum_incremental_result_eur_per_exported_kwh,
+            -maximum_grid_input_wh,
+            cls._market_charge_starts_at(assessment),
+            assessment.market_schedule_id,
+        )
+
+    @classmethod
+    def select_market_assessment(
+        cls,
+        assessments: tuple[MarketRouteAssessment, ...],
+    ) -> MarketRouteAssessment | None:
+        """Select one admitted market Candidate through the Evaluation boundary."""
+
+        admitted = tuple(item for item in assessments if item.admitted)
+        return max(admitted, key=cls._market_assessment_key) if admitted else None
+
     def evaluate(
         self,
         *,
@@ -189,17 +230,9 @@ class MarketDailyEvaluationEngine:
         native_observation: DailyReferenceStrategyObservation,
         assessments: tuple[MarketRouteAssessment, ...],
     ) -> tuple[DailyStorageIntent | None, datetime | None]:
-        admitted = tuple(item for item in assessments if item.admitted)
         schedules: tuple[DailyReferenceIntentSchedule, ...]
-        if admitted:
-            winner = max(
-                admitted,
-                key=lambda item: (
-                    item.worst_case_incremental_result_eur,
-                    item.minimum_incremental_result_eur_per_exported_kwh,
-                    item.market_schedule_id,
-                ),
-            )
+        winner = MarketDailyEvaluationEngine.select_market_assessment(assessments)
+        if winner is not None:
             schedules = (winner.intent_schedule,)
         else:
             candidates = {

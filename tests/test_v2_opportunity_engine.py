@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from legacy_cp_pipeline import CanonicalPipeline
 
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
@@ -9,7 +10,6 @@ from picot.v2.opportunity_engine import (
     OpportunityEngine,
     PriceOpportunityConfig,
 )
-from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.projection import project
 
 BASE = datetime(2026, 8, 13, 8, 0, tzinfo=UTC)

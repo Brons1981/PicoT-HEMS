@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from legacy_cp_pipeline import CanonicalPipeline
 
 from picot.v2 import household_load_forecast
 from picot.v2.contracts import (
@@ -10,7 +11,6 @@ from picot.v2.contracts import (
 from picot.v2.household_load_forecast import (
     build_fallback_household_load_forecast,
 )
-from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.planning_input import (
     HomeAssistantStateReader,
     HouseholdLoadObservation,

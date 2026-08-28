@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from importlib import import_module
 
 import pytest
+from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_delegated_storage_candidates import (
     BASE,
     _balance,
@@ -15,7 +16,6 @@ from test_v2_delegated_storage_pipeline_integration import (
 )
 
 from picot.v2.contracts import ProjectedHouseholdEnergyBalanceInterval
-from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.storage_capability_snapshot import (
     build_storage_capability_snapshot_set,
 )

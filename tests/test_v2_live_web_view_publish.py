@@ -3,10 +3,10 @@ from datetime import UTC, datetime, timedelta
 from urllib.error import HTTPError
 
 import pytest
+from legacy_cp_pipeline import CanonicalPipeline
 
 import picot.v2.live_runtime as live_runtime
 from picot.v2.opportunity_engine import PriceOpportunityConfig
-from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.planning_input import PlanningInputBundle
 from picot.v2.projection import Card
 from picot.v2.web_ui import WebViewStore

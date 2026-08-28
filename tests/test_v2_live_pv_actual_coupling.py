@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+from legacy_cp_pipeline import CanonicalPipeline
 
 import picot.v2.live_runtime as live_runtime
 from picot.v2 import (
@@ -22,7 +23,6 @@ from picot.v2.live_pv_actual import (
     apply_latest_closed_actual_pv,
 )
 from picot.v2.live_runtime import _with_planning_input_diagnostics
-from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.planning_input import PlanningInputBundle
 from picot.v2.projection import project
 from picot.v2.pv_actual_history import PVHistoryReadResult

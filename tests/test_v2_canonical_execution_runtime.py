@@ -2,6 +2,7 @@ from dataclasses import replace
 from datetime import timedelta
 from importlib import import_module
 
+from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_storage_mode_provenance_integration import BASE, _run
 
 from picot.v2.canonical_execution_runtime import (
@@ -10,7 +11,6 @@ from picot.v2.canonical_execution_runtime import (
 )
 from picot.v2.contracts import BMSCalibrationEvidence, CanonicalPipelineRun
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
-from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     ActivePlanCommitmentStore,

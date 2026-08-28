@@ -1,11 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
+from legacy_cp_pipeline import CanonicalPipeline
+
 from picot.v2.contracts import (
     PVAttenuationBucket,
     PVEnergyTimelineInterval,
     PVForecastAttenuationProfile,
 )
-from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.projection import project
 from picot.v2.pv_attenuation_range import (
     derive_pv_attenuated_forecast_range,

@@ -1,12 +1,13 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+from legacy_cp_pipeline import CanonicalPipeline
+
 from picot.v2.contracts import (
     CurrentStorageState,
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
-from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.projection import project
 
 

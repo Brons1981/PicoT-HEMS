@@ -4,6 +4,8 @@ import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+from legacy_cp_pipeline import CanonicalPipeline
+
 from picot.v2.contracts import (
     HouseholdLoadForecast,
     HouseholdLoadForecastInterval,
@@ -12,7 +14,6 @@ from picot.v2.contracts import (
     PVEnergyTimelineInterval,
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
-from legacy_cp_pipeline import CanonicalPipeline
 from picot.v2.power_history import (
     PowerHistoryPoint,
     PowerHistorySeries,

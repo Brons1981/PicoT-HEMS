@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 
-from picot.v2.live_runtime import _append_storage_mode_transition
 from legacy_cp_pipeline import CanonicalPipeline
+
+from picot.v2.live_runtime import _append_storage_mode_transition
 from picot.v2.projection import project
 from picot.v2.storage_mode_transition_history import (
     StorageModeTransitionEvent,

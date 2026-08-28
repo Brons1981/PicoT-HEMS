@@ -1,5 +1,6 @@
 from dataclasses import replace
 
+from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_delegated_storage_pipeline_integration import (
     BASE,
     CAPABILITY_ID,
@@ -7,7 +8,6 @@ from test_v2_delegated_storage_pipeline_integration import (
 )
 
 from picot.domain.execution_primitive import ExecutionPrimitive
-from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.projection import project
 from picot.v2.zendure_mode_capabilities import (
     derive_zendure_mode_capability_evidence,

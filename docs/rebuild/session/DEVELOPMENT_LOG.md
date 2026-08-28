@@ -1462,3 +1462,100 @@ Exact next action: allow dev.153 to run unchanged for 48 hours, perform the one
 marked manual-discharge stress test, then export diagnostics and evaluate every
 closed comparison dossier before deciding whether the daily strategy should
 replace the canonical strategy.
+
+
+## 2026-08-28 — 2.0.0-dev.193 MEP sole canonical planner
+
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
+
+Branch: `feature/mep-sole-canonical-planner`.
+
+Last verified repository commit before this working tree:
+`b4a5bb6` (`2.0.0-dev.192`).
+
+### Decisions
+
+- Accepted V2ADR-055. MEP is the sole planner and enters the one canonical
+  nine-stage pipeline. CP, the separate EP observer runtime, private MEP
+  execution and the live-PV canary control route are removed from production.
+- The validated EP physical schedule/simulation logic is retained only as
+  internal MEP candidate-generation logic. It has no worker, persistence,
+  dashboard, commitment or dispatch authority of its own.
+- Evaluation exclusively owns native/market winner selection and the
+  incumbent-versus-challenger decision. The Plan Store exclusively owns
+  durable continuity and revision evidence.
+- Market routes may be generated only from canonical `OpportunitySet`
+  evidence and must retain the originating opportunity identifiers.
+- Vendor mode translation occurs only in the canonical Home Assistant adapter.
+- One `execution_mode` option controls observer versus live authority.
+
+### Implemented
+
+- Replaced the production CP pipeline with required MEP composition and moved
+  the former CP pipeline to `tests/legacy_cp_pipeline.py` as a frozen regression
+  fixture.
+- Removed the EP runtime/worker/dashboard, planner-comparison ledger, private
+  MEP runtime execution/dashboard, live-PV canary runtime and their obsolete
+  side-channel tests.
+- Split MEP generation from Evaluation. MEP runtime returns an unselected
+  portfolio; the canonical Evaluation engine selects exactly one winner.
+- Routed the shared `storage_target_required_by` deadline into MEP charge-window
+  discovery. A later cheap window cannot be used when it misses that deadline.
+- Added incumbent-first Evaluation with an explicit configurable
+  `plan_switching_margin_eur` default of EUR 0.05.
+- Extended durable commitments with the complete remaining canonical segment
+  sequence, selection reason and replaced plan identity. Ordinary recalculation
+  retains the existing plan and revision; accepted necessity or material total
+  objective improvement creates an explicit revision.
+- Moved Zendure mode mapping from planning into the adapter boundary. Core
+  execution plans now carry canonical primitives and source policy only.
+- Removed CP/EP/private-MEP comparison views and overlays. The dashboard now
+  presents only the canonical MEP plan, including calculation timestamp and SoC
+  at calculation.
+- Bumped the add-on and Core version to `2.0.0-dev.193`.
+
+### Local verification
+
+- Full test suite: `1056 passed`.
+- Ruff: all changed production and acceptance-test files passed.
+- mypy: `Success: no issues found in 183 source files`.
+- New acceptance coverage proves one runtime planner, one execution authority,
+  no production CP fallback, OpportunitySet lineage, adapter-only vendor
+  mapping, deadline-aware replacement, material switching margin, full plan
+  persistence and canonical-only dashboard presentation.
+
+### GitHub CI verification
+
+- PR #561: `release: PicoT 2.0.0-dev.193 MEP sole planner`.
+- Remote head after the CI import-order correction:
+  `479704499901f14cf7cb132c3d79cdf3b5b1dc82`.
+- Tests run 1921: passed.
+- PicoT Core CI run 1866: passed.
+- PicoT v2 Rebuild run 795: passed.
+
+### Not verified / known issues
+
+- dev.193 has not been installed or observed live; execution, restart recovery,
+  target completion and real Home Assistant/Zendure feedback remain to be
+  verified before `LIVE_VERIFIED`.
+- The dev.193 implementation is published on
+  `feature/mep-sole-canonical-planner` in PR #561.
+
+### DO NOT CHANGE / critical context
+
+- ADR-001 through ADR-037 plus accepted V2 ADRs, including V2ADR-055, remain the
+  authority. Legacy ADR-038 and higher are excluded unless deliberately accepted
+  into V2.
+- Do not restore CP, a separate EP worker/dashboard, planner comparison, private
+  MEP commitment/dispatch or a canary control route.
+- Do not let Opportunity, Execution, Device Adapter, dashboard or vendor
+  feedback select or replace a plan.
+- Do not tune confidence to compensate for planning behaviour; MEP consumes the
+  designed confidence evidence unchanged.
+
+Exact current position: dev.193 is implemented and CI-verified in PR #561 on
+`feature/mep-sole-canonical-planner`, with one MEP planner connected to the
+canonical pipeline and no parallel production control route.
+
+Exact first next action: merge PR #561 and install dev.193 for controlled live
+verification of plan continuity and deadline-aware overnight charging.

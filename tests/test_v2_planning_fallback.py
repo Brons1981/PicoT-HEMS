@@ -6,10 +6,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_delegated_storage_pipeline_integration import _snapshot
 
 from picot.domain.execution_primitive import ExecutionPrimitive
-from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.projection import project
 from picot.v2.web_ui import build_web_view

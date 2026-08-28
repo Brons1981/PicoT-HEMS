@@ -1,6 +1,8 @@
 from dataclasses import replace
 from datetime import UTC, datetime
 
+from legacy_cp_pipeline import CanonicalPipeline
+
 from picot.v2.household_objective_input import (
     attach_household_objectives,
 )
@@ -9,7 +11,6 @@ from picot.v2.household_planning_regime import (
     UserObjectiveProfile,
 )
 from picot.v2.live_runtime import _planning_input_signature
-from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.planning_input import PlanningInputBundle
 from picot.v2.projection import project
 

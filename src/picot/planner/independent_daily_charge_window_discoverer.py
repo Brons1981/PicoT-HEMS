@@ -52,9 +52,15 @@ class IndependentDailyChargeWindowDiscoverer:
         intents: tuple[DailyStorageIntent, ...] = CHARGE_INTENTS,
         micro_charge_suppression_fraction: float = 0.01,
         charge_session_active: bool = False,
+        required_by: datetime | None = None,
     ) -> DailyReferenceChargeWindowSet:
         if not 0.0 <= micro_charge_suppression_fraction <= 1.0:
             raise ValueError("Daily micro-charge suppression fraction is invalid.")
+        deadline = required_by or household.horizon_end
+        if deadline.tzinfo is None or deadline.utcoffset() is None:
+            raise ValueError("Daily charge deadline must be timezone-aware.")
+        if not household.horizon_start < deadline <= household.horizon_end:
+            raise ValueError("Daily charge deadline must be inside the horizon.")
         starts_at_target = (
             storage_state.current_stored_energy_wh >= target_storage_energy_wh
         )
@@ -133,6 +139,8 @@ class IndependentDailyChargeWindowDiscoverer:
             if intent not in CHARGE_INTENTS:
                 raise ValueError("Daily window discovery accepts only charge intents.")
             for start_index in range(len(household.intervals)):
+                if household.intervals[start_index].starts_at >= deadline:
+                    continue
                 # The first interval starts at the immutable snapshot time and may
                 # therefore be the remaining part of an already-running market
                 # quarter. It is a valid immediate-start option. Future starts
@@ -172,6 +180,8 @@ class IndependentDailyChargeWindowDiscoverer:
                     continue
                 target_times = tuple(item for item in reached if item is not None)
                 conservative = max(target_times)
+                if conservative > deadline:
+                    continue
                 end_index = next(
                     index + 1
                     for index, interval in enumerate(household.intervals)
@@ -211,6 +221,11 @@ class IndependentDailyChargeWindowDiscoverer:
                     for item in exact.trajectories
                 )
                 sufficient = all(item is not None for item in exact_reached)
+                sufficient_before_deadline = sufficient and all(
+                    item <= deadline
+                    for item in exact_reached
+                    if item is not None
+                )
                 shorter_sufficient = False
                 if end_index - start_index > 1:
                     shorter = self._schedule(
@@ -243,7 +258,7 @@ class IndependentDailyChargeWindowDiscoverer:
                         is not None
                         for item in shorter_result.trajectories
                     )
-                if not sufficient or shorter_sufficient:
+                if not sufficient_before_deadline or shorter_sufficient:
                     raise ValueError(
                         "Daily charge window minimality did not reconcile."
                     )

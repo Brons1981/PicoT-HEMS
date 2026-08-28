@@ -28,11 +28,18 @@ from picot.domain.storage_energy_inventory import (
 from picot.planner.independent_daily_reference_portfolio import (
     IndependentDailyReferencePortfolioProducer,
 )
-from picot.v2.contracts import PlanningInputSnapshot
+from picot.v2.contracts import OpportunitySet, PlanningInputSnapshot
 from picot.v2.independent_daily_reference_adapter import (
     IndependentDailyReferenceAdapter,
 )
 from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
+from picot.v2.opportunity_engine import (
+    HIGH_EXPORT_VALUE_WINDOW,
+    LOWEST_PRICE_WINDOW,
+    NEGATIVE_PRICE_WINDOW,
+    OpportunityEngine,
+    PriceOpportunityConfig,
+)
 
 METHOD_VERSION = "market-daily-planner:v1"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
@@ -65,6 +72,7 @@ class MarketCapacityRoute:
 
     route_id: str
     snapshot_id: str
+    opportunity_ids: tuple[str, ...]
     window_starts_at: datetime
     window_ends_at: datetime
     maximum_charge_input_wh: float
@@ -84,6 +92,10 @@ class MarketCapacityRoute:
     inventory_sources: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if not self.opportunity_ids or any(
+            not item.strip() for item in self.opportunity_ids
+        ):
+            raise ValueError("MEP market route opportunity lineage must be explicit.")
         if self.window_ends_at <= self.window_starts_at:
             raise ValueError("MEP market window must have positive duration.")
         if (
@@ -116,6 +128,12 @@ class MarketCapacityRoute:
             or self.inventory_acquisition_cost_eur is None
         ):
             raise ValueError("MEP inventory valuation must be complete.")
+
+
+@dataclass(frozen=True, slots=True)
+class _MarketOpportunityWindow:
+    opportunity_id: str
+    intervals: tuple[DailyReferenceTariffInterval, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +244,30 @@ class MarketDailyPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketDailyCandidatePortfolio:
+    """Unselected MEP candidate and simulation evidence."""
+
+    snapshot_id: str
+    native_observation: DailyReferenceStrategyObservation
+    market_routes: tuple[MarketCapacityRoute, ...]
+    route_assessments: tuple[MarketRouteAssessment, ...]
+    recovery_outside_horizon: bool
+    round_trip_efficiency: float
+    trading_margin_fraction: float
+    wear_eur_per_export_kwh: float
+    minimum_total_route_profit_eur: float
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if self.native_observation.snapshot_id != self.snapshot_id:
+            raise ValueError("MEP portfolio must share one Planning Input snapshot.")
+        if not 0.5 <= self.round_trip_efficiency <= 1.0:
+            raise ValueError("MEP portfolio RTE must be between 0.5 and 1.0")
+        if not self.method_version.strip():
+            raise ValueError("MEP portfolio method version must be explicit.")
+
+
+@dataclass(frozen=True, slots=True)
 class MarketDailyPlannerDiagnostics:
     """Observational MEP phase timings; never consumed by planner policy."""
 
@@ -241,7 +283,7 @@ class MarketDailyPlannerDiagnostics:
 
 
 class MarketDailyPlanner:
-    """Plan MEP end-to-end without consuming CP or EP output."""
+    """Generate unselected MEP candidates without consuming CP or EP output."""
 
     def plan(
         self,
@@ -252,16 +294,27 @@ class MarketDailyPlanner:
         dispatch_authority: bool = False,
         micro_charge_suppression_fraction: float = 0.01,
         storage_inventory: StorageEnergyInventory | None = None,
+        required_by: datetime | None = None,
+        opportunities: OpportunitySet | None = None,
     ) -> MarketDailyPlan:
-        plan, _ = self.plan_with_diagnostics(
+        portfolio, _ = self.generate_with_diagnostics(
             snapshot=snapshot,
             conversion_model=conversion_model,
             trading_policy=trading_policy,
-            dispatch_authority=dispatch_authority,
             micro_charge_suppression_fraction=micro_charge_suppression_fraction,
             storage_inventory=storage_inventory,
+            required_by=required_by,
+            opportunities=opportunities,
         )
-        return plan
+        from picot.planner.market_daily_evaluation_engine import (
+            MarketDailyEvaluationEngine,
+        )
+
+        return MarketDailyEvaluationEngine().evaluate(
+            snapshot=snapshot,
+            portfolio=portfolio,
+            dispatch_authority=dispatch_authority,
+        )
 
     def plan_with_diagnostics(
         self,
@@ -272,17 +325,72 @@ class MarketDailyPlanner:
         dispatch_authority: bool = False,
         micro_charge_suppression_fraction: float = 0.01,
         storage_inventory: StorageEnergyInventory | None = None,
+        required_by: datetime | None = None,
+        opportunities: OpportunitySet | None = None,
     ) -> tuple[MarketDailyPlan, MarketDailyPlannerDiagnostics]:
+        portfolio, diagnostics = self.generate_with_diagnostics(
+            snapshot=snapshot,
+            conversion_model=conversion_model,
+            trading_policy=trading_policy,
+            micro_charge_suppression_fraction=micro_charge_suppression_fraction,
+            storage_inventory=storage_inventory,
+            required_by=required_by,
+            opportunities=opportunities,
+        )
+        from picot.planner.market_daily_evaluation_engine import (
+            MarketDailyEvaluationEngine,
+        )
+
+        started = perf_counter()
+        plan = MarketDailyEvaluationEngine().evaluate(
+            snapshot=snapshot,
+            portfolio=portfolio,
+            dispatch_authority=dispatch_authority,
+        )
+        return plan, MarketDailyPlannerDiagnostics(
+            native_plan_ms=diagnostics.native_plan_ms,
+            tariff_build_ms=diagnostics.tariff_build_ms,
+            market_route_build_ms=diagnostics.market_route_build_ms,
+            market_route_assessment_ms=diagnostics.market_route_assessment_ms,
+            winner_selection_ms=round((perf_counter() - started) * 1000.0, 3),
+            planner_total_ms=round(
+                diagnostics.planner_total_ms
+                + (perf_counter() - started) * 1000.0,
+                3,
+            ),
+            native_candidate_count=diagnostics.native_candidate_count,
+            market_route_count=diagnostics.market_route_count,
+            route_assessment_count=diagnostics.route_assessment_count,
+        )
+
+    def generate_with_diagnostics(
+        self,
+        *,
+        snapshot: PlanningInputSnapshot,
+        conversion_model: StorageConversionModel,
+        trading_policy: MarketTradingPolicy | None = None,
+        micro_charge_suppression_fraction: float = 0.01,
+        storage_inventory: StorageEnergyInventory | None = None,
+        required_by: datetime | None = None,
+        opportunities: OpportunitySet | None = None,
+    ) -> tuple[MarketDailyCandidatePortfolio, MarketDailyPlannerDiagnostics]:
         planner_started = perf_counter()
         trading_policy = trading_policy or MarketTradingPolicy()
-        # This is a private MEP planning run from the shared immutable input.
-        # No CP/EP runtime, persisted observation or winner is consulted.
+        opportunities = opportunities or OpportunityEngine().detect(
+            snapshot,
+            price_config=PriceOpportunityConfig(
+                low_price_margin_eur_per_kwh=0.02,
+                high_price_margin_eur_per_kwh=0.02,
+                config_version="mep-compatibility-opportunities:v1",
+            ),
+        )
         phase_started = perf_counter()
         native_observation = IndependentDailyReferenceAdapter().observe(
             snapshot=snapshot,
             conversion_model=conversion_model,
             maximum_duration=MARKET_DAILY_MAXIMUM_DURATION,
             micro_charge_suppression_fraction=micro_charge_suppression_fraction,
+            required_by=required_by,
         )
         native_plan_ms = (perf_counter() - phase_started) * 1000.0
         horizon_end = native_observation.strategy_space.schedules[0].horizon_end
@@ -300,6 +408,7 @@ class MarketDailyPlanner:
             conversion_model=conversion_model,
             trading_policy=trading_policy,
             storage_inventory=storage_inventory,
+            opportunities=opportunities,
         )
         market_route_build_ms = (perf_counter() - phase_started) * 1000.0
         phase_started = perf_counter()
@@ -312,34 +421,12 @@ class MarketDailyPlanner:
             routes=routes,
         )
         market_route_assessment_ms = (perf_counter() - phase_started) * 1000.0
-        phase_started = perf_counter()
-        market_wins = any(item.admitted for item in assessments)
-        current_intent, current_interval_ends_at = self._current_decision(
-            snapshot=snapshot,
-            native_observation=native_observation,
-            assessments=assessments,
-        )
-        plan = MarketDailyPlan(
-            planner_id="mep",
-            planner_name="Markt Etmaal Planner",
+        portfolio = MarketDailyCandidatePortfolio(
             snapshot_id=snapshot.snapshot_id,
             native_observation=native_observation,
             market_routes=routes,
             route_assessments=assessments,
-            winning_source=("market_route" if market_wins else "mep_native_plan"),
-            reason=(
-                "profitable_complete_market_route"
-                if market_wins
-                else (
-                    "market_recovery_outside_available_horizon"
-                    if not routes and recovery_outside_horizon
-                    else "no_admitted_market_route"
-                )
-            ),
-            dispatch_authority=dispatch_authority,
-            current_intent=current_intent,
-            current_interval_ends_at=current_interval_ends_at,
-            method_version=METHOD_VERSION,
+            recovery_outside_horizon=recovery_outside_horizon,
             round_trip_efficiency=(
                 conversion_model.charge_efficiency * conversion_model.discharge_efficiency
             ),
@@ -348,21 +435,21 @@ class MarketDailyPlanner:
             minimum_total_route_profit_eur=(
                 trading_policy.minimum_total_route_profit_eur
             ),
+            method_version=METHOD_VERSION,
         )
-        winner_selection_ms = (perf_counter() - phase_started) * 1000.0
         candidates = native_observation.observer_result.candidate_set.candidates
         diagnostics = MarketDailyPlannerDiagnostics(
             native_plan_ms=round(native_plan_ms, 3),
             tariff_build_ms=round(tariff_build_ms, 3),
             market_route_build_ms=round(market_route_build_ms, 3),
             market_route_assessment_ms=round(market_route_assessment_ms, 3),
-            winner_selection_ms=round(winner_selection_ms, 3),
+            winner_selection_ms=0.0,
             planner_total_ms=round((perf_counter() - planner_started) * 1000.0, 3),
             native_candidate_count=len(candidates),
             market_route_count=len(routes),
             route_assessment_count=len(assessments),
         )
-        return plan, diagnostics
+        return portfolio, diagnostics
 
     @staticmethod
     def _market_routes(
@@ -373,6 +460,7 @@ class MarketDailyPlanner:
         conversion_model: StorageConversionModel,
         trading_policy: MarketTradingPolicy,
         storage_inventory: StorageEnergyInventory | None,
+        opportunities: OpportunitySet,
     ) -> tuple[tuple[MarketCapacityRoute, ...], bool]:
         if not trading_policy.market_routes_enabled:
             return (), False
@@ -388,21 +476,47 @@ class MarketDailyPlanner:
         if len(matching_limits) != 1:
             return (), False
         limits = matching_limits[0]
-        negative_groups: list[list[DailyReferenceTariffInterval]] = []
-        for interval in tariffs.intervals:
-            if interval.import_eur_per_kwh >= 0.0:
-                continue
-            if negative_groups and negative_groups[-1][-1].ends_at == interval.starts_at:
-                negative_groups[-1].append(interval)
-            else:
-                negative_groups.append([interval])
+        if (
+            opportunities.snapshot_id != snapshot.snapshot_id
+            or opportunities.detection_status != "ready"
+        ):
+            return (), False
+
+        def opportunity_windows(kind: str) -> tuple[_MarketOpportunityWindow, ...]:
+            windows: list[_MarketOpportunityWindow] = []
+            for opportunity in opportunities.opportunities:
+                if opportunity.kind != kind:
+                    continue
+                intervals = tuple(
+                    interval
+                    for interval in tariffs.intervals
+                    if interval.starts_at >= opportunity.starts_at
+                    and interval.ends_at <= opportunity.ends_at
+                    and interval.ends_at > snapshot.captured_at
+                )
+                if intervals and all(
+                    left.ends_at == right.starts_at
+                    for left, right in zip(intervals, intervals[1:], strict=False)
+                ):
+                    windows.append(
+                        _MarketOpportunityWindow(
+                            opportunity_id=opportunity.opportunity_id,
+                            intervals=intervals,
+                        )
+                    )
+            return tuple(windows)
+
+        negative_groups = opportunity_windows(NEGATIVE_PRICE_WINDOW)
+        low_windows = opportunity_windows(LOWEST_PRICE_WINDOW)
+        high_windows = opportunity_windows(HIGH_EXPORT_VALUE_WINDOW)
 
         maximum_energy_wh = limits.maximum_soc * storage.usable_capacity_wh
         minimum_energy_wh = limits.minimum_soc * storage.usable_capacity_wh
         current_energy_wh = storage.current_soc * storage.usable_capacity_wh
         usable_storage_range_wh = maximum_energy_wh - minimum_energy_wh
         result: list[MarketCapacityRoute] = []
-        for group in negative_groups:
+        for opportunity_window in negative_groups:
+            group = opportunity_window.intervals
             starts_at = group[0].starts_at
             ends_at = group[-1].ends_at
             duration_hours = (ends_at - starts_at).total_seconds() / 3600.0
@@ -420,6 +534,7 @@ class MarketDailyPlanner:
                         f"{starts_at.isoformat()}:{ends_at.isoformat()}"
                     ),
                     snapshot_id=snapshot.snapshot_id,
+                    opportunity_ids=(opportunity_window.opportunity_id,),
                     window_starts_at=starts_at,
                     window_ends_at=ends_at,
                     maximum_charge_input_wh=maximum_charge_input_wh,
@@ -436,30 +551,17 @@ class MarketDailyPlanner:
         # deliberately generated from MEP's own tariffs, never from an EP
         # candidate or winner.  Full physical simulation and incremental
         # settlement below remain the admission authority.
-        future = tuple(item for item in tariffs.intervals if item.ends_at > snapshot.captured_at)
-        interval_windows = tuple(
-            tuple(future[index : index + width])
-            for width in range(1, min(8, len(future)) + 1)
-            for index in range(0, len(future) - width + 1)
-            if all(
-                left.ends_at == right.starts_at
-                for left, right in zip(
-                    future[index : index + width],
-                    future[index + 1 : index + width],
-                    strict=False,
-                )
-            )
-        )
         trade_candidates: list[
             tuple[
                 float,
-                tuple[DailyReferenceTariffInterval, ...],
-                tuple[DailyReferenceTariffInterval, ...],
+                _MarketOpportunityWindow,
+                _MarketOpportunityWindow,
                 float,
                 float,
             ]
         ] = []
-        for charge_window in interval_windows:
+        for charge_opportunity in low_windows:
+            charge_window = charge_opportunity.intervals
             charge_start = charge_window[0].starts_at
             charge_end = charge_window[-1].ends_at
             charge_hours = (charge_end - charge_start).total_seconds() / 3600
@@ -467,7 +569,8 @@ class MarketDailyPlanner:
                 item.import_eur_per_kwh * (item.ends_at - item.starts_at).total_seconds()
                 for item in charge_window
             ) / ((charge_end - charge_start).total_seconds())
-            for export_window in interval_windows:
+            for export_opportunity in high_windows:
+                export_window = export_opportunity.intervals
                 if export_window[0].starts_at < charge_end:
                     continue
                 export_start = export_window[0].starts_at
@@ -498,23 +601,25 @@ class MarketDailyPlanner:
                     trade_candidates.append(
                         (
                             indicated_result,
-                            charge_window,
-                            export_window,
+                            charge_opportunity,
+                            export_opportunity,
                             charge_input_wh,
                             export_output_wh,
                         )
                     )
         for (
             _indicated_result,
-            charge_window,
-            export_window,
+            charge_opportunity,
+            export_opportunity,
             charge_input_wh,
             export_output_wh,
         ) in sorted(
             trade_candidates,
             key=lambda item: item[0],
             reverse=True,
-        )[:6]:
+        ):
+            charge_window = charge_opportunity.intervals
+            export_window = export_opportunity.intervals
             charge_start = charge_window[0].starts_at
             charge_end = charge_window[-1].ends_at
             export_start = export_window[0].starts_at
@@ -543,6 +648,10 @@ class MarketDailyPlanner:
                         f"{export_start.isoformat()}"
                     ),
                     snapshot_id=snapshot.snapshot_id,
+                    opportunity_ids=(
+                        charge_opportunity.opportunity_id,
+                        export_opportunity.opportunity_id,
+                    ),
                     window_starts_at=charge_start,
                     window_ends_at=charge_end,
                     maximum_charge_input_wh=charge_input_wh,
@@ -566,8 +675,8 @@ class MarketDailyPlanner:
         pv_trade_candidates: list[
             tuple[
                 float,
-                tuple[DailyReferenceTariffInterval, ...],
-                tuple[DailyReferenceTariffInterval, ...],
+                _MarketOpportunityWindow,
+                _MarketOpportunityWindow,
                 float,
                 float,
                 StorageEnergyCostAllocation | None,
@@ -576,10 +685,15 @@ class MarketDailyPlanner:
         rte = conversion_model.charge_efficiency * conversion_model.discharge_efficiency
         recovery_outside_horizon = False
         cheapest_known_recharge_rate = min(
-            (item.import_eur_per_kwh for item in future),
+            (
+                item.import_eur_per_kwh
+                for window in low_windows
+                for item in window.intervals
+            ),
             default=0.0,
         )
-        for export_window in interval_windows:
+        for export_opportunity in high_windows:
+            export_window = export_opportunity.intervals
             export_start = export_window[0].starts_at
             export_end = export_window[-1].ends_at
             export_hours = (export_end - export_start).total_seconds() / 3600
@@ -607,25 +721,22 @@ class MarketDailyPlanner:
                 for item in export_window
             ) / ((export_end - export_start).total_seconds())
             required_recharge_input_wh = export_output_wh / rte
-            recovery_windows: list[tuple[DailyReferenceTariffInterval, ...]] = []
-            for start_index, first in enumerate(future):
-                if first.starts_at < export_end:
+            recovery_windows: list[_MarketOpportunityWindow] = []
+            for recovery_opportunity in low_windows:
+                recovery_window = recovery_opportunity.intervals
+                if recovery_window[0].starts_at < export_end:
                     continue
-                recovery_intervals: list[DailyReferenceTariffInterval] = []
-                available_input_wh = 0.0
-                for interval in future[start_index:]:
-                    if recovery_intervals and recovery_intervals[-1].ends_at != interval.starts_at:
-                        break
-                    recovery_intervals.append(interval)
-                    duration_hours = (
-                        interval.ends_at - interval.starts_at
-                    ).total_seconds() / 3600.0
-                    available_input_wh += limits.maximum_charge_input_power_w * duration_hours
-                    if available_input_wh >= required_recharge_input_wh:
-                        recovery_windows.append(tuple(recovery_intervals))
-                        break
+                available_input_wh = sum(
+                    limits.maximum_charge_input_power_w
+                    * (interval.ends_at - interval.starts_at).total_seconds()
+                    / 3600.0
+                    for interval in recovery_window
+                )
+                if available_input_wh >= required_recharge_input_wh:
+                    recovery_windows.append(recovery_opportunity)
             recovery_candidates = []
-            for recovery_window in recovery_windows:
+            for recovery_opportunity in recovery_windows:
+                recovery_window = recovery_opportunity.intervals
                 recovery_start = recovery_window[0].starts_at
                 recovery_end = recovery_window[-1].ends_at
                 recovery_hours = (recovery_end - recovery_start).total_seconds() / 3600
@@ -638,7 +749,7 @@ class MarketDailyPlanner:
                     item.import_eur_per_kwh * (item.ends_at - item.starts_at).total_seconds()
                     for item in recovery_window
                 ) / ((recovery_end - recovery_start).total_seconds())
-                recovery_candidates.append((recharge_rate, recovery_window))
+                recovery_candidates.append((recharge_rate, recovery_opportunity))
             if not recovery_candidates:
                 if export_rate >= trading_policy.minimum_export_rate(
                     cheapest_known_recharge_rate,
@@ -647,10 +758,11 @@ class MarketDailyPlanner:
                     recovery_outside_horizon = True
                 continue
             lowest_recharge_rate = min(item[0] for item in recovery_candidates)
-            recharge_rate, recovery_window = max(
+            recharge_rate, recovery_opportunity = max(
                 (item for item in recovery_candidates if item[0] == lowest_recharge_rate),
-                key=lambda item: item[1][0].starts_at,
+                key=lambda item: item[1].intervals[0].starts_at,
             )
+            recovery_window = recovery_opportunity.intervals
             minimum_export_rate = trading_policy.minimum_export_rate(recharge_rate, rte)
             if inventory_allocation is not None:
                 inventory_rate = (
@@ -668,8 +780,8 @@ class MarketDailyPlanner:
             pv_trade_candidates.append(
                 (
                     export_rate - inventory_minimum_export_rate,
-                    export_window,
-                    recovery_window,
+                    export_opportunity,
+                    recovery_opportunity,
                     export_output_wh,
                     minimum_export_rate,
                     inventory_allocation,
@@ -677,8 +789,8 @@ class MarketDailyPlanner:
             )
         for (
             _,
-            export_window,
-            recovery_window,
+            export_opportunity,
+            recovery_opportunity,
             export_output_wh,
             minimum_export_rate,
             inventory_allocation,
@@ -686,7 +798,9 @@ class MarketDailyPlanner:
             pv_trade_candidates,
             key=lambda item: (item[0], item[3]),
             reverse=True,
-        )[:8]:
+        ):
+            export_window = export_opportunity.intervals
+            recovery_window = recovery_opportunity.intervals
             export_start = export_window[0].starts_at
             export_end = export_window[-1].ends_at
             recovery_start = recovery_window[0].starts_at
@@ -727,6 +841,10 @@ class MarketDailyPlanner:
                         f"{recovery_end.isoformat()}"
                     ),
                     snapshot_id=snapshot.snapshot_id,
+                    opportunity_ids=(
+                        export_opportunity.opportunity_id,
+                        recovery_opportunity.opportunity_id,
+                    ),
                     window_starts_at=recovery_start,
                     window_ends_at=recovery_end,
                     maximum_charge_input_wh=0.0,
@@ -757,6 +875,10 @@ class MarketDailyPlanner:
                         f"{recovery_start.isoformat()}:{recovery_end.isoformat()}"
                     ),
                     snapshot_id=snapshot.snapshot_id,
+                    opportunity_ids=(
+                        export_opportunity.opportunity_id,
+                        recovery_opportunity.opportunity_id,
+                    ),
                     window_starts_at=recovery_start,
                     window_ends_at=recovery_end,
                     maximum_charge_input_wh=recharge_input_wh,
@@ -794,16 +916,12 @@ class MarketDailyPlanner:
     ) -> tuple[MarketRouteAssessment, ...]:
         if not routes:
             return ()
-        candidates = {
-            item.candidate_id: item
-            for item in native_observation.observer_result.candidate_set.candidates
-        }
         results = {
             item.intent_schedule.schedule_id: item
             for item in native_observation.observer_result.portfolio.strategy_results
         }
-        native_winner_id = sorted(native_observation.observer_result.best_observation_ids)[0]
-        baseline_results = (results[candidates[native_winner_id].intent_schedule_id],)
+        baseline_schedule_id = native_observation.strategy_space.schedules[0].schedule_id
+        baseline_results = (results[baseline_schedule_id],)
         adapter = IndependentDailyReferenceAdapter()
         inputs = adapter.build_inputs(
             snapshot,
@@ -849,61 +967,6 @@ class MarketDailyPlanner:
         return tuple(assessments)
 
     @staticmethod
-    def _current_decision(
-        *,
-        snapshot: PlanningInputSnapshot,
-        native_observation: DailyReferenceStrategyObservation,
-        assessments: tuple[MarketRouteAssessment, ...],
-    ) -> tuple[DailyStorageIntent | None, datetime | None]:
-        admitted = tuple(item for item in assessments if item.admitted)
-        schedules: tuple[DailyReferenceIntentSchedule, ...]
-        if admitted:
-            winner = max(
-                admitted,
-                key=lambda item: (
-                    item.worst_case_incremental_result_eur,
-                    item.minimum_incremental_result_eur_per_exported_kwh,
-                    item.market_schedule_id,
-                ),
-            )
-            schedules = (winner.intent_schedule,)
-        else:
-            candidates = {
-                item.candidate_id: item
-                for item in native_observation.observer_result.candidate_set.candidates
-            }
-            results = {
-                item.intent_schedule.schedule_id: item.intent_schedule
-                for item in native_observation.observer_result.portfolio.strategy_results
-            }
-            native_winner_ids = sorted(
-                native_observation.observer_result.best_observation_ids
-            )
-            if native_winner_ids:
-                schedules = (
-                    results[candidates[native_winner_ids[0]].intent_schedule_id],
-                )
-            else:
-                schedules = (native_observation.strategy_space.schedules[0],)
-        due = tuple(
-            next(
-                (
-                    interval
-                    for interval in schedule.intervals
-                    if interval.starts_at <= snapshot.captured_at < interval.ends_at
-                ),
-                None,
-            )
-            for schedule in schedules
-        )
-        if not due or any(item is None for item in due):
-            return None, None
-        decisions = {(item.intent, item.ends_at) for item in due if item is not None}
-        if len(decisions) != 1:
-            return None, None
-        return next(iter(decisions))
-
-    @staticmethod
     def _market_schedule(
         baseline: DailyReferenceIntentSchedule,
         *,
@@ -939,30 +1002,32 @@ class MarketDailyPlanner:
             export_targets[(interval.starts_at, interval.ends_at)] = target_wh
             remaining_output_wh -= target_wh
         schedule_id = f"mep-market:{route.route_id}:{baseline.schedule_id}"
-        intervals = tuple(
-            DailyReferenceIntentInterval(
+        intervals_list: list[DailyReferenceIntentInterval] = []
+        for item in baseline.intervals:
+            intent = (
+                DailyStorageIntent.GRID_REQUIREMENT
+                if route.route_kind
+                in {"grid_trade", "negative_capacity", "pv_trade_grid_recovery"}
+                and route.maximum_charge_input_wh > 0.0
+                and item.starts_at < route.window_ends_at
+                and item.ends_at > route.window_starts_at
+                else (
+                    DailyStorageIntent.STORAGE_EXPORT
+                    if (item.starts_at, item.ends_at) in export_targets
+                    else item.intent
+                )
+            )
+            intervals_list.append(DailyReferenceIntentInterval(
                 starts_at=item.starts_at,
                 ends_at=item.ends_at,
-                intent=(
-                    DailyStorageIntent.GRID_REQUIREMENT
-                    if route.route_kind
-                    in {"grid_trade", "negative_capacity", "pv_trade_grid_recovery"}
-                    and route.maximum_charge_input_wh > 0.0
-                    and item.starts_at < route.window_ends_at
-                    and item.ends_at > route.window_starts_at
-                    else (
-                        DailyStorageIntent.STORAGE_EXPORT
-                        if (item.starts_at, item.ends_at) in export_targets
-                        else item.intent
-                    )
+                intent=intent,
+                storage_export_target_wh=(
+                    export_targets.get((item.starts_at, item.ends_at), 0.0)
+                    if intent is DailyStorageIntent.STORAGE_EXPORT
+                    else 0.0
                 ),
-                storage_export_target_wh=export_targets.get(
-                    (item.starts_at, item.ends_at),
-                    0.0,
-                ),
-            )
-            for item in baseline.intervals
-        )
+            ))
+        intervals = tuple(intervals_list)
         return DailyReferenceIntentSchedule(
             schedule_id=schedule_id,
             snapshot_id=baseline.snapshot_id,

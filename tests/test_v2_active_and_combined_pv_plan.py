@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from importlib import import_module
 
 import pytest
+from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_delegated_storage_candidates import (
     BASE,
     _balance,
@@ -15,8 +16,6 @@ from test_v2_delegated_storage_pipeline_integration import (
 )
 
 from picot.v2.contracts import ProjectedHouseholdEnergyBalanceInterval
-from picot.v2.live_pv_canary_runtime import active_pv_charge_window
-from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.storage_capability_snapshot import (
     build_storage_capability_snapshot_set,
 )
@@ -249,4 +248,3 @@ def test_standby_with_nom_capability_builds_active_pv_charge_plan() -> None:
         "balance_bidirectional"
     )
     assert run.execution_plan_set.plans[0].planned_vendor_mode == "Nul op de meter"
-    assert active_pv_charge_window(run, at=snapshot.captured_at) is True

@@ -33,10 +33,9 @@ def apply_daily_measured_pv_basis(
 ) -> tuple[PlanningInputSnapshot, DailyPVBasisDecision]:
     """Plan from the lower/central midpoint and adapt today's basis to actuals.
 
-    The returned snapshot is intended exclusively for EP/MEP. The canonical
-    planner keeps the unmodified snapshot and therefore retains its existing
-    conservative basis. Future dates remain on the midpoint; complete closed
-    actual evidence may move only the remaining current day to lower or central.
+    The returned snapshot is the PV basis for the sole canonical MEP planner.
+    Future dates remain on the midpoint; complete closed actual evidence may
+    move only the remaining current day to lower or central.
     """
 
     decision = _select_basis(diagnostics)

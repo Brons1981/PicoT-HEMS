@@ -2,6 +2,7 @@ from dataclasses import replace
 from datetime import timedelta
 from importlib import import_module
 
+from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_delegated_storage_candidates import (
     BASE,
     _balance,
@@ -14,7 +15,6 @@ from test_v2_delegated_storage_pipeline_integration import (
 )
 
 from picot.v2.contracts import ProjectedHouseholdEnergyBalanceInterval
-from picot.v2.pipeline import CanonicalPipeline
 
 
 def _interval(

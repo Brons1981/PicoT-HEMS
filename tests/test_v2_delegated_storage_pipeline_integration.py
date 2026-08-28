@@ -3,6 +3,11 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
+from legacy_cp_pipeline import (
+    CanonicalPipeline,
+    _average_price_for_window,
+    _balance_for_pv_forecast_basis,
+)
 
 from picot.domain.capability_snapshot import (
     CapabilityAvailability,
@@ -29,11 +34,6 @@ from picot.v2.household_planning_regime import (
     AdaptiveHouseholdObjectivePolicy,
     UserObjectiveProfile,
     derive_household_planning_regime,
-)
-from picot.v2.pipeline import (
-    CanonicalPipeline,
-    _average_price_for_window,
-    _balance_for_pv_forecast_basis,
 )
 from picot.v2.plan_commitment_store import ActivePlanCommitment
 from picot.v2.projection import project

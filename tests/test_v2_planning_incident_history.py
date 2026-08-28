@@ -4,10 +4,10 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_delegated_storage_pipeline_integration import _snapshot
 from test_v2_planning_fallback import _missing_forecast_fallback_run
 
-from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import PlanningInputBundle, SourceEvidence
 

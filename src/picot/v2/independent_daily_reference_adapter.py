@@ -106,6 +106,7 @@ class IndependentDailyReferenceAdapter:
         tariffs: DailyReferenceTariffSchedule | None = None,
         maximum_duration: timedelta = DAILY_REFERENCE_DURATION,
         micro_charge_suppression_fraction: float = 0.01,
+        required_by: datetime | None = None,
     ) -> DailyReferenceStrategyObservation:
         """Run the complete observer chain from one immutable Planning Input."""
 
@@ -148,6 +149,7 @@ class IndependentDailyReferenceAdapter:
                 and snapshot.storage_mode_capability_evidence.current_vendor_mode
                 in {"Nul op de meter", "Snel opladen"}
             ),
+            required_by=required_by,
         )
         if charge_windows.discovery_status == "no_feasible_window":
             raise DailyReferenceInputError("daily_reference_charge_windows_unavailable")

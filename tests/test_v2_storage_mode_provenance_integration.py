@@ -2,13 +2,13 @@ from dataclasses import replace
 from importlib import import_module
 
 import pytest
+from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_delegated_storage_pipeline_integration import (
     BASE,
     CAPABILITY_ID,
     _snapshot,
 )
 
-from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.projection import project
 from picot.v2.zendure_mode_capabilities import (
     derive_zendure_mode_capability_evidence,

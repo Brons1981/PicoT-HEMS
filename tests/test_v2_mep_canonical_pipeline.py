@@ -211,12 +211,9 @@ def test_configured_switching_margin_is_used_by_evaluation(tmp_path) -> None:
     )
 
 
-def test_mep_uses_storage_deadline_from_shared_planning_input(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.51)
-    deadline = snapshot.captured_at + timedelta(hours=4)
+def test_legacy_cp_storage_deadline_cannot_block_mep(tmp_path) -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.41)
+    deadline = snapshot.captured_at + timedelta(minutes=49)
     regime = HouseholdPlanningRegime(
         regime_id="regime-deadline",
         profile_id="profile",
@@ -237,20 +234,15 @@ def test_mep_uses_storage_deadline_from_shared_planning_input(
         evidence_ids=("deadline-evidence",),
         storage_target_required_by=deadline.isoformat(),
     )
-    runtime = MarketDailyPlannerRuntime(_conversion())
-    original_generate = runtime.generate
-    observed: dict[str, object] = {}
-
-    def recording_generate(planning_input, **kwargs):
-        observed["required_by"] = kwargs.get("required_by")
-        return original_generate(planning_input, **kwargs)
-
-    monkeypatch.setattr(runtime, "generate", recording_generate)
     pipeline = CanonicalPipeline(
-        market_daily_planner_runtime=runtime,
+        market_daily_planner_runtime=MarketDailyPlannerRuntime(_conversion()),
         commitment_store=ActivePlanCommitmentStore(tmp_path / "commitments.json"),
     )
 
-    pipeline.run(planning_input=replace(snapshot, household_planning_regime=regime))
+    run = pipeline.run(
+        planning_input=replace(snapshot, household_planning_regime=regime)
+    )
 
-    assert observed["required_by"] == deadline
+    assert run.candidate_set.derivation_status == "ready"
+    assert run.evaluation.status == "winner_selected"
+    assert run.execution_plan_set.plans

@@ -11,10 +11,12 @@ def test_live_runtime_contains_one_canonical_planner_route() -> None:
     source = _source("src/picot/v2/live_runtime.py")
 
     forbidden_parallel_components = (
+        "CandidateEngine",
         "IndependentDailyObserverRuntime",
         "IndependentDailyObserverWorker",
         "MarketDailyPlannerWorker",
         "PlannerComparisonLedger",
+        "derive_storage_requirements",
     )
 
     assert all(

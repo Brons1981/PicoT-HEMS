@@ -21,6 +21,12 @@ MEP owns planning and nothing downstream of planning. It consumes one immutable
 `PlanningInputSnapshot` and produces complete, physically coherent candidate
 plans. It does not consume, restore, compare or depend on CP or EP output.
 
+A deadline derived by the removed CP Candidate Engine is CP output and is not
+part of MEP's Planning Input. MEP derives physically feasible timing inside its
+own planning responsibility. Continuity of an already selected feasible plan
+is enforced by Evaluation and the canonical Plan Store, not by importing a CP
+deadline into MEP.
+
 The validated EP physical planning behaviour is retained inside MEP as its
 native physical planning logic. That retained behaviour is not a second planner
 and has no separate runtime, worker, state, persistence or execution authority.
@@ -95,9 +101,9 @@ Before live release, tests must prove:
 3. MEP does not contain a private execution or commitment layer;
 4. one `execution_mode` option controls observer versus live authority;
 5. the planner contains no vendor mode policy;
-6. a required-energy deadline prevents a later cheap interval from replacing
-   the currently committed feasible plan when that later interval misses the
-   deadline;
+6. MEP timing and incumbent-first Evaluation prevent a later cheap interval
+   from replacing the currently committed feasible plan when that alternative
+   cannot satisfy the MEP-owned physical horizon;
 7. the canonical Plan Store persists and restores the selected plan, and only
    Evaluation can replace it using material challenger evidence;
 8. restart, stale evidence, missing feedback, BMS protection and user override

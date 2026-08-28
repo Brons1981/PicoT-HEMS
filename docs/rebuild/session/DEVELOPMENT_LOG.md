@@ -1466,8 +1466,7 @@ replace the canonical strategy.
 
 ## 2026-08-28 — 2.0.0-dev.193 MEP sole canonical planner
 
-Status: `IMPLEMENTED`; locally verified, not yet `CI_VERIFIED` or
-`LIVE_VERIFIED`.
+Status: `CI_VERIFIED`; not yet `LIVE_VERIFIED`.
 
 Branch: `feature/mep-sole-canonical-planner`.
 
@@ -1525,14 +1524,22 @@ Last verified repository commit before this working tree:
   mapping, deadline-aware replacement, material switching margin, full plan
   persistence and canonical-only dashboard presentation.
 
+### GitHub CI verification
+
+- PR #561: `release: PicoT 2.0.0-dev.193 MEP sole planner`.
+- Remote head after the CI import-order correction:
+  `479704499901f14cf7cb132c3d79cdf3b5b1dc82`.
+- Tests run 1921: passed.
+- PicoT Core CI run 1866: passed.
+- PicoT v2 Rebuild run 795: passed.
+
 ### Not verified / known issues
 
-- No GitHub CI has run for this working tree.
 - dev.193 has not been installed or observed live; execution, restart recovery,
   target completion and real Home Assistant/Zendure feedback remain to be
   verified before `LIVE_VERIFIED`.
-- The dev.193 implementation is contained in the release commit carrying this
-  log entry; remote branch publication and GitHub CI are still pending.
+- The dev.193 implementation is published on
+  `feature/mep-sole-canonical-planner` in PR #561.
 
 ### DO NOT CHANGE / critical context
 
@@ -1546,10 +1553,9 @@ Last verified repository commit before this working tree:
 - Do not tune confidence to compensate for planning behaviour; MEP consumes the
   designed confidence evidence unchanged.
 
-Exact current position: dev.193 is implemented and locally regression-verified
-on `feature/mep-sole-canonical-planner`, with one MEP planner connected to the
+Exact current position: dev.193 is implemented and CI-verified in PR #561 on
+`feature/mep-sole-canonical-planner`, with one MEP planner connected to the
 canonical pipeline and no parallel production control route.
 
-Exact first next action: publish the dev.193 release commit for GitHub CI, and
-only after CI succeeds install it for controlled live
+Exact first next action: merge PR #561 and install dev.193 for controlled live
 verification of plan continuity and deadline-aware overnight charging.

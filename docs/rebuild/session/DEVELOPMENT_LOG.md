@@ -1649,3 +1649,28 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Ruff on all changed production and test files: `All checks passed!`.
 - mypy: `Success: no issues found in 183 source files`.
 - Embedded dashboard JavaScript syntax check and `git diff --check` pass.
+
+
+## 2026-08-28 — 2.0.0-dev.196 colour MEP price bars by action
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+### Decision and implementation
+
+- Keep the established dashboard energy palette as the single colour
+  vocabulary.
+- Colour complete price bars green (`#35a862`) while MEP charges the battery.
+- Colour complete price bars grey (`#aab2bd`) while MEP trades by exporting
+  stored energy to the grid.
+- Use the same action colours for the legend, plan chips and lower window
+  markers. Unselected price bars remain blue.
+- This is presentation only. Planning, commitment, execution and manual
+  authority are unchanged.
+- Bumped add-on and Core version to `2.0.0-dev.196`.
+
+### Verification
+
+- Affected MEP, dashboard, override and version suite: `72 passed`.
+- Full repository suite: `1058 passed`.
+- Ruff on changed production and test files: `All checks passed!`.
+- Embedded dashboard JavaScript syntax check and `git diff --check` pass.

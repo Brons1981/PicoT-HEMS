@@ -1852,3 +1852,17 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Advanced the commitment contract to v6: future and balance-only dev.203 plans
   replan, while an active explicit-power phase remains uninterrupted.
 - Bumped add-on and Core version to `2.0.0-dev.204`.
+## 2026-08-30 — 2.0.0-dev.205 fast-mode dispatch containment
+
+- Added V2ADR-060 for the canonical fast-power to fixed Zendure-mode adapter
+  contract and external dispatch failure containment.
+- Made `CHARGE_AT_POWER` and `DISCHARGE_AT_POWER` executable through their
+  admitted `input_select.select_option` mappings while retaining legacy numeric
+  charge mappings.
+- Contained adapter and transport exceptions as visible `translation_failed`
+  and `dispatch_failed` outcomes with their diagnostic reason; the live process
+  no longer terminates and a later cycle can retry.
+- Added real-adapter regressions for `Snel opladen` and `Snel ontladen` plus a
+  canonical runtime fail-closed regression.
+- Kept all MEP planning, commitment and financial selection behavior unchanged.
+- Bumped add-on and Core version to `2.0.0-dev.205`.

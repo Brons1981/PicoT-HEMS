@@ -64,6 +64,7 @@ from picot.v2.plan_commitment_store import (
     EARLIER_COMMITMENT_METHOD_VERSION,
     LEGACY_COMMITMENT_METHOD_VERSION,
     PREVIOUS_COMMITMENT_METHOD_VERSION,
+    TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
 )
@@ -800,13 +801,45 @@ def _restore_active_plan_commitments(
                 "defective_commitment_requires_replan"
             )
             continue
+        due_primitive = next(
+            (
+                segment.primitive
+                for segment in commitment.segments
+                if segment.starts_at
+                <= snapshot.captured_at
+                < segment.ends_at
+            ),
+            (
+                commitment.primitive
+                if commitment.starts_at
+                <= snapshot.captured_at
+                < commitment.ends_at
+                else None
+            ),
+        )
+        timing_previous_explicit_active = (
+            method_version == TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION
+            and due_primitive in {"charge_at_power", "discharge_at_power"}
+        )
+        if (
+            method_version == TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION
+            and not timing_previous_explicit_active
+        ):
+            store.clear(commitment.execution_scope_id)
+            store.record_recovery_rejection(
+                "superseded_charge_timing_requires_replan"
+            )
+            continue
         compatible_active_previous_plan = (
-            method_version
-            in {
-                PREVIOUS_COMMITMENT_METHOD_VERSION,
-                EARLIER_COMMITMENT_METHOD_VERSION,
-            }
-            and commitment.starts_at <= snapshot.captured_at
+            timing_previous_explicit_active
+            or (
+                method_version
+                in {
+                    PREVIOUS_COMMITMENT_METHOD_VERSION,
+                    EARLIER_COMMITMENT_METHOD_VERSION,
+                }
+                and commitment.starts_at <= snapshot.captured_at
+            )
         )
         if (
             method_version != COMMITMENT_METHOD_VERSION

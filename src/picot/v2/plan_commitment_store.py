@@ -10,7 +10,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
-COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v5"
+COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v6"
+TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v5"
 DEFECTIVE_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v4"
 PREVIOUS_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v3"
 EARLIER_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v2"

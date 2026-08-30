@@ -7,6 +7,7 @@ from test_v2_delegated_storage_pipeline_integration import BASE, _snapshot
 from picot.domain.capability_snapshot import CapabilityAvailability
 from picot.v2.live_runtime import _restore_active_plan_commitments
 from picot.v2.plan_commitment_store import (
+    DEFECTIVE_COMMITMENT_METHOD_VERSION,
     EARLIER_COMMITMENT_METHOD_VERSION,
     LEGACY_COMMITMENT_METHOD_VERSION,
     PREVIOUS_COMMITMENT_METHOD_VERSION,
@@ -107,6 +108,34 @@ def test_future_pre_subwindow_commitment_is_cleared_for_fresh_mep_plan(
     assert restored.active_plan_commitments == ()
     assert store.load("home-battery") is None
     assert "superseded_future_commitment_requires_replan" in (
+        incidents.read_text(encoding="utf-8")
+    )
+
+
+def test_active_dev202_commitment_is_cleared_for_corrective_replan(
+    tmp_path,
+) -> None:
+    incidents = tmp_path / "incidents.jsonl"
+    store = ActivePlanCommitmentStore(
+        tmp_path / "commitment.json",
+        incident_path=incidents,
+    )
+    active = replace(
+        _commitment(),
+        starts_at=BASE,
+        ends_at=BASE + timedelta(days=1),
+        selection_method_version=DEFECTIVE_COMMITMENT_METHOD_VERSION,
+    )
+    store.save(active)
+
+    restored = _restore_active_plan_commitments(
+        _at(BASE + timedelta(minutes=15)),
+        store,
+    )
+
+    assert restored.active_plan_commitments == ()
+    assert store.load("home-battery") is None
+    assert "defective_commitment_requires_replan" in (
         incidents.read_text(encoding="utf-8")
     )
 

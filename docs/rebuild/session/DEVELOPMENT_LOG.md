@@ -1828,3 +1828,14 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   authority, provenance, calibration and capability blockers remain
   `dry_run_blocked`.
 - Bumped add-on and Core version to `2.0.0-dev.202`.
+## 2026-08-30 — 2.0.0-dev.203 preserve post-export recovery
+
+- Restricted `acquisition_target_reached` to charge phases that precede a
+  still-future export and can therefore contribute to that export.
+- Preserved grid/PV recovery phases that follow export; the safe post-export
+  target can no longer be mistaken for a completed pre-export acquisition.
+- Coalesced contiguous equal commitment segments after every revision so a
+  replaced charge phase produces one continuous NOM window.
+- Advanced the commitment contract to v5 and reject dev.202 v4 commitments on
+  restart, forcing MEP to reconstruct any already-corrupted live route.
+- Bumped add-on and Core version to `2.0.0-dev.203`.

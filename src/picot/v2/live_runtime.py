@@ -60,6 +60,7 @@ from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
+    DEFECTIVE_COMMITMENT_METHOD_VERSION,
     EARLIER_COMMITMENT_METHOD_VERSION,
     LEGACY_COMMITMENT_METHOD_VERSION,
     PREVIOUS_COMMITMENT_METHOD_VERSION,
@@ -793,6 +794,12 @@ def _restore_active_plan_commitments(
             store.record_recovery_rejection("expired_at_restart")
             continue
         method_version = commitment.selection_method_version
+        if method_version == DEFECTIVE_COMMITMENT_METHOD_VERSION:
+            store.clear(commitment.execution_scope_id)
+            store.record_recovery_rejection(
+                "defective_commitment_requires_replan"
+            )
+            continue
         compatible_active_previous_plan = (
             method_version
             in {

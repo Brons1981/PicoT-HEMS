@@ -95,6 +95,23 @@ def _coalesce(
     return tuple(phases)
 
 
+def _coalesce_committed_segments(
+    segments: tuple[CommittedPlanSegment, ...],
+) -> tuple[CommittedPlanSegment, ...]:
+    coalesced: list[CommittedPlanSegment] = []
+    for segment in segments:
+        if (
+            coalesced
+            and coalesced[-1].ends_at == segment.starts_at
+            and coalesced[-1].primitive == segment.primitive
+            and coalesced[-1].source_policy == segment.source_policy
+        ):
+            coalesced[-1] = replace(coalesced[-1], ends_at=segment.ends_at)
+        else:
+            coalesced.append(segment)
+    return tuple(coalesced)
+
+
 def _path_for_schedule(
     *,
     snapshot: PlanningInputSnapshot,
@@ -319,34 +336,60 @@ def _complete_acquisition_revision(
         ),
         None,
     )
+    future_exports = tuple(
+        segment
+        for segment in commitment.segments
+        if segment.primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value
+        and segment.ends_at > snapshot.captured_at
+    )
+    future_charges = tuple(
+        segment
+        for segment in commitment.segments
+        if segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
+        and segment.ends_at > snapshot.captured_at
+    )
+    has_acquisition_before_export = any(
+        charge.ends_at <= export.starts_at
+        for charge in future_charges
+        for export in future_exports
+    )
+
+    def is_pre_export_acquisition(segment: CommittedPlanSegment) -> bool:
+        return (
+            segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
+            and any(
+                segment.ends_at <= export.starts_at
+                for export in future_exports
+            )
+        )
+
     if (
         state is None
         or state.current_stored_energy_wh + 1e-6 < commitment.target_energy_wh
-        or not _has_future_export(commitment, snapshot.captured_at)
-        or not any(
-            segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
-            and segment.ends_at > snapshot.captured_at
-            for segment in commitment.segments
-        )
+        or not future_exports
+        or not future_charges
+        or not has_acquisition_before_export
     ):
         return None
-    revised_segments = tuple(
-        replace(
-            segment,
-            starts_at=max(segment.starts_at, snapshot.captured_at),
-            primitive=(
-                ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value
-                if segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
-                else segment.primitive
-            ),
-            source_policy=(
-                ChargeSourcePolicy.PV_ONLY.value
-                if segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
-                else segment.source_policy
-            ),
+    revised_segments = _coalesce_committed_segments(
+        tuple(
+            replace(
+                segment,
+                starts_at=max(segment.starts_at, snapshot.captured_at),
+                primitive=(
+                    ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value
+                    if is_pre_export_acquisition(segment)
+                    else segment.primitive
+                ),
+                source_policy=(
+                    ChargeSourcePolicy.PV_ONLY.value
+                    if is_pre_export_acquisition(segment)
+                    else segment.source_policy
+                ),
+            )
+            for segment in commitment.segments
+            if segment.ends_at > snapshot.captured_at
         )
-        for segment in commitment.segments
-        if segment.ends_at > snapshot.captured_at
     )
     return replace(
         commitment,
@@ -411,7 +454,7 @@ def _defer_charge_revision(
     revised.append(replace(due, starts_at=shifted_start, ends_at=shifted_end))
     revised.append(replace(following, starts_at=shifted_end))
     revised.extend(segments[due_index + 2 :])
-    revised_segments = tuple(revised)
+    revised_segments = _coalesce_committed_segments(tuple(revised))
     return replace(
         commitment,
         plan_id=_id(

@@ -1839,3 +1839,16 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Advanced the commitment contract to v5 and reject dev.202 v4 commitments on
   restart, forcing MEP to reconstruct any already-corrupted live route.
 - Bumped add-on and Core version to `2.0.0-dev.203`.
+## 2026-08-30 — 2.0.0-dev.204 financially bounded late grid fallback
+
+- Added V2ADR-059 and kept complete-route financial outcome as the primary MEP
+  charge-timing objective.
+- Replaced explicit-charge PV overlap with total route-wide grid energy inside
+  the existing EUR 0.01 financial-equivalence cohort.
+- Added the latest safe charge start only as the final timing tie-break after
+  equal route-wide grid demand.
+- Preserved peak-anchored export construction and materially cheaper earlier
+  charge routes.
+- Advanced the commitment contract to v6: future and balance-only dev.203 plans
+  replan, while an active explicit-power phase remains uninterrupted.
+- Bumped add-on and Core version to `2.0.0-dev.204`.

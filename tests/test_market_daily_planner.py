@@ -346,7 +346,7 @@ def test_mep_subdivides_broad_grid_trade_window_and_preserves_pv_room() -> None:
     assert result.current_intent.value == "nom"
 
 
-def test_mep_treats_subcent_market_routes_as_equal_before_pv_timing() -> None:
+def test_mep_uses_latest_safe_charge_window_inside_equal_route_cost() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     cheap_window_end = snapshot.captured_at + timedelta(hours=12)
     horizon_end = snapshot.captured_at + timedelta(hours=24)
@@ -387,25 +387,53 @@ def test_mep_treats_subcent_market_routes_as_equal_before_pv_timing() -> None:
     )
     assert pv_aligned is not latest
 
+    # Hold complete-route grid energy equal so the last-safe tie-break is
+    # isolated from both financial value and physical net-energy demand.
+    common_grid_input_wh = 10000.0
+
+    def with_route_values(assessment, *, result_eur, grid_input_wh=common_grid_input_wh):
+        return replace(
+            assessment,
+            worst_case_incremental_result_eur=result_eur,
+            scenario_evidence=tuple(
+                replace(evidence, grid_to_storage_input_wh=grid_input_wh)
+                for evidence in assessment.scenario_evidence
+            ),
+        )
+
     assessments = (
-        replace(pv_aligned, worst_case_incremental_result_eur=0.495),
-        replace(latest, worst_case_incremental_result_eur=0.500),
+        with_route_values(pv_aligned, result_eur=0.495),
+        with_route_values(latest, result_eur=0.500),
     )
 
     winner = MarketDailyEvaluationEngine.select_market_assessment(assessments)
 
     assert winner is not None
-    assert winner.market_schedule_id == pv_aligned.market_schedule_id
+    assert winner.market_schedule_id == latest.market_schedule_id
+
+    lower_grid_route = MarketDailyEvaluationEngine.select_market_assessment(
+        (
+            with_route_values(
+                pv_aligned,
+                result_eur=0.495,
+                grid_input_wh=9000.0,
+            ),
+            with_route_values(latest, result_eur=0.500),
+        )
+    )
+
+    assert lower_grid_route is not None
+    assert lower_grid_route.market_schedule_id == pv_aligned.market_schedule_id
 
     financially_better = MarketDailyEvaluationEngine.select_market_assessment(
         (
-            replace(pv_aligned, worst_case_incremental_result_eur=0.489),
-            replace(latest, worst_case_incremental_result_eur=0.500),
+            with_route_values(pv_aligned, result_eur=0.521),
+            with_route_values(latest, result_eur=0.500),
         )
     )
 
     assert financially_better is not None
-    assert financially_better.market_schedule_id == latest.market_schedule_id
+    assert financially_better.market_schedule_id == pv_aligned.market_schedule_id
 
 
 def test_export_marginal_return_breaks_complete_route_subcent_tie() -> None:

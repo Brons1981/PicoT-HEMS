@@ -5,14 +5,17 @@ import pytest
 from test_v2_delegated_storage_pipeline_integration import BASE, _snapshot
 
 from picot.domain.capability_snapshot import CapabilityAvailability
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.live_runtime import _restore_active_plan_commitments
 from picot.v2.plan_commitment_store import (
     DEFECTIVE_COMMITMENT_METHOD_VERSION,
     EARLIER_COMMITMENT_METHOD_VERSION,
     LEGACY_COMMITMENT_METHOD_VERSION,
     PREVIOUS_COMMITMENT_METHOD_VERSION,
+    TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
+    CommittedPlanSegment,
 )
 
 
@@ -138,6 +141,90 @@ def test_active_dev202_commitment_is_cleared_for_corrective_replan(
     assert "defective_commitment_requires_replan" in (
         incidents.read_text(encoding="utf-8")
     )
+
+
+def test_balance_phase_with_previous_timing_is_cleared_for_replan(
+    tmp_path,
+) -> None:
+    incidents = tmp_path / "incidents.jsonl"
+    store = ActivePlanCommitmentStore(
+        tmp_path / "commitment.json",
+        incident_path=incidents,
+    )
+    previous = replace(
+        _commitment(),
+        primitive="balance_discharge_only",
+        starts_at=BASE,
+        ends_at=BASE + timedelta(hours=4),
+        selection_method_version=TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=BASE,
+                ends_at=BASE + timedelta(hours=1),
+                primitive="balance_discharge_only",
+                source_policy=None,
+            ),
+            CommittedPlanSegment(
+                starts_at=BASE + timedelta(hours=1),
+                ends_at=BASE + timedelta(hours=2),
+                primitive="charge_at_power",
+                source_policy="pv_preferred_grid_allowed",
+            ),
+        ),
+    )
+    store.save(previous)
+
+    restored = _restore_active_plan_commitments(
+        _at(BASE + timedelta(minutes=15)),
+        store,
+    )
+
+    assert restored.active_plan_commitments == ()
+    assert "superseded_charge_timing_requires_replan" in (
+        incidents.read_text(encoding="utf-8")
+    )
+
+
+def test_explicit_phase_with_previous_timing_remains_active(tmp_path) -> None:
+    store = ActivePlanCommitmentStore(tmp_path / "commitment.json")
+    previous = replace(
+        _commitment(),
+        primitive="charge_at_power",
+        source_policy="pv_preferred_grid_allowed",
+        starts_at=BASE,
+        ends_at=BASE + timedelta(hours=2),
+        selection_method_version=TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=BASE,
+                ends_at=BASE + timedelta(hours=1),
+                primitive="charge_at_power",
+                source_policy="pv_preferred_grid_allowed",
+            ),
+        ),
+    )
+    store.save(previous)
+
+    source = _at(BASE + timedelta(minutes=15))
+    capable = replace(
+        source,
+        capability_snapshot_set=replace(
+            source.capability_snapshot_set,
+            capabilities=tuple(
+                replace(
+                    item,
+                    supported_primitives=(
+                        *item.supported_primitives,
+                        ExecutionPrimitive.CHARGE_AT_POWER,
+                    ),
+                )
+                for item in source.capability_snapshot_set.capabilities
+            ),
+        ),
+    )
+    restored = _restore_active_plan_commitments(capable, store)
+
+    assert restored.active_plan_commitments == (previous,)
 
 
 @pytest.mark.parametrize(

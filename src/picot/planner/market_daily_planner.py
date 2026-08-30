@@ -41,7 +41,7 @@ from picot.v2.opportunity_engine import (
     PriceOpportunityConfig,
 )
 
-METHOD_VERSION = "market-daily-planner:v4"
+METHOD_VERSION = "market-daily-planner:v5"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 

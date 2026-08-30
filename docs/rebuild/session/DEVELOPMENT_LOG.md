@@ -1866,3 +1866,17 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   canonical runtime fail-closed regression.
 - Kept all MEP planning, commitment and financial selection behavior unchanged.
 - Bumped add-on and Core version to `2.0.0-dev.205`.
+## 2026-08-30 — 2.0.0-dev.206 committed segment clock execution
+
+- Added V2ADR-061 after live dev.205 proved that a healthy measurement loop
+  could skip the end of an explicit export segment.
+- Added the currently due commitment segment to the stable execution input
+  signature, making every segment boundary start one canonical cycle on the
+  next normal poll without selecting or replacing the MEP plan.
+- Kept ordinary telemetry suppressed during an active commitment so SoC and
+  power noise still cannot cause full-plan churn.
+- Kept the previous signature after rejected or failed dispatch, allowing the
+  required segment transition to retry on the next poll.
+- Added regressions for the exact export-to-smart-discharge boundary and retry
+  behavior discovered in diagnostics 66.
+- Bumped add-on and Core version to `2.0.0-dev.206`.

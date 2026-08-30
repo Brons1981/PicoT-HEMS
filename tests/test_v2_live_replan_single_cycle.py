@@ -100,3 +100,25 @@ def test_run_live_cycle_executes_changed_content_and_updates_signature() -> None
     assert calls == [second.snapshot.run_id]
     assert result == _planning_input_signature(second)
     assert result != previous_signature
+
+
+def test_run_live_cycle_retries_when_execution_reports_failure() -> None:
+    first = _bundle(captured_at=BASE, price=0.20)
+    changed = _bundle(captured_at=BASE + timedelta(minutes=1), price=0.10)
+    previous_signature = _planning_input_signature(first)
+    calls: list[str] = []
+
+    first_result = _run_live_cycle(
+        previous_signature=previous_signature,
+        bundle=changed,
+        execute=lambda current: (calls.append(current.snapshot.run_id), False)[1],
+    )
+    second_result = _run_live_cycle(
+        previous_signature=first_result,
+        bundle=changed,
+        execute=lambda current: (calls.append(current.snapshot.run_id), False)[1],
+    )
+
+    assert calls == [changed.snapshot.run_id, changed.snapshot.run_id]
+    assert first_result == previous_signature
+    assert second_result == previous_signature

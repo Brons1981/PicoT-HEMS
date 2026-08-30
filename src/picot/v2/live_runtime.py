@@ -537,6 +537,46 @@ def _attach_live_household_objectives(
     )
     return replace(bundle, snapshot=snapshot)
 
+
+def _commitment_execution_phase(
+    commitment: ActivePlanCommitment,
+    *,
+    captured_at: datetime,
+) -> dict[str, object]:
+    """Describe only the clock phase that can change committed execution."""
+    if captured_at < commitment.starts_at:
+        return {"status": "scheduled", "segment": None}
+    if captured_at >= commitment.ends_at:
+        return {"status": "completed", "segment": None}
+    segment = next(
+        (
+            item
+            for item in commitment.segments
+            if item.starts_at <= captured_at < item.ends_at
+        ),
+        None,
+    )
+    if segment is None:
+        return {
+            "status": "active",
+            "segment": {
+                "starts_at": commitment.starts_at.isoformat(),
+                "ends_at": commitment.ends_at.isoformat(),
+                "primitive": commitment.primitive,
+                "source_policy": commitment.source_policy,
+            },
+        }
+    return {
+        "status": "active",
+        "segment": {
+            "starts_at": segment.starts_at.isoformat(),
+            "ends_at": segment.ends_at.isoformat(),
+            "primitive": segment.primitive,
+            "source_policy": segment.source_policy,
+        },
+    }
+
+
 def _planning_input_signature(
     bundle: PlanningInputBundle,
     *,
@@ -716,10 +756,9 @@ def _planning_input_signature(
                 "starts_at": item.starts_at.isoformat(),
                 "ends_at": item.ends_at.isoformat(),
                 "target_energy_wh": item.target_energy_wh,
-                "execution_phase": (
-                    "scheduled"
-                    if bundle.snapshot.captured_at < item.starts_at
-                    else "active"
+                "execution_phase": _commitment_execution_phase(
+                    item,
+                    captured_at=bundle.snapshot.captured_at,
                 ),
             }
             for item in bundle.snapshot.active_plan_commitments
@@ -914,7 +953,7 @@ def _run_live_cycle(
     bundle: PlanningInputBundle,
     execute: Any,
     refresh_unchanged: Any = None,
-) -> str:
+) -> str | None:
     """Execute one changed-input cycle and return the committed input signature."""
     if not _should_run_cycle(previous_signature, bundle):
         assert previous_signature is not None
@@ -922,7 +961,9 @@ def _run_live_cycle(
             refresh_unchanged(bundle)
         return previous_signature
 
-    execute(bundle)
+    execution_succeeded = execute(bundle)
+    if execution_succeeded is False:
+        return previous_signature
     return _planning_input_signature(bundle)
 
 
@@ -946,7 +987,7 @@ def _poll_live_cycle(
         Callable[[PlanningInputBundle], None] | None
     ) = None,
     observe: Callable[[PlanningInputBundle], None] | None = None,
-) -> str:
+) -> str | None:
     """Load fresh Planning Input and execute only when decision input changed."""
     bundle = load_bundle()
     observation = bundle.household_load_observation
@@ -1683,7 +1724,7 @@ def _execute_planning_bundle(
     planning_incident_history: PlanningIncidentHistory | None = None,
     daily_pv_basis_decision: DailyPVBasisDecision | None = None,
     financial_result_ledger: FinancialResultLedger | None = None,
-) -> None:
+) -> bool:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
         (bundle.assembly_finished_at - bundle.assembly_started_at).total_seconds() * 1000.0,
@@ -1979,6 +2020,7 @@ def _execute_planning_bundle(
         ),
         flush=True,
     )
+    return run.vendor_result.status not in {"dispatch_failed", "rejected"}
 
 
 def main() -> None:
@@ -2375,7 +2417,7 @@ def main() -> None:
     def execute(
         bundle: PlanningInputBundle,
         pv_actual_diagnostics: LivePVActualDiagnostics,
-    ) -> None:
+    ) -> bool:
         power_history, power_history_read_ms = read_power_history(bundle)
         timeline = bundle.snapshot.pv_energy_timeline
         pv_sunset_source = pv_sunset_reader.read(
@@ -2422,7 +2464,7 @@ def main() -> None:
             if timeline is not None
             else ()
         )
-        _execute_planning_bundle(
+        return _execute_planning_bundle(
             token=token,
             canonical_pipeline=canonical_pipeline,
             price_config=price_config,

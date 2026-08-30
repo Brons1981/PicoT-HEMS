@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from hashlib import sha256
 from time import perf_counter
 
@@ -281,9 +281,154 @@ def _commitment_target_reached(
     )
     if state is None:
         return False
+    has_future_export = any(
+        segment.primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value
+        and segment.ends_at > snapshot.captured_at
+        for segment in commitment.segments
+    )
+    if has_future_export:
+        return False
     if commitment.primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value:
         return state.current_stored_energy_wh <= commitment.target_energy_wh
     return state.current_stored_energy_wh >= commitment.target_energy_wh
+
+
+def _has_future_export(
+    commitment: ActivePlanCommitment,
+    captured_at: datetime,
+) -> bool:
+    return any(
+        segment.primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value
+        and segment.ends_at > captured_at
+        for segment in commitment.segments
+    )
+
+
+def _complete_acquisition_revision(
+    *,
+    snapshot: PlanningInputSnapshot,
+    commitment: ActivePlanCommitment,
+) -> ActivePlanCommitment | None:
+    """Remove completed charge phases without discarding later export."""
+
+    state = next(
+        (
+            item
+            for item in snapshot.current_storage_states
+            if item.execution_scope_id == commitment.execution_scope_id
+        ),
+        None,
+    )
+    if (
+        state is None
+        or state.current_stored_energy_wh + 1e-6 < commitment.target_energy_wh
+        or not _has_future_export(commitment, snapshot.captured_at)
+        or not any(
+            segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
+            and segment.ends_at > snapshot.captured_at
+            for segment in commitment.segments
+        )
+    ):
+        return None
+    revised_segments = tuple(
+        replace(
+            segment,
+            starts_at=max(segment.starts_at, snapshot.captured_at),
+            primitive=(
+                ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value
+                if segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
+                else segment.primitive
+            ),
+            source_policy=(
+                ChargeSourcePolicy.PV_ONLY.value
+                if segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
+                else segment.source_policy
+            ),
+        )
+        for segment in commitment.segments
+        if segment.ends_at > snapshot.captured_at
+    )
+    return replace(
+        commitment,
+        plan_id=_id(
+            "mep-plan-revision",
+            f"{commitment.plan_id}|acquisition-complete|{snapshot.captured_at.isoformat()}",
+        ),
+        plan_revision=commitment.plan_revision + 1,
+        primitive=revised_segments[0].primitive,
+        source_policy=(revised_segments[0].source_policy or "not_applicable"),
+        starts_at=revised_segments[0].starts_at,
+        ends_at=revised_segments[-1].ends_at,
+        segments=revised_segments,
+        selection_reason="execution_feedback:acquisition_target_reached",
+        replaced_plan_id=commitment.plan_id,
+    )
+
+
+def _defer_charge_revision(
+    *,
+    snapshot: PlanningInputSnapshot,
+    commitment: ActivePlanCommitment,
+) -> ActivePlanCommitment | None:
+    """Move a PV-covered due charge phase to the last safe fallback slot."""
+
+    segments = list(commitment.segments)
+    due_index = next(
+        (
+            index
+            for index, segment in enumerate(segments)
+            if segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
+            and segment.starts_at <= snapshot.captured_at < segment.ends_at
+        ),
+        None,
+    )
+    if due_index is None or due_index + 1 >= len(segments):
+        return None
+    due = segments[due_index]
+    following = segments[due_index + 1]
+    if following.primitive != ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value:
+        return None
+    duration = due.ends_at - snapshot.captured_at
+    canonical_interval = timedelta(minutes=15)
+    shifted_end = following.ends_at - canonical_interval
+    shifted_start = shifted_end - duration
+    if shifted_start <= snapshot.captured_at:
+        return None
+    revised: list[CommittedPlanSegment] = []
+    revised.extend(
+        segment
+        for segment in segments[:due_index]
+        if segment.ends_at > snapshot.captured_at
+    )
+    revised.append(
+        CommittedPlanSegment(
+            starts_at=snapshot.captured_at,
+            ends_at=shifted_start,
+            primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+            source_policy=ChargeSourcePolicy.PV_ONLY.value,
+        )
+    )
+    revised.append(replace(due, starts_at=shifted_start, ends_at=shifted_end))
+    revised.append(replace(following, starts_at=shifted_end))
+    revised.extend(segments[due_index + 2 :])
+    revised_segments = tuple(revised)
+    return replace(
+        commitment,
+        plan_id=_id(
+            "mep-plan-revision",
+            f"{commitment.plan_id}|pv-deferred|{snapshot.captured_at.isoformat()}",
+        ),
+        plan_revision=commitment.plan_revision + 1,
+        primitive=revised_segments[0].primitive,
+        source_policy=(revised_segments[0].source_policy or "not_applicable"),
+        starts_at=revised_segments[0].starts_at,
+        ends_at=revised_segments[-1].ends_at,
+        segments=revised_segments,
+        selection_reason=(
+            "execution_feedback:measured_pv_progress_covers_grid_charge"
+        ),
+        replaced_plan_id=commitment.plan_id,
+    )
 
 
 def _overlap_fraction(
@@ -531,6 +676,7 @@ def _persist_plan(
     if phase is None:
         return
     starts_at, ends_at, intent = phase
+    coalesced_segments = _coalesce(schedule.intervals)
     primitive, source_policy = _intent_primitive(intent)
     limits = next(
         item
@@ -570,7 +716,10 @@ def _persist_plan(
                 source_policy.value if source_policy is not None else "not_applicable"
             ),
             starts_at=starts_at,
-            ends_at=ends_at,
+            # A market commitment owns its complete lifecycle.  Expiring it at
+            # the end of the first charge phase silently discards a later
+            # export phase.
+            ends_at=coalesced_segments[-1][1],
             target_energy_wh=target_energy_wh,
             selection_method_version=COMMITMENT_METHOD_VERSION,
             planner_id="mep",
@@ -622,7 +771,7 @@ def _persist_plan(
                         else None
                     ),
                 )
-                for starts_at, ends_at, intent in _coalesce(schedule.intervals)
+                for starts_at, ends_at, intent in coalesced_segments
                 for primitive, source_policy in (_intent_primitive(intent),)
             ),
             selection_reason=selection_reason,
@@ -678,6 +827,15 @@ def build_mep_canonical_run(
 
     stage_started = perf_counter()
     retained_commitment = next(iter(snapshot.active_plan_commitments), None)
+    if retained_commitment is not None:
+        completed_revision = _complete_acquisition_revision(
+            snapshot=snapshot,
+            commitment=retained_commitment,
+        )
+        if completed_revision is not None:
+            retained_commitment = completed_revision
+            if commitment_store is not None:
+                commitment_store.save(completed_revision)
     if retained_commitment is not None and _commitment_target_reached(
         snapshot,
         retained_commitment,
@@ -917,6 +1075,9 @@ def build_mep_canonical_run(
         if not control_change_allowed:
             blockers.append("observer_only_authority")
     request_ready = due_segment is not None and blockers in ([], ["observer_only_authority"])
+    measured_progress_deferred = blockers == [
+        "measured_pv_progress_covers_grid_charge"
+    ]
     request_id = (
         _id(
             "mep-primitive-request",
@@ -935,6 +1096,8 @@ def build_mep_canonical_run(
             if request_ready and control_change_allowed
             else "observer_request_ready"
             if request_ready
+            else "execution_deferred"
+            if measured_progress_deferred
             else "dry_run_blocked"
             if due_segment is not None
             else "not_emitted"
@@ -953,6 +1116,21 @@ def build_mep_canonical_run(
         ),
         blockers=tuple(blockers),
     )
+    if (
+        measured_progress_deferred
+        and commitment_store is not None
+        and due_path_segment is not None
+    ):
+        active_commitment = commitment_store.load(
+            due_path_segment.execution_scope_id
+        )
+        if active_commitment is not None:
+            deferred_revision = _defer_charge_revision(
+                snapshot=snapshot,
+                commitment=active_commitment,
+            )
+            if deferred_revision is not None:
+                commitment_store.save(deferred_revision)
     execution_primitive_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
     stage_started = perf_counter()

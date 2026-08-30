@@ -408,6 +408,134 @@ def test_mep_treats_subcent_market_routes_as_equal_before_pv_timing() -> None:
     assert financially_better.market_schedule_id == latest.market_schedule_id
 
 
+def test_export_marginal_return_breaks_complete_route_subcent_tie() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    cheap_window_end = snapshot.captured_at + timedelta(hours=12)
+    source = snapshot.price_points[0]
+    result = MarketDailyPlanner().plan(
+        snapshot=replace(
+            snapshot,
+            price_points=(
+                replace(
+                    source,
+                    point_id="broad-cheap-window",
+                    ends_at=cheap_window_end,
+                    value_eur_per_kwh=0.05,
+                ),
+                replace(
+                    source,
+                    point_id="later-export-window",
+                    starts_at=cheap_window_end,
+                    ends_at=snapshot.captured_at + timedelta(hours=24),
+                    value_eur_per_kwh=0.55,
+                ),
+            ),
+        ),
+        conversion_model=_conversion(),
+    )
+    admitted = tuple(item for item in result.route_assessments if item.admitted)
+    assert len(admitted) >= 2
+    lower_peak = replace(
+        admitted[0],
+        worst_case_incremental_result_eur=0.500,
+        minimum_incremental_result_eur_per_exported_kwh=0.373,
+    )
+    actual_peak = replace(
+        admitted[1],
+        worst_case_incremental_result_eur=0.491,
+        minimum_incremental_result_eur_per_exported_kwh=0.388,
+    )
+
+    winner = MarketDailyEvaluationEngine.select_market_assessment(
+        (lower_peak, actual_peak)
+    )
+
+    assert winner is actual_peak
+
+
+def test_stored_energy_export_windows_all_retain_absolute_price_peak() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=1.0)
+    source = snapshot.price_points[0]
+    peak_start = snapshot.captured_at + timedelta(hours=6)
+    points = (
+        replace(
+            source,
+            point_id="before-high",
+            ends_at=peak_start - timedelta(minutes=15),
+            value_eur_per_kwh=0.10,
+        ),
+        replace(
+            source,
+            point_id="high-left",
+            starts_at=peak_start - timedelta(minutes=15),
+            ends_at=peak_start,
+            value_eur_per_kwh=0.37,
+        ),
+        replace(
+            source,
+            point_id="absolute-peak",
+            starts_at=peak_start,
+            ends_at=peak_start + timedelta(minutes=15),
+            value_eur_per_kwh=0.388,
+        ),
+        replace(
+            source,
+            point_id="high-right",
+            starts_at=peak_start + timedelta(minutes=15),
+            ends_at=peak_start + timedelta(minutes=30),
+            value_eur_per_kwh=0.375,
+        ),
+        replace(
+            source,
+            point_id="after-high",
+            starts_at=peak_start + timedelta(minutes=30),
+            ends_at=snapshot.captured_at + timedelta(hours=24),
+            value_eur_per_kwh=0.10,
+        ),
+    )
+    measured_wh = snapshot.current_storage_states[0].current_stored_energy_wh
+    inventory = StorageEnergyInventory(
+        execution_scope_id="battery",
+        captured_at=snapshot.captured_at,
+        measured_stored_energy_wh=measured_wh,
+        lots=(
+            StorageEnergyLot(
+                source="pv",
+                stored_energy_wh=measured_wh,
+                acquisition_cost_eur=0.10,
+                acquired_at=snapshot.captured_at - timedelta(hours=1),
+                evidence_ids=("measured-pv-charge",),
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=replace(snapshot, price_points=points),
+        conversion_model=_conversion(),
+        storage_inventory=inventory,
+    )
+
+    routes = tuple(
+        route
+        for route in result.market_routes
+        if route.route_kind == "stored_energy_export"
+    )
+    assert routes
+    assert all(
+        route.export_window_starts_at <= peak_start
+        < route.export_window_ends_at
+        for route in routes
+        if route.export_window_starts_at is not None
+        and route.export_window_ends_at is not None
+    )
+    assessments = tuple(
+        assessment
+        for assessment in result.route_assessments
+        if assessment.route_id in {route.route_id for route in routes}
+    )
+    assert any(item.admitted for item in assessments)
+
+
 def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
     source = snapshot.price_points[0]

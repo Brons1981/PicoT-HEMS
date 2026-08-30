@@ -2,6 +2,9 @@
 
 Status: Accepted
 
+Partially superseded by V2ADR-058 for deferred-execution feedback, complete
+commitment lifetime and acquisition-free stored-energy export.
+
 ## Context
 
 MEP can schedule an explicit grid-supported acquisition window while NOM later

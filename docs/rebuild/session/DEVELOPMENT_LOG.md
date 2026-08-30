@@ -1816,3 +1816,15 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   across legend, chips, price-bar outlines, plan markers and projected SoC.
 - Kept all MEP planning and execution behavior unchanged.
 - Bumped add-on and Core version to `2.0.0-dev.201`.
+## 2026-08-30 — 2.0.0-dev.202 adaptive market feedback and peak export
+
+- Added V2ADR-058 for explicit measured-progress execution feedback, complete
+  market-commitment lifetime and acquisition-free stored-energy export.
+- Preserved future export segments when NOM/PV makes explicit grid charging
+  unnecessary or the acquisition target is reached.
+- Added peak-anchored contiguous export candidates and made marginal export
+  return decisive inside the complete-route EUR 0.01 cohort.
+- Reclassified measured-PV charge admission as `execution_deferred`; genuine
+  authority, provenance, calibration and capability blockers remain
+  `dry_run_blocked`.
+- Bumped add-on and Core version to `2.0.0-dev.202`.

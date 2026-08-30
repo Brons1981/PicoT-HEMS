@@ -830,6 +830,20 @@ def test_price_bars_use_existing_energy_palette_for_mep_actions() -> None:
     assert '["canonical-trade", "MEP handel / terugleveren"]' in DASHBOARD_HTML
     assert 'charge_at_power: "canonical-charge"' in DASHBOARD_HTML
     assert 'discharge_at_power: "canonical-trade"' in DASHBOARD_HTML
+    assert ".price-swatch.canonical-support { background: #3994e6; }" in (
+        DASHBOARD_HTML
+    )
+    assert ".price-chart .soc-line.canonical-support" in DASHBOARD_HTML
+    assert "stroke: #3994e6;" in DASHBOARD_HTML
+
+
+def test_price_chart_has_room_for_soc_and_one_plan_lane() -> None:
+    assert "min-width: 1000px;" in DASHBOARD_HTML
+    assert "const width = 1280;" in DASHBOARD_HTML
+    assert "const height = 430;" in DASHBOARD_HTML
+    assert "bottom: 76" in DASHBOARD_HTML
+    assert "y: height - margin.bottom + 14" in DASHBOARD_HTML
+    assert "(plotHeight - 20)" in DASHBOARD_HTML
 
 
 def test_dashboard_preserves_interaction_state_during_refresh() -> None:

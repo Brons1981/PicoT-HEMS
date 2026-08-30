@@ -1806,3 +1806,13 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Expanded the price chart to all MEP primitives and added a plan-coloured
   projected SoC overlay anchored at the current measured SoC.
 - Bumped add-on and Core version to `2.0.0-dev.200`.
+## 2026-08-30 — 2.0.0-dev.201 roomier price and SoC chart
+
+- Increased the price/SoC chart canvas and margins so the 100% SoC line,
+  right-hand SoC axis, time labels and plan lane have their own visual space.
+- Put sequential plan-window markers on one dedicated lane instead of stacking
+  them into the plot and time labels.
+- Reused PicoT's household-load blue (`#3994e6`) for smart household discharge
+  across legend, chips, price-bar outlines, plan markers and projected SoC.
+- Kept all MEP planning and execution behavior unchanged.
+- Bumped add-on and Core version to `2.0.0-dev.201`.

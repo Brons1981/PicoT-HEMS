@@ -816,16 +816,20 @@ def test_dashboard_exposes_canonical_mep_execution_plan() -> None:
 def test_price_bars_use_existing_energy_palette_for_mep_actions() -> None:
     assert ".price-bar.canonical-charge" in DASHBOARD_HTML
     assert ".price-bar.canonical-trade" in DASHBOARD_HTML
-    assert ".price-swatch.canonical-charge { background: #35a862; }" in (
+    assert ".price-swatch.canonical-nom { background: #35a862; }" in (
+        DASHBOARD_HTML
+    )
+    assert ".price-swatch.canonical-charge { background: #df5c57; }" in (
         DASHBOARD_HTML
     )
     assert ".price-swatch.canonical-trade { background: #aab2bd; }" in (
         DASHBOARD_HTML
     )
-    assert '["canonical-charge", "MEP batterij laden"]' in DASHBOARD_HTML
+    assert '["canonical-nom", "NOM / PV laden"]' in DASHBOARD_HTML
+    assert '["canonical-charge", "Net import / snel laden"]' in DASHBOARD_HTML
     assert '["canonical-trade", "MEP handel / terugleveren"]' in DASHBOARD_HTML
-    assert '? "canonical-charge"' in DASHBOARD_HTML
-    assert ': "canonical-trade"' in DASHBOARD_HTML
+    assert 'charge_at_power: "canonical-charge"' in DASHBOARD_HTML
+    assert 'discharge_at_power: "canonical-trade"' in DASHBOARD_HTML
 
 
 def test_dashboard_preserves_interaction_state_during_refresh() -> None:

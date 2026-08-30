@@ -10,7 +10,10 @@ from picot.v2.contracts import (
     PVEnergyTimelineInterval,
 )
 from picot.v2.live_runtime import _planning_input_signature, _should_run_cycle
-from picot.v2.plan_commitment_store import ActivePlanCommitment
+from picot.v2.plan_commitment_store import (
+    ActivePlanCommitment,
+    CommittedPlanSegment,
+)
 from picot.v2.planning_input import CanonicalInputFact, PlanningInputBundle
 
 BASE = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
@@ -253,6 +256,69 @@ def test_scheduled_commitment_start_is_a_material_execution_boundary() -> None:
     )
 
     assert _planning_input_signature(first) != _planning_input_signature(at_start)
+
+
+def test_active_commitment_segment_change_is_a_material_execution_boundary() -> None:
+    boundary = BASE + timedelta(minutes=30)
+    before = _with_active_commitment(
+        _bundle(captured_at=boundary - timedelta(seconds=1)),
+        current_energy_wh=500.0,
+    )
+    after = _with_active_commitment(
+        _bundle(captured_at=boundary),
+        current_energy_wh=500.0,
+    )
+    segments = (
+        CommittedPlanSegment(
+            starts_at=BASE,
+            ends_at=boundary,
+            primitive="discharge_at_power",
+            source_policy=None,
+        ),
+        CommittedPlanSegment(
+            starts_at=boundary,
+            ends_at=BASE + timedelta(hours=1),
+            primitive="balance_discharge_only",
+            source_policy=None,
+        ),
+    )
+    before_commitment = replace(
+        before.snapshot.active_plan_commitments[0],
+        primitive="discharge_at_power",
+        segments=segments,
+    )
+    after_commitment = replace(
+        after.snapshot.active_plan_commitments[0],
+        primitive="discharge_at_power",
+        segments=segments,
+    )
+    before = replace(
+        before,
+        snapshot=replace(
+            before.snapshot,
+            active_plan_commitments=(before_commitment,),
+        ),
+    )
+    after = replace(
+        after,
+        snapshot=replace(
+            after.snapshot,
+            active_plan_commitments=(after_commitment,),
+        ),
+    )
+    later = replace(
+        after,
+        snapshot=replace(
+            after.snapshot,
+            run_id="run-after-boundary",
+            snapshot_id="snapshot-after-boundary",
+            captured_at=boundary + timedelta(minutes=1),
+        ),
+    )
+
+    assert _planning_input_signature(before) != _planning_input_signature(after)
+    assert _should_run_cycle(_planning_input_signature(before), after)
+    assert _planning_input_signature(after) == _planning_input_signature(later)
 
 
 def test_incident_replay_soc_progress_and_power_variation_keep_one_plan() -> None:

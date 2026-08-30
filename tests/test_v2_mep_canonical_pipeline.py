@@ -9,11 +9,18 @@ from picot.v2.contracts import StorageRoundTripEfficiencyEvidence
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
 from picot.v2.mep_canonical_pipeline import (
+    _commitment_target_reached,
+    _complete_acquisition_revision,
+    _defer_charge_revision,
     _measured_pv_basis_covers_remaining_acquisition,
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline
-from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
+from picot.v2.plan_commitment_store import (
+    ActivePlanCommitment,
+    ActivePlanCommitmentStore,
+    CommittedPlanSegment,
+)
 from picot.v2.projection import project
 from picot.v2.web_ui import DASHBOARD_HTML, build_web_view
 
@@ -283,6 +290,7 @@ def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
     scope_id = snapshot.current_storage_states[0].execution_scope_id
     commitment = store.load(scope_id)
     assert commitment is not None
+    assert commitment.ends_at == commitment.segments[-1].ends_at
 
     continued = pipeline.run(
         planning_input=replace(
@@ -319,6 +327,110 @@ def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
     assert chosen_plan["target_held_across_scenarios"] == (
         commitment.target_held_across_scenarios
     )
+
+
+def test_charge_target_does_not_clear_later_export_commitment() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=1.0)
+    starts_at = snapshot.captured_at
+    export_start = starts_at + timedelta(hours=4)
+    commitment = ActivePlanCommitment(
+        execution_scope_id="battery",
+        plan_id="market-plan",
+        plan_revision=1,
+        primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+        source_policy="pv_preferred_grid_allowed",
+        starts_at=starts_at,
+        ends_at=export_start + timedelta(minutes=30),
+        target_energy_wh=8160.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(minutes=30),
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+                source_policy="pv_preferred_grid_allowed",
+            ),
+            CommittedPlanSegment(
+                starts_at=export_start,
+                ends_at=export_start + timedelta(minutes=30),
+                primitive=ExecutionPrimitive.DISCHARGE_AT_POWER.value,
+                source_policy=None,
+            ),
+        ),
+    )
+
+    assert not _commitment_target_reached(snapshot, commitment)
+
+    completed = _complete_acquisition_revision(
+        snapshot=snapshot,
+        commitment=commitment,
+    )
+
+    assert completed is not None
+    assert completed.plan_revision == 2
+    assert all(
+        segment.primitive != ExecutionPrimitive.CHARGE_AT_POWER.value
+        for segment in completed.segments
+    )
+    assert any(
+        segment.primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value
+        for segment in completed.segments
+    )
+
+
+def test_measured_progress_revision_moves_charge_to_last_safe_slot() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.87)
+    starts_at = snapshot.captured_at
+    nom_end = starts_at + timedelta(hours=5)
+    export_start = nom_end + timedelta(hours=1)
+    commitment = ActivePlanCommitment(
+        execution_scope_id="battery",
+        plan_id="market-plan",
+        plan_revision=1,
+        primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+        source_policy="pv_preferred_grid_allowed",
+        starts_at=starts_at,
+        ends_at=export_start + timedelta(minutes=30),
+        target_energy_wh=8160.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(minutes=30),
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+                source_policy="pv_preferred_grid_allowed",
+            ),
+            CommittedPlanSegment(
+                starts_at=starts_at + timedelta(minutes=30),
+                ends_at=nom_end,
+                primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+                source_policy="pv_only",
+            ),
+            CommittedPlanSegment(
+                starts_at=export_start,
+                ends_at=export_start + timedelta(minutes=30),
+                primitive=ExecutionPrimitive.DISCHARGE_AT_POWER.value,
+                source_policy=None,
+            ),
+        ),
+    )
+
+    revised = _defer_charge_revision(
+        snapshot=snapshot,
+        commitment=commitment,
+    )
+
+    assert revised is not None
+    assert revised.plan_revision == 2
+    shifted_charge = next(
+        segment
+        for segment in revised.segments
+        if segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
+    )
+    assert shifted_charge.ends_at == nom_end - timedelta(minutes=15)
+    assert shifted_charge.starts_at == shifted_charge.ends_at - timedelta(minutes=30)
+    assert revised.segments[0].primitive == (
+        ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value
+    )
+    assert revised.segments[-1].primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value
 
 
 def test_market_planner_generates_and_evaluation_selects() -> None:

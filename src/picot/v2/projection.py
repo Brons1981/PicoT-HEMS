@@ -725,10 +725,15 @@ def project(run: CanonicalPipelineRun) -> Projection:
                         "niets naar Zendure."
                         if pb.status == "not_emitted"
                         else (
+                            "Netladen is uitgesteld: gemeten PV- en SoC-"
+                            "voortgang dekt de resterende laadbehoefte."
+                            if pb.status == "execution_deferred"
+                            else (
                             "De uitvoerbare opdracht is geblokkeerd; PicoT "
                             "stuurt niets naar Zendure."
                             if pb.status == "dry_run_blocked"
                             else None
+                            )
                         )
                         )
                     )

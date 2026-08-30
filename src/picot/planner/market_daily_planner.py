@@ -41,7 +41,7 @@ from picot.v2.opportunity_engine import (
     PriceOpportunityConfig,
 )
 
-METHOD_VERSION = "market-daily-planner:v3"
+METHOD_VERSION = "market-daily-planner:v4"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
@@ -127,6 +127,7 @@ class MarketCapacityRoute:
             "grid_trade",
             "pv_trade",
             "pv_trade_grid_recovery",
+            "stored_energy_export",
         }:
             raise ValueError("MEP market-route kind must be explicit.")
         if (self.export_window_starts_at is None) != (self.export_window_ends_at is None):
@@ -202,6 +203,50 @@ def _minimal_charge_subwindows(
         if candidate[-1].ends_at <= opportunity_end - safety_duration
     )
     return with_safety_margin or tuple(candidates)
+
+
+def _peak_anchored_export_windows(
+    intervals: tuple[DailyReferenceTariffInterval, ...],
+) -> tuple[tuple[DailyReferenceTariffInterval, ...], ...]:
+    """Grow contiguous export windows from the highest priced interval.
+
+    Every returned window contains the absolute price peak.  Additional
+    capacity is added from the more valuable adjacent interval so a vendor
+    window remains contiguous without allowing a sub-cent total-result tie to
+    move the export away from the actual peak.
+    """
+
+    if not intervals:
+        return ()
+    peak_index = max(
+        range(len(intervals)),
+        key=lambda index: (
+            intervals[index].export_eur_per_kwh,
+            -index,
+        ),
+    )
+    left = peak_index
+    right = peak_index
+    windows: list[tuple[DailyReferenceTariffInterval, ...]] = [
+        (intervals[peak_index],)
+    ]
+    while left > 0 or right + 1 < len(intervals):
+        left_rate = (
+            intervals[left - 1].export_eur_per_kwh
+            if left > 0
+            else float("-inf")
+        )
+        right_rate = (
+            intervals[right + 1].export_eur_per_kwh
+            if right + 1 < len(intervals)
+            else float("-inf")
+        )
+        if right_rate > left_rate:
+            right += 1
+        else:
+            left -= 1
+        windows.append(intervals[left : right + 1])
+    return tuple(windows)
 
 
 @dataclass(frozen=True, slots=True)
@@ -769,6 +814,122 @@ class MarketDailyPlanner:
                     method_version=METHOD_VERSION,
                 )
             )
+
+        # Energy already present above the protected reserve may be exported
+        # without inventing a linked acquisition or forcing restoration to the
+        # baseline horizon-end target.  Candidate sizes grow from the absolute
+        # export-price peak so every possible vendor window retains that peak.
+        free_stored_output_wh = max(
+            0.0,
+            (current_energy_wh - minimum_energy_wh)
+            * conversion_model.discharge_efficiency,
+        )
+        fallback_acquisition_rate = min(
+            (
+                item.import_eur_per_kwh
+                for window in low_windows
+                for item in window.intervals
+            ),
+            default=0.0,
+        )
+        for export_opportunity in high_windows:
+            for export_window in _peak_anchored_export_windows(
+                export_opportunity.intervals
+            ):
+                export_start = export_window[0].starts_at
+                export_end = export_window[-1].ends_at
+                export_capacity_wh = sum(
+                    limits.maximum_discharge_output_power_w
+                    * _duration_hours(interval)
+                    for interval in export_window
+                )
+                export_output_wh = min(
+                    free_stored_output_wh,
+                    export_capacity_wh,
+                )
+                inventory_allocation = None
+                if storage_inventory is not None:
+                    if (
+                        storage_inventory.execution_scope_id
+                        != storage.execution_scope_id
+                        or storage_inventory.captured_at > snapshot.captured_at
+                    ):
+                        continue
+                    inventory_allocation = storage_inventory.cheapest_known_allocation(
+                        maximum_deliverable_energy_wh=export_output_wh,
+                        discharge_efficiency=conversion_model.discharge_efficiency,
+                    )
+                    export_output_wh = inventory_allocation.deliverable_energy_wh
+                if export_output_wh <= 0.0:
+                    continue
+                export_rate = sum(
+                    item.export_eur_per_kwh
+                    * (item.ends_at - item.starts_at).total_seconds()
+                    for item in export_window
+                ) / ((export_end - export_start).total_seconds())
+                if inventory_allocation is not None:
+                    acquisition_rate = (
+                        inventory_allocation.acquisition_cost_eur
+                        / (inventory_allocation.deliverable_energy_wh / 1000.0)
+                    )
+                    minimum_export_rate = (
+                        acquisition_rate * (1.0 + trading_policy.margin_fraction)
+                        + trading_policy.wear_eur_per_export_kwh
+                    )
+                else:
+                    minimum_export_rate = trading_policy.minimum_export_rate(
+                        fallback_acquisition_rate,
+                        conversion_model.charge_efficiency
+                        * conversion_model.discharge_efficiency,
+                    )
+                if export_rate < minimum_export_rate:
+                    continue
+                result.append(
+                    MarketCapacityRoute(
+                        route_id=(
+                            f"mep-stored-energy-export:{snapshot.snapshot_id}:"
+                            f"{export_start.isoformat()}:{export_end.isoformat()}"
+                        ),
+                        snapshot_id=snapshot.snapshot_id,
+                        opportunity_ids=(export_opportunity.opportunity_id,),
+                        window_starts_at=export_start,
+                        window_ends_at=export_end,
+                        maximum_charge_input_wh=0.0,
+                        reserved_storage_room_wh=0.0,
+                        storage_energy_ceiling_before_window_wh=maximum_energy_wh,
+                        required_pre_window_discharge_output_wh=export_output_wh,
+                        opportunity_window_starts_at=(
+                            export_opportunity.intervals[0].starts_at
+                        ),
+                        opportunity_window_ends_at=(
+                            export_opportunity.intervals[-1].ends_at
+                        ),
+                        charge_safety_margin_seconds=0.0,
+                        export_window_starts_at=export_start,
+                        export_window_ends_at=export_end,
+                        route_kind="stored_energy_export",
+                        reason="profitable_export_from_protected_stored_energy",
+                        average_export_eur_per_kwh=export_rate,
+                        average_recharge_eur_per_kwh=None,
+                        minimum_export_eur_per_kwh=minimum_export_rate,
+                        inventory_deliverable_energy_wh=(
+                            inventory_allocation.deliverable_energy_wh
+                            if inventory_allocation is not None
+                            else None
+                        ),
+                        inventory_acquisition_cost_eur=(
+                            inventory_allocation.acquisition_cost_eur
+                            if inventory_allocation is not None
+                            else None
+                        ),
+                        inventory_sources=(
+                            inventory_allocation.sources
+                            if inventory_allocation is not None
+                            else ()
+                        ),
+                        method_version=METHOD_VERSION,
+                    )
+                )
         # PV trade candidates do not invent an acquisition price.  They retain
         # MEP's own PV/NOM schedule and only test whether demonstrably surplus
         # stored energy can be exported in a high-value interval while the
@@ -1114,7 +1275,13 @@ class MarketDailyPlanner:
                 and interval.starts_at < route.export_window_ends_at
                 and interval.ends_at > route.export_window_starts_at
             )
-            if route.route_kind in {"grid_trade", "pv_trade", "pv_trade_grid_recovery"}
+            if route.route_kind
+            in {
+                "grid_trade",
+                "pv_trade",
+                "pv_trade_grid_recovery",
+                "stored_energy_export",
+            }
             else tuple(
                 interval
                 for interval in reversed(baseline.intervals)
@@ -1143,7 +1310,12 @@ class MarketDailyPlanner:
             )
             inside_pv_preference_window = (
                 route.route_kind
-                in {"grid_trade", "pv_trade", "pv_trade_grid_recovery"}
+                in {
+                    "grid_trade",
+                    "pv_trade",
+                    "pv_trade_grid_recovery",
+                    "stored_energy_export",
+                }
                 and item.starts_at < route.opportunity_window_ends_at
                 and item.ends_at > route.opportunity_window_starts_at
             )
@@ -1280,8 +1452,11 @@ class MarketDailyPlanner:
         physically_admissible = all(
             item.physically_complete
             and item.reserve_respected
-            and item.storage_energy_at_horizon_end_wh + 1e-6
-            >= baseline_assessment[scenario].storage_energy_at_horizon_end_wh
+            and (
+                route.route_kind == "stored_energy_export"
+                or item.storage_energy_at_horizon_end_wh + 1e-6
+                >= baseline_assessment[scenario].storage_energy_at_horizon_end_wh
+            )
             for scenario, item in market_assessment.items()
         )
         worst_result = min(incremental_results)

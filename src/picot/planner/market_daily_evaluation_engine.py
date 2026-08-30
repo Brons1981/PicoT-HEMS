@@ -92,13 +92,16 @@ class MarketDailyEvaluationEngine:
         return min(
             financially_equivalent,
             key=lambda item: (
+                # The complete-route cent tolerance decides whether routes are
+                # economically equivalent; it must never move an admitted
+                # export away from the highest marginal net-return interval.
+                -item.minimum_incremental_result_eur_per_exported_kwh,
                 -cls._mep_basis_evidence(
                     item
                 ).explicit_charge_pv_to_storage_input_wh,
                 cls._mep_basis_evidence(
                     item
                 ).explicit_charge_grid_to_storage_input_wh,
-                -item.minimum_incremental_result_eur_per_exported_kwh,
                 item.market_schedule_id,
             ),
         )

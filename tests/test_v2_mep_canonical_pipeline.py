@@ -1,11 +1,16 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.contracts import StorageRoundTripEfficiencyEvidence
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
+from picot.v2.mep_canonical_pipeline import (
+    _measured_pv_basis_covers_remaining_acquisition,
+)
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline
 from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
@@ -21,6 +26,78 @@ def _pipeline(tmp_path, *, switching_margin_eur: float = 0.05):
         plan_switching_margin_eur=switching_margin_eur,
     )
     return pipeline, store
+
+
+def _pv_admission_fixture(*, promoted_to_central: bool) -> tuple[object, object, object]:
+    starts_at = datetime.fromisoformat("2026-08-30T10:00:00+00:00")
+    ends_at = starts_at + timedelta(hours=1)
+    due_segment = SimpleNamespace(
+        segment_id="charge",
+        order=1,
+        execution_scope_id="battery",
+        starts_at=starts_at,
+        ends_at=ends_at,
+        primitive=ExecutionPrimitive.CHARGE_AT_POWER,
+    )
+    central_wh = 2000.0
+    lower_wh = central_wh if promoted_to_central else 400.0
+    snapshot = SimpleNamespace(
+        captured_at=starts_at,
+        storage_mode_capability_evidence=SimpleNamespace(
+            current_vendor_mode="Nul op de meter"
+        ),
+        current_storage_states=(SimpleNamespace(
+            execution_scope_id="battery",
+            capability_id="storage",
+            current_stored_energy_wh=7000.0,
+            usable_capacity_wh=8160.0,
+        ),),
+        storage_physical_limits=(SimpleNamespace(
+            execution_scope_id="battery",
+            capability_id="storage",
+            maximum_soc=1.0,
+        ),),
+        pv_energy_timeline=SimpleNamespace(intervals=(SimpleNamespace(
+            starts_at=starts_at,
+            ends_at=ends_at,
+            forecast_lower_energy_wh=lower_wh,
+            forecast_central_energy_wh=central_wh,
+        ),)),
+        household_load_forecast=SimpleNamespace(intervals=(SimpleNamespace(
+            starts_at=starts_at,
+            ends_at=ends_at,
+            expected_energy_wh=300.0,
+        ),)),
+        storage_round_trip_efficiency=SimpleNamespace(
+            status="available",
+            round_trip_efficiency=0.83,
+        ),
+    )
+    return snapshot, SimpleNamespace(segments=(due_segment,)), due_segment
+
+
+def test_measured_pv_promotion_keeps_nom_when_target_is_covered() -> None:
+    snapshot, path, due_segment = _pv_admission_fixture(
+        promoted_to_central=True
+    )
+
+    assert _measured_pv_basis_covers_remaining_acquisition(
+        snapshot=snapshot,
+        path=path,
+        due_segment=due_segment,
+    )
+
+
+def test_lagging_actual_pv_does_not_block_planned_grid_charge() -> None:
+    snapshot, path, due_segment = _pv_admission_fixture(
+        promoted_to_central=False
+    )
+
+    assert not _measured_pv_basis_covers_remaining_acquisition(
+        snapshot=snapshot,
+        path=path,
+        due_segment=due_segment,
+    )
 
 
 def test_mep_winner_flows_through_canonical_path_and_plan_store(tmp_path) -> None:
@@ -108,6 +185,13 @@ def test_dashboard_presents_mep_execution_plan_without_legacy_outcomes(
     assert "renderBatteryEnergyPlan(" in DASHBOARD_HTML
     assert "view.planning_status?.execution_plans" in DASHBOARD_HTML
     assert "selectedExecutionPlanWindows(view)" in DASHBOARD_HTML
+    assert "primitivePlanKind" in DASHBOARD_HTML
+    assert view["planning_status"]["soc_timeline"][0] == {
+        "at": snapshot.captured_at.isoformat(),
+        "soc_percent": 51.0,
+        "primitive": "actual",
+    }
+    assert len(view["planning_status"]["soc_timeline"]) > 1
 
 
 def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(

@@ -5,6 +5,7 @@ from importlib import import_module
 from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_storage_mode_provenance_integration import BASE, _run
 
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.canonical_execution_runtime import (
     CanonicalDispatchOutcome,
     CanonicalExecutionRuntime,
@@ -273,6 +274,98 @@ def test_canonical_runtime_dispatches_the_exact_approved_mode() -> None:
     assert result.adapter_boundary.status == "translated"
     assert result.vendor_result.status == "dispatched"
     assert result.vendor_result.command_id == "ha-command-test"
+
+
+def test_canonical_runtime_prefers_fast_charge_over_manual_power_mode() -> None:
+    calls: list[tuple[object, object]] = []
+    runtime = CanonicalExecutionRuntime(
+        dispatch=lambda request, mapping: (
+            calls.append((request, mapping))
+            or CanonicalDispatchOutcome(
+                status="dispatched",
+                command_id="ha-command-fast-charge",
+            )
+        )
+    )
+    live = _live_run()
+    plan = live.execution_plan_set.plans[0]
+    segment = plan.segments[0]
+    charge_segment = replace(
+        segment,
+        primitive=ExecutionPrimitive.CHARGE_AT_POWER,
+        requested_power_w=2400.0,
+    )
+    charge_plan = replace(
+        plan,
+        planned_primitive=ExecutionPrimitive.CHARGE_AT_POWER,
+        segments=(charge_segment, *plan.segments[1:]),
+    )
+    charge_run = replace(
+        live,
+        execution_plan_set=replace(
+            live.execution_plan_set,
+            plans=(charge_plan,),
+        ),
+        primitive_boundary=replace(
+            live.primitive_boundary,
+            planned_primitive=ExecutionPrimitive.CHARGE_AT_POWER,
+            current_vendor_mode="Nul op de meter",
+        ),
+    )
+
+    result = runtime.apply(charge_run)
+
+    assert len(calls) == 1
+    request, mapping = calls[0]
+    assert request.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+    assert mapping.fixed_value == "Snel opladen"
+    assert result.vendor_result.planned_vendor_mode == "Snel opladen"
+
+
+def test_canonical_runtime_prefers_fast_discharge_over_manual_power_mode() -> None:
+    calls: list[tuple[object, object]] = []
+    runtime = CanonicalExecutionRuntime(
+        dispatch=lambda request, mapping: (
+            calls.append((request, mapping))
+            or CanonicalDispatchOutcome(
+                status="dispatched",
+                command_id="ha-command-fast-discharge",
+            )
+        )
+    )
+    live = _live_run()
+    plan = live.execution_plan_set.plans[0]
+    segment = plan.segments[0]
+    discharge_segment = replace(
+        segment,
+        primitive=ExecutionPrimitive.DISCHARGE_AT_POWER,
+        requested_power_w=2400.0,
+    )
+    discharge_plan = replace(
+        plan,
+        planned_primitive=ExecutionPrimitive.DISCHARGE_AT_POWER,
+        segments=(discharge_segment, *plan.segments[1:]),
+    )
+    discharge_run = replace(
+        live,
+        execution_plan_set=replace(
+            live.execution_plan_set,
+            plans=(discharge_plan,),
+        ),
+        primitive_boundary=replace(
+            live.primitive_boundary,
+            planned_primitive=ExecutionPrimitive.DISCHARGE_AT_POWER,
+            current_vendor_mode="Alleen slim ontladen",
+        ),
+    )
+
+    result = runtime.apply(discharge_run)
+
+    assert len(calls) == 1
+    request, mapping = calls[0]
+    assert request.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+    assert mapping.fixed_value == "Snel ontladen"
+    assert result.vendor_result.planned_vendor_mode == "Snel ontladen"
 
 
 def test_plan_builder_converts_complete_mixed_storage_path_exactly_once() -> None:

@@ -772,7 +772,8 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.low { background: #35a862; }
     .price-swatch.high { background: #df6b57; }
     .price-swatch.missing { background: #2b3541; }
-    .price-swatch.canonical-charge { background: #35a862; }
+    .price-swatch.canonical-nom { background: #35a862; }
+    .price-swatch.canonical-charge { background: #df5c57; }
     .price-swatch.canonical-trade { background: #aab2bd; }
     .planner-window-summary {
       display: flex;
@@ -787,9 +788,13 @@ DASHBOARD_HTML = """<!doctype html>
       font-size: 12px;
       font-weight: 700;
     }
-    .planner-window-chip.canonical-charge {
+    .planner-window-chip.canonical-nom {
       border-color: #35a862;
       color: #6fd68f;
+    }
+    .planner-window-chip.canonical-charge {
+      border-color: #df5c57;
+      color: #ff9b95;
     }
     .planner-window-chip.canonical-trade {
       border-color: #aab2bd;
@@ -819,14 +824,27 @@ DASHBOARD_HTML = """<!doctype html>
       fill: #477fa8;
       opacity: 0.85;
     }
-    .price-chart .price-bar.canonical-charge { fill: #35a862; }
-    .price-chart .price-bar.canonical-trade { fill: #aab2bd; }
+    .price-chart .price-bar.canonical-nom { stroke: #35a862; stroke-width: 3; }
+    .price-chart .price-bar.canonical-charge { stroke: #df5c57; stroke-width: 3; }
+    .price-chart .price-bar.canonical-trade { stroke: #aab2bd; stroke-width: 3; }
+    .price-chart .price-bar.canonical-support { stroke: #28784b; stroke-width: 3; }
     .price-chart .price-bar.past { opacity: 0.30; }
     .price-chart .planner-window {
       pointer-events: none;
     }
-    .price-chart .planner-window.canonical-charge { fill: #35a862; }
+    .price-chart .planner-window.canonical-nom { fill: #35a862; }
+    .price-chart .planner-window.canonical-charge { fill: #df5c57; }
     .price-chart .planner-window.canonical-trade { fill: #aab2bd; }
+    .price-chart .planner-window.canonical-support { fill: #28784b; }
+    .price-chart .soc-line { fill: none; stroke-width: 3; }
+    .price-chart .soc-line.canonical-nom { stroke: #35a862; }
+    .price-chart .soc-line.canonical-charge { stroke: #df5c57; }
+    .price-chart .soc-line.canonical-trade { stroke: #aab2bd; }
+    .price-chart .soc-line.canonical-support {
+      stroke: #28784b;
+      stroke-dasharray: 7 4;
+    }
+    .price-chart .soc-point { fill: #eef4fb; stroke: #17202a; stroke-width: 2; }
     .price-chart .now-line {
       stroke: #eef4fb;
       stroke-width: 1.5;
@@ -1189,7 +1207,12 @@ DASHBOARD_HTML = """<!doctype html>
       });
     }
 
-    function renderPriceTimeline(timeline, capturedAt, plannerWindows = []) {
+    function renderPriceTimeline(
+      timeline,
+      capturedAt,
+      plannerWindows = [],
+      socTimeline = []
+    ) {
       const container = element("price-timeline");
       container.replaceChildren();
 
@@ -1227,7 +1250,8 @@ DASHBOARD_HTML = """<!doctype html>
       for (const [kind, label] of [
         ["normal", "Overige prijzen"],
         ["missing", "Nog niet gepubliceerd"],
-        ["canonical-charge", "MEP batterij laden"],
+        ["canonical-nom", "NOM / PV laden"],
+        ["canonical-charge", "Net import / snel laden"],
         ["canonical-trade", "MEP handel / terugleveren"]
       ]) {
         const item = document.createElement("span");
@@ -1259,7 +1283,7 @@ DASHBOARD_HTML = """<!doctype html>
       const height = 350;
       const margin = {
         top: 24,
-        right: 20,
+        right: 58,
         bottom: 52,
         left: 76
       };
@@ -1282,6 +1306,8 @@ DASHBOARD_HTML = """<!doctype html>
         margin.top +
         ((maximum - value) / (maximum - minimum)) *
           plotHeight;
+      const socYPosition = (value) =>
+        margin.top + ((100 - value) / 100) * plotHeight;
 
       const scroll = document.createElement("div");
       scroll.className = "price-chart-scroll";
@@ -1326,6 +1352,16 @@ DASHBOARD_HTML = """<!doctype html>
             x: margin.left - 8,
             y: y + 4,
             "text-anchor": "end"
+          },
+          "axis-label"
+        );
+        appendSvgText(
+          svg,
+          `${100 - index * 25}%`,
+          {
+            x: width - margin.right + 8,
+            y: margin.top + (plotHeight * index) / 4 + 4,
+            "text-anchor": "start"
           },
           "axis-label"
         );
@@ -1443,6 +1479,33 @@ DASHBOARD_HTML = """<!doctype html>
           width: Math.max(2, xPosition(windowEnd) - xPosition(windowStart)),
           height: 6,
           rx: 2
+        }));
+      }
+
+      const visibleSoc = socTimeline.filter((point) => {
+        const timestamp = new Date(point.at).getTime();
+        const soc = Number(point.soc_percent);
+        return Number.isFinite(timestamp) && Number.isFinite(soc) &&
+          timestamp >= startsAtMs && timestamp <= endsAtMs;
+      });
+      for (let index = 1; index < visibleSoc.length; index += 1) {
+        const previous = visibleSoc[index - 1];
+        const current = visibleSoc[index];
+        svg.appendChild(createSvgElement("line", {
+          class: `soc-line ${primitivePlanKind(current.primitive)}`,
+          x1: xPosition(new Date(previous.at).getTime()),
+          y1: socYPosition(Number(previous.soc_percent)),
+          x2: xPosition(new Date(current.at).getTime()),
+          y2: socYPosition(Number(current.soc_percent))
+        }));
+      }
+      if (visibleSoc.length) {
+        const actual = visibleSoc[0];
+        svg.appendChild(createSvgElement("circle", {
+          class: "soc-point",
+          cx: xPosition(new Date(actual.at).getTime()),
+          cy: socYPosition(Number(actual.soc_percent)),
+          r: 5
         }));
       }
 
@@ -3327,23 +3390,34 @@ DASHBOARD_HTML = """<!doctype html>
       ].join(" ")).join(" | ");
     }
 
+    function primitivePlanKind(primitive) {
+      return {
+        balance_bidirectional: "canonical-nom",
+        charge_at_power: "canonical-charge",
+        discharge_at_power: "canonical-trade",
+        balance_discharge_only: "canonical-support",
+        standby: "normal",
+        actual: "normal",
+      }[primitive] ?? "normal";
+    }
+
     function selectedExecutionPlanWindows(view) {
       const windows = [];
       const plans = view.planning_status?.execution_plans ?? [];
       for (const plan of plans) {
         for (const segment of plan.segments ?? []) {
-          if (!["charge_at_power", "discharge_at_power"].includes(
-            segment.primitive
-          )) continue;
+          const labels = {
+            balance_bidirectional: "NOM / PV laden",
+            charge_at_power: "Net import / snel laden",
+            discharge_at_power: "Handel / terugleveren",
+            balance_discharge_only: "Slim huishoudelijk ontladen",
+            standby: "Stand-by",
+          };
           windows.push({
             starts_at: segment.starts_at,
             ends_at: segment.ends_at,
-            kind: segment.primitive === "charge_at_power"
-              ? "canonical-charge"
-              : "canonical-trade",
-            label: segment.primitive === "charge_at_power"
-              ? "MEP batterij laden"
-              : "MEP handel / terugleveren",
+            kind: primitivePlanKind(segment.primitive),
+            label: labels[segment.primitive] ?? displayValue(segment.primitive),
           });
         }
       }
@@ -3892,7 +3966,8 @@ DASHBOARD_HTML = """<!doctype html>
           opportunities: []
         },
         view.captured_at,
-        selectedExecutionPlanWindows(view)
+        selectedExecutionPlanWindows(view),
+        view.planning_status?.soc_timeline ?? []
       );
       renderPipeline(pipeline);
       renderPipelineHealth(view.pipeline_health);
@@ -5070,6 +5145,106 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
     )
     applicable_plan = due_plan or next_plan
     fallback_active = run.evaluation.status == "fallback_active"
+    soc_timeline: list[dict[str, object]] = []
+    if initial_storage_state is not None and winning_execution_plan is not None:
+        limits = next(
+            (
+                item
+                for item in run.planning_input.storage_physical_limits
+                if item.execution_scope_id
+                == initial_storage_state.execution_scope_id
+                and item.capability_id == initial_storage_state.capability_id
+            ),
+            None,
+        )
+        current_energy_wh = initial_storage_state.current_stored_energy_wh
+        current_time = run.planning_input.captured_at
+        soc_timeline.append({
+            "at": current_time.isoformat(),
+            "soc_percent": round(initial_storage_state.current_soc * 100, 2),
+            "primitive": "actual",
+        })
+        rte_evidence = run.planning_input.storage_round_trip_efficiency
+        efficiency = (
+            rte_evidence.round_trip_efficiency
+            if rte_evidence is not None
+            and rte_evidence.status == "available"
+            and rte_evidence.round_trip_efficiency is not None
+            else 0.8
+        )
+
+        def interval_energy(
+            starts_at: datetime,
+            ends_at: datetime,
+            *,
+            pv: bool,
+        ) -> float:
+            intervals = (
+                run.planning_input.pv_energy_timeline.intervals
+                if pv and run.planning_input.pv_energy_timeline is not None
+                else run.planning_input.household_load_forecast.intervals
+                if not pv
+                and run.planning_input.household_load_forecast is not None
+                else ()
+            )
+            total = 0.0
+            for interval in intervals:
+                overlap_start = max(starts_at, interval.starts_at)
+                overlap_end = min(ends_at, interval.ends_at)
+                if overlap_end <= overlap_start:
+                    continue
+                fraction = (overlap_end - overlap_start).total_seconds() / (
+                    interval.ends_at - interval.starts_at
+                ).total_seconds()
+                value = (
+                    getattr(interval, "forecast_lower_energy_wh", None)
+                    if pv
+                    else getattr(interval, "expected_energy_wh", None)
+                )
+                total += (value or 0.0) * fraction
+            return total
+
+        for segment in winning_execution_plan.segments:
+            starts_at = max(segment.starts_at, current_time)
+            if segment.ends_at <= starts_at:
+                continue
+            duration_hours = (segment.ends_at - starts_at).total_seconds() / 3600
+            pv_wh = interval_energy(starts_at, segment.ends_at, pv=True)
+            load_wh = interval_energy(starts_at, segment.ends_at, pv=False)
+            if segment.primitive.value == "charge_at_power":
+                delta_wh = (segment.requested_power_w or 0.0) * duration_hours
+                delta_wh *= efficiency
+            elif segment.primitive.value == "discharge_at_power":
+                delta_wh = -(segment.requested_power_w or 0.0) * duration_hours
+                delta_wh /= efficiency
+            elif segment.primitive.value == "balance_bidirectional":
+                net_wh = pv_wh - load_wh
+                delta_wh = net_wh * efficiency if net_wh >= 0 else net_wh / efficiency
+            elif segment.primitive.value == "balance_discharge_only":
+                delta_wh = min(0.0, pv_wh - load_wh) / efficiency
+            else:
+                delta_wh = 0.0
+            current_energy_wh += delta_wh
+            if limits is not None:
+                current_energy_wh = min(
+                    limits.maximum_soc * initial_storage_state.usable_capacity_wh,
+                    max(
+                        limits.minimum_soc
+                        * initial_storage_state.usable_capacity_wh,
+                        current_energy_wh,
+                    ),
+                )
+            soc_timeline.append({
+                "at": segment.ends_at.isoformat(),
+                "soc_percent": round(
+                    current_energy_wh
+                    / initial_storage_state.usable_capacity_wh
+                    * 100,
+                    2,
+                ),
+                "primitive": segment.primitive.value,
+            })
+            current_time = segment.ends_at
     return {
         "run_id": run.planning_input.run_id,
         "snapshot_id": run.planning_input.snapshot_id,
@@ -5079,6 +5254,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             if initial_storage_state is not None
             else None
         ),
+        "soc_timeline": soc_timeline if not fallback_active else [],
         "valid_until": (
             run.planning_input.horizon_end.isoformat()
             if run.planning_input.horizon_end is not None

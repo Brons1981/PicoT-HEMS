@@ -12,6 +12,7 @@ from picot.adapters.home_assistant import (
 )
 from picot.adapters.home_assistant_http import HomeAssistantHttpTransport
 from picot.domain.execution import ExecutionPrimitiveRequest
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.home_assistant import (
     HomeAssistantCommandMapping,
     HomeAssistantDispatchMode,
@@ -67,13 +68,22 @@ class CanonicalExecutionRuntime:
         evidence = run.planning_input.storage_mode_capability_evidence
         matches = (
             tuple(
-                item.vendor_mode
+                item
                 for item in evidence.mappings
                 if boundary.planned_primitive in item.primitives
             )
             if evidence is not None
             else ()
         )
+        if boundary.planned_primitive in {
+            ExecutionPrimitive.CHARGE_AT_POWER,
+            ExecutionPrimitive.DISCHARGE_AT_POWER,
+        }:
+            matches = tuple(
+                item
+                for item in matches
+                if item.power_semantics == "integration_configured_maximum"
+            )
         if len(matches) != 1 or evidence is None:
             return replace(
                 run,
@@ -91,7 +101,7 @@ class CanonicalExecutionRuntime:
                     status="translation_blocked",
                 ),
             )
-        planned_vendor_mode = matches[0]
+        planned_vendor_mode = matches[0].vendor_mode
         mapping = HomeAssistantCommandMapping(
             mapping_id=(f"canonical-zendure-mode-{boundary.planned_primitive.value}-v1"),
             mapping_version=1,

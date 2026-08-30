@@ -1796,3 +1796,13 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Ruff on all changed production and test files: `All checks passed!`.
 - mypy: `Success: no issues found in 183 source files`.
 - `git diff --check`: passed.
+## 2026-08-30 — 2.0.0-dev.200 live MEP dispatch and visibility
+
+- Removed the ambiguous Zendure translation for canonical charge/discharge
+  power primitives by selecting the integration-configured fast modes.
+- Added measured-PV/SoC admission at the primitive boundary: NOM is retained
+  only when central-promoted measured-PV evidence proves the target; lagging PV
+  continues to permit the planned grid acquisition.
+- Expanded the price chart to all MEP primitives and added a plan-coloured
+  projected SoC overlay anchored at the current measured SoC.
+- Bumped add-on and Core version to `2.0.0-dev.200`.

@@ -377,6 +377,168 @@ def test_charge_target_does_not_clear_later_export_commitment() -> None:
     )
 
 
+def test_export_first_commitment_preserves_later_recovery_charge() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.98)
+    starts_at = snapshot.captured_at
+    export_end = starts_at + timedelta(hours=2)
+    recovery_start = starts_at + timedelta(hours=14)
+    recovery_end = recovery_start + timedelta(hours=2, minutes=15)
+    commitment = ActivePlanCommitment(
+        execution_scope_id="battery",
+        plan_id="export-then-recovery",
+        plan_revision=1,
+        primitive=ExecutionPrimitive.DISCHARGE_AT_POWER.value,
+        source_policy="not_applicable",
+        starts_at=starts_at,
+        ends_at=recovery_end + timedelta(hours=2, minutes=15),
+        # A discharge-first commitment stores the safe post-export target.
+        target_energy_wh=2448.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=starts_at,
+                ends_at=export_end,
+                primitive=ExecutionPrimitive.DISCHARGE_AT_POWER.value,
+                source_policy=None,
+            ),
+            CommittedPlanSegment(
+                starts_at=export_end,
+                ends_at=recovery_start,
+                primitive=ExecutionPrimitive.BALANCE_DISCHARGE_ONLY.value,
+                source_policy=None,
+            ),
+            CommittedPlanSegment(
+                starts_at=recovery_start,
+                ends_at=recovery_end,
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+                source_policy="pv_preferred_grid_allowed",
+            ),
+            CommittedPlanSegment(
+                starts_at=recovery_end,
+                ends_at=recovery_end + timedelta(hours=2, minutes=15),
+                primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+                source_policy="pv_only",
+            ),
+        ),
+    )
+
+    completed = _complete_acquisition_revision(
+        snapshot=snapshot,
+        commitment=commitment,
+    )
+
+    assert completed is None
+    assert any(
+        segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
+        for segment in commitment.segments
+    )
+
+
+def test_completed_acquisition_coalesces_adjacent_nom_segments() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=1.0)
+    starts_at = snapshot.captured_at
+    export_start = starts_at + timedelta(hours=4)
+    commitment = ActivePlanCommitment(
+        execution_scope_id="battery",
+        plan_id="nom-charge-nom-export",
+        plan_revision=1,
+        primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+        source_policy="pv_only",
+        starts_at=starts_at,
+        ends_at=export_start + timedelta(minutes=30),
+        target_energy_wh=8160.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(minutes=15),
+                primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+                source_policy="pv_only",
+            ),
+            CommittedPlanSegment(
+                starts_at=starts_at + timedelta(minutes=15),
+                ends_at=starts_at + timedelta(minutes=45),
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+                source_policy="pv_preferred_grid_allowed",
+            ),
+            CommittedPlanSegment(
+                starts_at=starts_at + timedelta(minutes=45),
+                ends_at=export_start,
+                primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+                source_policy="pv_only",
+            ),
+            CommittedPlanSegment(
+                starts_at=export_start,
+                ends_at=export_start + timedelta(minutes=30),
+                primitive=ExecutionPrimitive.DISCHARGE_AT_POWER.value,
+                source_policy=None,
+            ),
+        ),
+    )
+
+    completed = _complete_acquisition_revision(
+        snapshot=snapshot,
+        commitment=commitment,
+    )
+
+    assert completed is not None
+    assert len(completed.segments) == 2
+    assert completed.segments[0].starts_at == starts_at
+    assert completed.segments[0].ends_at == export_start
+    assert completed.segments[0].primitive == (
+        ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value
+    )
+
+
+def test_completed_pre_export_acquisition_preserves_post_export_recovery() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=1.0)
+    starts_at = snapshot.captured_at
+    export_start = starts_at + timedelta(hours=4)
+    export_end = export_start + timedelta(minutes=30)
+    commitment = ActivePlanCommitment(
+        execution_scope_id="battery",
+        plan_id="acquire-export-recover",
+        plan_revision=1,
+        primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+        source_policy="pv_preferred_grid_allowed",
+        starts_at=starts_at,
+        ends_at=export_end + timedelta(hours=2),
+        target_energy_wh=8160.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(minutes=30),
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+                source_policy="pv_preferred_grid_allowed",
+            ),
+            CommittedPlanSegment(
+                starts_at=export_start,
+                ends_at=export_end,
+                primitive=ExecutionPrimitive.DISCHARGE_AT_POWER.value,
+                source_policy=None,
+            ),
+            CommittedPlanSegment(
+                starts_at=export_end,
+                ends_at=export_end + timedelta(hours=2),
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+                source_policy="pv_preferred_grid_allowed",
+            ),
+        ),
+    )
+
+    completed = _complete_acquisition_revision(
+        snapshot=snapshot,
+        commitment=commitment,
+    )
+
+    assert completed is not None
+    remaining_charges = tuple(
+        segment
+        for segment in completed.segments
+        if segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
+    )
+    assert len(remaining_charges) == 1
+    assert remaining_charges[0].starts_at == export_end
+
+
 def test_measured_progress_revision_moves_charge_to_last_safe_slot() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.87)
     starts_at = snapshot.captured_at

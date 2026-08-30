@@ -38,6 +38,21 @@ removed, the remaining grid fallback is shortened from the front and moved no
 earlier than necessary, and the last safe completion interval remains reserved.
 When no grid energy remains necessary, only the acquisition segment disappears.
 
+Acquisition completion is order-sensitive.  It applies only to charge segments
+that precede a still-future export and contribute energy to that export.  A
+charge segment after export is recovery, not acquisition, and cannot be removed
+because the pre-export SoC already exceeds the safe post-export target.
+
+Every commitment revision coalesces contiguous segments with the same primitive
+and source policy.  Revision history remains visible in provenance, while the
+executable timeline exposes one continuous NOM window rather than artificial
+adjacent fragments.
+
+Commitments written by dev.202 use the defective v4 ordering semantics and are
+not recoverable from their persisted segments after an incorrect recovery
+removal.  Dev.203 advances the commitment contract to v5 and clears every v4
+commitment at restart so MEP reconstructs the complete route from current facts.
+
 ### Export from protected stored energy
 
 MEP generates `stored_energy_export` candidates for energy already present above
@@ -98,6 +113,9 @@ Tests must prove that:
 8. export duration grows with safely exportable energy;
 9. EUR 0.373 cannot beat EUR 0.388 through complete-route cent tolerance;
 10. the SoC projection remains visible without a linked charge segment.
+11. export-first recovery charging survives pre-export target evaluation;
+12. adjacent identical NOM segments are coalesced after every revision.
+13. an active v4 commitment is rejected at restart for a corrective replan.
 
 ## Core principle
 

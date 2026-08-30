@@ -25,6 +25,12 @@ SUPPORTED_MODE_PRIMITIVES = frozenset(
         ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
     }
 )
+SUPPORTED_FAST_MODE_PRIMITIVES = frozenset(
+    {
+        ExecutionPrimitive.CHARGE_AT_POWER,
+        ExecutionPrimitive.DISCHARGE_AT_POWER,
+    }
+)
 
 
 class HomeAssistantTransport(Protocol):
@@ -89,6 +95,11 @@ class HomeAssistantAdapter:
         request: ExecutionPrimitiveRequest,
         mapping: HomeAssistantCommandMapping,
     ) -> str | float:
+        if (
+            request.primitive in SUPPORTED_FAST_MODE_PRIMITIVES
+            and mapping.domain == "input_select"
+        ):
+            return HomeAssistantAdapter._mode_value(mapping)
         if request.primitive is ExecutionPrimitive.CHARGE_AT_POWER:
             return HomeAssistantAdapter._power_value(request, mapping)
         if request.primitive in SUPPORTED_MODE_PRIMITIVES:
@@ -121,15 +132,13 @@ class HomeAssistantAdapter:
     @staticmethod
     def _mode_value(mapping: HomeAssistantCommandMapping) -> str:
         if mapping.domain != "input_select" or mapping.service != "select_option":
-            raise ValueError(
-                "Balance mode primitives require input_select.select_option."
-            )
+            raise ValueError("Mode primitives require input_select.select_option.")
         if mapping.value_key != "option":
-            raise ValueError("Balance mode mappings require service data key 'option'.")
+            raise ValueError("Mode mappings require service data key 'option'.")
         if mapping.fixed_value is None:
-            raise ValueError("Balance mode mappings require an explicit fixed option.")
+            raise ValueError("Mode mappings require an explicit fixed option.")
         if mapping.minimum_value is not None or mapping.maximum_value is not None:
-            raise ValueError("Balance mode mappings may not define numeric bounds.")
+            raise ValueError("Mode mappings may not define numeric bounds.")
         return mapping.fixed_value
 
     @staticmethod

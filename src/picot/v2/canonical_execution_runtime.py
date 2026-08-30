@@ -169,7 +169,34 @@ class CanonicalExecutionRuntime:
             requested_at=run.planning_input.captured_at,
             requested_power_w=segment.requested_power_w,
         )
-        outcome = self.dispatch(request, mapping)
+        try:
+            outcome = self.dispatch(request, mapping)
+        except Exception as error:  # noqa: BLE001 - fail closed at external boundary
+            self._pending_vendor_mode = None
+            return replace(
+                translated,
+                primitive_boundary=replace(
+                    translated.primitive_boundary,
+                    blockers=tuple(
+                        dict.fromkeys(
+                            (
+                                *translated.primitive_boundary.blockers,
+                                "canonical_dispatch_failed",
+                            )
+                        )
+                    ),
+                ),
+                adapter_boundary=replace(
+                    translated.adapter_boundary,
+                    status="translation_failed",
+                ),
+                vendor_result=replace(
+                    translated.vendor_result,
+                    command_id=None,
+                    status="dispatch_failed",
+                    failure_reason=f"{type(error).__name__}: {error}",
+                ),
+            )
         if outcome.status == "dispatched":
             self._pending_vendor_mode = planned_vendor_mode
         return replace(

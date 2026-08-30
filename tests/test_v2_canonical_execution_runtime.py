@@ -368,6 +368,23 @@ def test_canonical_runtime_prefers_fast_discharge_over_manual_power_mode() -> No
     assert result.vendor_result.planned_vendor_mode == "Snel ontladen"
 
 
+def test_canonical_runtime_fails_closed_when_adapter_rejects_request() -> None:
+    def reject_request(request: object, mapping: object) -> CanonicalDispatchOutcome:
+        del request, mapping
+        raise ValueError("Adapter does not support this Execution Primitive.")
+
+    runtime = CanonicalExecutionRuntime(dispatch=reject_request)
+
+    result = runtime.apply(_live_run())
+
+    assert result.adapter_boundary.status == "translation_failed"
+    assert result.vendor_result.status == "dispatch_failed"
+    assert result.vendor_result.command_id is None
+    assert result.vendor_result.failure_reason == (
+        "ValueError: Adapter does not support this Execution Primitive."
+    )
+
+
 def test_plan_builder_converts_complete_mixed_storage_path_exactly_once() -> None:
     run = _live_run()
     winning_path = next(

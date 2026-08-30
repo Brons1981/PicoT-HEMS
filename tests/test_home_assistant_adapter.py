@@ -135,6 +135,42 @@ def test_adapter_translates_initial_zendure_modes(
     assert call.service_data == (("option", option),)
 
 
+@pytest.mark.parametrize(
+    ("primitive", "option"),
+    [
+        (ExecutionPrimitive.CHARGE_AT_POWER, "Snel opladen"),
+        (ExecutionPrimitive.DISCHARGE_AT_POWER, "Snel ontladen"),
+    ],
+)
+def test_adapter_translates_fast_power_primitives_to_zendure_modes(
+    primitive: ExecutionPrimitive,
+    option: str,
+) -> None:
+    request = _mode_request(primitive)
+    request = ExecutionPrimitiveRequest(
+        request_id=request.request_id,
+        plan_set_id=request.plan_set_id,
+        plan_id=request.plan_id,
+        plan_revision=request.plan_revision,
+        segment_id=request.segment_id,
+        execution_scope_id=request.execution_scope_id,
+        capability_id=request.capability_id,
+        primitive=request.primitive,
+        requested_at=request.requested_at,
+        requested_power_w=2400.0,
+    )
+
+    call = HomeAssistantAdapter().translate(
+        request,
+        _mode_mapping(primitive, option),
+        created_at=NOW,
+    )
+
+    assert call.domain == "input_select"
+    assert call.service == "select_option"
+    assert call.service_data == (("option", option),)
+
+
 def test_adapter_rejects_mode_mapping_without_explicit_option() -> None:
     mapping = _mode_mapping(
         ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,

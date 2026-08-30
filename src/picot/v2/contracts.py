@@ -1144,6 +1144,7 @@ class VendorBoundaryResult:
     dispatch_intent_id: str | None = None
     target_entity_id: str | None = None
     planned_vendor_mode: str | None = None
+    failure_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

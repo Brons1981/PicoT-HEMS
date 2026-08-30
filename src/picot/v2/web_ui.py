@@ -775,6 +775,7 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.canonical-nom { background: #35a862; }
     .price-swatch.canonical-charge { background: #df5c57; }
     .price-swatch.canonical-trade { background: #aab2bd; }
+    .price-swatch.canonical-support { background: #3994e6; }
     .planner-window-summary {
       display: flex;
       flex-wrap: wrap;
@@ -800,11 +801,15 @@ DASHBOARD_HTML = """<!doctype html>
       border-color: #aab2bd;
       color: #d1d7de;
     }
+    .planner-window-chip.canonical-support {
+      border-color: #3994e6;
+      color: #62b8f5;
+    }
     .price-chart-scroll { overflow-x: auto; }
     .price-chart {
       display: block;
       width: 100%;
-      min-width: 760px;
+      min-width: 1000px;
       height: auto;
     }
     .price-chart .grid-line {
@@ -827,7 +832,7 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .price-bar.canonical-nom { stroke: #35a862; stroke-width: 3; }
     .price-chart .price-bar.canonical-charge { stroke: #df5c57; stroke-width: 3; }
     .price-chart .price-bar.canonical-trade { stroke: #aab2bd; stroke-width: 3; }
-    .price-chart .price-bar.canonical-support { stroke: #28784b; stroke-width: 3; }
+    .price-chart .price-bar.canonical-support { stroke: #3994e6; stroke-width: 3; }
     .price-chart .price-bar.past { opacity: 0.30; }
     .price-chart .planner-window {
       pointer-events: none;
@@ -835,13 +840,13 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .planner-window.canonical-nom { fill: #35a862; }
     .price-chart .planner-window.canonical-charge { fill: #df5c57; }
     .price-chart .planner-window.canonical-trade { fill: #aab2bd; }
-    .price-chart .planner-window.canonical-support { fill: #28784b; }
+    .price-chart .planner-window.canonical-support { fill: #3994e6; }
     .price-chart .soc-line { fill: none; stroke-width: 3; }
     .price-chart .soc-line.canonical-nom { stroke: #35a862; }
     .price-chart .soc-line.canonical-charge { stroke: #df5c57; }
     .price-chart .soc-line.canonical-trade { stroke: #aab2bd; }
     .price-chart .soc-line.canonical-support {
-      stroke: #28784b;
+      stroke: #3994e6;
       stroke-dasharray: 7 4;
     }
     .price-chart .soc-point { fill: #eef4fb; stroke: #17202a; stroke-width: 2; }
@@ -1252,7 +1257,8 @@ DASHBOARD_HTML = """<!doctype html>
         ["missing", "Nog niet gepubliceerd"],
         ["canonical-nom", "NOM / PV laden"],
         ["canonical-charge", "Net import / snel laden"],
-        ["canonical-trade", "MEP handel / terugleveren"]
+        ["canonical-trade", "MEP handel / terugleveren"],
+        ["canonical-support", "Slim huishoudelijk ontladen"]
       ]) {
         const item = document.createElement("span");
         item.className = "price-legend-item";
@@ -1279,13 +1285,13 @@ DASHBOARD_HTML = """<!doctype html>
         container.appendChild(summary);
       }
 
-      const width = 1200;
-      const height = 350;
+      const width = 1280;
+      const height = 430;
       const margin = {
-        top: 24,
-        right: 58,
-        bottom: 52,
-        left: 76
+        top: 36,
+        right: 64,
+        bottom: 76,
+        left: 82
       };
       const plotWidth = width - margin.left - margin.right;
       const plotHeight = height - margin.top - margin.bottom;
@@ -1307,7 +1313,7 @@ DASHBOARD_HTML = """<!doctype html>
         ((maximum - value) / (maximum - minimum)) *
           plotHeight;
       const socYPosition = (value) =>
-        margin.top + ((100 - value) / 100) * plotHeight;
+        margin.top + 10 + ((100 - value) / 100) * (plotHeight - 20);
 
       const scroll = document.createElement("div");
       scroll.className = "price-chart-scroll";
@@ -1385,7 +1391,7 @@ DASHBOARD_HTML = """<!doctype html>
           formatChartTime(timestamp, timezone),
           {
             x,
-            y: height - 20,
+            y: height - 16,
             "text-anchor": hour === 0 ? "start" : "middle"
           },
           "axis-label"
@@ -1461,7 +1467,7 @@ DASHBOARD_HTML = """<!doctype html>
         svg.appendChild(bar);
       }
 
-      for (const [index, window] of plannerWindows.entries()) {
+      for (const window of plannerWindows) {
         const windowStart = Math.max(
           startsAtMs,
           new Date(window.starts_at).getTime()
@@ -1475,7 +1481,7 @@ DASHBOARD_HTML = """<!doctype html>
         svg.appendChild(createSvgElement("rect", {
           class: `planner-window ${window.kind}`,
           x: xPosition(windowStart),
-          y: height - margin.bottom - 16 + index * 8,
+          y: height - margin.bottom + 14,
           width: Math.max(2, xPosition(windowEnd) - xPosition(windowStart)),
           height: 6,
           rx: 2

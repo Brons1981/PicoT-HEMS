@@ -1923,3 +1923,16 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Verification: `1108 passed`; focused Builder/MEP/commitment/runtime chain
   `93 passed`; Ruff passed; mypy `Success: no issues found in 187 source files`;
   `git diff --check` passed.
+
+## 2026-08-31 — 2.0.0-dev.207 ADR boundary recovery release
+
+- PR #575 merged the complete ADR-032/033 recovery on `main` as commit
+  `6e99c82f477fdb31ea613ab23652f9ea7ec99a08`.
+- GitHub PicoT Core CI, PicoT v2 Rebuild and Tests all passed for the merged
+  recovery.
+- Bumped the Home Assistant add-on and canonical v2 runtime together to
+  `2.0.0-dev.207`; no planning, evaluation, commitment, runtime or adapter
+  behavior changes are part of this release-only slice.
+- Live verification must confirm clean startup, a fresh v8 commitment with
+  comparable incumbent/challenger evidence, retained identity for equivalent
+  plans and correct execution at the next committed segment boundary.

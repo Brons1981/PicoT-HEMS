@@ -1952,3 +1952,19 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Bumped the Home Assistant add-on and canonical v2 runtime together to
   `2.0.0-dev.208`; no planning, evaluation, commitment, runtime policy or
   adapter behavior changed.
+
+## 2026-08-31 — 2.0.0-dev.209 canonical entrypoint ownership identity
+
+- Dev.208 proved the canonical modules were packaged, then stopped during
+  `python -m picot.v2.live_runtime` because Python sets `__name__` to
+  `__main__` for the executed module.
+- The architecture registry correctly rejected `__main__` because the
+  `live_runtime_composition` owner is `picot.v2.live_runtime`.
+- Kept the registry strict and changed only the executable live-runtime
+  declaration to its fixed canonical module identity.
+- Expanded architecture regressions to permit explicit canonical declarations
+  and require the live entrypoint to use one; ordinary modules continue using
+  `__name__`.
+- Bumped the Home Assistant add-on and canonical v2 runtime together to
+  `2.0.0-dev.209`; no planning, evaluation, commitment, execution or adapter
+  behavior changed.

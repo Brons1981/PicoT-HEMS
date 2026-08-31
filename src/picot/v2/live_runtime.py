@@ -136,7 +136,9 @@ from picot.v2.web_ui import (
     create_web_server,
 )
 
-ARCHITECTURE_OWNERSHIP = architecture_ownership("live_runtime_composition", __name__)
+ARCHITECTURE_OWNERSHIP = architecture_ownership(
+    "live_runtime_composition", "picot.v2.live_runtime"
+)
 
 HOUSEHOLD_LOAD_HISTORY_PATH = Path(
     "/data/picot_v2_household_load_history.jsonl"

@@ -1993,3 +1993,35 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Live validation must release any active manual override, then confirm a new
   plan charges early enough to avoid projected household grid dependency and
   dispatches the currently due segment.
+
+## 2026-08-31 — 2.0.0-dev.211 canonical storage requirement comparison
+
+- Kept ADR-001 through ADR-037 authoritative and retained V2ADR-055 MEP as the
+  sole candidate generator; no CP planner or private pipeline selection was
+  introduced.
+- Published MEP's projected lower-scenario household energy balance and one
+  canonical ADR-037 `StorageEnergyRequirement` with the dev.210 physical
+  deadline. Every complete candidate path now carries the requirement ID as a
+  constraint.
+- Made Candidate Outcome production invalidate native, market and incumbent
+  paths that cannot reach the required storage energy by the deadline across
+  every PV scenario. Canonical ADR-032 Evaluation still performs all winner and
+  incumbent/challenger selection; it receives only explicit validity evidence.
+- Applied the configured storage-export wear cost symmetrically to native and
+  freshly simulated committed outcomes, matching the existing market-route
+  calculation. An identical incumbent and challenger therefore receive equal
+  current financial outcomes.
+- Added regressions proving that a low-SoC, no-PV incumbent charging only after
+  the household deadline is replaced by an immediate feasible plan, and that
+  identical export schedules compare with equal wear-adjusted finance.
+- Extended machine-readable ownership for the Candidate Outcome layer with
+  ADR-037 and `storage_requirement_projection`.
+- Recovery-environment verification: 19 canonical pipeline scenarios and 59
+  related architecture, MEP, market-route and reference-simulation scenarios
+  passed through direct execution; Python compilation and `git diff --check`
+  passed. The restored workspace lacked pytest, Ruff and mypy, so GitHub CI is
+  required before merge.
+- Live validation must release any active manual override and confirm that
+  diagnostics publish the storage requirement, late commitment is invalid and
+  the selected plan reaches the target before its deadline. The flat dashboard
+  projection remains a separately scoped UI defect.

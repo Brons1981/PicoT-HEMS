@@ -1,7 +1,7 @@
 """Canonical MEP Candidate and Candidate Outcome production.
 
 MEP produces complete alternatives; ADR-032 Evaluation alone selects a winner.
-See ADR-024, ADR-031, ADR-032, V2ADR-055 and V2ADR-062.
+See ADR-024, ADR-031, ADR-032, ADR-037, V2ADR-055 and V2ADR-062.
 """
 
 from __future__ import annotations
@@ -64,13 +64,19 @@ from picot.planner.market_daily_planner import (
     MarketDailyCandidatePortfolio,
     MarketRouteAssessment,
 )
-from picot.v2.contracts import MepCandidateOutcome, PlanningInputSnapshot
+from picot.v2.contracts import (
+    MepCandidateOutcome,
+    PlanningInputSnapshot,
+    ProjectedHouseholdEnergyBalance,
+    ProjectedHouseholdEnergyBalanceInterval,
+    StorageEnergyRequirement,
+)
 from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
 from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
 from picot.v2.plan_commitment_store import ActivePlanCommitment, CommittedPlanSegment
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_outcomes", __name__)
-METHOD_VERSION = "mep-canonical-candidate-outcomes:v1"
+METHOD_VERSION = "mep-canonical-candidate-outcomes:v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +96,8 @@ class MepComparablePortfolio:
     sources: tuple[MepCandidateSource, ...]
     diagnostic_outcomes: tuple[MepCandidateOutcome, ...]
     incumbent_candidate_id: str | None
+    projected_balance: ProjectedHouseholdEnergyBalance
+    storage_requirement: StorageEnergyRequirement
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +202,7 @@ def _path(
     evidence_ids: tuple[str, ...],
     strategy_version: int,
     projected_result: DailyReferenceStrategyResult | None,
+    constraint_ids: tuple[str, ...],
 ) -> DomainEnergyPath:
     storage = snapshot.current_storage_states[0]
     limits = next(
@@ -262,7 +271,7 @@ def _path(
         segments=segments,
         projected_states=states,
         opportunity_ids=opportunity_ids,
-        constraint_ids=limits.evidence_ids,
+        constraint_ids=constraint_ids,
         capability_ids=(storage.capability_id,),
         strategy_version=strategy_version,
         mapping_version=capability_set.mapping_version,
@@ -309,9 +318,26 @@ def _objective_outcomes(
 
 def _native_metrics(
     result: DailyReferenceStrategyResult,
+    *,
+    baseline: DailyReferenceStrategyResult,
+    wear_eur_per_export_kwh: float,
 ) -> tuple[float, float, float, float, float]:
     run = result.run
-    financial = min(item.net_financial_result_eur for item in run.financial.paths)
+    baseline_assessments = {
+        item.scenario: item for item in baseline.run.assessment.assessments
+    }
+    assessments = {item.scenario: item for item in run.assessment.assessments}
+    financial = min(
+        item.net_financial_result_eur
+        - max(
+            0.0,
+            assessments[item.scenario].storage_to_grid_output_wh
+            - baseline_assessments[item.scenario].storage_to_grid_output_wh,
+        )
+        / 1000.0
+        * wear_eur_per_export_kwh
+        for item in run.financial.paths
+    )
     self_consumption = min(
         assessment.usable_pv_wh - assessment.pv_to_grid_wh
         for assessment in run.assessment.assessments
@@ -330,6 +356,127 @@ def _native_metrics(
         for trajectory in run.simulation.trajectories
     )
     return financial, self_consumption, reserve, confidence, grid_to_storage
+
+
+def _storage_requirement_evidence(
+    *,
+    snapshot: PlanningInputSnapshot,
+    portfolio: MarketDailyCandidatePortfolio,
+    baseline: DailyReferenceStrategyResult,
+) -> tuple[ProjectedHouseholdEnergyBalance, StorageEnergyRequirement]:
+    """Project the ADR-037 requirement that constrains every complete path."""
+
+    storage = snapshot.current_storage_states[0]
+    limits = next(
+        item
+        for item in snapshot.storage_physical_limits
+        if item.execution_scope_id == storage.execution_scope_id
+        and item.capability_id == storage.capability_id
+    )
+    trajectory = next(
+        item
+        for item in baseline.run.simulation.trajectories
+        if item.scenario is PVScenario.LOWER
+    )
+    balance_id = _id(
+        "mep-projected-household-balance",
+        f"{snapshot.snapshot_id}|{portfolio.required_by.isoformat()}",
+    )
+    intervals = tuple(
+        ProjectedHouseholdEnergyBalanceInterval(
+            starts_at=item.starts_at,
+            ends_at=item.ends_at,
+            current_usable_storage_energy_wh=item.storage_energy_at_start_wh,
+            expected_usable_pv_energy_wh=item.usable_pv_wh,
+            planned_grid_energy_wh=(
+                item.grid_to_household_wh + item.grid_to_storage_input_wh
+            ),
+            household_load_forecast_energy_wh=item.household_demand_wh,
+            known_future_demand_energy_wh=0.0,
+            conversion_losses_wh=(
+                item.storage_charge_loss_wh + item.storage_discharge_loss_wh
+            ),
+            other_planned_household_energy_flows_wh=-(
+                item.pv_to_grid_wh + item.storage_to_grid_output_wh
+            ),
+            projected_storage_energy_wh=item.storage_energy_at_end_wh,
+            confidence=item.confidence,
+            evidence_ids=item.evidence_ids,
+        )
+        for item in trajectory.intervals
+    )
+    balance = ProjectedHouseholdEnergyBalance(
+        balance_id=balance_id,
+        run_id=snapshot.run_id,
+        snapshot_id=snapshot.snapshot_id,
+        storage_state_id=storage.storage_state_id,
+        intervals=intervals,
+    )
+    relevant = tuple(
+        item for item in intervals if item.starts_at < portfolio.required_by
+    )
+    evidence_ids = tuple(
+        dict.fromkeys(
+            (
+                balance_id,
+                *(
+                    evidence_id
+                    for interval in relevant
+                    for evidence_id in interval.evidence_ids
+                ),
+                METHOD_VERSION,
+            )
+        )
+    )
+    target_energy_wh = limits.maximum_soc * storage.usable_capacity_wh
+    requirement = StorageEnergyRequirement(
+        requirement_id=_id(
+            "mep-storage-requirement",
+            f"{balance_id}|{target_energy_wh}|{portfolio.required_by.isoformat()}",
+        ),
+        run_id=snapshot.run_id,
+        snapshot_id=snapshot.snapshot_id,
+        storage_state_id=storage.storage_state_id,
+        projected_balance_id=balance_id,
+        required_energy_wh=target_energy_wh,
+        required_soc=limits.maximum_soc,
+        required_by=portfolio.required_by,
+        reason="household_demand",
+        confidence=min((item.confidence for item in relevant), default=0.0),
+        evidence_ids=evidence_ids,
+        reserve_contribution_wh=limits.minimum_soc * storage.usable_capacity_wh,
+        confidence_method_version="mep-household-requirement-minimum-confidence:v1",
+    )
+    return balance, requirement
+
+
+def _target_reached_by_requirement(
+    *,
+    result: DailyReferenceStrategyResult | None,
+    market: MarketRouteAssessment | None,
+    requirement: StorageEnergyRequirement,
+    current_storage_energy_wh: float,
+) -> bool:
+    """Return whether every scenario reaches the required state by its deadline."""
+
+    if current_storage_energy_wh + 1e-6 >= requirement.required_energy_wh:
+        return True
+    if market is not None:
+        return all(
+            any(
+                checkpoint.at <= requirement.required_by
+                and checkpoint.energy_wh + 1e-6 >= requirement.required_energy_wh
+                for checkpoint in scenario.storage_energy_checkpoints
+            )
+            for scenario in market.scenario_evidence
+        )
+    if result is None:
+        return False
+    return all(
+        trajectory.target_reached_at is not None
+        and trajectory.target_reached_at <= requirement.required_by
+        for trajectory in result.run.simulation.trajectories
+    )
 
 
 def _recoverability(
@@ -470,6 +617,19 @@ def produce_mep_comparable_portfolio(
         item.intent_schedule_id: item
         for item in portfolio.native_observation.observer_result.candidate_set.candidates
     }
+    baseline = next(
+        item
+        for item in native_results.values()
+        if all(
+            interval.intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+            for interval in item.intent_schedule.intervals
+        )
+    )
+    projected_balance, storage_requirement = _storage_requirement_evidence(
+        snapshot=snapshot,
+        portfolio=portfolio,
+        baseline=baseline,
+    )
     route_ids = {item.route_id: item.opportunity_ids for item in portfolio.market_routes}
     source_rows: list[MepCandidateSource] = []
     rows: list[_CandidateRow] = []
@@ -564,7 +724,11 @@ def produce_mep_comparable_portfolio(
                 reserve,
                 confidence,
                 grid_to_storage,
-            ) = _native_metrics(result)
+            ) = _native_metrics(
+                result,
+                baseline=baseline,
+                wear_eur_per_export_kwh=portfolio.wear_eur_per_export_kwh,
+            )
             built = (
                 IndependentDailyCandidateEngine()
                 .build_portfolio(
@@ -591,7 +755,19 @@ def produce_mep_comparable_portfolio(
             confidence = 0.0
             grid_to_storage = snapshot.current_storage_states[0].usable_capacity_wh
             reasons.append("fresh_incumbent_simulation_unavailable")
+        if not _target_reached_by_requirement(
+            result=result,
+            market=market,
+            requirement=storage_requirement,
+            current_storage_energy_wh=(
+                snapshot.current_storage_states[0].current_stored_energy_wh
+            ),
+        ):
+            reasons.append("storage_requirement_not_met_by_deadline")
         family = _family(native, incumbent=committed is not None)
+        constraint_ids = tuple(
+            dict.fromkeys((*limits.evidence_ids, storage_requirement.requirement_id))
+        )
         path = _path(
             snapshot=snapshot,
             schedule=schedule,
@@ -602,6 +778,7 @@ def produce_mep_comparable_portfolio(
             evidence_ids=evidence_ids,
             strategy_version=strategy.strategy_version,
             projected_result=result,
+            constraint_ids=constraint_ids,
         )
         candidate = DomainCandidate(
             candidate_id,
@@ -609,7 +786,7 @@ def produce_mep_comparable_portfolio(
             family,
             path.path_id,
             opportunity_ids,
-            limits.evidence_ids,
+            constraint_ids,
             strategy.strategy_version,
             path.capability_ids,
             path.assumptions,
@@ -703,5 +880,12 @@ def produce_mep_comparable_portfolio(
         tuple(outcomes),
     )
     return MepComparablePortfolio(
-        candidate_set, outcome_set, strategy, tuple(source_rows), tuple(diagnostics), incumbent_id
+        candidate_set,
+        outcome_set,
+        strategy,
+        tuple(source_rows),
+        tuple(diagnostics),
+        incumbent_id,
+        projected_balance,
+        storage_requirement,
     )

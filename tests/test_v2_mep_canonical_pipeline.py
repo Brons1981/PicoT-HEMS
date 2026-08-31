@@ -2,6 +2,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
 from picot.domain.execution_primitive import ExecutionPrimitive
@@ -726,6 +727,265 @@ def test_historical_financial_result_cannot_replace_fresh_incumbent(tmp_path) ->
     assert store.load(scope_id) == incumbent
     assert continued.execution_plan_set.plans[0].plan_id == incumbent.plan_id
     assert continued.evaluation.decisive_step == ("commitment:equivalent_incumbent_retained")
+
+
+def test_household_requirement_invalidates_late_incumbent_before_evaluation(
+    tmp_path,
+) -> None:
+    """ADR-037/V2ADR-062: commitment cannot hide a fresh physical deadline."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.30)
+    assert snapshot.pv_energy_timeline is not None
+    source = snapshot.price_points[0]
+    late_charge_start = snapshot.captured_at + timedelta(hours=12)
+    late_charge_end = late_charge_start + timedelta(hours=3)
+    horizon_end = snapshot.captured_at + timedelta(hours=24)
+    dark = replace(
+        snapshot,
+        pv_energy_timeline=replace(
+            snapshot.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    item,
+                    pv_energy_wh=0.0,
+                    forecast_lower_energy_wh=0.0,
+                    forecast_central_energy_wh=0.0,
+                    forecast_upper_energy_wh=0.0,
+                )
+                for item in snapshot.pv_energy_timeline.intervals
+            ),
+        ),
+        price_points=(
+            replace(
+                source,
+                point_id="current-cheap",
+                ends_at=snapshot.captured_at + timedelta(hours=3),
+                value_eur_per_kwh=0.13,
+            ),
+            replace(
+                source,
+                point_id="expensive-before-late-charge",
+                starts_at=snapshot.captured_at + timedelta(hours=3),
+                ends_at=late_charge_start,
+                value_eur_per_kwh=0.40,
+            ),
+            replace(
+                source,
+                point_id="later-cheap",
+                starts_at=late_charge_start,
+                ends_at=horizon_end,
+                value_eur_per_kwh=0.10,
+            ),
+        ),
+    )
+    incumbent = ActivePlanCommitment(
+        execution_scope_id="battery",
+        plan_id="late-incumbent",
+        plan_revision=1,
+        primitive=ExecutionPrimitive.BALANCE_DISCHARGE_ONLY.value,
+        source_policy="not_applicable",
+        starts_at=dark.captured_at,
+        ends_at=horizon_end,
+        target_energy_wh=8160.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=dark.captured_at,
+                ends_at=late_charge_start,
+                primitive=ExecutionPrimitive.BALANCE_DISCHARGE_ONLY.value,
+                source_policy=None,
+            ),
+            CommittedPlanSegment(
+                starts_at=late_charge_start,
+                ends_at=late_charge_end,
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+                source_policy="pv_preferred_grid_allowed",
+            ),
+            CommittedPlanSegment(
+                starts_at=late_charge_end,
+                ends_at=horizon_end,
+                primitive=ExecutionPrimitive.BALANCE_DISCHARGE_ONLY.value,
+                source_policy=None,
+            ),
+        ),
+    )
+    planning_input = replace(dark, active_plan_commitments=(incumbent,))
+    pipeline, store = _pipeline(tmp_path)
+
+    run = pipeline.run(planning_input=planning_input)
+
+    assert len(run.candidate_set.storage_requirements) == 1
+    requirement = run.candidate_set.storage_requirements[0]
+    assert requirement.required_by < late_charge_start
+    incumbent_outcome = next(item for item in run.outcomes.outcomes if item.incumbent)
+    assert incumbent_outcome.validity == "invalid"
+    assert "storage_requirement_not_met_by_deadline" in (
+        incumbent_outcome.invalidity_reasons
+    )
+    assert run.evaluation.commitment_decision == "replaced"
+    assert run.evaluation.winning_candidate_id != incumbent_outcome.candidate_id
+    replacement = store.load("battery")
+    assert replacement is not None
+    assert replacement.plan_id != incumbent.plan_id
+    assert any(
+        segment.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+        and segment.starts_at == dark.captured_at
+        and segment.ends_at <= requirement.required_by
+        for segment in run.execution_plan_set.plans[0].segments
+    )
+
+
+def test_identical_incumbent_and_challenger_use_equal_wear_adjusted_finance(
+    tmp_path,
+) -> None:
+    """V2ADR-062: equal remaining paths use symmetric current outcomes."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.20)
+    source = snapshot.price_points[0]
+    export_start = snapshot.captured_at + timedelta(hours=12)
+    horizon_end = snapshot.captured_at + timedelta(hours=24)
+    priced = replace(
+        snapshot,
+        storage_round_trip_efficiency=StorageRoundTripEfficiencyEvidence(
+            status="available",
+            round_trip_efficiency=0.83,
+            observed_at=snapshot.captured_at,
+            source_entity_id="sensor.test_storage_rte",
+            evidence_id="test-storage-rte",
+            method_version="test-storage-rte:v1",
+        ),
+        price_points=(
+            replace(
+                source,
+                point_id="cheap-acquisition",
+                ends_at=export_start,
+                value_eur_per_kwh=0.05,
+            ),
+            replace(
+                source,
+                point_id="valuable-export",
+                starts_at=export_start,
+                ends_at=horizon_end,
+                value_eur_per_kwh=0.55,
+            ),
+        ),
+    )
+    pipeline, _store = _pipeline(tmp_path)
+    config = PriceOpportunityConfig(
+        low_price_margin_eur_per_kwh=0.10,
+        high_price_margin_eur_per_kwh=0.10,
+        config_version="test-price-opportunities:v1",
+        market_timezone="UTC",
+    )
+    first = pipeline.run(planning_input=priced, price_opportunity_config=config)
+    valid_ids = {
+        item.candidate_id
+        for item in first.outcomes.outcomes
+        if item.validity == "valid"
+    }
+    market_candidate = next(
+        candidate
+        for candidate in first.candidate_set.candidates
+        if candidate.family == "market_route"
+        and candidate.candidate_id in valid_ids
+        and any(
+            segment.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+            for path in first.candidate_set.energy_paths
+            if path.path_id == candidate.energy_path_id
+            for segment in path.segments
+        )
+    )
+    market_path = next(
+        path
+        for path in first.candidate_set.energy_paths
+        if path.path_id == market_candidate.energy_path_id
+    )
+    incumbent = ActivePlanCommitment(
+        execution_scope_id="battery",
+        plan_id="wear-symmetric-incumbent",
+        plan_revision=1,
+        primitive=market_path.segments[0].primitive.value,
+        source_policy=(
+            market_path.segments[0].charge_source_policy.value
+            if market_path.segments[0].charge_source_policy is not None
+            else "not_applicable"
+        ),
+        starts_at=market_path.segments[0].starts_at,
+        ends_at=market_path.segments[-1].ends_at,
+        target_energy_wh=8160.0,
+        segments=tuple(
+            CommittedPlanSegment(
+                starts_at=segment.starts_at,
+                ends_at=segment.ends_at,
+                primitive=segment.primitive.value,
+                source_policy=(
+                    segment.charge_source_policy.value
+                    if segment.charge_source_policy is not None
+                    else None
+                ),
+                storage_export_target_wh=(
+                    (segment.requested_power_w or 0.0)
+                    * (segment.ends_at - segment.starts_at).total_seconds()
+                    / 3600.0
+                    if segment.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+                    else None
+                ),
+            )
+            for segment in market_path.segments
+        ),
+    )
+
+    continued = pipeline.run(
+        planning_input=replace(priced, active_plan_commitments=(incumbent,)),
+        price_opportunity_config=config,
+    )
+
+    incumbent_candidate = next(
+        item for item in continued.candidate_set.candidates if item.family == "committed"
+    )
+    incumbent_path = next(
+        item
+        for item in continued.candidate_set.energy_paths
+        if item.path_id == incumbent_candidate.energy_path_id
+    )
+
+    def schedule_signature(path):
+        return tuple(
+            (
+                segment.starts_at,
+                segment.ends_at,
+                segment.primitive,
+                segment.requested_power_w,
+                segment.charge_source_policy,
+            )
+            for segment in path.segments
+        )
+
+    matching_path = next(
+        item
+        for item in continued.candidate_set.energy_paths
+        if item.family != "committed"
+        and schedule_signature(item) == schedule_signature(incumbent_path)
+    )
+    matching_candidate = next(
+        item
+        for item in continued.candidate_set.candidates
+        if item.energy_path_id == matching_path.path_id
+    )
+    incumbent_outcome = next(
+        item
+        for item in continued.outcomes.outcomes
+        if item.candidate_id == incumbent_candidate.candidate_id
+    )
+    challenger_outcome = next(
+        item
+        for item in continued.outcomes.outcomes
+        if item.candidate_id == matching_candidate.candidate_id
+    )
+
+    assert incumbent_outcome.worst_case_financial_result_eur == pytest.approx(
+        challenger_outcome.worst_case_financial_result_eur,
+        abs=1e-9,
+    )
 
 
 def test_configured_switching_margin_is_used_by_evaluation(tmp_path) -> None:

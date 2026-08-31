@@ -787,6 +787,12 @@ def build_mep_canonical_run(
         candidate_set_id=_id("mep-candidate-set", opportunities.opportunity_set_id),
         candidates=tuple(candidates),
         energy_paths=tuple(paths),
+        projected_balances=(
+            (comparable.projected_balance,) if comparable is not None else ()
+        ),
+        storage_requirements=(
+            (comparable.storage_requirement,) if comparable is not None else ()
+        ),
         derivation_status=("ready" if winner is not None else "blocked"),
         derivation_reason=(None if winner is not None else planner_outcome.reason),
     )

@@ -92,10 +92,15 @@ OWNERSHIP_BY_LAYER: dict[str, ArchitectureOwnership] = {
             "docs/architecture/ADR-024-candidate-engine.md",
             "docs/architecture/ADR-031-candidate-scenario-construction-contract.md",
             "docs/architecture/ADR-032-candidate-evaluation-contract.md",
+            "docs/architecture/ADR-037-household-energy-requirement-storage-reserve-grid-use.md",
             "docs/rebuild/V2ADR-055-mep-sole-canonical-planner.md",
             "docs/architecture/decisions/V2ADR-062-material-replanning-and-commitment-comparison.md",
         ),
-        owns=("canonical_candidate_projection", "fresh_incumbent_outcomes"),
+        owns=(
+            "canonical_candidate_projection",
+            "storage_requirement_projection",
+            "fresh_incumbent_outcomes",
+        ),
         must_not=("winner_selection", "commitment_admission", "plan_construction"),
     ),
     "evaluation_engine": ArchitectureOwnership(

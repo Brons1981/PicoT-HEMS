@@ -167,14 +167,24 @@ functional defects: MEP used the full horizon when ADR-037 required earlier
 storage recovery for projected household demand, and a persisted lifecycle
 could expose a future top-level start despite a currently due first segment.
 
-Release `2.0.0-dev.210` is prepared on branch
-`fix/dev210-mep-energy-requirement`.  It derives the household requirement
-deadline inside MEP without restoring CP, leaves winner selection exclusively
-with canonical Evaluation, preserves the first segment as the commitment
-lifecycle start and lets live execution recognize due legacy segments.  Local
-pre-release evidence is `1112 passed` with Ruff, mypy and diff checks green.
-After merge and installation, release any active manual override before live
-validation.  Confirm fresh planning avoids projected household grid dependency
-when physical recovery is possible and that the currently due segment is
-dispatched.  Do not start another functional slice before that evidence is
-reviewed.
+Live `2.0.0-dev.210` exposed that MEP derived the ADR-037 household requirement
+deadline but did not publish the canonical projected balance or
+`StorageEnergyRequirement`.  Consequently a persisted plan that reached the
+target only after the fresh deadline remained valid and commitment could retain
+it.  Native and committed paths also omitted the wear adjustment already used
+by market-route outcomes, making equal paths financially asymmetric.
+
+Release `2.0.0-dev.211` is prepared on branch
+`fix/dev211-canonical-storage-requirement`.  MEP Candidate Outcome production
+now publishes one ADR-037 requirement, links it as a constraint to every path
+and invalidates any path that does not reach the target by that deadline across
+all scenarios.  ADR-032 Evaluation remains the sole winner selector and can
+therefore retain commitment only while it remains physically valid.  Identical
+native, market and committed paths now use the same wear-adjusted financial
+outcome.  Local recovery-environment evidence is 19 canonical plus 59 related
+scenarios passed through direct execution; syntax and diff checks passed.  The
+restored environment lacks pytest, Ruff and mypy, so all GitHub CI workflows
+must pass before merge.  After installation, release any manual override and
+confirm diagnostics contain the storage requirement, a late incumbent is
+invalid and the selected plan charges before the deadline.  The flat
+dashboard projection is a separate UI slice and is not repaired here.

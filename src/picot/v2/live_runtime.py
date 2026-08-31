@@ -554,10 +554,6 @@ def _commitment_execution_phase(
     captured_at: datetime,
 ) -> dict[str, object]:
     """Describe only the clock phase that can change committed execution."""
-    if captured_at < commitment.starts_at:
-        return {"status": "scheduled", "segment": None}
-    if captured_at >= commitment.ends_at:
-        return {"status": "completed", "segment": None}
     segment = next(
         (
             item
@@ -566,23 +562,27 @@ def _commitment_execution_phase(
         ),
         None,
     )
-    if segment is None:
+    if segment is not None:
         return {
             "status": "active",
             "segment": {
-                "starts_at": commitment.starts_at.isoformat(),
-                "ends_at": commitment.ends_at.isoformat(),
-                "primitive": commitment.primitive,
-                "source_policy": commitment.source_policy,
+                "starts_at": segment.starts_at.isoformat(),
+                "ends_at": segment.ends_at.isoformat(),
+                "primitive": segment.primitive,
+                "source_policy": segment.source_policy,
             },
         }
+    if captured_at < commitment.starts_at:
+        return {"status": "scheduled", "segment": None}
+    if captured_at >= commitment.ends_at:
+        return {"status": "completed", "segment": None}
     return {
         "status": "active",
         "segment": {
-            "starts_at": segment.starts_at.isoformat(),
-            "ends_at": segment.ends_at.isoformat(),
-            "primitive": segment.primitive,
-            "source_policy": segment.source_policy,
+            "starts_at": commitment.starts_at.isoformat(),
+            "ends_at": commitment.ends_at.isoformat(),
+            "primitive": commitment.primitive,
+            "source_policy": commitment.source_policy,
         },
     }
 

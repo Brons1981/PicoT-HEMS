@@ -135,10 +135,7 @@ class MarketDailyPlannerRuntime:
                     maximum_duration=maximum_duration,
                 )
             )
-            if effective_required_by is None:
-                effective_required_by = (
-                    portfolio.native_observation.strategy_space.schedules[0].horizon_end
-                )
+            effective_required_by = portfolio.required_by
         except Exception as exc:
             status = "blocked"
             reason = str(exc) or exc.__class__.__name__

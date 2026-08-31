@@ -155,6 +155,8 @@ def test_mep_winner_flows_through_canonical_path_and_plan_store(tmp_path) -> Non
     assert commitment.schedule_id is not None
     assert commitment.selection_reason == run.evaluation.decisive_step
     assert len(commitment.segments) == len(winning_path.segments)
+    assert commitment.starts_at == commitment.segments[0].starts_at
+    assert commitment.primitive == commitment.segments[0].primitive
     assert commitment.segments[0].starts_at == winning_path.segments[0].starts_at
     assert commitment.segments[-1].ends_at == winning_path.segments[-1].ends_at
     assert commitment.selected_at == snapshot.captured_at

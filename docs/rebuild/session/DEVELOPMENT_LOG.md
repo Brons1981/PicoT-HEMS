@@ -1968,3 +1968,28 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Bumped the Home Assistant add-on and canonical v2 runtime together to
   `2.0.0-dev.209`; no planning, evaluation, commitment, execution or adapter
   behavior changed.
+
+## 2026-08-31 — 2.0.0-dev.210 household requirement and lifecycle repair
+
+- Kept ADR-001 through ADR-037 authoritative; no new ADR was required and no
+  CP planner or CP-derived planning path was introduced.
+- Made MEP derive the ADR-037 storage-energy deadline from the first projected
+  household grid dependency, bounded by the earliest physically reachable
+  target time. Candidate construction is rerun against that deadline; MEP
+  still generates complete paths and canonical Evaluation remains the only
+  winner selector.
+- Preserved the full Execution Plan lifecycle in commitment persistence: the
+  commitment start, primitive and source policy now describe its first
+  segment, while target-energy semantics continue to follow the future
+  actionable segment.
+- Made live execution prefer a currently due persisted segment over a legacy
+  top-level future start, repairing dev.209 commitments without inventing or
+  re-evaluating a plan in runtime.
+- Added regressions for a low-SoC, no-PV horizon with a cheaper later price,
+  canonical commitment lifecycle identity, and legacy segment-first execution
+  phase classification.
+- Pre-release verification: `1112 passed`; Ruff passed on all affected files;
+  mypy passed on all affected source; `git diff --check` passed.
+- Live validation must release any active manual override, then confirm a new
+  plan charges early enough to avoid projected household grid dependency and
+  dispatches the currently due segment.

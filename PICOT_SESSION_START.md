@@ -161,12 +161,20 @@ Completed and merged through PR #575:
 
 The identified recovery checkpoint is merged on `main` as commit
 `6e99c82f477fdb31ea613ab23652f9ea7ec99a08`; all three GitHub CI workflows
-passed.  Release `2.0.0-dev.207` failed before runtime startup because its
-add-on image omitted the new `picot.architecture_ownership` module and
-`picot.runtime` package.  Dev.208 packaged those components but then failed at
-the ownership guard because Python exposes a module started with `-m` as
-`__main__`.  Release `2.0.0-dev.209` makes the executable live-runtime declare
-its fixed canonical identity while keeping the ownership registry strict.  It
-is the dedicated live-validation release for this boundary recovery.  Do not
-start new functional work before its live startup, planning, commitment and
-segment-dispatch evidence has been reviewed.
+passed.  Releases dev.207 and dev.208 exposed and dev.209 repaired add-on
+packaging and executable ownership defects.  Live dev.209 then proved two
+functional defects: MEP used the full horizon when ADR-037 required earlier
+storage recovery for projected household demand, and a persisted lifecycle
+could expose a future top-level start despite a currently due first segment.
+
+Release `2.0.0-dev.210` is prepared on branch
+`fix/dev210-mep-energy-requirement`.  It derives the household requirement
+deadline inside MEP without restoring CP, leaves winner selection exclusively
+with canonical Evaluation, preserves the first segment as the commitment
+lifecycle start and lets live execution recognize due legacy segments.  Local
+pre-release evidence is `1112 passed` with Ruff, mypy and diff checks green.
+After merge and installation, release any active manual override before live
+validation.  Confirm fresh planning avoids projected household grid dependency
+when physical recovery is possible and that the currently due segment is
+dispatched.  Do not start another functional slice before that evidence is
+reviewed.

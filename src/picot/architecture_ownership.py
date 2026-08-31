@@ -78,6 +78,7 @@ OWNERSHIP_BY_LAYER: dict[str, ArchitectureOwnership] = {
             "docs/architecture/ADR-017-planning-decision-pipeline.md",
             "docs/architecture/ADR-024-candidate-engine.md",
             "docs/architecture/ADR-031-candidate-scenario-construction-contract.md",
+            "docs/architecture/ADR-037-household-energy-requirement-storage-reserve-grid-use.md",
             "docs/architecture/decisions/V2ADR-063-committed-trajectory-materiality-thresholds.md",
             "docs/rebuild/V2ADR-055-mep-sole-canonical-planner.md",
         ),

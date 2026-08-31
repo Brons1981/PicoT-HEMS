@@ -506,12 +506,13 @@ def _persist_plan(
     if store is None or not snapshot.current_storage_states:
         return
     storage = snapshot.current_storage_states[0]
-    phase = _first_action_phase(schedule, snapshot.captured_at)
-    if phase is None:
+    action_phase = _first_action_phase(schedule, snapshot.captured_at)
+    if action_phase is None:
         return
-    starts_at, ends_at, intent = phase
     coalesced_segments = _coalesce(schedule.intervals)
-    primitive, source_policy = _intent_primitive(intent)
+    starts_at, _first_ends_at, first_intent = coalesced_segments[0]
+    primitive, source_policy = _intent_primitive(first_intent)
+    action_primitive, _action_source_policy = _intent_primitive(action_phase[2])
     limits = next(
         item
         for item in snapshot.storage_physical_limits
@@ -519,7 +520,7 @@ def _persist_plan(
         and item.capability_id == storage.capability_id
     )
     target_energy_wh = limits.maximum_soc * storage.usable_capacity_wh
-    if primitive is ExecutionPrimitive.DISCHARGE_AT_POWER:
+    if action_primitive is ExecutionPrimitive.DISCHARGE_AT_POWER:
         route = next(
             (
                 item

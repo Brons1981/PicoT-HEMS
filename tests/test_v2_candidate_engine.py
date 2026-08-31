@@ -155,6 +155,8 @@ def test_candidate_engine_derives_conservative_storage_requirement() -> None:
             "reason": "full_before_first_projected_battery_support",
             "confidence": 0.70,
             "reserve_contribution_wh": 4000.0,
+            "requirement_kind": "household_energy",
+            "satisfaction_mode": "available_at",
         }
     ]
     assert candidate_card.attributes["projected_balances"] == [

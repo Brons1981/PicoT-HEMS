@@ -174,17 +174,21 @@ target only after the fresh deadline remained valid and commitment could retain
 it.  Native and committed paths also omitted the wear adjustment already used
 by market-route outcomes, making equal paths financially asymmetric.
 
-Release `2.0.0-dev.211` is prepared on branch
-`fix/dev211-canonical-storage-requirement`.  MEP Candidate Outcome production
-now publishes one ADR-037 requirement, links it as a constraint to every path
-and invalidates any path that does not reach the target by that deadline across
-all scenarios.  ADR-032 Evaluation remains the sole winner selector and can
-therefore retain commitment only while it remains physically valid.  Identical
-native, market and committed paths now use the same wear-adjusted financial
-outcome.  Local recovery-environment evidence is 19 canonical plus 59 related
-scenarios passed through direct execution; syntax and diff checks passed.  The
-restored environment lacks pytest, Ruff and mypy, so all GitHub CI workflows
-must pass before merge.  After installation, release any manual override and
-confirm diagnostics contain the storage requirement, a late incumbent is
-invalid and the selected plan charges before the deadline.  The flat
-dashboard projection is a separate UI slice and is not repaired here.
+Release `2.0.0-dev.211` was merged and installed live.  Its diagnostics proved
+that the published 100% record combined two different ADR-037 facts: the daily
+maximum storage target and the independently simulated household reserve.  A
+market route may reach the daily target before export and later use energy,
+provided its complete projected path still respects the household reserve.
+
+Release `2.0.0-dev.212` is prepared on branch
+`fix/dev212-separate-daily-target-reserve`.  The existing 100% record is now
+explicitly typed as a `daily_storage_target` with `reached_by` semantics.
+Every MEP Candidate Outcome separately publishes the conservative target
+completion time and whether household reserve remains respected across all PV
+scenarios.  Candidate Generation and simulation still derive both facts;
+ADR-032 Evaluation only consumes their validity and objective outcomes.  The
+configured micro-charge suppression remains unchanged.  Confidence-dependent
+reserve enlargement is not invented in this slice because the live Planning
+Input does not yet contain the canonical relative-confidence baseline required
+by the existing ADR-037 reserve policy.  The flat household dashboard line and
+financial source-label ambiguity remain separate UI slices.

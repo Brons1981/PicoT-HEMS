@@ -7,6 +7,7 @@ See ADR-024, ADR-031, ADR-032, ADR-037, V2ADR-055 and V2ADR-062.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from hashlib import sha256
 
 from picot.architecture_ownership import architecture_ownership
@@ -441,41 +442,69 @@ def _storage_requirement_evidence(
         required_energy_wh=target_energy_wh,
         required_soc=limits.maximum_soc,
         required_by=portfolio.required_by,
-        reason="household_demand",
+        reason="daily_storage_target_before_household_dependency",
         confidence=min((item.confidence for item in relevant), default=0.0),
         evidence_ids=evidence_ids,
         reserve_contribution_wh=limits.minimum_soc * storage.usable_capacity_wh,
-        confidence_method_version="mep-household-requirement-minimum-confidence:v1",
+        confidence_method_version="mep-daily-target-minimum-confidence:v1",
+        requirement_kind="daily_storage_target",
+        satisfaction_mode="reached_by",
     )
     return balance, requirement
 
 
-def _target_reached_by_requirement(
+def _daily_target_evidence(
     *,
     result: DailyReferenceStrategyResult | None,
     market: MarketRouteAssessment | None,
     requirement: StorageEnergyRequirement,
     current_storage_energy_wh: float,
-) -> bool:
-    """Return whether every scenario reaches the required state by its deadline."""
+) -> tuple[bool, datetime | None]:
+    """Return conservative daily-target completion evidence across scenarios."""
 
     if current_storage_energy_wh + 1e-6 >= requirement.required_energy_wh:
-        return True
+        reached_at = (
+            result.intent_schedule.horizon_start
+            if result is not None
+            else (
+                market.intent_schedule.horizon_start
+                if market is not None
+                else requirement.required_by
+            )
+        )
+        return True, reached_at
     if market is not None:
-        return all(
-            any(
-                checkpoint.at <= requirement.required_by
-                and checkpoint.energy_wh + 1e-6 >= requirement.required_energy_wh
-                for checkpoint in scenario.storage_energy_checkpoints
+        reached_at_by_scenario = tuple(
+            next(
+                (
+                    checkpoint.at
+                    for checkpoint in scenario.storage_energy_checkpoints
+                    if checkpoint.at <= requirement.required_by
+                    and checkpoint.energy_wh + 1e-6 >= requirement.required_energy_wh
+                ),
+                None,
             )
             for scenario in market.scenario_evidence
         )
+        if any(reached_at is None for reached_at in reached_at_by_scenario):
+            return False, None
+        return True, max(
+            reached_at
+            for reached_at in reached_at_by_scenario
+            if reached_at is not None
+        )
     if result is None:
-        return False
-    return all(
-        trajectory.target_reached_at is not None
-        and trajectory.target_reached_at <= requirement.required_by
-        for trajectory in result.run.simulation.trajectories
+        return False, None
+    reached_at_by_scenario = tuple(
+        trajectory.target_reached_at for trajectory in result.run.simulation.trajectories
+    )
+    if any(
+        reached_at is None or reached_at > requirement.required_by
+        for reached_at in reached_at_by_scenario
+    ):
+        return False, None
+    return True, max(
+        reached_at for reached_at in reached_at_by_scenario if reached_at is not None
     )
 
 
@@ -715,6 +744,9 @@ def produce_mep_comparable_portfolio(
             grid_to_storage = max(
                 item.grid_to_storage_input_wh for item in market.scenario_evidence
             )
+            household_reserve_respected = all(
+                item.reserve_respected for item in market.scenario_evidence
+            )
             if not market.physically_admissible:
                 reasons.append("market_route_physically_inadmissible")
         elif result is not None:
@@ -748,22 +780,25 @@ def produce_mep_comparable_portfolio(
                 reasons.append("physical_path_incomplete")
             if not built.reserve_respected_across_scenarios:
                 reasons.append("reserve_not_respected")
+            household_reserve_respected = built.reserve_respected_across_scenarios
             if not built.target_reached_across_scenarios:
                 reasons.append("target_not_reached")
         else:
             financial = self_consumption = reserve = 0.0
             confidence = 0.0
             grid_to_storage = snapshot.current_storage_states[0].usable_capacity_wh
+            household_reserve_respected = False
             reasons.append("fresh_incumbent_simulation_unavailable")
-        if not _target_reached_by_requirement(
+        daily_target_reached, daily_target_reached_at = _daily_target_evidence(
             result=result,
             market=market,
             requirement=storage_requirement,
             current_storage_energy_wh=(
                 snapshot.current_storage_states[0].current_stored_energy_wh
             ),
-        ):
-            reasons.append("storage_requirement_not_met_by_deadline")
+        )
+        if not daily_target_reached:
+            reasons.append("daily_storage_target_not_reached_by_deadline")
         family = _family(native, incumbent=committed is not None)
         constraint_ids = tuple(
             dict.fromkeys((*limits.evidence_ids, storage_requirement.requirement_id))
@@ -868,6 +903,10 @@ def produce_mep_comparable_portfolio(
                     if committed is not None
                     else limits.maximum_soc * snapshot.current_storage_states[0].usable_capacity_wh
                 ),
+                storage_requirement.required_by,
+                daily_target_reached,
+                daily_target_reached_at,
+                household_reserve_respected,
             )
         )
     candidate_set = DomainCandidateSet(

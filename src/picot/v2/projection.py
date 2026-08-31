@@ -597,6 +597,8 @@ def project(run: CanonicalPipelineRun) -> Projection:
                         "reserve_contribution_wh": (
                             requirement.reserve_contribution_wh
                         ),
+                        "requirement_kind": requirement.requirement_kind,
+                        "satisfaction_mode": requirement.satisfaction_mode,
                     }
                     for requirement in c.storage_requirements
                 ],

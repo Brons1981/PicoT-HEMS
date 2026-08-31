@@ -2025,3 +2025,33 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   diagnostics publish the storage requirement, late commitment is invalid and
   the selected plan reaches the target before its deadline. The flat dashboard
   projection remains a separately scoped UI defect.
+
+## 2026-08-31 — 2.0.0-dev.212 daily target and household reserve separation
+
+- Live dev.211 diagnostics disproved the label attached to its 100% record.
+  The value is the conservative daily maximum target with `reached_by`
+  semantics; it is not proof that 100% must still be present at the later
+  household dependency time after an intentional export segment.
+- Kept ADR-001 through ADR-037 authoritative. MEP remains the only Candidate
+  generator, complete paths remain mandatory and ADR-032 Evaluation remains
+  the only winner selector.
+- Added explicit `requirement_kind` and `satisfaction_mode` fields. The live
+  MEP target is now published as `daily_storage_target` / `reached_by` and no
+  longer labelled as household demand.
+- Added per-Candidate Outcome facts for the target deadline, conservative
+  cross-scenario target-completion result and completion time, plus the
+  separately simulated cross-scenario household-reserve result.
+- Preserved the hard daily preference for the effective maximum SoC. A 60%
+  state therefore still produces only valid winning alternatives that reach
+  the 100% target. Preserved the configured two-percent micro-charge
+  suppression and its active-session exception unchanged.
+- Did not invent confidence-dependent reserve enlargement. The existing
+  ADR-037 relative-confidence policy requires a canonical baseline that is not
+  present in the live MEP Planning Input; wiring a fallback or fixed threshold
+  here would create hidden planning policy.
+- Regression evidence covers a 60% starting SoC, valid linked market routes,
+  explicit household reserve, late-incumbent invalidation and the existing
+  micro-charge boundary. Direct execution passed all 20 canonical MEP pipeline
+  scenarios plus 37 market, ADR-037 contract and charge-window scenarios.
+  Python compilation and `git diff --check` passed. GitHub CI remains required
+  for real pytest, Ruff and mypy evidence before merge.

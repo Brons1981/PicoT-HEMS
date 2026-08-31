@@ -163,7 +163,10 @@ The identified recovery checkpoint is merged on `main` as commit
 `6e99c82f477fdb31ea613ab23652f9ea7ec99a08`; all three GitHub CI workflows
 passed.  Release `2.0.0-dev.207` failed before runtime startup because its
 add-on image omitted the new `picot.architecture_ownership` module and
-`picot.runtime` package.  Release `2.0.0-dev.208` is the packaging-only hotfix
-and dedicated live-validation release for this boundary recovery.  Do not start
-new functional work before its live startup, planning, commitment and
+`picot.runtime` package.  Dev.208 packaged those components but then failed at
+the ownership guard because Python exposes a module started with `-m` as
+`__main__`.  Release `2.0.0-dev.209` makes the executable live-runtime declare
+its fixed canonical identity while keeping the ownership registry strict.  It
+is the dedicated live-validation release for this boundary recovery.  Do not
+start new functional work before its live startup, planning, commitment and
 segment-dispatch evidence has been reviewed.

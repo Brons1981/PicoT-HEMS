@@ -1936,3 +1936,19 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Live verification must confirm clean startup, a fresh v8 commitment with
   comparable incumbent/challenger evidence, retained identity for equivalent
   plans and correct execution at the next committed segment boundary.
+
+## 2026-08-31 — 2.0.0-dev.208 canonical add-on packaging hotfix
+
+- Live dev.207 stopped before runtime startup with
+  `ModuleNotFoundError: No module named 'picot.architecture_ownership'`.
+- Root cause: the add-on Dockerfile copied only `domain`, `adapters`, `planner`
+  and `v2`; the merged canonical runtime additionally imports the top-level
+  `architecture_ownership.py` module and `runtime` package.
+- Added both missing canonical components to the image while preserving the
+  explicit exclusion of legacy `picot.addon`.
+- Added a recursive import-closure regression so every local top-level
+  `picot.*` dependency reachable from `picot.v2` must be represented in the
+  Docker packaging allowlist.
+- Bumped the Home Assistant add-on and canonical v2 runtime together to
+  `2.0.0-dev.208`; no planning, evaluation, commitment, runtime policy or
+  adapter behavior changed.

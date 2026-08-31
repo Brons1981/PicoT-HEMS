@@ -161,6 +161,9 @@ Completed and merged through PR #575:
 
 The identified recovery checkpoint is merged on `main` as commit
 `6e99c82f477fdb31ea613ab23652f9ea7ec99a08`; all three GitHub CI workflows
-passed.  Release `2.0.0-dev.207` is the dedicated live-validation release for
-this boundary recovery.  Do not start new functional work before its live
-startup, planning, commitment and segment-dispatch evidence has been reviewed.
+passed.  Release `2.0.0-dev.207` failed before runtime startup because its
+add-on image omitted the new `picot.architecture_ownership` module and
+`picot.runtime` package.  Release `2.0.0-dev.208` is the packaging-only hotfix
+and dedicated live-validation release for this boundary recovery.  Do not start
+new functional work before its live startup, planning, commitment and
+segment-dispatch evidence has been reviewed.

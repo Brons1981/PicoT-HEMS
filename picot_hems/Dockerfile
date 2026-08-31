@@ -8,9 +8,11 @@ RUN apk add --no-cache git \
     && git clone --depth 1 --branch main \
       https://github.com/Brons1981/PicoT-HEMS.git /tmp/picot-src \
     && mkdir -p /opt/picot/picot \
+    && cp /tmp/picot-src/src/picot/architecture_ownership.py /opt/picot/picot/architecture_ownership.py \
     && cp -R /tmp/picot-src/src/picot/domain /opt/picot/picot/domain \
     && cp -R /tmp/picot-src/src/picot/adapters /opt/picot/picot/adapters \
     && cp -R /tmp/picot-src/src/picot/planner /opt/picot/picot/planner \
+    && cp -R /tmp/picot-src/src/picot/runtime /opt/picot/picot/runtime \
     && cp -R /tmp/picot-src/src/picot/v2 /opt/picot/picot/v2 \
     && touch /opt/picot/picot/__init__.py \
     && rm -rf /tmp/picot-src \

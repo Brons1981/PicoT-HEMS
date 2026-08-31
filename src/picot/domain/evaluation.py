@@ -32,6 +32,7 @@ class RelativeResult(StrEnum):
 
 
 class TieBreakKind(StrEnum):
+    INCUMBENT_COMMITMENT = "incumbent_commitment"
     CONFIDENCE = "confidence"
     RECOVERABILITY = "recoverability"
     EXECUTION_COMPLEXITY = "execution_complexity"
@@ -135,6 +136,7 @@ class ObjectiveComparisonRecord:
     retained_candidate_ids: tuple[str, ...]
     available: bool
     decisive: bool
+    equivalence_margin: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

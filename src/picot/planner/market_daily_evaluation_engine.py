@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from picot.architecture_ownership import architecture_ownership
 from picot.domain.daily_reference_intent import (
     DailyReferenceIntentSchedule,
     DailyStorageIntent,
@@ -23,6 +24,7 @@ from picot.planner.market_daily_planner import (
 from picot.v2.contracts import PlanningInputSnapshot
 from picot.v2.plan_commitment_store import ActivePlanCommitment
 
+ARCHITECTURE_OWNERSHIP = architecture_ownership("evaluation_engine", __name__)
 FINANCIAL_EQUIVALENCE_EUR = 0.01
 
 

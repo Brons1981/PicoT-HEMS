@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from hashlib import sha256
 
+from picot.architecture_ownership import architecture_ownership
 from picot.domain.energy_path import PathSegment
 from picot.domain.evaluation import EvaluationOutcomeStatus, EvaluationResult
 from picot.domain.execution_plan import (
@@ -14,7 +15,8 @@ from picot.domain.execution_plan import (
     ExecutionPlanSet,
 )
 
-IMPLEMENTATION_VERSION = "execution-plan-builder-v1"
+ARCHITECTURE_OWNERSHIP = architecture_ownership("execution_plan_builder", __name__)
+IMPLEMENTATION_VERSION = "execution-plan-builder-v2"
 
 
 class ExecutionPlanBuilder:
@@ -142,6 +144,7 @@ class ExecutionPlanBuilder:
                 requested_power_w=source.requested_power_w,
                 soc_constraint=source.soc_constraint,
                 energy_profile_id=source.energy_profile_id,
+                charge_source_policy=source.charge_source_policy,
             )
             for index, source in enumerate(ordered, start=1)
         )

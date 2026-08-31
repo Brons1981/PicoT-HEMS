@@ -3,7 +3,9 @@ from datetime import UTC, datetime, timedelta
 from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
+    CommittedHouseholdLoadInterval,
     CommittedPlanSegment,
+    CommittedStorageEnergyCheckpoint,
 )
 
 
@@ -63,6 +65,27 @@ def test_mep_challenger_evidence_survives_store_restart(tmp_path) -> None:
         ),
         selection_reason="material_change:test",
         replaced_plan_id="mep-plan:previous",
+        selected_at=starts_at - timedelta(minutes=5),
+        household_load_intervals=(
+            CommittedHouseholdLoadInterval(
+                interval_id="load-baseline-1",
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(minutes=15),
+                expected_energy_wh=125.0,
+                confidence=0.8,
+                source_reference="history:baseline",
+                method_version="household-load:v1",
+            ),
+        ),
+        storage_energy_checkpoints=(
+            CommittedStorageEnergyCheckpoint(
+                at=starts_at + timedelta(minutes=15),
+                lower_energy_wh=4000.0,
+                central_energy_wh=4200.0,
+                upper_energy_wh=4400.0,
+            ),
+        ),
+        candidate_family="mixed_schedule",
     )
 
     ActivePlanCommitmentStore(path).save(commitment)

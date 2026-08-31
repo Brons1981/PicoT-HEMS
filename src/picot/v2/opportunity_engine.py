@@ -8,6 +8,7 @@ from hashlib import sha256
 from math import isfinite
 from zoneinfo import ZoneInfo
 
+from picot.architecture_ownership import architecture_ownership
 from picot.v2.contracts import (
     Opportunity,
     OpportunityEvidenceRef,
@@ -17,6 +18,7 @@ from picot.v2.contracts import (
     PriceForecastPoint,
 )
 
+ARCHITECTURE_OWNERSHIP = architecture_ownership("opportunity_engine", __name__)
 NEGATIVE_PRICE_WINDOW = "NEGATIVE_PRICE_WINDOW"
 LOWEST_PRICE_WINDOW = "LOWEST_PRICE_WINDOW"
 HIGH_EXPORT_VALUE_WINDOW = "HIGH_EXPORT_VALUE_WINDOW"

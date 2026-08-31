@@ -14,6 +14,7 @@ class RuntimeObservationKind(StrEnum):
     CAPABILITY_HEALTH_CHANGED = "capability_health_changed"
     CAPABILITY_MAPPING_CHANGED = "capability_mapping_changed"
     HOUSEHOLD_STATE_CHANGED = "household_state_changed"
+    STORAGE_STATE_CHANGED = "storage_state_changed"
     FORECAST_CHANGED = "forecast_changed"
     PRICE_CHANGED = "price_changed"
     USER_RULES_CHANGED = "user_rules_changed"

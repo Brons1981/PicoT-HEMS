@@ -10,7 +10,12 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
-COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v6"
+from picot.architecture_ownership import architecture_ownership
+
+ARCHITECTURE_OWNERSHIP = architecture_ownership("plan_store", __name__)
+COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v8"
+COMPARISON_PREVIOUS_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v7"
+MATERIALITY_PREVIOUS_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v6"
 TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v5"
 DEFECTIVE_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v4"
 PREVIOUS_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v3"
@@ -26,6 +31,7 @@ class CommittedPlanSegment:
     ends_at: datetime
     primitive: str
     source_policy: str | None
+    storage_export_target_wh: float | None = None
 
     def __post_init__(self) -> None:
         for value in (self.starts_at, self.ends_at):
@@ -37,6 +43,67 @@ class CommittedPlanSegment:
             raise ValueError("committed segment primitive must be explicit")
         if self.source_policy is not None and not self.source_policy.strip():
             raise ValueError("committed segment source policy must be explicit")
+        if self.storage_export_target_wh is not None:
+            if self.storage_export_target_wh <= 0.0:
+                raise ValueError("committed export target must be positive")
+            if self.primitive != "discharge_at_power":
+                raise ValueError("only committed discharge may carry an export target")
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedHouseholdLoadInterval:
+    """Frozen household forecast evidence used by the admitted plan."""
+
+    interval_id: str
+    starts_at: datetime
+    ends_at: datetime
+    expected_energy_wh: float
+    confidence: float
+    source_reference: str
+    method_version: str
+
+    def __post_init__(self) -> None:
+        if any(
+            not value.strip()
+            for value in (
+                self.interval_id,
+                self.source_reference,
+                self.method_version,
+            )
+        ):
+            raise ValueError("committed household-load lineage must be explicit")
+        for value in (self.starts_at, self.ends_at):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError(
+                    "committed household-load timestamps must be timezone-aware"
+                )
+        if self.starts_at >= self.ends_at:
+            raise ValueError("committed household-load interval must be positive")
+        if self.expected_energy_wh < 0.0:
+            raise ValueError("committed household energy must be non-negative")
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("committed household confidence must be bounded")
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedStorageEnergyCheckpoint:
+    """Frozen lower/central/upper storage corridor for one plan checkpoint."""
+
+    at: datetime
+    lower_energy_wh: float
+    central_energy_wh: float
+    upper_energy_wh: float
+
+    def __post_init__(self) -> None:
+        if self.at.tzinfo is None or self.at.utcoffset() is None:
+            raise ValueError("committed storage checkpoint must be timezone-aware")
+        if not (
+            0.0
+            <= self.lower_energy_wh
+            <= self.central_energy_wh
+            <= self.upper_energy_wh
+        ):
+            raise ValueError("committed storage corridor must be ordered")
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +128,10 @@ class ActivePlanCommitment:
     segments: tuple[CommittedPlanSegment, ...] = ()
     selection_reason: str | None = None
     replaced_plan_id: str | None = None
+    selected_at: datetime | None = None
+    household_load_intervals: tuple[CommittedHouseholdLoadInterval, ...] = ()
+    storage_energy_checkpoints: tuple[CommittedStorageEnergyCheckpoint, ...] = ()
+    candidate_family: str | None = None
 
     def __post_init__(self) -> None:
         if any(
@@ -89,6 +160,20 @@ class ActivePlanCommitment:
         for evidence_value in (self.selection_reason, self.replaced_plan_id):
             if evidence_value is not None and not evidence_value.strip():
                 raise ValueError("commitment replacement evidence must be explicit")
+        if self.candidate_family is not None and not self.candidate_family.strip():
+            raise ValueError("commitment candidate family must be explicit")
+        if self.selected_at is not None:
+            if (
+                self.selected_at.tzinfo is None
+                or self.selected_at.utcoffset() is None
+            ):
+                raise ValueError("commitment selection time must be timezone-aware")
+            if self.selected_at >= self.ends_at:
+                raise ValueError("commitment selection must precede plan end")
+        if (
+            self.household_load_intervals or self.storage_energy_checkpoints
+        ) and self.selected_at is None:
+            raise ValueError("commitment monitoring baselines require selection time")
         if any(
             left.ends_at > right.starts_at
             for left, right in zip(self.segments, self.segments[1:], strict=False)
@@ -103,6 +188,22 @@ class ActivePlanCommitment:
             and self.minimum_storage_energy_at_horizon_end_wh < 0.0
         ):
             raise ValueError("commitment horizon energy must be non-negative")
+        if any(
+            left.ends_at > right.starts_at
+            for left, right in zip(
+                self.household_load_intervals,
+                self.household_load_intervals[1:],
+                strict=False,
+            )
+        ):
+            raise ValueError("committed household-load intervals must not overlap")
+        checkpoint_times = tuple(
+            checkpoint.at for checkpoint in self.storage_energy_checkpoints
+        )
+        if checkpoint_times != tuple(sorted(set(checkpoint_times))):
+            raise ValueError(
+                "committed storage checkpoints must be unique and ordered"
+            )
 
 
 class ActivePlanCommitmentStore:
@@ -129,14 +230,41 @@ class ActivePlanCommitmentStore:
         serialized = asdict(commitment)
         serialized["starts_at"] = commitment.starts_at.isoformat()
         serialized["ends_at"] = commitment.ends_at.isoformat()
+        serialized["selected_at"] = (
+            commitment.selected_at.isoformat()
+            if commitment.selected_at is not None
+            else None
+        )
         serialized["segments"] = [
             {
                 "starts_at": segment.starts_at.isoformat(),
                 "ends_at": segment.ends_at.isoformat(),
                 "primitive": segment.primitive,
                 "source_policy": segment.source_policy,
+                "storage_export_target_wh": segment.storage_export_target_wh,
             }
             for segment in commitment.segments
+        ]
+        serialized["household_load_intervals"] = [
+            {
+                "interval_id": interval.interval_id,
+                "starts_at": interval.starts_at.isoformat(),
+                "ends_at": interval.ends_at.isoformat(),
+                "expected_energy_wh": interval.expected_energy_wh,
+                "confidence": interval.confidence,
+                "source_reference": interval.source_reference,
+                "method_version": interval.method_version,
+            }
+            for interval in commitment.household_load_intervals
+        ]
+        serialized["storage_energy_checkpoints"] = [
+            {
+                "at": checkpoint.at.isoformat(),
+                "lower_energy_wh": checkpoint.lower_energy_wh,
+                "central_energy_wh": checkpoint.central_energy_wh,
+                "upper_energy_wh": checkpoint.upper_energy_wh,
+            }
+            for checkpoint in commitment.storage_energy_checkpoints
         ]
         payload["commitments"][commitment.execution_scope_id] = serialized
         self._write(payload)
@@ -306,6 +434,11 @@ def _deserialize(payload: dict[str, Any]) -> ActivePlanCommitment:
                     if item.get("source_policy") is not None
                     else None
                 ),
+                storage_export_target_wh=(
+                    float(item["storage_export_target_wh"])
+                    if item.get("storage_export_target_wh") is not None
+                    else None
+                ),
             )
             for item in payload.get("segments", ())
         ),
@@ -317,6 +450,37 @@ def _deserialize(payload: dict[str, Any]) -> ActivePlanCommitment:
         replaced_plan_id=(
             str(payload["replaced_plan_id"])
             if payload.get("replaced_plan_id") is not None
+            else None
+        ),
+        selected_at=(
+            datetime.fromisoformat(payload["selected_at"])
+            if payload.get("selected_at") is not None
+            else None
+        ),
+        household_load_intervals=tuple(
+            CommittedHouseholdLoadInterval(
+                interval_id=str(item["interval_id"]),
+                starts_at=datetime.fromisoformat(item["starts_at"]),
+                ends_at=datetime.fromisoformat(item["ends_at"]),
+                expected_energy_wh=float(item["expected_energy_wh"]),
+                confidence=float(item["confidence"]),
+                source_reference=str(item["source_reference"]),
+                method_version=str(item["method_version"]),
+            )
+            for item in payload.get("household_load_intervals", ())
+        ),
+        storage_energy_checkpoints=tuple(
+            CommittedStorageEnergyCheckpoint(
+                at=datetime.fromisoformat(item["at"]),
+                lower_energy_wh=float(item["lower_energy_wh"]),
+                central_energy_wh=float(item["central_energy_wh"]),
+                upper_energy_wh=float(item["upper_energy_wh"]),
+            )
+            for item in payload.get("storage_energy_checkpoints", ())
+        ),
+        candidate_family=(
+            str(payload["candidate_family"])
+            if payload.get("candidate_family") is not None
             else None
         ),
     )

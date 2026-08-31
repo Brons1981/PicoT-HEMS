@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from time import perf_counter
 
-from picot.v2.contracts import CanonicalPipelineRun
+from picot.v2.contracts import CanonicalPipelineRun, DelegatedStorageCandidateOutcome
 from picot.v2.storage_energy_source_need import (
     derive_storage_energy_source_need,
 )
@@ -98,7 +98,11 @@ def project(run: CanonicalPipelineRun) -> Projection:
             None,
         )
         outcome = detailed_outcomes_by_candidate_id.get(candidate.candidate_id)
-        if path is None or not path.segments or outcome is None:
+        if (
+            path is None
+            or not path.segments
+            or not isinstance(outcome, DelegatedStorageCandidateOutcome)
+        ):
             continue
         segment = next(
             (

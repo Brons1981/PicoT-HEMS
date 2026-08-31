@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta
 
+from picot.architecture_ownership import architecture_ownership
+from picot.domain.planning_input_snapshot import RuntimePressureState
 from picot.domain.runtime import (
     MaterialChangeClassification,
     MaterialChangeRecord,
@@ -17,6 +19,7 @@ from picot.domain.runtime import (
     RuntimeObservationKind,
 )
 
+ARCHITECTURE_OWNERSHIP = architecture_ownership("runtime_monitor", __name__)
 IMPLEMENTATION_VERSION = "runtime-monitor-v1"
 STABILISATION_INTERVAL = timedelta(seconds=5)
 
@@ -218,6 +221,7 @@ class RuntimeMonitor:
 
         if kind in {
             RuntimeObservationKind.HOUSEHOLD_STATE_CHANGED,
+            RuntimeObservationKind.STORAGE_STATE_CHANGED,
             RuntimeObservationKind.FORECAST_CHANGED,
             RuntimeObservationKind.PRICE_CHANGED,
             RuntimeObservationKind.RUNTIME_PRESSURE_CHANGED,
@@ -284,3 +288,88 @@ class RuntimeMonitor:
     def _require_aware(value: datetime, label: str) -> None:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError(f"{label} must be timezone-aware.")
+
+
+class RuntimeMonitorSession:
+    """Hold immutable Runtime Monitor state for one live runtime process.
+
+    ADR-034 keeps classification deterministic by requiring callers to supply
+    immutable observations, coordination state and time.  This adapter owns
+    only the latest returned coordination state; it does not derive material
+    thresholds, build snapshots or make planning decisions.
+    """
+
+    def __init__(
+        self,
+        *,
+        monitor: RuntimeMonitor | None = None,
+        state: RuntimeCoordinationState | None = None,
+    ) -> None:
+        self._monitor = monitor or RuntimeMonitor()
+        self._state = state or RuntimeCoordinationState(
+            planner_state=PlannerRunState.IDLE,
+            active_planner_run_id=None,
+            last_planner_run_started_at=None,
+            last_planner_run_ended_at=None,
+            stabilisation_deadline=None,
+            replan_required=False,
+            replan_reasons=(),
+            source_observation_ids=(),
+            last_processed_observation_at=None,
+            runtime_pressure_state=RuntimePressureState.NORMAL,
+            state_version=1,
+        )
+
+    @property
+    def state(self) -> RuntimeCoordinationState:
+        return self._state
+
+    def observe(
+        self,
+        observations: tuple[RuntimeObservation, ...],
+        *,
+        now: datetime,
+    ) -> ReplanningSignal:
+        result = self._monitor.evaluate(observations, self._state, now=now)
+        self._state = result.next_state
+        return result.replanning_signal
+
+    def start_requested_run(
+        self,
+        *,
+        planner_run_id: str,
+        started_at: datetime,
+    ) -> None:
+        signal = self.observe((), now=started_at)
+        if not signal.fresh_snapshot_required:
+            raise ValueError(
+                "A Runtime Monitor requested Planner Run requires a fresh-snapshot signal."
+            )
+        self._state = self._monitor.start_planner_run(
+            self._state,
+            planner_run_id=planner_run_id,
+            started_at=started_at,
+        )
+
+    def finish_requested_run(
+        self,
+        *,
+        planner_run_id: str,
+        ended_at: datetime,
+        execution_succeeded: bool = True,
+    ) -> None:
+        self._state = self._monitor.finish_planner_run(
+            self._state,
+            planner_run_id=planner_run_id,
+            ended_at=ended_at,
+        )
+        if execution_succeeded:
+            return
+        failure = RuntimeObservation(
+            observation_id=f"planner-run:{planner_run_id}:execution-failed",
+            kind=RuntimeObservationKind.EXECUTION_OUTCOME_CHANGED,
+            observed_at=ended_at,
+            source_reference=f"planner-run:{planner_run_id}",
+            new_value="failed",
+        )
+        self.observe((failure,), now=ended_at)

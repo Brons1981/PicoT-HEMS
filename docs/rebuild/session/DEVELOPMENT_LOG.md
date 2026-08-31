@@ -1880,3 +1880,46 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Added regressions for the exact export-to-smart-discharge boundary and retry
   behavior discovered in diagnostics 66.
 - Bumped add-on and Core version to `2.0.0-dev.206`.
+
+## 2026-08-31 — ADR-032 incumbent/challenger comparison slice
+
+- Added V2ADR-062 and V2ADR-063 for material replanning, symmetric commitment
+  comparison and explicit committed-trajectory materiality thresholds.
+- Routed live material observations through the general Runtime Monitor and
+  retained household-load and storage-corridor baselines in commitment v8.
+- Added one canonical MEP Candidate/Outcome producer. It emits every native and
+  market alternative plus a freshly simulated incumbent over the same snapshot
+  and horizon before any winner exists.
+- Replaced the live pipeline's private MEP and historical commitment decisions
+  with ADR-032 `EvaluationEngine` comparison. Equivalent outcomes retain the
+  incumbent; invalid incumbents are excluded; historical financial fields are
+  provenance only.
+- Exposed per-candidate horizon, validity, financial, self-consumption, reserve,
+  recoverability and switching-margin evidence in diagnostics.
+- Preserved exact storage-export targets in persisted commitment segments and
+  reject older commitments that lack sufficient comparison provenance.
+- Added machine-readable ADR ownership boundaries and a mandatory session-start
+  routing document.
+- Verification: `1107 passed`; Ruff all changed production/test files; mypy
+  `Success: no issues found in 186 source files`; `git diff --check` passed.
+
+## 2026-08-31 — ADR-033 canonical Execution Plan Builder slice
+
+- Removed live and dead hand-built `ObserverExecutionPlan` construction from
+  `mep_canonical_pipeline.py`.
+- Routed the successful canonical `EvaluationResult` exclusively through
+  `ExecutionPlanBuilder` before commitment persistence and execution.
+- Extended canonical `ExecutionPlanSegment` with exact `ChargeSourcePolicy`
+  preservation under ADR-037 and V2ADR-050; primitives, time bounds, power,
+  evidence, purpose and capability references remain unchanged.
+- Added a policy-free compatibility projection from the canonical domain
+  `ExecutionPlanSet` to the existing live v2 DTO. A retained incumbent keeps
+  the Store-admitted commitment plan ID; no candidate or commitment evaluation
+  occurs in that projection.
+- Reused the canonical Evaluation ID and deterministic Builder plan/set IDs so
+  lineage no longer depends on a pipeline-local synthetic plan identity.
+- Added architecture regressions prohibiting live manual plan construction and
+  verifying exclusive ADR-033 Builder use.
+- Verification: `1108 passed`; focused Builder/MEP/commitment/runtime chain
+  `93 passed`; Ruff passed; mypy `Success: no issues found in 187 source files`;
+  `git diff --check` passed.

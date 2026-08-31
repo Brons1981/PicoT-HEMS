@@ -13,7 +13,7 @@ from picot.domain.runtime import (
     RuntimeObservation,
     RuntimeObservationKind,
 )
-from picot.runtime.runtime_monitor import RuntimeMonitor
+from picot.runtime.runtime_monitor import RuntimeMonitor, RuntimeMonitorSession
 
 BASE = datetime(2026, 8, 2, 7, 0, tzinfo=UTC)
 
@@ -202,3 +202,60 @@ def test_monitor_rejects_duplicate_observations() -> None:
 
     with pytest.raises(ValueError, match="must be unique"):
         RuntimeMonitor().evaluate((observation, observation), _state(), now=BASE)
+
+
+def test_live_session_retains_pending_replan_during_stabilisation() -> None:
+    session = RuntimeMonitorSession()
+    first = _observation(
+        "material-household-1",
+        RuntimeObservationKind.HOUSEHOLD_STATE_CHANGED,
+        material_transition=True,
+    )
+
+    initial_signal = session.observe((first,), now=BASE)
+    assert initial_signal.status is ReplanningSignalStatus.FRESH_SNAPSHOT_REQUIRED
+
+    session.start_requested_run(planner_run_id="run-1", started_at=BASE)
+    session.finish_requested_run(planner_run_id="run-1", ended_at=BASE)
+
+    second = _observation(
+        "material-household-2",
+        RuntimeObservationKind.HOUSEHOLD_STATE_CHANGED,
+        material_transition=True,
+        observed_at=BASE + timedelta(seconds=1),
+    )
+    blocked = session.observe((second,), now=BASE + timedelta(seconds=1))
+    released = session.observe((), now=BASE + timedelta(seconds=5))
+
+    assert blocked.status is ReplanningSignalStatus.BLOCKED_BY_STABILISATION
+    assert released.status is ReplanningSignalStatus.FRESH_SNAPSHOT_REQUIRED
+    assert released.source_observation_ids == ("material-household-2",)
+
+
+def test_live_session_retries_failed_requested_run_after_stabilisation() -> None:
+    session = RuntimeMonitorSession()
+    session.observe(
+        (
+            _observation(
+                "material-price-1",
+                RuntimeObservationKind.PRICE_CHANGED,
+                material_transition=True,
+            ),
+        ),
+        now=BASE,
+    )
+    session.start_requested_run(planner_run_id="run-failed", started_at=BASE)
+    session.finish_requested_run(
+        planner_run_id="run-failed",
+        ended_at=BASE,
+        execution_succeeded=False,
+    )
+
+    blocked = session.observe((), now=BASE + timedelta(seconds=4))
+    retry = session.observe((), now=BASE + timedelta(seconds=5))
+
+    assert blocked.status is ReplanningSignalStatus.BLOCKED_BY_STABILISATION
+    assert retry.status is ReplanningSignalStatus.FRESH_SNAPSHOT_REQUIRED
+    assert retry.source_observation_ids == (
+        "planner-run:run-failed:execution-failed",
+    )

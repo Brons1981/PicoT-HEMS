@@ -43,8 +43,66 @@ from picot.v2.opportunity_engine import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_generation", __name__)
-METHOD_VERSION = "market-daily-planner:v5"
+METHOD_VERSION = "market-daily-planner:v6"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
+
+
+def _household_energy_requirement_deadline(
+    observation: DailyReferenceStrategyObservation,
+) -> datetime:
+    """Return the first physically reachable household-storage deadline.
+
+    ADR-017 and ADR-037 make the projected household energy balance authoritative
+    for when stored energy is needed.  This is MEP-native physical evidence; it
+    is not a CP deadline and it does not select a charging window.
+    """
+
+    baseline = next(
+        item
+        for item in observation.observer_result.portfolio.strategy_results
+        if all(
+            interval.intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+            for interval in item.intent_schedule.intervals
+        )
+    )
+    dependency_starts = tuple(
+        interval.starts_at
+        for trajectory in baseline.run.simulation.trajectories
+        for interval in trajectory.intervals
+        if interval.grid_to_household_wh > 1e-6
+    )
+    dependency_start = min(
+        dependency_starts,
+        default=baseline.intent_schedule.horizon_end,
+    )
+    if dependency_start == baseline.intent_schedule.horizon_end:
+        return dependency_start
+
+    immediate_recovery_times = tuple(
+        max(
+            trajectory.target_reached_at
+            for trajectory in result.run.simulation.trajectories
+            if trajectory.target_reached_at is not None
+        )
+        for result in observation.observer_result.portfolio.strategy_results
+        if (
+            any(
+                interval.starts_at == result.intent_schedule.horizon_start
+                and interval.intent
+                in {DailyStorageIntent.NOM, DailyStorageIntent.GRID_REQUIREMENT}
+                for interval in result.intent_schedule.intervals
+            )
+            and all(
+                trajectory.target_reached_at is not None
+                for trajectory in result.run.simulation.trajectories
+            )
+        )
+    )
+    earliest_recovery = min(
+        immediate_recovery_times,
+        default=baseline.intent_schedule.horizon_end,
+    )
+    return max(dependency_start, earliest_recovery)
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,6 +467,7 @@ class MarketDailyCandidatePortfolio:
     wear_eur_per_export_kwh: float
     minimum_total_route_profit_eur: float
     method_version: str
+    required_by: datetime
 
     def __post_init__(self) -> None:
         if self.native_observation.snapshot_id != self.snapshot_id:
@@ -417,6 +476,8 @@ class MarketDailyCandidatePortfolio:
             raise ValueError("MEP portfolio RTE must be between 0.5 and 1.0")
         if not self.method_version.strip():
             raise ValueError("MEP portfolio method version must be explicit.")
+        if self.required_by.tzinfo is None or self.required_by.utcoffset() is None:
+            raise ValueError("MEP storage requirement deadline must be timezone-aware.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -544,13 +605,27 @@ class MarketDailyPlanner:
             ),
         )
         phase_started = perf_counter()
-        native_observation = IndependentDailyReferenceAdapter().observe(
+        reference_adapter = IndependentDailyReferenceAdapter()
+        native_observation = reference_adapter.observe(
             snapshot=snapshot,
             conversion_model=conversion_model,
             maximum_duration=maximum_duration,
             micro_charge_suppression_fraction=micro_charge_suppression_fraction,
             required_by=required_by,
         )
+        effective_required_by = required_by or _household_energy_requirement_deadline(
+            native_observation
+        )
+        if required_by is None and effective_required_by < (
+            native_observation.strategy_space.schedules[0].horizon_end
+        ):
+            native_observation = reference_adapter.observe(
+                snapshot=snapshot,
+                conversion_model=conversion_model,
+                maximum_duration=maximum_duration,
+                micro_charge_suppression_fraction=micro_charge_suppression_fraction,
+                required_by=effective_required_by,
+            )
         native_plan_ms = (perf_counter() - phase_started) * 1000.0
         horizon_end = native_observation.strategy_space.schedules[0].horizon_end
         phase_started = perf_counter()
@@ -594,6 +669,7 @@ class MarketDailyPlanner:
             wear_eur_per_export_kwh=trading_policy.wear_eur_per_export_kwh,
             minimum_total_route_profit_eur=(trading_policy.minimum_total_route_profit_eur),
             method_version=METHOD_VERSION,
+            required_by=effective_required_by,
         )
         candidates = native_observation.observer_result.candidate_set.candidates
         diagnostics = MarketDailyPlannerDiagnostics(

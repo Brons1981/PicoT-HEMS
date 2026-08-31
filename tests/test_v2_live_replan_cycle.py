@@ -9,7 +9,11 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
-from picot.v2.live_runtime import _planning_input_signature, _should_run_cycle
+from picot.v2.live_runtime import (
+    _commitment_execution_phase,
+    _planning_input_signature,
+    _should_run_cycle,
+)
 from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     CommittedPlanSegment,
@@ -134,6 +138,50 @@ def _with_active_commitment(
             active_plan_commitments=(commitment,),
         ),
     )
+
+
+def test_commitment_phase_prefers_due_segment_over_late_legacy_plan_start() -> None:
+    """ADR-027/033: the exact current segment owns execution timing."""
+
+    commitment = ActivePlanCommitment(
+        execution_scope_id="home-battery",
+        plan_id="plan-with-current-household-support",
+        plan_revision=1,
+        primitive="charge_at_power",
+        source_policy="pv_preferred_grid_allowed",
+        starts_at=BASE + timedelta(hours=12),
+        ends_at=BASE + timedelta(hours=15),
+        target_energy_wh=8160.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=BASE,
+                ends_at=BASE + timedelta(hours=12),
+                primitive="balance_discharge_only",
+                source_policy=None,
+            ),
+            CommittedPlanSegment(
+                starts_at=BASE + timedelta(hours=12),
+                ends_at=BASE + timedelta(hours=15),
+                primitive="charge_at_power",
+                source_policy="pv_preferred_grid_allowed",
+            ),
+        ),
+    )
+
+    phase = _commitment_execution_phase(
+        commitment,
+        captured_at=BASE + timedelta(minutes=30),
+    )
+
+    assert phase == {
+        "status": "active",
+        "segment": {
+            "starts_at": BASE.isoformat(),
+            "ends_at": (BASE + timedelta(hours=12)).isoformat(),
+            "primitive": "balance_discharge_only",
+            "source_policy": None,
+        },
+    }
 
 
 def test_identical_source_content_has_same_signature_across_fresh_snapshots() -> None:

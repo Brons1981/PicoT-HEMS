@@ -42,6 +42,68 @@ def test_mep_builds_native_plan_when_no_market_extension_applies() -> None:
     assert result.reason == "no_admitted_market_route"
 
 
+def test_mep_bounds_charge_candidates_before_projected_household_grid_dependency() -> None:
+    """ADR-017/037: a later cheap interval cannot hide an earlier energy need."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.30)
+    assert snapshot.pv_energy_timeline is not None
+    source = snapshot.price_points[0]
+    later_cheap_start = snapshot.captured_at + timedelta(hours=12)
+    dark = replace(
+        snapshot,
+        pv_energy_timeline=replace(
+            snapshot.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    item,
+                    pv_energy_wh=0.0,
+                    forecast_lower_energy_wh=0.0,
+                    forecast_central_energy_wh=0.0,
+                    forecast_upper_energy_wh=0.0,
+                )
+                for item in snapshot.pv_energy_timeline.intervals
+            ),
+        ),
+        price_points=(
+            replace(
+                source,
+                point_id="current-cheap",
+                ends_at=snapshot.captured_at + timedelta(hours=3),
+                value_eur_per_kwh=0.13,
+            ),
+            replace(
+                source,
+                point_id="expensive-household-period",
+                starts_at=snapshot.captured_at + timedelta(hours=3),
+                ends_at=later_cheap_start,
+                value_eur_per_kwh=0.40,
+            ),
+            replace(
+                source,
+                point_id="later-cheap",
+                starts_at=later_cheap_start,
+                value_eur_per_kwh=0.10,
+            ),
+        ),
+    )
+
+    portfolio, _ = MarketDailyPlanner().generate_with_diagnostics(
+        snapshot=dark,
+        conversion_model=_conversion(),
+    )
+
+    assert portfolio.required_by < later_cheap_start
+    charge_intervals = tuple(
+        interval
+        for schedule in portfolio.native_observation.strategy_space.schedules
+        for interval in schedule.intervals
+        if interval.intent.value == "grid_requirement"
+    )
+    assert charge_intervals
+    assert all(interval.ends_at <= portfolio.required_by for interval in charge_intervals)
+    assert any(interval.starts_at == snapshot.captured_at for interval in charge_intervals)
+
+
 def test_mep_does_not_override_native_smart_discharge_during_forecast_solar() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.995)
 

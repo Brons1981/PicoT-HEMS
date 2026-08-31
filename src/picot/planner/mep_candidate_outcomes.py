@@ -7,6 +7,7 @@ See ADR-024, ADR-031, ADR-032, ADR-037, V2ADR-055 and V2ADR-062.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from hashlib import sha256
 
 from picot.architecture_ownership import architecture_ownership

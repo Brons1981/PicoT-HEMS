@@ -11,6 +11,7 @@ from picot.adapters.home_assistant import (
     HomeAssistantDispatcher,
 )
 from picot.adapters.home_assistant_http import HomeAssistantHttpTransport
+from picot.architecture_ownership import architecture_ownership
 from picot.domain.execution import ExecutionPrimitiveRequest
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.home_assistant import (
@@ -20,6 +21,7 @@ from picot.domain.home_assistant import (
 from picot.v2.contracts import CanonicalPipelineRun
 from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
 
+ARCHITECTURE_OWNERSHIP = architecture_ownership("execution_engine", __name__)
 SUPERVISOR_BASE_URL = "http://supervisor/core"
 
 

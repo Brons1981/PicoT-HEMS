@@ -30,6 +30,7 @@ from picot.v2.contracts import (
     PVEnergyTimelineInterval,
     StoragePhysicalLimits,
 )
+from picot.v2.household_planning_regime import UserObjectiveProfile
 from picot.v2.independent_daily_reference_adapter import (
     DailyReferenceInputError,
     IndependentDailyReferenceAdapter,
@@ -116,6 +117,15 @@ def _snapshot(
         architecture_baseline_commit="baseline",
         pipeline_contract_version=1,
         strategy_id="strategy",
+        user_objective_profile=UserObjectiveProfile(
+            profile_id="test-profile",
+            version=1,
+            cost_optimization_weight=80,
+            self_consumption_weight=70,
+            reserve_availability_weight=60,
+            trading_enabled=True,
+            adaptive_priority_enabled=False,
+        ),
         horizon_end=START + timedelta(hours=36),
         price_points=(
             PriceForecastPoint(

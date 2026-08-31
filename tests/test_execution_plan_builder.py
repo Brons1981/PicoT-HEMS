@@ -123,6 +123,7 @@ def test_builder_creates_one_plan_per_scope_and_preserves_segments() -> None:
     assert battery.revision == 1
     assert battery.segments[0].source_path_segment_id == "path-segment-battery"
     assert battery.segments[0].requested_power_w == 1200.0
+    assert battery.segments[0].charge_source_policy is ChargeSourcePolicy.PV_ONLY
 
 
 def test_builder_returns_empty_plan_set_for_baseline_path() -> None:

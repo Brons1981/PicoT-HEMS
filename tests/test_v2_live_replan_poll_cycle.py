@@ -4,6 +4,8 @@ from pathlib import Path
 from threading import Event, Thread
 
 import picot.v2.live_runtime as live_runtime
+from picot.domain.runtime import RuntimeObservation, RuntimeObservationKind
+from picot.runtime.runtime_monitor import RuntimeMonitorSession
 from picot.v2 import ARCHITECTURE_BASELINE_COMMIT, PIPELINE_CONTRACT_VERSION, __version__
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
 from picot.v2.live_runtime import (
@@ -438,6 +440,78 @@ def test_poll_cycle_prepares_actual_pv_before_signature_and_execution(
         ("executed", enriched),
     ]
     assert result == _planning_input_signature(enriched)
+
+
+def test_non_material_runtime_observation_keeps_active_commitment() -> None:
+    first = _with_active_commitment(_bundle(captured_at=BASE, price=0.20))
+    fresh = _with_active_commitment(
+        _bundle(captured_at=BASE + timedelta(minutes=1), price=0.10)
+    )
+    executed: list[str] = []
+
+    result = _poll_live_cycle(
+        previous_signature=_planning_input_signature(first),
+        load_bundle=lambda: fresh,
+        execute=lambda bundle: executed.append(bundle.snapshot.run_id),
+        runtime_monitor=RuntimeMonitorSession(),
+        runtime_observations=lambda bundle: (
+            RuntimeObservation(
+                observation_id="household-load:within-tolerance",
+                kind=RuntimeObservationKind.HOUSEHOLD_STATE_CHANGED,
+                observed_at=bundle.snapshot.captured_at,
+                source_reference="household-load-deviation",
+                old_value="500Wh",
+                new_value="540Wh",
+                unit="Wh",
+                material_transition=False,
+            ),
+        ),
+    )
+
+    assert executed == []
+    assert result == _planning_input_signature(first)
+
+
+def test_material_runtime_observation_forces_fresh_committed_run() -> None:
+    first = _with_active_commitment(_bundle(captured_at=BASE, price=0.20))
+    observed = _with_active_commitment(
+        _bundle(captured_at=BASE + timedelta(minutes=1), price=0.10)
+    )
+    fresh = _with_active_commitment(
+        _bundle(captured_at=BASE + timedelta(minutes=1, seconds=1), price=0.11)
+    )
+    loaded = [observed, fresh]
+    executed: list[PlanningInputBundle] = []
+    monitor = RuntimeMonitorSession()
+
+    assert _planning_input_signature(first) == _planning_input_signature(observed)
+    assert _planning_input_signature(first) == _planning_input_signature(fresh)
+
+    result = _poll_live_cycle(
+        previous_signature=_planning_input_signature(first),
+        load_bundle=lambda: loaded.pop(0),
+        execute=lambda bundle: executed.append(bundle),
+        runtime_monitor=monitor,
+        runtime_observations=lambda bundle: (
+            RuntimeObservation(
+                observation_id="household-load:material-excess:1",
+                kind=RuntimeObservationKind.HOUSEHOLD_STATE_CHANGED,
+                observed_at=bundle.snapshot.captured_at,
+                source_reference="household-load-deviation",
+                old_value="1200Wh",
+                new_value="3000Wh",
+                unit="Wh",
+                material_transition=True,
+            ),
+        ),
+        runtime_now=lambda: fresh.snapshot.captured_at,
+    )
+
+    assert loaded == []
+    assert executed == [fresh]
+    assert result == _planning_input_signature(fresh)
+    assert monitor.state.last_planner_run_started_at == fresh.snapshot.captured_at
+    assert monitor.state.last_planner_run_ended_at == fresh.snapshot.captured_at
 
 def test_grid_power_observation_defaults_to_one_second() -> None:
     assert live_runtime._grid_power_observation_interval_seconds({}) == 1.0

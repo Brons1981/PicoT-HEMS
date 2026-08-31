@@ -50,31 +50,41 @@ def _pv_admission_fixture(*, promoted_to_central: bool) -> tuple[object, object,
     lower_wh = central_wh if promoted_to_central else 400.0
     snapshot = SimpleNamespace(
         captured_at=starts_at,
-        storage_mode_capability_evidence=SimpleNamespace(
-            current_vendor_mode="Nul op de meter"
+        storage_mode_capability_evidence=SimpleNamespace(current_vendor_mode="Nul op de meter"),
+        current_storage_states=(
+            SimpleNamespace(
+                execution_scope_id="battery",
+                capability_id="storage",
+                current_stored_energy_wh=7000.0,
+                usable_capacity_wh=8160.0,
+            ),
         ),
-        current_storage_states=(SimpleNamespace(
-            execution_scope_id="battery",
-            capability_id="storage",
-            current_stored_energy_wh=7000.0,
-            usable_capacity_wh=8160.0,
-        ),),
-        storage_physical_limits=(SimpleNamespace(
-            execution_scope_id="battery",
-            capability_id="storage",
-            maximum_soc=1.0,
-        ),),
-        pv_energy_timeline=SimpleNamespace(intervals=(SimpleNamespace(
-            starts_at=starts_at,
-            ends_at=ends_at,
-            forecast_lower_energy_wh=lower_wh,
-            forecast_central_energy_wh=central_wh,
-        ),)),
-        household_load_forecast=SimpleNamespace(intervals=(SimpleNamespace(
-            starts_at=starts_at,
-            ends_at=ends_at,
-            expected_energy_wh=300.0,
-        ),)),
+        storage_physical_limits=(
+            SimpleNamespace(
+                execution_scope_id="battery",
+                capability_id="storage",
+                maximum_soc=1.0,
+            ),
+        ),
+        pv_energy_timeline=SimpleNamespace(
+            intervals=(
+                SimpleNamespace(
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    forecast_lower_energy_wh=lower_wh,
+                    forecast_central_energy_wh=central_wh,
+                ),
+            )
+        ),
+        household_load_forecast=SimpleNamespace(
+            intervals=(
+                SimpleNamespace(
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    expected_energy_wh=300.0,
+                ),
+            )
+        ),
         storage_round_trip_efficiency=SimpleNamespace(
             status="available",
             round_trip_efficiency=0.83,
@@ -84,9 +94,7 @@ def _pv_admission_fixture(*, promoted_to_central: bool) -> tuple[object, object,
 
 
 def test_measured_pv_promotion_keeps_nom_when_target_is_covered() -> None:
-    snapshot, path, due_segment = _pv_admission_fixture(
-        promoted_to_central=True
-    )
+    snapshot, path, due_segment = _pv_admission_fixture(promoted_to_central=True)
 
     assert _measured_pv_basis_covers_remaining_acquisition(
         snapshot=snapshot,
@@ -96,9 +104,7 @@ def test_measured_pv_promotion_keeps_nom_when_target_is_covered() -> None:
 
 
 def test_lagging_actual_pv_does_not_block_planned_grid_charge() -> None:
-    snapshot, path, due_segment = _pv_admission_fixture(
-        promoted_to_central=False
-    )
+    snapshot, path, due_segment = _pv_admission_fixture(promoted_to_central=False)
 
     assert not _measured_pv_basis_covers_remaining_acquisition(
         snapshot=snapshot,
@@ -119,23 +125,48 @@ def test_mep_winner_flows_through_canonical_path_and_plan_store(tmp_path) -> Non
         if item.path_id == run.evaluation.winning_energy_path_id
     )
     execution_plan = run.execution_plan_set.plans[0]
-    assert tuple(
-        item.source_path_segment_id for item in execution_plan.segments
-    ) == winning_path.segment_ids
+    assert (
+        tuple(item.source_path_segment_id for item in execution_plan.segments)
+        == winning_path.segment_ids
+    )
+    assert execution_plan.evaluation_id == run.evaluation.evaluation_id
+    assert execution_plan.valid_from == snapshot.captured_at
+    assert all(
+        execution_segment.segment_id.startswith("execution-segment-")
+        and execution_segment.starts_at == path_segment.starts_at
+        and execution_segment.ends_at == path_segment.ends_at
+        and execution_segment.primitive is path_segment.primitive
+        and execution_segment.capability_id == path_segment.capability_id
+        and execution_segment.purpose == path_segment.purpose
+        and execution_segment.evidence_ids == path_segment.evidence_ids
+        and execution_segment.requested_power_w == path_segment.requested_power_w
+        and execution_segment.charge_source_policy
+        is path_segment.charge_source_policy
+        for execution_segment, path_segment in zip(
+            execution_plan.segments,
+            winning_path.segments,
+            strict=True,
+        )
+    )
     commitment = store.load(snapshot.current_storage_states[0].execution_scope_id)
     assert commitment is not None
     assert commitment.planner_id == "mep"
     assert commitment.plan_id == execution_plan.plan_id
     assert commitment.schedule_id is not None
-    assert commitment.selection_reason == (
-        "objective:mep_physical_and_market_evaluation"
-    )
+    assert commitment.selection_reason == run.evaluation.decisive_step
     assert len(commitment.segments) == len(winning_path.segments)
     assert commitment.segments[0].starts_at == winning_path.segments[0].starts_at
     assert commitment.segments[-1].ends_at == winning_path.segments[-1].ends_at
+    assert commitment.selected_at == snapshot.captured_at
+    assert commitment.household_load_intervals
+    assert commitment.storage_energy_checkpoints
+    assert all(
+        checkpoint.lower_energy_wh <= checkpoint.central_energy_wh <= checkpoint.upper_energy_wh
+        for checkpoint in commitment.storage_energy_checkpoints
+    )
 
 
-def test_dashboard_presents_mep_execution_plan_without_legacy_outcomes(
+def test_dashboard_presents_mep_execution_plan_with_comparable_outcomes(
     tmp_path,
 ) -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.51)
@@ -144,14 +175,19 @@ def test_dashboard_presents_mep_execution_plan_without_legacy_outcomes(
     run = pipeline.run(planning_input=snapshot)
     view = build_web_view(run, project(run))
 
-    assert run.outcomes.outcomes == ()
+    assert run.outcomes.candidate_ids == tuple(
+        outcome.candidate_id for outcome in run.outcomes.outcomes
+    )
+    assert len(run.outcomes.outcomes) == len(run.candidate_set.candidates)
+    assert all(
+        outcome.comparison_horizon_start == snapshot.captured_at
+        for outcome in run.outcomes.outcomes
+    )
     plans = view["planning_status"]["execution_plans"]
     chosen_plan = view["planning_status"]["chosen_plan"]
     assert len(plans) == 1
     assert plans[0]["plan_id"] == run.execution_plan_set.plans[0].plan_id
-    assert plans[0]["execution_scope_id"] == (
-        run.execution_plan_set.plans[0].execution_scope_id
-    )
+    assert plans[0]["execution_scope_id"] == (run.execution_plan_set.plans[0].execution_scope_id)
     assert plans[0]["segments"] == [
         {
             "starts_at": segment.starts_at.isoformat(),
@@ -177,18 +213,12 @@ def test_dashboard_presents_mep_execution_plan_without_legacy_outcomes(
         if segment.primitive.value == "charge_at_power"
     ]
     assert chosen_plan["plan_id"] == run.execution_plan_set.plans[0].plan_id
-    assert chosen_plan["execution_scope_id"] == (
-        run.execution_plan_set.plans[0].execution_scope_id
-    )
+    assert chosen_plan["execution_scope_id"] == (run.execution_plan_set.plans[0].execution_scope_id)
     assert chosen_plan["initial_storage_energy_wh"] == (
         snapshot.current_storage_states[0].current_stored_energy_wh
     )
-    assert chosen_plan["charge_window_starts_at"] == (
-        charge_segments[0].starts_at.isoformat()
-    )
-    assert chosen_plan["charge_window_ends_at"] == (
-        charge_segments[-1].ends_at.isoformat()
-    )
+    assert chosen_plan["charge_window_starts_at"] == (charge_segments[0].starts_at.isoformat())
+    assert chosen_plan["charge_window_ends_at"] == (charge_segments[-1].ends_at.isoformat())
     assert "renderBatteryEnergyPlan(" in DASHBOARD_HTML
     assert "view.planning_status?.execution_plans" in DASHBOARD_HTML
     assert "selectedExecutionPlanWindows(view)" in DASHBOARD_HTML
@@ -261,12 +291,31 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
         ),
     )
 
-    segments = run.execution_plan_set.plans[0].segments
-    charge_index = next(
-        index
-        for index, segment in enumerate(segments)
-        if segment.primitive.value == "charge_at_power"
+    market_candidate_ids = {
+        candidate.candidate_id
+        for candidate in run.candidate_set.candidates
+        if candidate.family == "market_route"
+    }
+    market_paths = tuple(
+        path
+        for path in run.candidate_set.energy_paths
+        if any(
+            candidate.energy_path_id == path.path_id
+            and candidate.candidate_id in market_candidate_ids
+            for candidate in run.candidate_set.candidates
+        )
     )
+    assert market_paths
+    charge_index = next(
+        (path, index)
+        for path in market_paths
+        for index, segment in enumerate(path.segments)
+        if segment.primitive.value == "charge_at_power"
+        and segment.starts_at >= midday_pv.intervals[13].ends_at
+        and segment.ends_at <= cheap_window_end - timedelta(minutes=15)
+    )
+    path, charge_index = charge_index
+    segments = path.segments
     charge = segments[charge_index]
     pv_peak_starts_at = midday_pv.intervals[10].starts_at
     pv_peak_ends_at = midday_pv.intervals[13].ends_at
@@ -299,9 +348,7 @@ def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
         )
     )
 
-    assert continued.evaluation.decisive_step == (
-        "stability:canonical_plan_commitment_retained"
-    )
+    assert continued.evaluation.decisive_step == ("commitment:equivalent_incumbent_retained")
     assert continued.execution_plan_set.plans[0].plan_id == (
         first.execution_plan_set.plans[0].plan_id
     )
@@ -324,9 +371,7 @@ def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
     assert chosen_plan["reserve_respected_across_scenarios"] == (
         commitment.reserve_respected_across_scenarios
     )
-    assert chosen_plan["target_held_across_scenarios"] == (
-        commitment.target_held_across_scenarios
-    )
+    assert chosen_plan["target_held_across_scenarios"] == (commitment.target_held_across_scenarios)
 
 
 def test_charge_target_does_not_clear_later_export_commitment() -> None:
@@ -483,9 +528,7 @@ def test_completed_acquisition_coalesces_adjacent_nom_segments() -> None:
     assert len(completed.segments) == 2
     assert completed.segments[0].starts_at == starts_at
     assert completed.segments[0].ends_at == export_start
-    assert completed.segments[0].primitive == (
-        ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value
-    )
+    assert completed.segments[0].primitive == (ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value)
 
 
 def test_completed_pre_export_acquisition_preserves_post_export_recovery() -> None:
@@ -589,29 +632,19 @@ def test_measured_progress_revision_moves_charge_to_last_safe_slot() -> None:
     )
     assert shifted_charge.ends_at == nom_end - timedelta(minutes=15)
     assert shifted_charge.starts_at == shifted_charge.ends_at - timedelta(minutes=30)
-    assert revised.segments[0].primitive == (
-        ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value
-    )
+    assert revised.segments[0].primitive == (ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value)
     assert revised.segments[-1].primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value
 
 
 def test_market_planner_generates_and_evaluation_selects() -> None:
-    planner_source = (
-        __import__(
-            "picot.planner.market_daily_planner",
-            fromlist=["MarketDailyPlanner"],
-        )
-        .__loader__
-        .get_source("picot.planner.market_daily_planner")
-    )
-    evaluation_source = (
-        __import__(
-            "picot.planner.market_daily_evaluation_engine",
-            fromlist=["MarketDailyEvaluationEngine"],
-        )
-        .__loader__
-        .get_source("picot.planner.market_daily_evaluation_engine")
-    )
+    planner_source = __import__(
+        "picot.planner.market_daily_planner",
+        fromlist=["MarketDailyPlanner"],
+    ).__loader__.get_source("picot.planner.market_daily_planner")
+    evaluation_source = __import__(
+        "picot.planner.market_daily_evaluation_engine",
+        fromlist=["MarketDailyEvaluationEngine"],
+    ).__loader__.get_source("picot.planner.market_daily_evaluation_engine")
 
     assert "def _current_decision" not in planner_source
     assert "best_observation_ids" not in planner_source
@@ -619,7 +652,7 @@ def test_market_planner_generates_and_evaluation_selects() -> None:
     assert "def current_decision" in evaluation_source
 
 
-def test_scheduled_incumbent_that_misses_required_deadline_is_replaced(
+def test_incumbent_with_incomplete_path_is_invalid_and_replaced(
     tmp_path,
 ) -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.51)
@@ -628,30 +661,26 @@ def test_scheduled_incumbent_that_misses_required_deadline_is_replaced(
     scope_id = snapshot.current_storage_states[0].execution_scope_id
     commitment = store.load(scope_id)
     assert commitment is not None
-    assert snapshot.horizon_end is not None
-    requirement_deadline = snapshot.horizon_end
-    late = replace(
+    incomplete = replace(
         commitment,
-        starts_at=requirement_deadline + timedelta(minutes=15),
-        ends_at=requirement_deadline + timedelta(hours=1),
+        segments=commitment.segments[1:],
     )
-    store.save(late)
+    store.save(incomplete)
 
     continued = pipeline.run(
-        planning_input=replace(snapshot, active_plan_commitments=(late,))
+        planning_input=replace(snapshot, active_plan_commitments=(incomplete,))
     )
 
     replacement = store.load(scope_id)
     assert replacement is not None
     assert replacement.plan_id != first.execution_plan_set.plans[0].plan_id
-    assert replacement.plan_revision == late.plan_revision + 1
-    assert replacement.replaced_plan_id == late.plan_id
-    assert replacement.selection_reason == (
-        "necessity:incumbent_misses_required_by"
+    assert replacement.plan_revision == incomplete.plan_revision + 1
+    assert replacement.replaced_plan_id == incomplete.plan_id
+    incumbent_outcome = next(
+        outcome for outcome in continued.outcomes.outcomes if outcome.incumbent
     )
-    assert continued.evaluation.decisive_step == (
-        "necessity:incumbent_misses_required_by"
-    )
+    assert incumbent_outcome.validity == "invalid"
+    assert "committed_schedule_gap" in incumbent_outcome.invalidity_reasons
 
 
 def test_immaterial_challenger_retains_scheduled_incumbent(tmp_path) -> None:
@@ -665,24 +694,18 @@ def test_immaterial_challenger_retains_scheduled_incumbent(tmp_path) -> None:
     incumbent = replace(
         commitment,
         starts_at=snapshot.captured_at + timedelta(minutes=15),
-        worst_case_financial_result_eur=(
-            commitment.worst_case_financial_result_eur - 0.01
-        ),
+        worst_case_financial_result_eur=(commitment.worst_case_financial_result_eur - 0.01),
     )
     store.save(incumbent)
 
-    continued = pipeline.run(
-        planning_input=replace(snapshot, active_plan_commitments=(incumbent,))
-    )
+    continued = pipeline.run(planning_input=replace(snapshot, active_plan_commitments=(incumbent,)))
 
     assert continued.execution_plan_set.plans[0].plan_id == commitment.plan_id
     assert store.load(scope_id) == incumbent
-    assert continued.evaluation.decisive_step == (
-        "stability:canonical_plan_commitment_retained"
-    )
+    assert continued.evaluation.decisive_step == ("commitment:equivalent_incumbent_retained")
 
 
-def test_materially_better_challenger_replaces_scheduled_incumbent(tmp_path) -> None:
+def test_historical_financial_result_cannot_replace_fresh_incumbent(tmp_path) -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.51)
     pipeline, store = _pipeline(tmp_path)
     pipeline.run(planning_input=snapshot)
@@ -696,17 +719,11 @@ def test_materially_better_challenger_replaces_scheduled_incumbent(tmp_path) -> 
     )
     store.save(incumbent)
 
-    continued = pipeline.run(
-        planning_input=replace(snapshot, active_plan_commitments=(incumbent,))
-    )
+    continued = pipeline.run(planning_input=replace(snapshot, active_plan_commitments=(incumbent,)))
 
-    replacement = store.load(scope_id)
-    assert replacement is not None
-    assert replacement.plan_id != incumbent.plan_id
-    assert replacement.plan_revision == incumbent.plan_revision + 1
-    assert continued.evaluation.decisive_step == (
-        "material_change:challenger_improves_total_objective"
-    )
+    assert store.load(scope_id) == incumbent
+    assert continued.execution_plan_set.plans[0].plan_id == incumbent.plan_id
+    assert continued.evaluation.decisive_step == ("commitment:equivalent_incumbent_retained")
 
 
 def test_configured_switching_margin_is_used_by_evaluation(tmp_path) -> None:
@@ -720,19 +737,14 @@ def test_configured_switching_margin_is_used_by_evaluation(tmp_path) -> None:
     incumbent = replace(
         commitment,
         starts_at=snapshot.captured_at + timedelta(minutes=15),
-        worst_case_financial_result_eur=(
-            commitment.worst_case_financial_result_eur - 0.01
-        ),
+        worst_case_financial_result_eur=(commitment.worst_case_financial_result_eur - 0.01),
     )
     store.save(incumbent)
 
-    continued = pipeline.run(
-        planning_input=replace(snapshot, active_plan_commitments=(incumbent,))
-    )
+    continued = pipeline.run(planning_input=replace(snapshot, active_plan_commitments=(incumbent,)))
 
-    assert continued.evaluation.decisive_step == (
-        "material_change:challenger_improves_total_objective"
-    )
+    assert continued.evaluation.financial_equivalence_margin_eur == 0.005
+    assert continued.evaluation.decisive_step == ("commitment:equivalent_incumbent_retained")
 
 
 def test_legacy_cp_storage_deadline_cannot_block_mep(tmp_path) -> None:
@@ -763,9 +775,7 @@ def test_legacy_cp_storage_deadline_cannot_block_mep(tmp_path) -> None:
         commitment_store=ActivePlanCommitmentStore(tmp_path / "commitments.json"),
     )
 
-    run = pipeline.run(
-        planning_input=replace(snapshot, household_planning_regime=regime)
-    )
+    run = pipeline.run(planning_input=replace(snapshot, household_planning_regime=regime))
 
     assert run.candidate_set.derivation_status == "ready"
     assert run.evaluation.status == "winner_selected"

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import sqrt
 from time import perf_counter
 
@@ -71,7 +71,7 @@ class MarketDailyPlannerRuntime:
         self.micro_charge_suppression_fraction = micro_charge_suppression_fraction
         self.storage_inventory_provider = storage_inventory_provider
 
-    def _planning_configuration(
+    def planning_configuration(
         self,
         snapshot: PlanningInputSnapshot,
     ) -> tuple[StorageConversionModel, MarketTradingPolicy]:
@@ -103,6 +103,7 @@ class MarketDailyPlannerRuntime:
         *,
         required_by: datetime | None = None,
         opportunities: OpportunitySet | None = None,
+        comparison_horizon_end: datetime | None = None,
     ) -> MarketDailyRuntimeOutcome:
         started = perf_counter()
         portfolio: MarketDailyCandidatePortfolio | None = None
@@ -110,7 +111,12 @@ class MarketDailyPlannerRuntime:
         status = "completed"
         effective_required_by = required_by
         try:
-            conversion_model, trading_policy = self._planning_configuration(snapshot)
+            conversion_model, trading_policy = self.planning_configuration(snapshot)
+            maximum_duration = (
+                comparison_horizon_end - snapshot.captured_at
+                if comparison_horizon_end is not None
+                else timedelta(hours=36)
+            )
             portfolio, planner_diagnostics = (
                 MarketDailyPlanner().generate_with_diagnostics(
                     snapshot=snapshot,
@@ -126,6 +132,7 @@ class MarketDailyPlannerRuntime:
                     ),
                     required_by=effective_required_by,
                     opportunities=opportunities,
+                    maximum_duration=maximum_duration,
                 )
             )
             if effective_required_by is None:

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import SocConstraint
 from picot.domain.execution_primitive import ExecutionPrimitive
 
@@ -40,6 +41,7 @@ class ExecutionPlanSegment:
     requested_power_w: float | None = None
     soc_constraint: SocConstraint | None = None
     energy_profile_id: str | None = None
+    charge_source_policy: ChargeSourcePolicy | None = None
 
     def __post_init__(self) -> None:
         for text_value, label in (
@@ -66,6 +68,15 @@ class ExecutionPlanSegment:
             raise ValueError("Execution segment evidence IDs must be unique.")
         if self.energy_profile_id is not None and not self.energy_profile_id.strip():
             raise ValueError("Energy profile ID must not be empty when provided.")
+        supports_charge_source_policy = self.primitive in {
+            ExecutionPrimitive.CHARGE_AT_POWER,
+            ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+            ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+        }
+        if not supports_charge_source_policy and self.charge_source_policy is not None:
+            raise ValueError(
+                "Charge source policy is only valid for charging Execution segments."
+            )
 
 
 @dataclass(frozen=True, slots=True)

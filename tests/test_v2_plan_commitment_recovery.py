@@ -8,14 +8,18 @@ from picot.domain.capability_snapshot import CapabilityAvailability
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.live_runtime import _restore_active_plan_commitments
 from picot.v2.plan_commitment_store import (
+    COMPARISON_PREVIOUS_COMMITMENT_METHOD_VERSION,
     DEFECTIVE_COMMITMENT_METHOD_VERSION,
     EARLIER_COMMITMENT_METHOD_VERSION,
     LEGACY_COMMITMENT_METHOD_VERSION,
+    MATERIALITY_PREVIOUS_COMMITMENT_METHOD_VERSION,
     PREVIOUS_COMMITMENT_METHOD_VERSION,
     TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
+    CommittedHouseholdLoadInterval,
     CommittedPlanSegment,
+    CommittedStorageEnergyCheckpoint,
 )
 
 
@@ -29,6 +33,27 @@ def _commitment() -> ActivePlanCommitment:
         starts_at=BASE,
         ends_at=BASE + timedelta(hours=1),
         target_energy_wh=1200.0,
+        selected_at=BASE - timedelta(minutes=15),
+        household_load_intervals=(
+            CommittedHouseholdLoadInterval(
+                interval_id="load-restart",
+                starts_at=BASE,
+                ends_at=BASE + timedelta(minutes=15),
+                expected_energy_wh=100.0,
+                confidence=1.0,
+                source_reference="history:restart",
+                method_version="household-load:v1",
+            ),
+        ),
+        storage_energy_checkpoints=(
+            CommittedStorageEnergyCheckpoint(
+                at=BASE + timedelta(minutes=15),
+                lower_energy_wh=900.0,
+                central_energy_wh=1000.0,
+                upper_energy_wh=1100.0,
+            ),
+        ),
+        candidate_family="pv_charge_only",
     )
 
 
@@ -86,6 +111,57 @@ def test_legacy_commitment_is_cleared_for_household_replanning(tmp_path) -> None
     assert restored.active_plan_commitments == ()
     assert store.load("home-battery") is None
     assert "legacy_commitment_requires_household_replan" in (
+        incidents.read_text(encoding="utf-8")
+    )
+
+
+def test_pre_materiality_commitment_is_cleared_for_fresh_baseline(tmp_path) -> None:
+    incidents = tmp_path / "incidents.jsonl"
+    store = ActivePlanCommitmentStore(
+        tmp_path / "commitment.json",
+        incident_path=incidents,
+    )
+    store.save(
+        replace(
+            _commitment(),
+            selection_method_version=MATERIALITY_PREVIOUS_COMMITMENT_METHOD_VERSION,
+            selected_at=None,
+            household_load_intervals=(),
+            storage_energy_checkpoints=(),
+        )
+    )
+
+    restored = _restore_active_plan_commitments(
+        _at(BASE + timedelta(minutes=15)),
+        store,
+    )
+
+    assert restored.active_plan_commitments == ()
+    assert store.load("home-battery") is None
+    assert "commitment_requires_materiality_baseline_replan" in (
+        incidents.read_text(encoding="utf-8")
+    )
+
+
+def test_pre_comparison_commitment_is_cleared_for_comparable_path(tmp_path) -> None:
+    incidents = tmp_path / "incidents.jsonl"
+    store = ActivePlanCommitmentStore(
+        tmp_path / "commitment.json",
+        incident_path=incidents,
+    )
+    store.save(
+        replace(
+            _commitment(),
+            selection_method_version=COMPARISON_PREVIOUS_COMMITMENT_METHOD_VERSION,
+            candidate_family=None,
+        )
+    )
+
+    restored = _restore_active_plan_commitments(_at(BASE), store)
+
+    assert restored.active_plan_commitments == ()
+    assert store.load("home-battery") is None
+    assert "commitment_requires_comparable_path_replan" in (
         incidents.read_text(encoding="utf-8")
     )
 

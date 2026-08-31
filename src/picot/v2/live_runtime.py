@@ -22,8 +22,11 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from picot.architecture_ownership import architecture_ownership
+from picot.domain.runtime import RuntimeObservation
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.market_daily_planner import MarketTradingPolicy
+from picot.runtime.runtime_monitor import RuntimeMonitorSession
 from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
     HomeAssistantCanonicalModeAdapter,
@@ -56,13 +59,16 @@ from picot.v2.live_storage_mode_provenance import (
 from picot.v2.market_daily_runtime import (
     MarketDailyPlannerRuntime,
 )
+from picot.v2.material_replanning import MaterialReplanningObservationProducer
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
+    COMPARISON_PREVIOUS_COMMITMENT_METHOD_VERSION,
     DEFECTIVE_COMMITMENT_METHOD_VERSION,
     EARLIER_COMMITMENT_METHOD_VERSION,
     LEGACY_COMMITMENT_METHOD_VERSION,
+    MATERIALITY_PREVIOUS_COMMITMENT_METHOD_VERSION,
     PREVIOUS_COMMITMENT_METHOD_VERSION,
     TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
@@ -129,6 +135,8 @@ from picot.v2.web_ui import (
     build_web_view,
     create_web_server,
 )
+
+ARCHITECTURE_OWNERSHIP = architecture_ownership("live_runtime_composition", __name__)
 
 HOUSEHOLD_LOAD_HISTORY_PATH = Path(
     "/data/picot_v2_household_load_history.jsonl"
@@ -834,6 +842,43 @@ def _restore_active_plan_commitments(
             store.record_recovery_rejection("expired_at_restart")
             continue
         method_version = commitment.selection_method_version
+        missing_materiality_baseline = (
+            commitment.selected_at is None
+            or not commitment.household_load_intervals
+            or not commitment.storage_energy_checkpoints
+        )
+        missing_comparison_context = (
+            commitment.candidate_family is None
+            or any(
+                segment.primitive == "discharge_at_power"
+                and segment.storage_export_target_wh is None
+                for segment in commitment.segments
+            )
+        )
+        if (
+            method_version == COMPARISON_PREVIOUS_COMMITMENT_METHOD_VERSION
+            or (
+                method_version == COMMITMENT_METHOD_VERSION
+                and missing_comparison_context
+            )
+        ):
+            store.clear(commitment.execution_scope_id)
+            store.record_recovery_rejection(
+                "commitment_requires_comparable_path_replan"
+            )
+            continue
+        if (
+            method_version == MATERIALITY_PREVIOUS_COMMITMENT_METHOD_VERSION
+            or (
+                method_version == COMMITMENT_METHOD_VERSION
+                and missing_materiality_baseline
+            )
+        ):
+            store.clear(commitment.execution_scope_id)
+            store.record_recovery_rejection(
+                "commitment_requires_materiality_baseline_replan"
+            )
+            continue
         if method_version == DEFECTIVE_COMMITMENT_METHOD_VERSION:
             store.clear(commitment.execution_scope_id)
             store.record_recovery_rejection(
@@ -953,15 +998,52 @@ def _run_live_cycle(
     bundle: PlanningInputBundle,
     execute: Any,
     refresh_unchanged: Any = None,
+    force_runtime_replan: bool = False,
+    runtime_monitor: RuntimeMonitorSession | None = None,
+    runtime_now: Callable[[], datetime] | None = None,
 ) -> str | None:
     """Execute one changed-input cycle and return the committed input signature."""
-    if not _should_run_cycle(previous_signature, bundle):
+    if (
+        not force_runtime_replan
+        and not _should_run_cycle(previous_signature, bundle)
+    ):
         assert previous_signature is not None
         if refresh_unchanged is not None:
             refresh_unchanged(bundle)
         return previous_signature
 
-    execution_succeeded = execute(bundle)
+    requested_run_id: str | None = None
+    requested_monitor: RuntimeMonitorSession | None = None
+    if force_runtime_replan:
+        if runtime_monitor is None:
+            raise ValueError("A forced runtime replan requires the Runtime Monitor.")
+        requested_monitor = runtime_monitor
+        requested_run_id = bundle.snapshot.run_id
+        requested_monitor.start_requested_run(
+            planner_run_id=requested_run_id,
+            started_at=bundle.snapshot.captured_at,
+        )
+
+    try:
+        execution_succeeded = execute(bundle)
+    except Exception:
+        if requested_run_id is not None:
+            assert requested_monitor is not None
+            ended_at = runtime_now() if runtime_now is not None else datetime.now(UTC)
+            requested_monitor.finish_requested_run(
+                planner_run_id=requested_run_id,
+                ended_at=max(bundle.snapshot.captured_at, ended_at),
+                execution_succeeded=False,
+            )
+        raise
+    if requested_run_id is not None:
+        assert requested_monitor is not None
+        ended_at = runtime_now() if runtime_now is not None else datetime.now(UTC)
+        requested_monitor.finish_requested_run(
+            planner_run_id=requested_run_id,
+            ended_at=max(bundle.snapshot.captured_at, ended_at),
+            execution_succeeded=execution_succeeded is not False,
+        )
     if execution_succeeded is False:
         return previous_signature
     return _planning_input_signature(bundle)
@@ -970,7 +1052,7 @@ def _run_live_cycle(
 def _poll_live_cycle(
     *,
     previous_signature: str | None,
-    load_bundle: Any,
+    load_bundle: Callable[[], PlanningInputBundle],
     execute: Any,
     prepare_bundle: (
         Callable[
@@ -987,28 +1069,58 @@ def _poll_live_cycle(
         Callable[[PlanningInputBundle], None] | None
     ) = None,
     observe: Callable[[PlanningInputBundle], None] | None = None,
+    runtime_monitor: RuntimeMonitorSession | None = None,
+    runtime_observations: (
+        Callable[[PlanningInputBundle], tuple[RuntimeObservation, ...]] | None
+    ) = None,
+    runtime_now: Callable[[], datetime] | None = None,
 ) -> str | None:
     """Load fresh Planning Input and execute only when decision input changed."""
-    bundle = load_bundle()
-    observation = bundle.household_load_observation
-    if persist_observation is not None and observation is not None:
-        try:
-            persist_observation(observation)
-        except OSError as exc:
-            print(
-                json.dumps(
-                    {
-                        "event": "picot_v2_household_load_history_unavailable",
-                        "error": type(exc).__name__,
-                    },
-                    separators=(",", ":"),
-                ),
-                flush=True,
-            )
+    def load_current_bundle() -> PlanningInputBundle:
+        current = load_bundle()
+        observation = current.household_load_observation
+        if persist_observation is not None and observation is not None:
+            try:
+                persist_observation(observation)
+            except OSError as exc:
+                print(
+                    json.dumps(
+                        {
+                            "event": "picot_v2_household_load_history_unavailable",
+                            "error": type(exc).__name__,
+                        },
+                        separators=(",", ":"),
+                    ),
+                    flush=True,
+                )
+        return current
 
+    bundle = load_current_bundle()
     preparation_diagnostics: Any = None
     if prepare_bundle is not None:
         bundle, preparation_diagnostics = prepare_bundle(bundle)
+
+    force_runtime_replan = False
+    if runtime_monitor is not None:
+        observations = (
+            runtime_observations(bundle)
+            if runtime_observations is not None
+            else ()
+        )
+        signal = runtime_monitor.observe(
+            observations,
+            now=bundle.snapshot.captured_at,
+        )
+        force_runtime_replan = signal.fresh_snapshot_required
+
+    if force_runtime_replan:
+        # ADR-034: the observation bundle proves only that a fresh snapshot is
+        # required.  Planning must use a second atomic capture made after that
+        # signal, never the values buffered by the triggering observation.
+        bundle = load_current_bundle()
+        preparation_diagnostics = None
+        if prepare_bundle is not None:
+            bundle, preparation_diagnostics = prepare_bundle(bundle)
 
     if advance_clock_boundaries is not None:
         advance_clock_boundaries(bundle)
@@ -1020,8 +1132,8 @@ def _poll_live_cycle(
 
         def execute_prepared(
             prepared_bundle: PlanningInputBundle,
-        ) -> None:
-            execute(
+        ) -> Any:
+            return execute(
                 prepared_bundle,
                 preparation_diagnostics,
             )
@@ -1031,6 +1143,9 @@ def _poll_live_cycle(
             bundle=bundle,
             execute=execute_prepared,
             refresh_unchanged=refresh_unchanged,
+            force_runtime_replan=force_runtime_replan,
+            runtime_monitor=runtime_monitor,
+            runtime_now=runtime_now,
         )
 
     return _run_live_cycle(
@@ -1038,6 +1153,9 @@ def _poll_live_cycle(
         bundle=bundle,
         execute=execute,
         refresh_unchanged=refresh_unchanged,
+        force_runtime_replan=force_runtime_replan,
+        runtime_monitor=runtime_monitor,
+        runtime_now=runtime_now,
     )
 
 
@@ -2494,6 +2612,10 @@ def main() -> None:
             financial_result_ledger=financial_result_ledger,
         )
 
+    runtime_monitor = RuntimeMonitorSession()
+    material_replanning = MaterialReplanningObservationProducer(
+        history=household_load_history,
+    )
     previous_signature: str | None = None
     while True:
         if planning_reset_requested.is_set():
@@ -2509,6 +2631,8 @@ def main() -> None:
                 persist_observation=household_load_history.append,
                 refresh_unchanged=refresh_unchanged,
                 observe=publish_input_sources,
+                runtime_monitor=runtime_monitor,
+                runtime_observations=material_replanning.observe,
             )
         )
         _wait_for_poll_or_reset(

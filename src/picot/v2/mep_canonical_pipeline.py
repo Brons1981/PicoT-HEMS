@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from hashlib import sha256
 from time import perf_counter
 
+from picot.architecture_ownership import architecture_ownership
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.daily_reference_candidate import DailyReferenceCandidate
 from picot.domain.daily_reference_intent import (
@@ -16,8 +17,14 @@ from picot.domain.daily_reference_intent import (
 )
 from picot.domain.energy_path import PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
-from picot.planner.market_daily_evaluation_engine import MarketDailyEvaluationEngine
-from picot.planner.market_daily_planner import MarketDailyPlan, MarketRouteAssessment
+from picot.planner.evaluation_engine import EvaluationEngine
+from picot.planner.execution_plan_builder import ExecutionPlanBuilder
+from picot.planner.market_daily_planner import (
+    MarketDailyCandidatePortfolio,
+    MarketDailyPlan,
+    MarketRouteAssessment,
+)
+from picot.planner.mep_candidate_outcomes import produce_mep_comparable_portfolio
 from picot.v2.contracts import (
     Candidate,
     CandidateOutcomeSet,
@@ -29,12 +36,11 @@ from picot.v2.contracts import (
     ExecutionPlanSet,
     ExecutionPrimitiveBoundary,
     ExecutionRecord,
-    ObserverExecutionPlan,
-    ObserverExecutionPlanSegment,
     OpportunitySet,
     PlanningInputSnapshot,
     VendorBoundaryResult,
 )
+from picot.v2.execution_plan_projection import project_execution_plan_set
 from picot.v2.market_daily_runtime import (
     MarketDailyPlannerRuntime,
     MarketDailyRuntimeOutcome,
@@ -43,8 +49,12 @@ from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
+    CommittedHouseholdLoadInterval,
     CommittedPlanSegment,
+    CommittedStorageEnergyCheckpoint,
 )
+
+ARCHITECTURE_OWNERSHIP = architecture_ownership("pipeline_composition", __name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,11 +94,7 @@ def _coalesce(
 ) -> tuple[tuple[datetime, datetime, DailyStorageIntent], ...]:
     phases: list[tuple[datetime, datetime, DailyStorageIntent]] = []
     for interval in intervals:
-        if (
-            phases
-            and phases[-1][1] == interval.starts_at
-            and phases[-1][2] is interval.intent
-        ):
+        if phases and phases[-1][1] == interval.starts_at and phases[-1][2] is interval.intent:
             phases[-1] = (phases[-1][0], interval.ends_at, interval.intent)
         else:
             phases.append((interval.starts_at, interval.ends_at, interval.intent))
@@ -105,183 +111,13 @@ def _coalesce_committed_segments(
             and coalesced[-1].ends_at == segment.starts_at
             and coalesced[-1].primitive == segment.primitive
             and coalesced[-1].source_policy == segment.source_policy
+            and coalesced[-1].storage_export_target_wh is None
+            and segment.storage_export_target_wh is None
         ):
             coalesced[-1] = replace(coalesced[-1], ends_at=segment.ends_at)
         else:
             coalesced.append(segment)
     return tuple(coalesced)
-
-
-def _path_for_schedule(
-    *,
-    snapshot: PlanningInputSnapshot,
-    schedule: DailyReferenceIntentSchedule,
-    path_id: str,
-    family: str,
-    source_evidence_ids: tuple[str, ...] = (),
-) -> EnergyPath:
-    storage = snapshot.current_storage_states[0]
-    limits = next(
-        item
-        for item in snapshot.storage_physical_limits
-        if item.execution_scope_id == storage.execution_scope_id
-        and item.capability_id == storage.capability_id
-    )
-    segments: list[PathSegment] = []
-    for order, (starts_at, ends_at, intent) in enumerate(
-        _coalesce(schedule.intervals),
-        start=1,
-    ):
-        primitive, source_policy = _intent_primitive(intent)
-        requested_power_w = (
-            limits.maximum_charge_input_power_w
-            if primitive is ExecutionPrimitive.CHARGE_AT_POWER
-            else (
-                limits.maximum_discharge_output_power_w
-                if primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
-                else None
-            )
-        )
-        segments.append(
-            PathSegment(
-                segment_id=_id(
-                    "mep-segment",
-                    f"{schedule.schedule_id}|{starts_at.isoformat()}|{intent.value}",
-                ),
-                order=order,
-                execution_scope_id=storage.execution_scope_id,
-                starts_at=starts_at,
-                ends_at=ends_at,
-                primitive=primitive,
-                capability_id=storage.capability_id,
-                purpose=f"mep:{intent.value}",
-                evidence_ids=(schedule.schedule_id, *source_evidence_ids),
-                requested_power_w=requested_power_w,
-                charge_source_policy=source_policy,
-            )
-        )
-    return EnergyPath(
-        run_id=snapshot.run_id,
-        snapshot_id=snapshot.snapshot_id,
-        path_id=path_id,
-        family=family,
-        segment_ids=tuple(item.segment_id for item in segments),
-        segments=tuple(segments),
-    )
-
-
-def _native_schedules(
-    plan: MarketDailyPlan,
-) -> dict[str, DailyReferenceIntentSchedule]:
-    return {
-        item.intent_schedule.schedule_id: item.intent_schedule
-        for item in plan.native_observation.observer_result.portfolio.strategy_results
-    }
-
-
-def _native_candidates(
-    plan: MarketDailyPlan,
-) -> dict[str, DailyReferenceCandidate]:
-    return {
-        item.candidate_id: item
-        for item in plan.native_observation.observer_result.candidate_set.candidates
-    }
-
-
-def _selected_market_assessment(
-    plan: MarketDailyPlan,
-) -> MarketRouteAssessment | None:
-    return MarketDailyEvaluationEngine.select_market_assessment(
-        plan.route_assessments
-    )
-
-
-def _plan_candidates(
-    snapshot: PlanningInputSnapshot,
-    plan: MarketDailyPlan,
-) -> tuple[
-    list[Candidate],
-    list[EnergyPath],
-    str,
-    DailyReferenceIntentSchedule,
-    DailyReferenceCandidate | None,
-    MarketRouteAssessment | None,
-]:
-    schedules = _native_schedules(plan)
-    canonical_candidates: list[Candidate] = []
-    paths: list[EnergyPath] = []
-    native_by_id = _native_candidates(plan)
-    for native in native_by_id.values():
-        schedule = schedules[native.intent_schedule_id]
-        path_id = _id("mep-energy-path", native.candidate_id)
-        canonical_candidates.append(
-            Candidate(
-                run_id=snapshot.run_id,
-                snapshot_id=snapshot.snapshot_id,
-                candidate_id=native.candidate_id,
-                energy_path_id=path_id,
-                family=native.family.value,
-                pv_forecast_basis="lower-central-upper",
-            )
-        )
-        paths.append(
-            _path_for_schedule(
-                snapshot=snapshot,
-                schedule=schedule,
-                path_id=path_id,
-                family=native.family.value,
-            )
-        )
-
-    market_candidate_ids: dict[str, str] = {}
-    routes_by_id = {item.route_id: item for item in plan.market_routes}
-    for assessment in plan.route_assessments:
-        candidate_id = _id("mep-market-candidate", assessment.market_schedule_id)
-        path_id = _id("mep-energy-path", candidate_id)
-        market_candidate_ids[assessment.market_schedule_id] = candidate_id
-        canonical_candidates.append(
-            Candidate(
-                run_id=snapshot.run_id,
-                snapshot_id=snapshot.snapshot_id,
-                candidate_id=candidate_id,
-                energy_path_id=path_id,
-                family="market_route",
-                pv_forecast_basis="lower-central-upper",
-            )
-        )
-        paths.append(
-            _path_for_schedule(
-                snapshot=snapshot,
-                schedule=assessment.intent_schedule,
-                path_id=path_id,
-                family="market_route",
-                source_evidence_ids=routes_by_id[assessment.route_id].opportunity_ids,
-            )
-        )
-
-    market_winner = _selected_market_assessment(plan)
-    if market_winner is not None:
-        winner_id = market_candidate_ids[market_winner.market_schedule_id]
-        return (
-            canonical_candidates,
-            paths,
-            winner_id,
-            market_winner.intent_schedule,
-            None,
-            market_winner,
-        )
-    native_winner_id = MarketDailyEvaluationEngine.select_native_candidate_id(
-        plan.native_observation
-    )
-    native_winner = native_by_id[native_winner_id]
-    return (
-        canonical_candidates,
-        paths,
-        native_winner_id,
-        schedules[native_winner.intent_schedule_id],
-        native_winner,
-        None,
-    )
 
 
 def _commitment_target_reached(
@@ -349,18 +185,12 @@ def _complete_acquisition_revision(
         and segment.ends_at > snapshot.captured_at
     )
     has_acquisition_before_export = any(
-        charge.ends_at <= export.starts_at
-        for charge in future_charges
-        for export in future_exports
+        charge.ends_at <= export.starts_at for charge in future_charges for export in future_exports
     )
 
     def is_pre_export_acquisition(segment: CommittedPlanSegment) -> bool:
-        return (
-            segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
-            and any(
-                segment.ends_at <= export.starts_at
-                for export in future_exports
-            )
+        return segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value and any(
+            segment.ends_at <= export.starts_at for export in future_exports
         )
 
     if (
@@ -439,9 +269,7 @@ def _defer_charge_revision(
         return None
     revised: list[CommittedPlanSegment] = []
     revised.extend(
-        segment
-        for segment in segments[:due_index]
-        if segment.ends_at > snapshot.captured_at
+        segment for segment in segments[:due_index] if segment.ends_at > snapshot.captured_at
     )
     revised.append(
         CommittedPlanSegment(
@@ -467,9 +295,7 @@ def _defer_charge_revision(
         starts_at=revised_segments[0].starts_at,
         ends_at=revised_segments[-1].ends_at,
         segments=revised_segments,
-        selection_reason=(
-            "execution_feedback:measured_pv_progress_covers_grid_charge"
-        ),
+        selection_reason=("execution_feedback:measured_pv_progress_covers_grid_charge"),
         replaced_plan_id=commitment.plan_id,
     )
 
@@ -533,11 +359,7 @@ def _measured_pv_basis_covers_remaining_acquisition(
         return False
     ordered = tuple(sorted(path.segments, key=lambda item: item.order))
     due_index = next(
-        (
-            index
-            for index, item in enumerate(ordered)
-            if item.segment_id == due_segment.segment_id
-        ),
+        (index for index, item in enumerate(ordered) if item.segment_id == due_segment.segment_id),
         None,
     )
     if due_index is None:
@@ -585,101 +407,19 @@ def _measured_pv_basis_covers_remaining_acquisition(
     rte = snapshot.storage_round_trip_efficiency
     conservative_charge_efficiency = (
         rte.round_trip_efficiency
-        if rte is not None
-        and rte.status == "available"
-        and rte.round_trip_efficiency is not None
+        if rte is not None and rte.status == "available" and rte.round_trip_efficiency is not None
         else 0.8
     )
-    projected_energy_wh = storage.current_stored_energy_wh + max(
-        0.0,
-        pv_surplus_wh,
-    ) * conservative_charge_efficiency
+    projected_energy_wh = (
+        storage.current_stored_energy_wh
+        + max(
+            0.0,
+            pv_surplus_wh,
+        )
+        * conservative_charge_efficiency
+    )
     target_energy_wh = limits.maximum_soc * storage.usable_capacity_wh
     return projected_energy_wh + 1e-6 >= target_energy_wh
-
-
-def _committed_candidate(
-    *,
-    snapshot: PlanningInputSnapshot,
-    commitment: ActivePlanCommitment,
-) -> tuple[Candidate, EnergyPath]:
-    state = next(
-        item
-        for item in snapshot.current_storage_states
-        if item.execution_scope_id == commitment.execution_scope_id
-    )
-    stored_segments = commitment.segments or (
-        CommittedPlanSegment(
-            starts_at=commitment.starts_at,
-            ends_at=commitment.ends_at,
-            primitive=commitment.primitive,
-            source_policy=(
-                commitment.source_policy
-                if commitment.source_policy != "not_applicable"
-                else None
-            ),
-        ),
-    )
-    remaining_segments = tuple(
-        item for item in stored_segments if item.ends_at > snapshot.captured_at
-    )
-    segments: list[PathSegment] = []
-    limits = next(
-        item
-        for item in snapshot.storage_physical_limits
-        if item.execution_scope_id == commitment.execution_scope_id
-        and item.capability_id == state.capability_id
-    )
-    for order, stored in enumerate(remaining_segments, start=1):
-        primitive = ExecutionPrimitive(stored.primitive)
-        segments.append(
-            PathSegment(
-                segment_id=_id(
-                    "mep-committed-segment",
-                    f"{commitment.plan_id}|{order}|{stored.starts_at.isoformat()}",
-                ),
-                order=order,
-                execution_scope_id=commitment.execution_scope_id,
-                starts_at=max(snapshot.captured_at, stored.starts_at),
-                ends_at=stored.ends_at,
-                primitive=primitive,
-                capability_id=state.capability_id,
-                purpose="mep:retained_canonical_commitment",
-                evidence_ids=(commitment.schedule_id or commitment.plan_id,),
-                requested_power_w=(
-                    limits.maximum_charge_input_power_w
-                    if primitive is ExecutionPrimitive.CHARGE_AT_POWER
-                    else limits.maximum_discharge_output_power_w
-                    if primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
-                    else None
-                ),
-                charge_source_policy=(
-                    ChargeSourcePolicy(stored.source_policy)
-                    if stored.source_policy is not None
-                    else None
-                ),
-            )
-        )
-    path_id = _id("mep-committed-path", commitment.plan_id)
-    path = EnergyPath(
-        run_id=snapshot.run_id,
-        snapshot_id=snapshot.snapshot_id,
-        path_id=path_id,
-        family="retained_commitment",
-        segment_ids=tuple(item.segment_id for item in segments),
-        segments=tuple(segments),
-    )
-    return (
-        Candidate(
-            run_id=snapshot.run_id,
-            snapshot_id=snapshot.snapshot_id,
-            candidate_id=_id("mep-committed-candidate", commitment.plan_id),
-            energy_path_id=path_id,
-            family="retained_commitment",
-            pv_forecast_basis="committed-plan",
-        ),
-        path,
-    )
 
 
 def _first_action_phase(
@@ -701,10 +441,61 @@ def _first_action_phase(
     )
 
 
+def _committed_storage_energy_checkpoints(
+    *,
+    plan: MarketDailyPlan | MarketDailyCandidatePortfolio,
+    schedule: DailyReferenceIntentSchedule,
+    market: MarketRouteAssessment | None,
+) -> tuple[CommittedStorageEnergyCheckpoint, ...]:
+    by_scenario: dict[str, dict[datetime, float]] = {}
+    if market is not None:
+        by_scenario = {
+            evidence.scenario.value: {
+                checkpoint.at: checkpoint.energy_wh
+                for checkpoint in evidence.storage_energy_checkpoints
+            }
+            for evidence in market.scenario_evidence
+        }
+    else:
+        strategy_result = next(
+            (
+                item
+                for item in (plan.native_observation.observer_result.portfolio.strategy_results)
+                if item.intent_schedule.schedule_id == schedule.schedule_id
+            ),
+            None,
+        )
+        if strategy_result is not None:
+            by_scenario = {
+                trajectory.scenario.value: {
+                    interval.ends_at: interval.storage_energy_at_end_wh
+                    for interval in trajectory.intervals
+                }
+                for trajectory in strategy_result.run.simulation.trajectories
+            }
+
+    required = {"lower", "central", "upper"}
+    if set(by_scenario) != required:
+        return ()
+    checkpoint_times = set(by_scenario["lower"])
+    checkpoint_times.intersection_update(by_scenario["central"])
+    checkpoint_times.intersection_update(by_scenario["upper"])
+    return tuple(
+        CommittedStorageEnergyCheckpoint(
+            at=at,
+            lower_energy_wh=by_scenario["lower"][at],
+            central_energy_wh=by_scenario["central"][at],
+            upper_energy_wh=by_scenario["upper"][at],
+        )
+        for at in sorted(checkpoint_times)
+    )
+
+
 def _persist_plan(
     *,
     store: ActivePlanCommitmentStore | None,
     snapshot: PlanningInputSnapshot,
+    plan: MarketDailyPlan | MarketDailyCandidatePortfolio,
     schedule: DailyReferenceIntentSchedule,
     plan_id: str,
     native: DailyReferenceCandidate | None,
@@ -745,19 +536,43 @@ def _persist_plan(
             if route is not None
             else limits.minimum_soc * storage.usable_capacity_wh
         )
+    storage_energy_checkpoints = _committed_storage_energy_checkpoints(
+        plan=plan,
+        schedule=schedule,
+        market=market,
+    )
+    household_load_intervals = tuple(
+        CommittedHouseholdLoadInterval(
+            interval_id=interval.interval_id,
+            starts_at=interval.starts_at,
+            ends_at=interval.ends_at,
+            expected_energy_wh=interval.expected_energy_wh,
+            confidence=interval.confidence,
+            source_reference=interval.source_reference,
+            method_version=interval.method_version,
+        )
+        for interval in (
+            snapshot.household_load_forecast.intervals
+            if snapshot.household_load_forecast is not None
+            else ()
+        )
+        if interval.starts_at >= snapshot.captured_at
+        and interval.ends_at <= coalesced_segments[-1][1]
+    )
+    if not household_load_intervals or not storage_energy_checkpoints:
+        raise ValueError(
+            "an admitted plan requires committed household-load and storage-energy "
+            "materiality baselines"
+        )
     store.save(
         ActivePlanCommitment(
             execution_scope_id=storage.execution_scope_id,
             plan_id=plan_id,
             plan_revision=(
-                prior_commitment.plan_revision + 1
-                if prior_commitment is not None
-                else 1
+                prior_commitment.plan_revision + 1 if prior_commitment is not None else 1
             ),
             primitive=primitive.value,
-            source_policy=(
-                source_policy.value if source_policy is not None else "not_applicable"
-            ),
+            source_policy=(source_policy.value if source_policy is not None else "not_applicable"),
             starts_at=starts_at,
             # A market commitment owns its complete lifecycle.  Expiring it at
             # the end of the first charge phase silently discards a later
@@ -770,16 +585,10 @@ def _persist_plan(
             worst_case_financial_result_eur=(
                 market.worst_case_incremental_result_eur
                 if market is not None
-                else (
-                    native.worst_case_financial_result_eur
-                    if native is not None
-                    else None
-                )
+                else (native.worst_case_financial_result_eur if native is not None else None)
             ),
             average_charge_window_price_eur_per_kwh=(
-                native.average_charge_window_price_eur_per_kwh
-                if native is not None
-                else None
+                native.average_charge_window_price_eur_per_kwh if native is not None else None
             ),
             minimum_confidence=(native.minimum_confidence if native is not None else None),
             reserve_respected_across_scenarios=(
@@ -803,25 +612,34 @@ def _persist_plan(
                 if market is not None
                 else None
             ),
-            segments=tuple(
-                CommittedPlanSegment(
-                    starts_at=starts_at,
-                    ends_at=ends_at,
-                    primitive=primitive.value,
-                    source_policy=(
-                        source_policy.value
-                        if source_policy is not None
-                        else None
-                    ),
+            segments=_coalesce_committed_segments(
+                tuple(
+                    CommittedPlanSegment(
+                        starts_at=interval.starts_at,
+                        ends_at=interval.ends_at,
+                        primitive=primitive.value,
+                        source_policy=(source_policy.value if source_policy is not None else None),
+                        storage_export_target_wh=(
+                            interval.storage_export_target_wh
+                            if interval.intent is DailyStorageIntent.STORAGE_EXPORT
+                            else None
+                        ),
+                    )
+                    for interval in schedule.intervals
+                    for primitive, source_policy in (_intent_primitive(interval.intent),)
                 )
-                for starts_at, ends_at, intent in coalesced_segments
-                for primitive, source_policy in (_intent_primitive(intent),)
             ),
             selection_reason=selection_reason,
-            replaced_plan_id=(
-                prior_commitment.plan_id
-                if prior_commitment is not None
-                else None
+            replaced_plan_id=(prior_commitment.plan_id if prior_commitment is not None else None),
+            selected_at=snapshot.captured_at,
+            household_load_intervals=household_load_intervals,
+            storage_energy_checkpoints=storage_energy_checkpoints,
+            candidate_family=(
+                "market_route"
+                if market is not None
+                else native.family.value
+                if native is not None
+                else "unknown"
             ),
         )
     )
@@ -836,39 +654,6 @@ def build_mep_canonical_run(
     control_change_allowed: bool,
     switching_margin_eur: float,
 ) -> tuple[CanonicalPipelineRun, MepCanonicalStageTimings, MarketDailyRuntimeOutcome]:
-    stage_started = perf_counter()
-    planner_outcome = planner_runtime.generate(
-        snapshot,
-        opportunities=opportunities,
-    )
-    evaluated_plan = (
-        MarketDailyEvaluationEngine().evaluate(
-            snapshot=snapshot,
-            portfolio=planner_outcome.portfolio,
-            dispatch_authority=False,
-        )
-        if planner_outcome.portfolio is not None
-        else None
-    )
-    if evaluated_plan is None:
-        candidates: list[Candidate] = []
-        paths: list[EnergyPath] = []
-        winner_id = None
-        selected_schedule = None
-        native_winner = None
-        market_winner = None
-    else:
-        (
-            candidates,
-            paths,
-            winner_id,
-            selected_schedule,
-            native_winner,
-            market_winner,
-        ) = _plan_candidates(snapshot, evaluated_plan)
-    candidate_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
-
-    stage_started = perf_counter()
     retained_commitment = next(iter(snapshot.active_plan_commitments), None)
     if retained_commitment is not None:
         completed_revision = _complete_acquisition_revision(
@@ -886,34 +671,110 @@ def build_mep_canonical_run(
         if commitment_store is not None:
             commitment_store.clear(retained_commitment.execution_scope_id)
         retained_commitment = None
-    challenger_financial_result = (
-        market_winner.worst_case_incremental_result_eur
-        if market_winner is not None
-        else native_winner.worst_case_financial_result_eur
-        if native_winner is not None
+    snapshot = replace(
+        snapshot,
+        active_plan_commitments=((retained_commitment,) if retained_commitment is not None else ()),
+    )
+
+    stage_started = perf_counter()
+    planner_outcome = planner_runtime.generate(
+        snapshot,
+        opportunities=opportunities,
+        comparison_horizon_end=(
+            retained_commitment.ends_at if retained_commitment is not None else None
+        ),
+    )
+    comparable = None
+    if planner_outcome.portfolio is not None:
+        try:
+            conversion_model, _ = planner_runtime.planning_configuration(snapshot)
+            comparable = produce_mep_comparable_portfolio(
+                snapshot=snapshot,
+                portfolio=planner_outcome.portfolio,
+                conversion_model=conversion_model,
+                incumbent=retained_commitment,
+                financial_equivalence_margin_eur=switching_margin_eur,
+            )
+        except Exception as exc:
+            planner_outcome = replace(
+                planner_outcome,
+                status="blocked",
+                reason=str(exc) or exc.__class__.__name__,
+                portfolio=None,
+            )
+    if comparable is None:
+        candidates: list[Candidate] = []
+        paths: list[EnergyPath] = []
+        winner_id: str | None = None
+        selected_schedule = None
+        native_winner = None
+        market_winner = None
+    else:
+        candidates = [
+            Candidate(
+                run_id=snapshot.run_id,
+                snapshot_id=snapshot.snapshot_id,
+                candidate_id=item.candidate_id,
+                energy_path_id=item.energy_path_id,
+                family=item.family.value,
+                pv_forecast_basis="lower-central-upper",
+            )
+            for item in comparable.candidate_set.candidates
+        ]
+        paths = [
+            EnergyPath(
+                run_id=snapshot.run_id,
+                snapshot_id=snapshot.snapshot_id,
+                path_id=item.path_id,
+                family=item.family.value,
+                segment_ids=tuple(segment.segment_id for segment in item.segments),
+                segments=item.segments,
+                projected_states=item.projected_states,
+                capability_confidence=item.confidence,
+            )
+            for item in comparable.candidate_set.energy_paths
+        ]
+        selected_schedule = None
+        native_winner = None
+        market_winner = None
+    candidate_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
+
+    stage_started = perf_counter()
+    canonical_evaluation = (
+        EvaluationEngine().evaluate(
+            comparable.candidate_set,
+            comparable.strategy,
+            comparable.outcome_set,
+            created_at=snapshot.captured_at,
+            incumbent_candidate_id=comparable.incumbent_candidate_id,
+            financial_equivalence_margin=switching_margin_eur,
+        )
+        if comparable is not None
         else None
     )
-    commitment_decision = MarketDailyEvaluationEngine.evaluate_commitment(
-        snapshot=snapshot,
-        incumbent=retained_commitment,
-        challenger_financial_result_eur=challenger_financial_result,
-        required_by=planner_outcome.required_by,
-        switching_margin_eur=switching_margin_eur,
+    winner_id = (
+        canonical_evaluation.record.winning_candidate_id
+        if canonical_evaluation is not None
+        else None
+    )
+    incumbent_retained = (
+        comparable is not None
+        and comparable.incumbent_candidate_id is not None
+        and winner_id == comparable.incumbent_candidate_id
     )
     replacement_reason = (
-        commitment_decision.decisive_step
-        if not commitment_decision.incumbent_retained
+        canonical_evaluation.record.decisive_step
+        if canonical_evaluation is not None
+        and comparable is not None
+        and comparable.incumbent_candidate_id is not None
+        and not incumbent_retained
         else None
     )
-    incumbent_retained = commitment_decision.incumbent_retained
-    if incumbent_retained and retained_commitment is not None:
-        committed_candidate, committed_path = _committed_candidate(
-            snapshot=snapshot,
-            commitment=retained_commitment,
-        )
-        candidates.append(committed_candidate)
-        paths.append(committed_path)
-        winner_id = committed_candidate.candidate_id
+    if comparable is not None and winner_id is not None:
+        source = next(item for item in comparable.sources if item.candidate_id == winner_id)
+        selected_schedule = source.schedule
+        native_winner = source.native_candidate
+        market_winner = source.market_assessment
     winner = next((item for item in candidates if item.candidate_id == winner_id), None)
     winning_path = next(
         (item for item in paths if winner is not None and item.path_id == winner.energy_path_id),
@@ -934,124 +795,105 @@ def build_mep_canonical_run(
         candidate_set_id=candidate_set.candidate_set_id,
         outcome_set_id=_id("mep-outcome-set", candidate_set.candidate_set_id),
         candidate_ids=tuple(item.candidate_id for item in candidates),
+        outcomes=(comparable.diagnostic_outcomes if comparable is not None else ()),
+    )
+    decisive_step = (
+        canonical_evaluation.record.decisive_step
+        if canonical_evaluation is not None
+        else "fallback:mep_planning_blocked"
     )
     evaluation = EvaluationRecord(
         run_id=snapshot.run_id,
         snapshot_id=snapshot.snapshot_id,
-        evaluation_id=_id("mep-evaluation", outcomes.outcome_set_id),
+        evaluation_id=(
+            canonical_evaluation.record.evaluation_id
+            if canonical_evaluation is not None
+            else _id("mep-evaluation", outcomes.outcome_set_id)
+        ),
         candidate_set_id=candidate_set.candidate_set_id,
         winning_candidate_id=(winner.candidate_id if winner is not None else None),
         winning_energy_path_id=(winning_path.path_id if winning_path is not None else None),
         reason=(
             "active canonical MEP plan commitment retained"
             if incumbent_retained
-            else evaluated_plan.reason
-            if evaluated_plan is not None
+            else decisive_step or "evaluation:winner_selected"
+            if winner is not None
             else planner_outcome.reason or "mep_planning_blocked"
         ),
         status=("winner_selected" if winner is not None else "fallback_active"),
-        evaluated_candidate_ids=tuple(item.candidate_id for item in candidates),
-        decisive_step=(
-            "stability:canonical_plan_commitment_retained"
+        evaluated_candidate_ids=(
+            canonical_evaluation.record.evaluated_candidate_ids
+            if canonical_evaluation is not None
+            else ()
+        ),
+        decisive_step=decisive_step,
+        incumbent_candidate_id=(
+            comparable.incumbent_candidate_id if comparable is not None else None
+        ),
+        financial_equivalence_margin_eur=switching_margin_eur,
+        commitment_decision=(
+            "retained"
             if incumbent_retained
-            else replacement_reason
-            if replacement_reason is not None
-            else "objective:mep_physical_and_market_evaluation"
-            if winner is not None
-            else "fallback:mep_planning_blocked"
+            else "replaced"
+            if comparable is not None and comparable.incumbent_candidate_id is not None
+            else "not_applicable"
         ),
     )
     evaluation_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
     stage_started = perf_counter()
-    plans: list[ObserverExecutionPlan] = []
-    if winner is not None and winning_path is not None and winning_path.segments:
-        scope_id = winning_path.segments[0].execution_scope_id
-        due = next(
-            (
-                item
-                for item in winning_path.segments
-                if item.starts_at <= snapshot.captured_at < item.ends_at
-            ),
-            winning_path.segments[0],
+    canonical_plan_set = (
+        ExecutionPlanBuilder().build(
+            canonical_evaluation,
+            created_at=snapshot.captured_at,
+            fallback_policy_id="mep-safe-fallback:v1",
         )
-        plan_id = (
-            retained_commitment.plan_id
-            if incumbent_retained and retained_commitment is not None
-            else _id(
-                "mep-plan",
-                (
-                    f"{evaluation.evaluation_id}|{winning_path.path_id}|"
-                    f"revision:{retained_commitment.plan_revision + 1}"
-                    if replacement_reason is not None
-                    and retained_commitment is not None
-                    else f"{evaluation.evaluation_id}|{winning_path.path_id}"
-                ),
-            )
+        if canonical_evaluation is not None
+        and canonical_evaluation.winning_energy_path is not None
+        else None
+    )
+    admitted_plan_ids_by_scope = (
+        {retained_commitment.execution_scope_id: retained_commitment.plan_id}
+        if incumbent_retained and retained_commitment is not None
+        else {}
+    )
+    if canonical_plan_set is not None:
+        execution_plan_set = project_execution_plan_set(
+            canonical_plan_set,
+            run_id=snapshot.run_id,
+            captured_at=snapshot.captured_at,
+            observer_only=not control_change_allowed,
+            admitted_plan_ids_by_scope=admitted_plan_ids_by_scope,
         )
-        plans.append(
-            ObserverExecutionPlan(
-                plan_id=plan_id,
-                evaluation_id=evaluation.evaluation_id,
-                winning_candidate_id=winner.candidate_id,
-                winning_energy_path_id=winning_path.path_id,
-                execution_scope_id=scope_id,
-                valid_from=min(item.starts_at for item in winning_path.segments),
-                valid_until=max(item.ends_at for item in winning_path.segments),
-                planned_primitive=due.primitive,
-                planned_vendor_mode=None,
-                lifecycle_status=(
-                    "due"
-                    if due.starts_at <= snapshot.captured_at < due.ends_at
-                    else "scheduled"
-                ),
-                observer_only=not control_change_allowed,
-                segments=tuple(
-                    ObserverExecutionPlanSegment(
-                        segment_id=_id("mep-plan-segment", item.segment_id),
-                        source_path_segment_id=item.segment_id,
-                        order=index,
-                        starts_at=item.starts_at,
-                        ends_at=item.ends_at,
-                        primitive=item.primitive,
-                        capability_id=item.capability_id,
-                        purpose=item.purpose,
-                        evidence_ids=item.evidence_ids,
-                        requested_power_w=item.requested_power_w,
-                        charge_source_policy=item.charge_source_policy,
-                        planned_vendor_mode=None,
-                    )
-                    for index, item in enumerate(winning_path.segments, start=1)
-                ),
-            )
+    else:
+        execution_plan_set = ExecutionPlanSet(
+            run_id=snapshot.run_id,
+            snapshot_id=snapshot.snapshot_id,
+            plan_set_id=_id("mep-plan-set", evaluation.evaluation_id),
+            evaluation_id=evaluation.evaluation_id,
+            winning_energy_path_id=evaluation.winning_energy_path_id,
         )
-        if not incumbent_retained and selected_schedule is not None:
+    plans = list(execution_plan_set.plans)
+    if plans:
+        plan_id = plans[0].plan_id
+        if (
+            not incumbent_retained
+            and selected_schedule is not None
+            and planner_outcome.portfolio is not None
+        ):
             _persist_plan(
                 store=commitment_store,
                 snapshot=snapshot,
+                plan=planner_outcome.portfolio,
                 schedule=selected_schedule,
                 plan_id=plan_id,
                 native=native_winner,
                 market=market_winner,
-                prior_commitment=(
-                    retained_commitment
-                    if replacement_reason is not None
-                    else None
-                ),
+                prior_commitment=(retained_commitment if replacement_reason is not None else None),
                 selection_reason=(
-                    evaluation.decisive_step
-                    or "objective:mep_physical_and_market_evaluation"
+                    evaluation.decisive_step or "objective:mep_physical_and_market_evaluation"
                 ),
             )
-    execution_plan_set = ExecutionPlanSet(
-        run_id=snapshot.run_id,
-        snapshot_id=snapshot.snapshot_id,
-        plan_set_id=_id("mep-plan-set", evaluation.evaluation_id),
-        evaluation_id=evaluation.evaluation_id,
-        winning_energy_path_id=evaluation.winning_energy_path_id,
-        plan_ids=tuple(item.plan_id for item in plans),
-        plans=tuple(plans),
-    )
     execution_plan_builder_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
     stage_started = perf_counter()
@@ -1085,8 +927,7 @@ def build_mep_canonical_run(
         (
             item
             for item in (winning_path.segments if winning_path is not None else ())
-            if due_segment is not None
-            and item.segment_id == due_segment.source_path_segment_id
+            if due_segment is not None and item.segment_id == due_segment.source_path_segment_id
         ),
         None,
     )
@@ -1118,9 +959,7 @@ def build_mep_canonical_run(
         if not control_change_allowed:
             blockers.append("observer_only_authority")
     request_ready = due_segment is not None and blockers in ([], ["observer_only_authority"])
-    measured_progress_deferred = blockers == [
-        "measured_pv_progress_covers_grid_charge"
-    ]
+    measured_progress_deferred = blockers == ["measured_pv_progress_covers_grid_charge"]
     request_id = (
         _id(
             "mep-primitive-request",
@@ -1147,9 +986,7 @@ def build_mep_canonical_run(
         ),
         planned_primitive=(due_segment.primitive if due_segment is not None else None),
         mapping_status=("pending_adapter" if request_id is not None else "not_requested"),
-        source_entity_id=(
-            mode_evidence.source_entity_id if mode_evidence is not None else None
-        ),
+        source_entity_id=(mode_evidence.source_entity_id if mode_evidence is not None else None),
         current_vendor_mode=(
             mode_evidence.current_vendor_mode if mode_evidence is not None else None
         ),
@@ -1159,14 +996,8 @@ def build_mep_canonical_run(
         ),
         blockers=tuple(blockers),
     )
-    if (
-        measured_progress_deferred
-        and commitment_store is not None
-        and due_path_segment is not None
-    ):
-        active_commitment = commitment_store.load(
-            due_path_segment.execution_scope_id
-        )
+    if measured_progress_deferred and commitment_store is not None and due_path_segment is not None:
+        active_commitment = commitment_store.load(due_path_segment.execution_scope_id)
         if active_commitment is not None:
             deferred_revision = _defer_charge_revision(
                 snapshot=snapshot,

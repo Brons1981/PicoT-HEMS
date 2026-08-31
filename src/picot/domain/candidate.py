@@ -20,6 +20,8 @@ class CandidateFamily(StrEnum):
     COST_FIRST = "cost_first"
     RESERVE_FIRST = "reserve_first"
     LIMITED_POWER_PARALLEL = "limited_power_parallel"
+    MARKET_ROUTE = "market_route"
+    COMMITTED = "committed"
 
 
 class CandidateExclusionKind(StrEnum):

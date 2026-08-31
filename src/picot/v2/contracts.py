@@ -1022,13 +1022,149 @@ class DelegatedStorageCandidateOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class MepCandidateOutcome:
+    """Diagnostic projection of one ADR-032-comparable MEP outcome."""
+
+    outcome_id: str
+    run_id: str
+    snapshot_id: str
+    candidate_id: str
+    energy_path_id: str
+    comparison_horizon_start: datetime
+    comparison_horizon_end: datetime
+    incumbent: bool
+    validity: str
+    invalidity_reasons: tuple[str, ...]
+    worst_case_financial_result_eur: float | None
+    self_consumed_pv_wh: float | None
+    reserve_availability_wh: float | None
+    confidence: float
+    recoverability: float | None
+    execution_complexity: int
+    expected_switching_count: int | None
+    evidence_ids: tuple[str, ...]
+    method_version: str
+    financial_equivalence_margin_eur: float
+    explicit_charge_window_starts_at: datetime | None
+    explicit_charge_window_ends_at: datetime | None
+    target_storage_energy_wh: float
+
+    def __post_init__(self) -> None:
+        if self.comparison_horizon_end <= self.comparison_horizon_start:
+            raise ValueError("MEP comparison horizon must be positive")
+        if self.validity not in {"valid", "invalid"}:
+            raise ValueError("MEP outcome validity must be valid or invalid")
+        if self.validity == "invalid" and not self.invalidity_reasons:
+            raise ValueError("Invalid MEP outcomes require reasons")
+        if self.validity == "valid" and self.invalidity_reasons:
+            raise ValueError("Valid MEP outcomes may not carry invalidity reasons")
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("MEP outcome confidence must be bounded")
+        if self.recoverability is not None and not 0.0 <= self.recoverability <= 1.0:
+            raise ValueError("MEP outcome recoverability must be bounded")
+        if self.execution_complexity < 0:
+            raise ValueError("MEP outcome complexity must be non-negative")
+        if self.expected_switching_count is not None and self.expected_switching_count < 0:
+            raise ValueError("MEP outcome switching count must be non-negative")
+        if self.financial_equivalence_margin_eur < 0.0:
+            raise ValueError("MEP financial equivalence margin must be non-negative")
+        if (self.explicit_charge_window_starts_at is None) != (
+            self.explicit_charge_window_ends_at is None
+        ):
+            raise ValueError("MEP explicit charge window must be complete")
+        if (
+            self.explicit_charge_window_starts_at is not None
+            and self.explicit_charge_window_ends_at is not None
+            and self.explicit_charge_window_ends_at
+            <= self.explicit_charge_window_starts_at
+        ):
+            raise ValueError("MEP explicit charge window must be positive")
+        if self.target_storage_energy_wh <= 0.0:
+            raise ValueError("MEP target storage energy must be positive")
+        if not self.evidence_ids or any(not item.strip() for item in self.evidence_ids):
+            raise ValueError("MEP outcome evidence IDs must be explicit")
+        if len(self.evidence_ids) != len(set(self.evidence_ids)):
+            raise ValueError("MEP outcome evidence IDs must be unique")
+        if not self.method_version.strip():
+            raise ValueError("MEP outcome method version must be explicit")
+
+    @property
+    def charge_window_starts_at(self) -> datetime:
+        return self.explicit_charge_window_starts_at or self.comparison_horizon_start
+
+    @property
+    def charge_window_ends_at(self) -> datetime:
+        return self.explicit_charge_window_ends_at or self.comparison_horizon_end
+
+    @property
+    def requirement_satisfied(self) -> None:
+        return None
+
+    @property
+    def storage_energy_at_requirement_wh(self) -> None:
+        return None
+
+    @property
+    def storage_energy_at_window_start_wh(self) -> None:
+        return None
+
+    @property
+    def storage_energy_at_window_end_wh(self) -> None:
+        return None
+
+    @property
+    def required_energy_wh(self) -> float:
+        return self.target_storage_energy_wh
+
+    @property
+    def required_storage_addition_wh(self) -> None:
+        return None
+
+    @property
+    def projected_storage_use_before_window_wh(self) -> None:
+        return None
+
+    @property
+    def pv_storage_contribution_wh(self) -> None:
+        return None
+
+    @property
+    def grid_storage_contribution_wh(self) -> None:
+        return None
+
+    @property
+    def conversion_losses_wh(self) -> None:
+        return None
+
+    @property
+    def charge_target_satisfied(self) -> None:
+        return None
+
+    @property
+    def reserve_satisfied(self) -> None:
+        return None
+
+    @property
+    def reserve_energy_required_wh(self) -> None:
+        return None
+
+    @property
+    def confidence_assessment(self) -> None:
+        return None
+
+    @property
+    def pv_forecast_basis(self) -> str:
+        return "lower-central-upper"
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateOutcomeSet:
     run_id: str
     snapshot_id: str
     candidate_set_id: str
     outcome_set_id: str
     candidate_ids: tuple[str, ...]
-    outcomes: tuple[DelegatedStorageCandidateOutcome, ...] = ()
+    outcomes: tuple[DelegatedStorageCandidateOutcome | MepCandidateOutcome, ...] = ()
 
     def __post_init__(self) -> None:
         if self.outcomes and self.candidate_ids != tuple(
@@ -1049,6 +1185,9 @@ class EvaluationRecord:
     status: str = "winner_selected"
     evaluated_candidate_ids: tuple[str, ...] = ()
     decisive_step: str | None = None
+    incumbent_candidate_id: str | None = None
+    financial_equivalence_margin_eur: float = 0.0
+    commitment_decision: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -24,7 +24,7 @@ from picot.domain.evaluation import (
 )
 from picot.domain.objectives import ObjectiveKind, PlannerStrategy
 
-IMPLEMENTATION_VERSION = "evaluation-v1"
+IMPLEMENTATION_VERSION = "evaluation-v2"
 
 
 class EvaluationEngine:
@@ -43,8 +43,17 @@ class EvaluationEngine:
         outcomes: CandidateOutcomeSet,
         *,
         created_at: datetime,
+        incumbent_candidate_id: str | None = None,
+        financial_equivalence_margin: float = 0.0,
     ) -> EvaluationResult:
-        self._validate_atomic_inputs(candidate_set, strategy, outcomes, created_at)
+        self._validate_atomic_inputs(
+            candidate_set,
+            strategy,
+            outcomes,
+            created_at,
+            incumbent_candidate_id=incumbent_candidate_id,
+            financial_equivalence_margin=financial_equivalence_margin,
+        )
         by_id = {item.candidate_id: item for item in outcomes.outcomes}
         valid_ids = [
             candidate.candidate_id
@@ -76,6 +85,11 @@ class EvaluationEngine:
                     weight,
                     remaining,
                     by_id,
+                    equivalence_margin=(
+                        financial_equivalence_margin
+                        if objective is ObjectiveKind.FINANCIAL_RESULT
+                        else 0.0
+                    ),
                 )
                 objective_records.append(objective_record)
                 if weight > 0 and objective_record.available:
@@ -87,7 +101,34 @@ class EvaluationEngine:
                         )
                         break
 
-        if len(remaining) > 1:
+        if (
+            len(remaining) > 1
+            and incumbent_candidate_id is not None
+            and incumbent_candidate_id in remaining
+        ):
+            tie_records.append(
+                TieBreakRecord(
+                    kind=TieBreakKind.INCUMBENT_COMMITMENT,
+                    values=tuple(
+                        CandidateComparisonValue(
+                            candidate_id,
+                            candidate_id == incumbent_candidate_id,
+                            (
+                                RelativeResult.BETTER
+                                if candidate_id == incumbent_candidate_id
+                                else RelativeResult.WORSE
+                            ),
+                        )
+                        for candidate_id in remaining
+                    ),
+                    retained_candidate_ids=(incumbent_candidate_id,),
+                    available=True,
+                    decisive=True,
+                )
+            )
+            remaining = [incumbent_candidate_id]
+            decisive_step = "commitment:equivalent_incumbent_retained"
+        elif len(remaining) > 1:
             remaining, tie_records, decisive_step = self._apply_tie_breaks(remaining, by_id)
 
         winner_id = remaining[0] if len(remaining) == 1 else None
@@ -142,6 +183,9 @@ class EvaluationEngine:
         strategy: PlannerStrategy,
         outcomes: CandidateOutcomeSet,
         created_at: datetime,
+        *,
+        incumbent_candidate_id: str | None,
+        financial_equivalence_margin: float,
     ) -> None:
         if created_at.tzinfo is None or created_at.utcoffset() is None:
             raise ValueError("Evaluation creation time must be timezone-aware.")
@@ -155,6 +199,13 @@ class EvaluationEngine:
         if outcomes.candidate_set_reference != expected_reference:
             raise ValueError("Candidate Outcome Set reference must match Candidate Set.")
         candidate_ids = {item.candidate_id for item in candidate_set.candidates}
+        if financial_equivalence_margin < 0.0:
+            raise ValueError("Financial equivalence margin must not be negative.")
+        if (
+            incumbent_candidate_id is not None
+            and incumbent_candidate_id not in candidate_ids
+        ):
+            raise ValueError("Incumbent Candidate must exist in the Candidate Set.")
         outcome_ids = {item.candidate_id for item in outcomes.outcomes}
         if candidate_ids != outcome_ids:
             raise ValueError("Candidate IDs and Candidate Outcome IDs must match exactly.")
@@ -176,6 +227,8 @@ class EvaluationEngine:
         weight: int,
         candidate_ids: list[str],
         outcomes: dict[str, CandidateOutcome],
+        *,
+        equivalence_margin: float,
     ) -> tuple[ObjectiveComparisonRecord, list[str]]:
         values = []
         direction: ComparisonDirection | None = None
@@ -204,6 +257,7 @@ class EvaluationEngine:
                         retained_candidate_ids=tuple(candidate_ids),
                         available=False,
                         decisive=False,
+                        equivalence_margin=equivalence_margin,
                     ),
                     candidate_ids,
                 )
@@ -217,14 +271,26 @@ class EvaluationEngine:
             if direction is ComparisonDirection.HIGHER_IS_BETTER
             else min(raw_values)
         )
-        retained = [candidate_id for candidate_id, value in values if value == best]
+        retained = [
+            candidate_id
+            for candidate_id, value in values
+            if (
+                best - value <= equivalence_margin
+                if direction is ComparisonDirection.HIGHER_IS_BETTER
+                else value - best <= equivalence_margin
+            )
+        ]
         compared = tuple(
             CandidateComparisonValue(
                 candidate_id,
                 value,
                 RelativeResult.BETTER
-                if value == best and len(retained) == 1
-                else (RelativeResult.EQUAL if value == best else RelativeResult.WORSE),
+                if candidate_id in retained and len(retained) == 1
+                else (
+                    RelativeResult.EQUAL
+                    if candidate_id in retained
+                    else RelativeResult.WORSE
+                ),
             )
             for candidate_id, value in values
         )
@@ -238,6 +304,7 @@ class EvaluationEngine:
                 retained_candidate_ids=tuple(retained),
                 available=True,
                 decisive=False,
+                equivalence_margin=equivalence_margin,
             ),
             retained,
         )
@@ -255,6 +322,7 @@ class EvaluationEngine:
             retained_candidate_ids=record.retained_candidate_ids,
             available=record.available,
             decisive=True,
+            equivalence_margin=record.equivalence_margin,
         )
 
     def _apply_tie_breaks(

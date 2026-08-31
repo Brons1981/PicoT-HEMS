@@ -208,3 +208,59 @@ def test_evaluation_rejects_mismatched_candidate_outcomes() -> None:
 
     with pytest.raises(ValueError, match="must match exactly"):
         EvaluationEngine().evaluate(candidate_set, _strategy(), mismatched, created_at=BASE)
+
+
+def test_financial_equivalence_retains_explicit_incumbent() -> None:
+    candidate_set = _candidate_set()
+    reference = EvaluationEngine().candidate_set_reference(candidate_set)
+    close = CandidateOutcomeSet(
+        snapshot_id="snapshot-1",
+        strategy_version=2,
+        candidate_set_reference=reference,
+        outcomes=(
+            _outcome("candidate-a", financial=1.04, reserve=1000.0),
+            _outcome("candidate-b", financial=1.00, reserve=1000.0),
+        ),
+    )
+
+    result = EvaluationEngine().evaluate(
+        candidate_set,
+        _strategy(),
+        close,
+        created_at=BASE,
+        incumbent_candidate_id="candidate-b",
+        financial_equivalence_margin=0.05,
+    )
+
+    assert result.winning_candidate is not None
+    assert result.winning_candidate.candidate_id == "candidate-b"
+    assert result.record.decisive_step == "commitment:equivalent_incumbent_retained"
+    assert result.record.objective_comparisons[0].equivalence_margin == 0.05
+    assert result.record.tie_breaks[0].kind is TieBreakKind.INCUMBENT_COMMITMENT
+
+
+def test_financial_improvement_beyond_margin_replaces_incumbent() -> None:
+    candidate_set = _candidate_set()
+    reference = EvaluationEngine().candidate_set_reference(candidate_set)
+    improved = CandidateOutcomeSet(
+        snapshot_id="snapshot-1",
+        strategy_version=2,
+        candidate_set_reference=reference,
+        outcomes=(
+            _outcome("candidate-a", financial=1.051, reserve=1000.0),
+            _outcome("candidate-b", financial=1.00, reserve=1000.0),
+        ),
+    )
+
+    result = EvaluationEngine().evaluate(
+        candidate_set,
+        _strategy(),
+        improved,
+        created_at=BASE,
+        incumbent_candidate_id="candidate-b",
+        financial_equivalence_margin=0.05,
+    )
+
+    assert result.winning_candidate is not None
+    assert result.winning_candidate.candidate_id == "candidate-a"
+    assert result.record.decisive_step == "objective:financial_result"

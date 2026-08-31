@@ -14,7 +14,11 @@ from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 from picot.domain.energy_path import PathSegment
-from picot.v2.contracts import CanonicalPipelineRun, PriceForecastPoint
+from picot.v2.contracts import (
+    CanonicalPipelineRun,
+    DelegatedStorageCandidateOutcome,
+    PriceForecastPoint,
+)
 from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.projection import Projection
@@ -4848,7 +4852,10 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
         selected = candidate.candidate_id == run.evaluation.winning_candidate_id
         outcome = outcomes_by_candidate.get(candidate.candidate_id)
         path = paths_by_id[candidate.energy_path_id]
-        if candidate.family == "pv_charge_only" and outcome is not None:
+        if candidate.family == "pv_charge_only" and isinstance(
+            outcome,
+            DelegatedStorageCandidateOutcome,
+        ):
             local_timezone = ZoneInfo("Europe/Amsterdam")
             segments_by_date: dict[date, list[PathSegment]] = {}
             for segment in path.segments:

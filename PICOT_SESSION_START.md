@@ -144,10 +144,10 @@ canonical identities and records across the full affected chain.
 
 ## Current recovery checkpoint — 2026-08-31
 
-Audit of `main` commit `808c4cf0b81556c8095c228f8bbeb44a43b5084e`
-identified these repair targets:
+Audit of pre-recovery `main` commit
+`808c4cf0b81556c8095c228f8bbeb44a43b5084e` identified these repair targets:
 
-Completed locally and awaiting review/commit:
+Completed and merged through PR #575:
 
 1. live observations reach general Runtime Monitor material classification;
 2. MEP emits a complete CandidateSet and non-empty CandidateOutcomeSet before
@@ -159,6 +159,8 @@ Completed locally and awaiting review/commit:
 6. the Winning Energy Path passes exclusively through the canonical ADR-033
    Execution Plan Builder; source policy and all segment intent are preserved.
 
-The identified recovery checkpoint is locally complete. Before new functional
-work, review and commit this boundary set as one controlled recovery change.
-Live verification starts only after local review and CI evidence pass.
+The identified recovery checkpoint is merged on `main` as commit
+`6e99c82f477fdb31ea613ab23652f9ea7ec99a08`; all three GitHub CI workflows
+passed.  Release `2.0.0-dev.207` is the dedicated live-validation release for
+this boundary recovery.  Do not start new functional work before its live
+startup, planning, commitment and segment-dispatch evidence has been reviewed.

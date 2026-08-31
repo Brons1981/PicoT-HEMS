@@ -334,6 +334,44 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
     assert segments[charge_index + 1].primitive.value == "balance_bidirectional"
     assert segments[charge_index + 1].ends_at == cheap_window_end
 
+    valid_market_outcomes = tuple(
+        outcome
+        for outcome in run.outcomes.outcomes
+        if outcome.candidate_id in market_candidate_ids and outcome.validity == "valid"
+    )
+    assert valid_market_outcomes
+    assert all(outcome.daily_target_reached for outcome in valid_market_outcomes)
+    assert all(
+        outcome.daily_target_reached_at <= outcome.daily_target_required_by
+        for outcome in valid_market_outcomes
+        if outcome.daily_target_reached_at is not None
+    )
+    assert all(
+        outcome.household_reserve_respected for outcome in valid_market_outcomes
+    )
+
+
+def test_mep_separates_daily_maximum_target_from_household_reserve(
+    tmp_path,
+) -> None:
+    """ADR-037: 100% remains the target; reserve is a separate hard outcome."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.60)
+    pipeline, _store = _pipeline(tmp_path)
+
+    run = pipeline.run(planning_input=snapshot)
+
+    requirement = run.candidate_set.storage_requirements[0]
+    assert requirement.requirement_kind == "daily_storage_target"
+    assert requirement.satisfaction_mode == "reached_by"
+    assert requirement.required_soc == 1.0
+    valid_outcomes = tuple(
+        outcome for outcome in run.outcomes.outcomes if outcome.validity == "valid"
+    )
+    assert valid_outcomes
+    assert all(outcome.daily_target_reached for outcome in valid_outcomes)
+    assert all(outcome.household_reserve_respected for outcome in valid_outcomes)
+
 
 def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.51)
@@ -818,7 +856,9 @@ def test_household_requirement_invalidates_late_incumbent_before_evaluation(
     assert requirement.required_by < late_charge_start
     incumbent_outcome = next(item for item in run.outcomes.outcomes if item.incumbent)
     assert incumbent_outcome.validity == "invalid"
-    assert "storage_requirement_not_met_by_deadline" in (
+    assert incumbent_outcome.daily_target_reached is False
+    assert incumbent_outcome.daily_target_reached_at is None
+    assert "daily_storage_target_not_reached_by_deadline" in (
         incumbent_outcome.invalidity_reasons
     )
     assert run.evaluation.commitment_decision == "replaced"

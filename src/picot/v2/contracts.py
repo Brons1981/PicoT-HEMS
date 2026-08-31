@@ -798,6 +798,22 @@ class StorageEnergyRequirement:
     confidence_method_version: str = (
         "legacy-storage-requirement-confidence:unversioned"
     )
+    requirement_kind: str = "household_energy"
+    satisfaction_mode: str = "available_at"
+
+    def __post_init__(self) -> None:
+        if self.requirement_kind not in {
+            "household_energy",
+            "daily_storage_target",
+        }:
+            raise ValueError("Storage requirement kind is unsupported")
+        if self.satisfaction_mode not in {"available_at", "reached_by"}:
+            raise ValueError("Storage requirement satisfaction mode is unsupported")
+        if (
+            self.requirement_kind == "daily_storage_target"
+            and self.satisfaction_mode != "reached_by"
+        ):
+            raise ValueError("Daily storage targets must use reached_by semantics")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1048,6 +1064,10 @@ class MepCandidateOutcome:
     explicit_charge_window_starts_at: datetime | None
     explicit_charge_window_ends_at: datetime | None
     target_storage_energy_wh: float
+    daily_target_required_by: datetime
+    daily_target_reached: bool
+    daily_target_reached_at: datetime | None
+    household_reserve_respected: bool
 
     def __post_init__(self) -> None:
         if self.comparison_horizon_end <= self.comparison_horizon_start:
@@ -1081,6 +1101,18 @@ class MepCandidateOutcome:
             raise ValueError("MEP explicit charge window must be positive")
         if self.target_storage_energy_wh <= 0.0:
             raise ValueError("MEP target storage energy must be positive")
+        if (
+            self.daily_target_required_by.tzinfo is None
+            or self.daily_target_required_by.utcoffset() is None
+        ):
+            raise ValueError("MEP daily target deadline must be timezone-aware")
+        if self.daily_target_reached != (self.daily_target_reached_at is not None):
+            raise ValueError("MEP daily target result must reconcile with its time")
+        if (
+            self.daily_target_reached_at is not None
+            and self.daily_target_reached_at > self.daily_target_required_by
+        ):
+            raise ValueError("MEP daily target cannot be reached after its deadline")
         if not self.evidence_ids or any(not item.strip() for item in self.evidence_ids):
             raise ValueError("MEP outcome evidence IDs must be explicit")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):

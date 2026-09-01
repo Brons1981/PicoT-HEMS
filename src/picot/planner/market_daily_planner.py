@@ -43,7 +43,7 @@ from picot.v2.opportunity_engine import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_generation", __name__)
-METHOD_VERSION = "market-daily-planner:v6"
+METHOD_VERSION = "market-daily-planner:v7"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
@@ -1278,7 +1278,21 @@ class MarketDailyPlanner:
             for item in native_observation.observer_result.portfolio.strategy_results
         }
         baseline_schedule_id = native_observation.strategy_space.schedules[0].schedule_id
-        baseline_results = (results[baseline_schedule_id],)
+        baseline_result = results[baseline_schedule_id]
+        hybrid_results = tuple(
+            result
+            for result in results.values()
+            if result.intent_schedule.schedule_id != baseline_schedule_id
+            and {
+                interval.intent for interval in result.intent_schedule.intervals
+            }.issuperset(
+                {
+                    DailyStorageIntent.NOM,
+                    DailyStorageIntent.GRID_REQUIREMENT,
+                }
+            )
+        )
+        parent_results = (baseline_result, *hybrid_results)
         adapter = IndependentDailyReferenceAdapter()
         inputs = adapter.build_inputs(
             snapshot,
@@ -1287,9 +1301,9 @@ class MarketDailyPlanner:
         )
         assessments: list[MarketRouteAssessment] = []
         for route in routes:
-            for baseline_result in baseline_results:
+            for parent_result in parent_results:
                 schedule = self._market_schedule(
-                    baseline_result.intent_schedule,
+                    parent_result.intent_schedule,
                     route=route,
                     maximum_discharge_output_power_w=(inputs.maximum_discharge_output_power_w),
                 )
@@ -1313,7 +1327,7 @@ class MarketDailyPlanner:
                 assessments.append(
                     self._assessment(
                         route=route,
-                        baseline_result=baseline_result,
+                        parent_result=parent_result,
                         market_result=market_result,
                         wear_eur_per_export_kwh=trading_policy.wear_eur_per_export_kwh,
                         minimum_total_route_profit_eur=(
@@ -1419,12 +1433,12 @@ class MarketDailyPlanner:
     def _assessment(
         *,
         route: MarketCapacityRoute,
-        baseline_result: DailyReferenceStrategyResult,
+        parent_result: DailyReferenceStrategyResult,
         market_result: DailyReferenceStrategyResult,
         wear_eur_per_export_kwh: float,
         minimum_total_route_profit_eur: float,
     ) -> MarketRouteAssessment:
-        baseline_run = baseline_result.run
+        baseline_run = parent_result.run
         market_run = market_result.run
         baseline_assessment = {item.scenario: item for item in baseline_run.assessment.assessments}
         market_assessment = {item.scenario: item for item in market_run.assessment.assessments}
@@ -1548,7 +1562,7 @@ class MarketDailyPlanner:
         )
         return MarketRouteAssessment(
             route_id=route.route_id,
-            source_native_schedule_id=baseline_result.intent_schedule.schedule_id,
+            source_native_schedule_id=parent_result.intent_schedule.schedule_id,
             market_schedule_id=market_result.intent_schedule.schedule_id,
             intent_schedule=market_result.intent_schedule,
             physically_admissible=physically_admissible,

@@ -329,6 +329,7 @@ def test_mep_builds_complete_2026_grid_trade_with_linked_saldering() -> None:
         item
         for item in result.route_assessments
         if item.route_id in {route.route_id for route in grid_routes}
+        and "baseline-household-support" in item.source_native_schedule_id
     )
     assert grid_assessments
     assert all(item.admitted for item in grid_assessments)
@@ -336,6 +337,60 @@ def test_mep_builds_complete_2026_grid_trade_with_linked_saldering() -> None:
         item.worst_case_incremental_result_eur
         >= item.minimum_total_route_profit_eur
         for item in grid_assessments
+    )
+
+
+def test_mep_combines_grid_trade_with_hybrid_pv_residual_grid_parent() -> None:
+    """ADR-017/024/037: trade extends the complete hybrid household path."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    split = snapshot.captured_at + timedelta(hours=12)
+    end = snapshot.captured_at + timedelta(hours=24)
+    source = snapshot.price_points[0]
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(source, point_id="cheap", ends_at=split, value_eur_per_kwh=0.05),
+            replace(
+                source,
+                point_id="expensive",
+                starts_at=split,
+                ends_at=end,
+                value_eur_per_kwh=2.00,
+            ),
+        ),
+    )
+
+    portfolio, _ = MarketDailyPlanner().generate_with_diagnostics(
+        snapshot=priced,
+        conversion_model=_conversion(),
+    )
+
+    hybrid_trades = tuple(
+        assessment
+        for assessment in portfolio.route_assessments
+        if "hybrid-pv-grid" in assessment.source_native_schedule_id
+        and any(
+            interval.intent.value == "storage_export"
+            for interval in assessment.intent_schedule.intervals
+        )
+    )
+
+    assert hybrid_trades
+    assert any(assessment.admitted for assessment in hybrid_trades)
+    assert all(
+        any(
+            interval.intent.value == "grid_requirement"
+            for interval in assessment.intent_schedule.intervals
+        )
+        for assessment in hybrid_trades
+    )
+    assert all(
+        evidence.reserve_respected
+        and evidence.minimum_storage_energy_observed_wh
+        >= evidence.minimum_storage_energy_wh
+        for assessment in hybrid_trades
+        for evidence in assessment.scenario_evidence
     )
 
 

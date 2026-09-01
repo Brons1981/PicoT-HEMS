@@ -226,12 +226,30 @@ def test_dashboard_presents_mep_execution_plan_with_comparable_outcomes(
     assert "view.planning_status?.execution_plans" in DASHBOARD_HTML
     assert "selectedExecutionPlanWindows(view)" in DASHBOARD_HTML
     assert "primitivePlanKind" in DASHBOARD_HTML
-    assert view["planning_status"]["soc_timeline"][0] == {
+    winning_path = next(
+        path
+        for path in run.candidate_set.energy_paths
+        if path.path_id == run.evaluation.winning_energy_path_id
+    )
+    expected_soc_timeline = [{
         "at": snapshot.captured_at.isoformat(),
         "soc_percent": 51.0,
         "primitive": "actual",
-    }
-    assert len(view["planning_status"]["soc_timeline"]) > 1
+    }]
+    for state in winning_path.projected_states:
+        if state.at <= snapshot.captured_at or state.battery_soc is None:
+            continue
+        segment = next(
+            item
+            for item in winning_path.segments
+            if item.starts_at < state.at <= item.ends_at
+        )
+        expected_soc_timeline.append({
+            "at": state.at.isoformat(),
+            "soc_percent": round(state.battery_soc * 100, 2),
+            "primitive": segment.primitive.value,
+        })
+    assert view["planning_status"]["soc_timeline"] == expected_soc_timeline
 
 
 def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
@@ -309,6 +327,17 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
         )
     )
     assert market_paths
+    assert all(path.projected_states for path in market_paths)
+    assert all(
+        state.storage_energy_wh
+        == pytest.approx(
+            state.battery_soc
+            * snapshot.current_storage_states[0].usable_capacity_wh
+        )
+        for path in market_paths
+        for state in path.projected_states
+        if state.battery_soc is not None and state.storage_energy_wh is not None
+    )
     charge_index = next(
         (path, index)
         for path in market_paths

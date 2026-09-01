@@ -1,7 +1,7 @@
 """Canonical MEP Candidate and Candidate Outcome production.
 
 MEP produces complete alternatives; ADR-032 Evaluation alone selects a winner.
-See ADR-024, ADR-031, ADR-032, ADR-037, V2ADR-055 and V2ADR-062.
+See ADR-024, ADR-030, ADR-031, ADR-032, ADR-037, V2ADR-055 and V2ADR-062.
 """
 
 from __future__ import annotations
@@ -203,6 +203,7 @@ def _path(
     evidence_ids: tuple[str, ...],
     strategy_version: int,
     projected_result: DailyReferenceStrategyResult | None,
+    market_assessment: MarketRouteAssessment | None,
     constraint_ids: tuple[str, ...],
 ) -> DomainEnergyPath:
     storage = snapshot.current_storage_states[0]
@@ -241,7 +242,22 @@ def _path(
         for index, interval in enumerate(_path_intervals(schedule), start=1)
     )
     states: tuple[ProjectedEnergyState, ...] = ()
-    if projected_result is not None:
+    if market_assessment is not None:
+        central_evidence = next(
+            item
+            for item in market_assessment.scenario_evidence
+            if item.scenario is PVScenario.CENTRAL
+        )
+        states = tuple(
+            ProjectedEnergyState(
+                at=checkpoint.at,
+                confidence=central_evidence.minimum_confidence,
+                battery_soc=(checkpoint.energy_wh / storage.usable_capacity_wh),
+                storage_energy_wh=checkpoint.energy_wh,
+            )
+            for checkpoint in central_evidence.storage_energy_checkpoints
+        )
+    elif projected_result is not None:
         central = next(
             item
             for item in projected_result.run.simulation.trajectories
@@ -276,7 +292,11 @@ def _path(
         capability_ids=(storage.capability_id,),
         strategy_version=strategy_version,
         mapping_version=capability_set.mapping_version,
-        assumptions=("lower-central-upper PV scenarios", "fresh Planning Input"),
+        assumptions=(
+            "lower-central-upper PV scenarios",
+            "projected states use central PV scenario",
+            "fresh Planning Input",
+        ),
         confidence=confidence,
     )
 
@@ -813,6 +833,7 @@ def produce_mep_comparable_portfolio(
             evidence_ids=evidence_ids,
             strategy_version=strategy.strategy_version,
             projected_result=result,
+            market_assessment=market,
             constraint_ids=constraint_ids,
         )
         candidate = DomainCandidate(

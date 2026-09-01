@@ -180,9 +180,9 @@ maximum storage target and the independently simulated household reserve.  A
 market route may reach the daily target before export and later use energy,
 provided its complete projected path still respects the household reserve.
 
-Release `2.0.0-dev.212` is prepared on branch
-`fix/dev212-separate-daily-target-reserve`.  The existing 100% record is now
-explicitly typed as a `daily_storage_target` with `reached_by` semantics.
+Release `2.0.0-dev.212` was merged and installed live.  The existing 100%
+record is now explicitly typed as a `daily_storage_target` with `reached_by`
+semantics.
 Every MEP Candidate Outcome separately publishes the conservative target
 completion time and whether household reserve remains respected across all PV
 scenarios.  Candidate Generation and simulation still derive both facts;
@@ -192,3 +192,12 @@ reserve enlargement is not invented in this slice because the live Planning
 Input does not yet contain the canonical relative-confidence baseline required
 by the existing ADR-037 reserve policy.  The flat household dashboard line and
 financial source-label ambiguity remain separate UI slices.
+
+Live dev.212 then proved that the price-chart SoC line was not a projection of
+the Winning Energy Path.  Projection/UI privately re-simulated Execution Plan
+segments at their requested maximum power and ignored canonical market-route
+storage checkpoints and per-interval export targets.  Dev.213 restores
+ADR-030 ownership: native and market Candidate Energy Paths publish central
+scenario Projected Energy States, and the UI renders only those immutable
+states plus the actual starting SoC.  Hybrid NOM/PV plus residual-grid
+Candidate construction remains a separate MEP Candidate Generation slice.

@@ -90,6 +90,7 @@ OWNERSHIP_BY_LAYER: dict[str, ArchitectureOwnership] = {
         module="picot.planner.mep_candidate_outcomes",
         adr_paths=(
             "docs/architecture/ADR-024-candidate-engine.md",
+            "docs/architecture/ADR-030-energy-path-capability-snapshot-contract.md",
             "docs/architecture/ADR-031-candidate-scenario-construction-contract.md",
             "docs/architecture/ADR-032-candidate-evaluation-contract.md",
             "docs/architecture/ADR-037-household-energy-requirement-storage-reserve-grid-use.md",
@@ -98,6 +99,7 @@ OWNERSHIP_BY_LAYER: dict[str, ArchitectureOwnership] = {
         ),
         owns=(
             "canonical_candidate_projection",
+            "canonical_projected_energy_states",
             "storage_requirement_projection",
             "fresh_incumbent_outcomes",
         ),

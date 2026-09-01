@@ -15,6 +15,7 @@ from picot.domain.daily_reference_intent import (
     DailyReferenceIntentSchedule,
     DailyStorageIntent,
 )
+from picot.domain.daily_reference_portfolio import DailyReferenceStrategyResult
 from picot.domain.energy_path import PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.planner.evaluation_engine import EvaluationEngine
@@ -508,9 +509,18 @@ def _committed_storage_energy_checkpoints(
     plan: MarketDailyPlan | MarketDailyCandidatePortfolio,
     schedule: DailyReferenceIntentSchedule,
     market: MarketRouteAssessment | None,
+    projected_result: DailyReferenceStrategyResult | None = None,
 ) -> tuple[CommittedStorageEnergyCheckpoint, ...]:
     by_scenario: dict[str, dict[datetime, float]] = {}
-    if market is not None:
+    if projected_result is not None:
+        by_scenario = {
+            trajectory.scenario.value: {
+                interval.ends_at: interval.storage_energy_at_end_wh
+                for interval in trajectory.intervals
+            }
+            for trajectory in projected_result.run.simulation.trajectories
+        }
+    elif market is not None:
         by_scenario = {
             evidence.scenario.value: {
                 checkpoint.at: checkpoint.energy_wh
@@ -562,6 +572,8 @@ def _persist_plan(
     plan_id: str,
     native: DailyReferenceCandidate | None,
     market: MarketRouteAssessment | None,
+    projected_result: DailyReferenceStrategyResult | None = None,
+    candidate_family: str | None = None,
     prior_commitment: ActivePlanCommitment | None = None,
     selection_reason: str,
 ) -> None:
@@ -603,6 +615,7 @@ def _persist_plan(
         plan=plan,
         schedule=schedule,
         market=market,
+        projected_result=projected_result,
     )
     household_load_intervals = tuple(
         CommittedHouseholdLoadInterval(
@@ -698,7 +711,9 @@ def _persist_plan(
             household_load_intervals=household_load_intervals,
             storage_energy_checkpoints=storage_energy_checkpoints,
             candidate_family=(
-                "market_route"
+                candidate_family
+                if candidate_family is not None
+                else "market_route"
                 if market is not None
                 else native.family.value
                 if native is not None
@@ -743,9 +758,7 @@ def build_mep_canonical_run(
     planner_outcome = planner_runtime.generate(
         snapshot,
         opportunities=opportunities,
-        comparison_horizon_end=(
-            retained_commitment.ends_at if retained_commitment is not None else None
-        ),
+        comparison_horizon_end=None,
     )
     comparable = None
     if planner_outcome.portfolio is not None:
@@ -772,6 +785,8 @@ def build_mep_canonical_run(
         selected_schedule = None
         native_winner = None
         market_winner = None
+        selected_projected_result = None
+        selected_prefix_composed = False
     else:
         candidates = [
             Candidate(
@@ -800,6 +815,8 @@ def build_mep_canonical_run(
         selected_schedule = None
         native_winner = None
         market_winner = None
+        selected_projected_result = None
+        selected_prefix_composed = False
     candidate_engine_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
     stage_started = perf_counter()
@@ -838,6 +855,8 @@ def build_mep_canonical_run(
         selected_schedule = source.schedule
         native_winner = source.native_candidate
         market_winner = source.market_assessment
+        selected_projected_result = source.projected_result
+        selected_prefix_composed = source.committed_prefix_composed
     winner = next((item for item in candidates if item.candidate_id == winner_id), None)
     winning_path = next(
         (item for item in paths if winner is not None and item.path_id == winner.energy_path_id),
@@ -956,8 +975,18 @@ def build_mep_canonical_run(
                 plan=planner_outcome.portfolio,
                 schedule=selected_schedule,
                 plan_id=plan_id,
-                native=native_winner,
-                market=market_winner,
+                native=(None if selected_prefix_composed else native_winner),
+                market=(None if selected_prefix_composed else market_winner),
+                projected_result=(
+                    selected_projected_result if selected_prefix_composed else None
+                ),
+                candidate_family=(
+                    "market_route"
+                    if market_winner is not None
+                    else native_winner.family.value
+                    if native_winner is not None
+                    else None
+                ),
                 prior_commitment=(retained_commitment if replacement_reason is not None else None),
                 selection_reason=(
                     evaluation.decisive_step or "objective:mep_physical_and_market_evaluation"

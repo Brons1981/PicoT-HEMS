@@ -6,7 +6,7 @@ See ADR-024, ADR-030, ADR-031, ADR-032, ADR-037, V2ADR-055 and V2ADR-062.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from hashlib import sha256
 
@@ -87,6 +87,8 @@ class MepCandidateSource:
     native_candidate: DailyReferenceCandidate | None = None
     market_assessment: MarketRouteAssessment | None = None
     incumbent_commitment: ActivePlanCommitment | None = None
+    projected_result: DailyReferenceStrategyResult | None = None
+    committed_prefix_composed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +113,7 @@ class _CandidateRow:
     result: DailyReferenceStrategyResult | None
     opportunity_ids: tuple[str, ...]
     evidence_ids: tuple[str, ...]
+    committed_prefix_composed: bool = False
 
 
 def _id(prefix: str, seed: str) -> str:
@@ -589,8 +592,11 @@ def _committed_schedule(
             None,
         )
         if segment is None:
-            reasons.append("committed_schedule_gap")
-            intent = DailyStorageIntent.STANDBY
+            if grid.starts_at >= commitment.ends_at:
+                intent = DailyStorageIntent.NOM
+            else:
+                reasons.append("committed_schedule_gap")
+                intent = DailyStorageIntent.STANDBY
             export_target = 0.0
         elif segment.primitive not in intents:
             reasons.append("committed_primitive_unsupported")
@@ -615,6 +621,64 @@ def _committed_schedule(
             method_version=METHOD_VERSION,
         ),
         tuple(dict.fromkeys(reasons)),
+    )
+
+
+def _compose_committed_prefix(
+    *,
+    snapshot: PlanningInputSnapshot,
+    commitment: ActivePlanCommitment,
+    schedule: DailyReferenceIntentSchedule,
+) -> DailyReferenceIntentSchedule | None:
+    """Keep the admitted prefix and use a challenger only after it ends."""
+
+    intents = {
+        ExecutionPrimitive.BALANCE_DISCHARGE_ONLY.value: DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
+        ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value: DailyStorageIntent.NOM,
+        ExecutionPrimitive.STANDBY.value: DailyStorageIntent.STANDBY,
+        ExecutionPrimitive.CHARGE_AT_POWER.value: DailyStorageIntent.GRID_REQUIREMENT,
+        ExecutionPrimitive.DISCHARGE_AT_POWER.value: DailyStorageIntent.STORAGE_EXPORT,
+    }
+    intervals: list[DailyReferenceIntentInterval] = []
+    for original in schedule.intervals:
+        cursor = original.starts_at
+        while cursor < original.ends_at:
+            if cursor >= commitment.ends_at:
+                intervals.append(replace(original, starts_at=cursor))
+                break
+            segment = next(
+                (
+                    item
+                    for item in commitment.segments
+                    if item.starts_at <= cursor < item.ends_at
+                ),
+                None,
+            )
+            if segment is None or segment.primitive not in intents:
+                return None
+            ends_at = min(original.ends_at, segment.ends_at, commitment.ends_at)
+            intent = intents[segment.primitive]
+            export_target = (
+                segment.storage_export_target_wh or 0.0
+                if intent is DailyStorageIntent.STORAGE_EXPORT
+                else 0.0
+            )
+            if intent is DailyStorageIntent.STORAGE_EXPORT and export_target <= 0.0:
+                return None
+            intervals.append(
+                DailyReferenceIntentInterval(cursor, ends_at, intent, export_target)
+            )
+            cursor = ends_at
+    return DailyReferenceIntentSchedule(
+        schedule_id=_id(
+            "mep-prefix-composed-schedule",
+            f"{commitment.plan_id}|{schedule.schedule_id}|{schedule.horizon_end.isoformat()}",
+        ),
+        snapshot_id=snapshot.snapshot_id,
+        horizon_start=schedule.horizon_start,
+        horizon_end=schedule.horizon_end,
+        intervals=tuple(intervals),
+        method_version=f"{METHOD_VERSION}+committed-prefix:v1",
     )
 
 
@@ -680,6 +744,7 @@ def produce_mep_comparable_portfolio(
         baseline=baseline,
     )
     route_ids = {item.route_id: item.opportunity_ids for item in portfolio.market_routes}
+    reference = next(iter(native_results.values())).intent_schedule
     source_rows: list[MepCandidateSource] = []
     rows: list[_CandidateRow] = []
     for schedule_id, native_result in native_results.items():
@@ -711,10 +776,42 @@ def produce_mep_comparable_portfolio(
             )
         )
 
+    if incumbent is not None and reference.horizon_end > incumbent.ends_at:
+        composed_rows: list[_CandidateRow] = []
+        for row in rows:
+            composed = _compose_committed_prefix(
+                snapshot=snapshot,
+                commitment=incumbent,
+                schedule=row.schedule,
+            )
+            if composed is None:
+                composed_rows.append(row)
+                continue
+            composed_rows.append(
+                replace(
+                    row,
+                    schedule=composed,
+                    result=_simulate_committed(
+                        snapshot=snapshot,
+                        schedule=composed,
+                        conversion_model=conversion_model,
+                    ),
+                    committed_prefix_composed=True,
+                )
+            )
+        rows = composed_rows
+        baseline_candidate_id = native_candidates[
+            baseline.intent_schedule.schedule_id
+        ].candidate_id
+        baseline = next(
+            row.result
+            for row in rows
+            if row.candidate_id == baseline_candidate_id and row.result is not None
+        )
+
     incumbent_id: str | None = None
     incumbent_reasons: tuple[str, ...] = ()
     if incumbent is not None:
-        reference = next(iter(native_results.values())).intent_schedule
         schedule, incumbent_reasons = _committed_schedule(
             snapshot=snapshot, commitment=incumbent, reference=reference
         )
@@ -756,7 +853,7 @@ def produce_mep_comparable_portfolio(
         opportunity_ids = row.opportunity_ids
         evidence_ids = row.evidence_ids
         reasons: list[str] = list(incumbent_reasons if committed is not None else ())
-        if market is not None:
+        if market is not None and not row.committed_prefix_composed:
             financial = min(item.total_financial_result_eur for item in market.scenario_evidence)
             self_consumption = min(item.self_consumed_pv_wh for item in market.scenario_evidence)
             reserve = min(item.reserve_margin_wh for item in market.scenario_evidence)
@@ -811,7 +908,7 @@ def produce_mep_comparable_portfolio(
             reasons.append("fresh_incumbent_simulation_unavailable")
         daily_target_reached, daily_target_reached_at = _daily_target_evidence(
             result=result,
-            market=market,
+            market=(market if not row.committed_prefix_composed else None),
             requirement=storage_requirement,
             current_storage_energy_wh=(
                 snapshot.current_storage_states[0].current_stored_energy_wh
@@ -833,7 +930,7 @@ def produce_mep_comparable_portfolio(
             evidence_ids=evidence_ids,
             strategy_version=strategy.strategy_version,
             projected_result=result,
-            market_assessment=market,
+            market_assessment=(market if not row.committed_prefix_composed else None),
             constraint_ids=constraint_ids,
         )
         candidate = DomainCandidate(
@@ -880,7 +977,17 @@ def produce_mep_comparable_portfolio(
         candidates.append(candidate)
         paths.append(path)
         outcomes.append(outcome)
-        source_rows.append(MepCandidateSource(candidate_id, schedule, native, market, committed))
+        source_rows.append(
+            MepCandidateSource(
+                candidate_id,
+                schedule,
+                native,
+                market,
+                committed,
+                result,
+                row.committed_prefix_composed,
+            )
+        )
         diagnostics.append(
             MepCandidateOutcome(
                 _id("mep-outcome", candidate_id),

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from legacy_cp_pipeline import CanonicalPipeline
 
+import picot.v2.web_ui as web_ui
 from picot.v2.contracts import (
     HouseholdLoadForecast,
     HouseholdLoadForecastInterval,
@@ -23,6 +24,7 @@ from picot.v2.projection import project
 from picot.v2.web_ui import (
     DASHBOARD_HTML,
     WebViewStore,
+    _bounded_evidence_ids,
     _power_history_display_points,
     _self_consumption_history_view,
     build_web_view,
@@ -374,16 +376,31 @@ def test_web_view_serializes_canonical_power_history() -> None:
                 "history_semantics": "state_hold",
                 "display_method": "time_weighted_average",
                 "display_points": [],
-                "points": [
-                    {
-                        "sampled_at": "2026-08-17T10:00:00+00:00",
-                        "power_w": 1234.0,
-                        "evidence_id": "evidence-pv-1",
-                    }
-                ],
             }
         ],
     }
+
+
+def test_dashboard_evidence_and_payload_are_hard_bounded(monkeypatch) -> None:
+    evidence = tuple(f"evidence-{index}" for index in range(40))
+    bounded = _bounded_evidence_ids(evidence)
+    assert len(bounded) == 16
+    assert bounded[:2] == ["evidence-0", "evidence-1"]
+    assert bounded[-2:] == ["evidence-38", "evidence-39"]
+
+    monkeypatch.setattr(web_ui, "MAX_WEB_VIEW_CHARACTERS", 200)
+    store = WebViewStore()
+    store.publish(
+        {
+            "run_id": "run-bounded",
+            "power_history": {"series": [{"points": ["x" * 400]}]},
+            "self_consumption_history": {"series": [{"points": ["y" * 400]}]},
+        }
+    )
+    latest = store.latest_json()
+    assert latest is not None
+    assert len(latest) <= 200
+    assert json.loads(latest)["error"] == "dashboard_payload_limit"
 
 
 def test_power_history_display_time_weights_state_hold_transitions() -> None:

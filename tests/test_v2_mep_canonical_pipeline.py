@@ -7,6 +7,7 @@ from test_independent_daily_reference_adapter import _conversion, _snapshot
 
 import picot.planner.mep_candidate_outcomes as mep_candidate_outcomes
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.planner.market_daily_planner import MarketTradingPolicy
 from picot.v2.contracts import StorageRoundTripEfficiencyEvidence
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
@@ -28,10 +29,20 @@ from picot.v2.projection import project
 from picot.v2.web_ui import DASHBOARD_HTML, build_web_view
 
 
-def _pipeline(tmp_path, *, switching_margin_eur: float = 0.05):
+def _pipeline(
+    tmp_path,
+    *,
+    switching_margin_eur: float = 0.05,
+    market_routes_enabled: bool = False,
+):
     store = ActivePlanCommitmentStore(tmp_path / "commitments.json")
     pipeline = CanonicalPipeline(
-        market_daily_planner_runtime=MarketDailyPlannerRuntime(_conversion()),
+        market_daily_planner_runtime=MarketDailyPlannerRuntime(
+            _conversion(),
+            trading_policy=MarketTradingPolicy(
+                market_routes_enabled=market_routes_enabled
+            ),
+        ),
         commitment_store=store,
         plan_switching_margin_eur=switching_margin_eur,
     )
@@ -283,8 +294,8 @@ def test_low_pv_snapshot_publishes_valid_pv_first_residual_grid_candidate(
     assert hybrid_grid_seconds == timedelta(minutes=75).total_seconds()
 
 
-def test_hybrid_parent_publishes_valid_complete_market_path(tmp_path) -> None:
-    """Dev.215: market trade extends PV capture plus residual grid recovery."""
+def test_dev221_default_runtime_excludes_optional_market_routes(tmp_path) -> None:
+    """DEV.221 restores the physical MEP basis before optional trade returns."""
 
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     split = snapshot.captured_at + timedelta(hours=12)
@@ -330,23 +341,19 @@ def test_hybrid_parent_publishes_valid_complete_market_path(tmp_path) -> None:
         and outcome.daily_target_reached
         and outcome.household_reserve_respected
     }
-    complete_market_paths = tuple(
-        path
+    assert valid_ids
+    assert all(
+        candidate.family != "market_route"
         for candidate in run.candidate_set.candidates
-        for path in run.candidate_set.energy_paths
-        if candidate.energy_path_id == path.path_id
-        and candidate.family == "market_route"
-        and candidate.candidate_id in valid_ids
-        and {segment.primitive for segment in path.segments}.issuperset(
-            {
-                ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
-                ExecutionPrimitive.CHARGE_AT_POWER,
-                ExecutionPrimitive.DISCHARGE_AT_POWER,
-            }
-        )
     )
-
-    assert complete_market_paths
+    assert {
+        candidate.pv_forecast_basis
+        for candidate in run.candidate_set.candidates
+    } == {"confidence-weighted-lower-central"}
+    assert len(run.candidate_set.candidates) <= 3
+    assert run.planning_input.horizon_end == (
+        run.planning_input.captured_at + timedelta(hours=36)
+    )
 
 
 def test_dashboard_presents_mep_execution_plan_with_comparable_outcomes(
@@ -480,7 +487,7 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
             ),
         ),
     )
-    pipeline, _store = _pipeline(tmp_path)
+    pipeline, _store = _pipeline(tmp_path, market_routes_enabled=True)
 
     run = pipeline.run(
         planning_input=priced,
@@ -1131,7 +1138,6 @@ def test_household_requirement_invalidates_late_incumbent_before_evaluation(
     assert replacement.plan_id != incumbent.plan_id
     assert any(
         segment.primitive is ExecutionPrimitive.CHARGE_AT_POWER
-        and segment.starts_at == dark.captured_at
         and segment.ends_at <= requirement.required_by
         for segment in run.execution_plan_set.plans[0].segments
     )
@@ -1172,7 +1178,7 @@ def test_identical_incumbent_and_challenger_use_equal_wear_adjusted_finance(
             ),
         ),
     )
-    pipeline, _store = _pipeline(tmp_path)
+    pipeline, _store = _pipeline(tmp_path, market_routes_enabled=True)
     config = PriceOpportunityConfig(
         low_price_margin_eur_per_kwh=0.10,
         high_price_margin_eur_per_kwh=0.10,

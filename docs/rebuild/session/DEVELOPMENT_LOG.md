@@ -985,6 +985,34 @@ Live verification, 2026-08-22:
 
 Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 
+## 2026-09-01 — 2.0.0-dev.221 bounded physical MEP recovery
+
+- Restored ADR-001 through ADR-037 as the authoritative planning boundary and
+  kept MEP focused on complete physical energy paths. Optional battery market
+  trading is disabled in the live runtime for this recovery release; it will
+  return only behind an explicit bounded user rule in a later slice.
+- Applied PV confidence before Candidate Generation. The planning basis now
+  moves continuously from Solcast lower toward central as confidence rises;
+  live actual-PV evidence can still replace that forecast basis for today.
+- Bounded charge-path discovery before full simulation. MEP retains the
+  physical NOM/PV path and at most one necessary grid or hybrid completion path
+  selected inside published low-price windows. Without a price window, no
+  speculative grid window is added unless a physical deadline requires one.
+- Retained the 36-hour horizon and next-day planning. Existing three-scenario
+  domain labels remain as validation compatibility, but no upper-specific
+  Candidate family or market-route search is generated.
+- Regression evidence covers confidence weighting, no-market live defaults,
+  bounded Candidate counts, next-day coverage, required grid completion and
+  price-window selection. The representative 36-hour fixture produces three
+  Candidates in approximately 3.2 seconds instead of 52 Candidates in 5.8
+  seconds before bounding.
+- Pre-release verification: the complete pytest suite passed 1123 tests
+  (including the JavaScript syntax check with the bundled Node runtime); Ruff,
+  mypy and `git diff --check` passed. Live observer validation remains required
+  before enabling any new execution behavior.
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
 - Corrected the V2ADR-052 execution guard so NOM is protected only while the
   committed PV acquisition phase is actually active: `start <= now < end`.
 - A future commitment remains durably persisted, but no longer blocks the due

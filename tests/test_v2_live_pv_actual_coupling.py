@@ -540,7 +540,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     assert actual.pv_energy_wh == pytest.approx(300.0)
     assert future == replace(
         bundle.snapshot.pv_energy_timeline.intervals[1],
-        forecast_lower_energy_wh=675.0,
+            forecast_lower_energy_wh=663.0,
     )
     assert diagnostics.history_status == "available"
     assert diagnostics.interval_status == "actual"

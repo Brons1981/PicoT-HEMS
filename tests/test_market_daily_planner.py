@@ -101,7 +101,8 @@ def test_mep_bounds_charge_candidates_before_projected_household_grid_dependency
     )
     assert charge_intervals
     assert all(interval.ends_at <= portfolio.required_by for interval in charge_intervals)
-    assert any(interval.starts_at == snapshot.captured_at for interval in charge_intervals)
+    assert min(interval.starts_at for interval in charge_intervals) >= snapshot.captured_at
+    assert max(interval.ends_at for interval in charge_intervals) <= portfolio.required_by
 
 
 def test_mep_does_not_override_native_smart_discharge_during_forecast_solar() -> None:

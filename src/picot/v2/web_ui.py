@@ -954,14 +954,9 @@ DASHBOARD_HTML = """<!doctype html>
           <a href="downloads/planning-incidents.jsonl" download>
             Download incidenthistorie
           </a>
-          <a
-            id="diagnostic-download-link"
-            href="downloads/picot-diagnostics.zip"
-            download
-          >
+          <a href="downloads/picot-diagnostics.zip" download>
             Download alle diagnosebestanden
           </a>
-          <span id="diagnostic-download-status" role="status" aria-live="polite"></span>
         </div>
         <div id="planning-incident-history">
           Nog geen fallbackincidenten vastgelegd.
@@ -4063,10 +4058,6 @@ DASHBOARD_HTML = """<!doctype html>
       resetStorageModeOverride
     );
     element("reset-planning").addEventListener("click", resetPlanning);
-    element("diagnostic-download-link").addEventListener("click", () => {
-      element("diagnostic-download-status").textContent =
-        "Diagnosebestand wordt voorbereid; de download start zo.";
-    });
     initializeTabs();
     loadView().finally(watchViewUpdates);
     setInterval(loadView, 60000);
@@ -4380,14 +4371,13 @@ def create_web_server(
             self.end_headers()
             self.wfile.write(encoded)
 
-        def _send_file_download(
+        def _send_download(
             self,
-            path: Path,
+            body: bytes,
             *,
             content_type: str,
             filename: str,
         ) -> None:
-            file_size = path.stat().st_size
             self.send_response(int(HTTPStatus.OK))
             self.send_header("Content-Type", content_type)
             self.send_header(
@@ -4396,33 +4386,9 @@ def create_web_server(
             )
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Length", str(file_size))
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            with path.open("rb") as source:
-                remaining = file_size
-                while remaining > 0:
-                    chunk = source.read(min(1024 * 1024, remaining))
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    remaining -= len(chunk)
-
-        def _send_diagnostic_zip(self, paths: tuple[Path, ...]) -> None:
-            # Finalise the central directory before sending HTTP headers. A
-            # client can therefore never receive a syntactically incomplete
-            # archive merely because compression is still running.
-            payload = diagnostic_zip(paths)
-            self.send_response(int(HTTPStatus.OK))
-            self.send_header("Content-Type", "application/zip")
-            self.send_header(
-                "Content-Disposition",
-                'attachment; filename="picot-diagnostics.zip"',
-            )
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self.wfile.write(body)
 
         def do_GET(self) -> None:
             parsed_url = urlsplit(self.path)
@@ -4471,15 +4437,19 @@ def create_web_server(
                         '{"status":"incident_history_not_found"}',
                     )
                     return
-                self._send_file_download(
-                    incident_path,
+                self._send_download(
+                    incident_path.read_bytes(),
                     content_type="application/x-ndjson",
                     filename=incident_path.name,
                 )
                 return
 
             if path == "/downloads/picot-diagnostics.zip":
-                self._send_diagnostic_zip(store.diagnostic_paths())
+                self._send_download(
+                    diagnostic_zip(store.diagnostic_paths()),
+                    content_type="application/zip",
+                    filename="picot-diagnostics.zip",
+                )
                 return
 
             if path != "/api/view":

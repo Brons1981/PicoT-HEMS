@@ -122,8 +122,6 @@ def test_web_server_exposes_auto_refreshing_read_only_dashboard() -> None:
     assert 'id="planning-incident-history"' in html
     assert 'href="downloads/planning-incidents.jsonl"' in html
     assert 'href="downloads/picot-diagnostics.zip"' in html
-    assert 'id="diagnostic-download-status"' in html
-    assert "Diagnosebestand wordt voorbereid" in html
     assert "formatMeasurement" in html
     assert "formatMeasurement(source.raw_state, source.raw_unit)" in html
 

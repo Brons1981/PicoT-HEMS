@@ -1280,6 +1280,37 @@ class ExecutionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class PVChargeProgressEvidence:
+    """Auditable decision basis for deferring residual grid charging."""
+
+    method_version: str
+    decision: str
+    reason: str
+    remaining_target_energy_wh: float | None = None
+    conservative_pv_to_storage_wh: float | None = None
+    required_grid_input_energy_wh: float | None = None
+    acquisition_deadline: datetime | None = None
+    latest_safe_grid_charge_starts_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.method_version.strip() or not self.decision.strip() or not self.reason.strip():
+            raise ValueError("PV charge progress identity fields cannot be blank")
+        for energy_value in (
+            self.remaining_target_energy_wh,
+            self.conservative_pv_to_storage_wh,
+            self.required_grid_input_energy_wh,
+        ):
+            if energy_value is not None and energy_value < 0.0:
+                raise ValueError("PV charge progress energy values cannot be negative")
+        for timestamp_value in (
+            self.acquisition_deadline,
+            self.latest_safe_grid_charge_starts_at,
+        ):
+            if timestamp_value is not None and timestamp_value.tzinfo is None:
+                raise ValueError("PV charge progress timestamps must be timezone-aware")
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionPrimitiveBoundary:
     run_id: str
     snapshot_id: str
@@ -1293,6 +1324,7 @@ class ExecutionPrimitiveBoundary:
     planned_vendor_mode: str | None = None
     mapping_method_version: str | None = None
     blockers: tuple[str, ...] = ()
+    pv_charge_progress: PVChargeProgressEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)

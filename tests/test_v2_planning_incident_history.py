@@ -8,6 +8,7 @@ from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_delegated_storage_pipeline_integration import _snapshot
 from test_v2_planning_fallback import _missing_forecast_fallback_run
 
+import picot.v2.planning_incident_history as incident_history
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import PlanningInputBundle, SourceEvidence
 
@@ -61,6 +62,8 @@ def test_fallback_persists_five_preceding_polls_and_recovery(tmp_path) -> None:
     ]
     assert len(records[1]["preceding_polls"]) == 5
     assert records[1]["preceding_polls"][0]["entities"][0]["state"] == "1"
+    assert "price_points" not in records[1]["preceding_polls"][0]["entities"][0]
+    assert "candidate_set" not in records[1]["preceding_polls"][0]
     assert records[1]["poll"]["evaluation"]["status"] == "fallback_active"
     assert records[1]["poll"]["entities"][0] == {
         "entity_id": "sensor.goodwe_vermogen",
@@ -95,6 +98,39 @@ def test_identical_active_fallback_does_not_grow_history(tmp_path) -> None:
 
     records = [json.loads(line) for line in path.read_text().splitlines()]
     assert [record["event"] for record in records] == ["fallback_started"]
+
+
+def test_oversized_history_is_rotated_without_parsing(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "planning-incidents.jsonl"
+    path.write_text("not-json" * 30, encoding="utf-8")
+    monkeypatch.setattr(incident_history, "MAX_INCIDENT_HISTORY_BYTES", 100)
+
+    PlanningIncidentHistory(path)
+
+    assert not path.exists()
+    archived = tuple(tmp_path.glob("planning-incidents.oversized-*.jsonl"))
+    assert len(archived) == 1
+    assert archived[0].read_text(encoding="utf-8").startswith("not-json")
+
+
+def test_oversized_incident_record_is_reduced_to_bounded_facts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "planning-incidents.jsonl"
+    monkeypatch.setattr(incident_history, "MAX_INCIDENT_RECORD_BYTES", 500)
+    history = PlanningIncidentHistory(path)
+    source = _snapshot()
+
+    history.record(
+        bundle=_bundle(source, state="100"),
+        run=CanonicalPipeline().run(planning_input=source),
+    )
+
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["detail_level"] == "bounded"
+    assert record["oversized_record_bytes"] > 500
+    assert "poll" not in record
 
 
 def test_normal_plan_outcome_changes_are_persisted(tmp_path) -> None:

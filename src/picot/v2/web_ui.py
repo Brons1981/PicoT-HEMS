@@ -31,6 +31,8 @@ from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
 POWER_HISTORY_DISPLAY_INTERVAL = timedelta(minutes=5)
 SELF_CONSUMPTION_DISPLAY_INTERVAL = timedelta(minutes=10)
 PV_ACTUAL_DISPLAY_INTERVAL = timedelta(minutes=2)
+MAX_DISPLAY_EVIDENCE_IDS = 16
+MAX_WEB_VIEW_CHARACTERS = 8_000_000
 
 
 class _DisplayPowerPoint(TypedDict):
@@ -38,6 +40,15 @@ class _DisplayPowerPoint(TypedDict):
     power_w: float
     coverage_ratio: float
     derived_from_evidence_ids: list[str]
+
+
+def _bounded_evidence_ids(values: tuple[str, ...]) -> list[str]:
+    """Keep dashboard provenance useful without copying unbounded telemetry IDs."""
+    unique = tuple(dict.fromkeys(values))
+    if len(unique) <= MAX_DISPLAY_EVIDENCE_IDS:
+        return list(unique)
+    edge = MAX_DISPLAY_EVIDENCE_IDS // 2
+    return [*unique[:edge], *unique[-edge:]]
 
 
 def _power_history_display_points(
@@ -107,7 +118,7 @@ def _power_history_display_points(
                     "sampled_at": (bucket_start + (bucket_end - bucket_start) / 2).isoformat(),
                     "power_w": average,
                     "coverage_ratio": min(1.0, covered_seconds / bucket_seconds),
-                    "derived_from_evidence_ids": list(evidence_ids),
+                    "derived_from_evidence_ids": _bounded_evidence_ids(evidence_ids),
                 }
             )
         bucket_start = bucket_end
@@ -281,14 +292,6 @@ def _power_history_view(
                 )
                 if starts_at is not None and ends_at is not None
                 else [],
-                "points": [
-                    {
-                        "sampled_at": point.sampled_at.isoformat(),
-                        "power_w": point.power_w,
-                        "evidence_id": point.evidence_id,
-                    }
-                    for point in series.points
-                ],
             }
             for series in (power_history.series if power_history is not None else ())
         ],
@@ -1665,7 +1668,7 @@ DASHBOARD_HTML = """<!doctype html>
       const container = element("power-history-chart");
       container.replaceChildren();
       const series = Array.isArray(history?.series)
-        ? history.series.filter((item) => Array.isArray(item.points))
+        ? history.series.filter((item) => Array.isArray(item.display_points))
         : [];
       const start = new Date(history?.starts_at);
       const end = new Date(history?.ends_at);
@@ -1674,7 +1677,7 @@ DASHBOARD_HTML = """<!doctype html>
         Number.isNaN(start.getTime()) ||
         Number.isNaN(end.getTime()) ||
         end <= start ||
-        !series.some((item) => item.points.length > 0)
+        !series.some((item) => item.display_points.length > 0)
       ) {
         container.textContent = history?.error
           ? `Vermogenshistorie niet beschikbaar: ${history.error}.`
@@ -1765,7 +1768,7 @@ DASHBOARD_HTML = """<!doctype html>
       const currentValues = document.createElement("div");
       currentValues.className = "power-current-values";
       for (const item of visible) {
-        const latest = item.points.at(-1);
+        const latest = item.display_points.at(-1);
         if (!latest) continue;
         const value = document.createElement("div");
         value.className = "power-current-value";
@@ -4115,17 +4118,41 @@ class WebViewStore:
             view["retired_comparison_history"] = dict(self._retired_comparison_history)
         if self._financial_results is not None:
             view["financial_results"] = dict(self._financial_results)
-        self._latest_json = json.dumps(view, separators=(",", ":"))
+        serialized = json.dumps(view, separators=(",", ":"))
+        if len(serialized) > MAX_WEB_VIEW_CHARACTERS:
+            bounded = dict(view)
+            bounded["power_history"] = {
+                "available": False,
+                "status": "payload_bounded",
+                "error": "dashboard_payload_limit",
+                "series": [],
+                "pv_actual_display_points": [],
+            }
+            bounded["self_consumption_history"] = {
+                "available": False,
+                "status": "payload_bounded",
+                "error": "dashboard_payload_limit",
+                "series": [],
+            }
+            bounded.pop("retired_comparison_history", None)
+            serialized = json.dumps(bounded, separators=(",", ":"))
+        if len(serialized) > MAX_WEB_VIEW_CHARACTERS:
+            serialized = json.dumps(
+                {
+                    "status": "view_too_large",
+                    "error": "dashboard_payload_limit",
+                    "run_id": view.get("run_id"),
+                },
+                separators=(",", ":"),
+            )
+        self._latest_json = serialized
         self._revision += 1
         self._condition.notify_all()
 
     def publish(self, view: dict[str, object]) -> None:
         """Serialize completely before atomically replacing the snapshot."""
-        copied: object = json.loads(json.dumps(view))
-        if not isinstance(copied, dict):
-            raise TypeError("web view must serialize to an object")
         with self._condition:
-            self._replace_latest_locked(copied)
+            self._replace_latest_locked(view)
 
     def publish_fast_grid_power_source(
         self,

@@ -168,6 +168,37 @@ MARKET_DAILY_LATEST_PATH = Path(
 )
 
 
+def _runtime_memory_kib() -> dict[str, int | None]:
+    """Read current and peak resident memory without allocating a profiler."""
+    values: dict[str, int | None] = {"rss_kib": None, "peak_rss_kib": None}
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            label, _, raw = line.partition(":")
+            if label not in {"VmRSS", "VmHWM"}:
+                continue
+            amount = raw.strip().split(maxsplit=1)[0]
+            values["rss_kib" if label == "VmRSS" else "peak_rss_kib"] = int(amount)
+    except (OSError, ValueError):
+        pass
+    return values
+
+
+def _log_runtime_memory(phase: str, *, run_id: str | None = None, **extra: object) -> None:
+    print(
+        json.dumps(
+            {
+                "event": "picot_v2_runtime_memory",
+                "phase": phase,
+                "run_id": run_id,
+                **_runtime_memory_kib(),
+                **extra,
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+
+
 def _save_market_daily_diagnostics(
     path: Path,
     market_view: dict[str, object],
@@ -1851,11 +1882,14 @@ def _execute_planning_bundle(
         3,
     )
 
+    _log_runtime_memory("before_pipeline", run_id=bundle.snapshot.run_id)
+
     run, stage_timings = canonical_pipeline.run_timed(
         planning_input=bundle.snapshot,
         price_opportunity_config=price_config,
         control_change_allowed=execution_enabled,
     )
+    _log_runtime_memory("after_pipeline", run_id=run.planning_input.run_id)
     if canonical_execution_runtime is not None:
         run = canonical_execution_runtime.apply(run)
         if (
@@ -1930,6 +1964,7 @@ def _execute_planning_bundle(
                 ),
                 flush=True,
             )
+    _log_runtime_memory("after_incident_history", run_id=run.planning_input.run_id)
     if planning_fallback_notifier is not None:
         try:
             planning_fallback_notifier.update(
@@ -1994,6 +2029,7 @@ def _execute_planning_bundle(
         planning_input_ms=planning_input_ms,
         timings=stage_timings,
     )
+    _log_runtime_memory("after_projection", run_id=run.planning_input.run_id)
     serialization_started = perf_counter()
     json.dumps([asdict(card) for card in projection.cards], separators=(",", ":"))
     serialization_ms = round((perf_counter() - serialization_started) * 1000.0, 3)
@@ -2038,11 +2074,18 @@ def _execute_planning_bundle(
         (perf_counter() - web_view_build_started) * 1000.0,
         3,
     )
+    _log_runtime_memory("after_web_view_build", run_id=run.planning_input.run_id)
     web_view_publish_started = perf_counter()
     web_view_store.publish(web_view)
     web_view_publish_ms = round(
         (perf_counter() - web_view_publish_started) * 1000.0,
         3,
+    )
+    latest_web_view = web_view_store.latest_json()
+    _log_runtime_memory(
+        "after_web_view_publish",
+        run_id=run.planning_input.run_id,
+        web_view_characters=(len(latest_web_view) if latest_web_view is not None else 0),
     )
 
     sink = HomeAssistantProjectionSink(token)
@@ -2113,6 +2156,8 @@ def _execute_planning_bundle(
             ),
             flush=True,
         )
+
+    _log_runtime_memory("after_ha_publish", run_id=run.planning_input.run_id)
 
     print(
         json.dumps(

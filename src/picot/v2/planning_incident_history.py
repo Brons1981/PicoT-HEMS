@@ -18,6 +18,8 @@ SCHEMA_VERSION = 1
 DEFAULT_PRECEDING_POLLS = 5
 FULL_DETAIL_RETENTION = timedelta(hours=36)
 COMPACTION_INTERVAL = timedelta(hours=1)
+MAX_INCIDENT_HISTORY_BYTES = 64 * 1024 * 1024
+MAX_INCIDENT_RECORD_BYTES = 8 * 1024 * 1024
 
 
 def _json_value(value: object) -> object:
@@ -112,6 +114,34 @@ def _poll_snapshot(
     }
 
 
+def _preceding_poll_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
+    """Retain compact lead-up evidence in RAM; full changed polls remain on disk."""
+    compact_entities: list[dict[str, object]] = []
+    entities = snapshot.get("entities")
+    if isinstance(entities, list):
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
+            compact_entities.append(
+                {
+                    key: value
+                    for key, value in entity.items()
+                    if key not in {"price_points", "pv_energy_intervals"}
+                }
+            )
+    return {
+        key: snapshot.get(key)
+        for key in (
+            "captured_at_utc",
+            "captured_at_local",
+            "run_id",
+            "snapshot_id",
+            "picot_version",
+            "horizon_end",
+        )
+    } | {"entities": compact_entities}
+
+
 @dataclass(slots=True)
 class PlanningIncidentHistory:
     """Persist meaningful plan changes plus the complete fallback lifecycle."""
@@ -132,6 +162,7 @@ class PlanningIncidentHistory:
         self._polls = deque(maxlen=self.preceding_poll_count)
         ZoneInfo(self.local_timezone_name)
         now = datetime.now(UTC)
+        self._rotate_oversized_history(now)
         self._compact_expired_details(now)
         self._last_compacted_at = now
 
@@ -226,7 +257,7 @@ class PlanningIncidentHistory:
             )
             self._active_incident_id = None
             self._active_fingerprint = None
-        self._polls.append(snapshot)
+        self._polls.append(_preceding_poll_snapshot(snapshot))
 
     @staticmethod
     def _planning_fingerprint(run: CanonicalPipelineRun) -> str:
@@ -284,11 +315,56 @@ class PlanningIncidentHistory:
         ):
             self._compact_expired_details(captured_at)
             self._last_compacted_at = captured_at
+        encoded = json.dumps(record, default=_json_value, separators=(",", ":"))
+        encoded_size = len(encoded)
+        if encoded_size > MAX_INCIDENT_RECORD_BYTES:
+            bounded = _basic_incident_record(record)
+            bounded["detail_level"] = "bounded"
+            bounded["oversized_record_bytes"] = encoded_size
+            encoded = json.dumps(bounded, default=_json_value, separators=(",", ":"))
+            encoded_size = len(encoded)
+        if (
+            self.path.is_file()
+            and self.path.stat().st_size + encoded_size + 1
+            > MAX_INCIDENT_HISTORY_BYTES
+        ):
+            self._rotate_history(captured_at or datetime.now(UTC))
         with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(record, default=_json_value, separators=(",", ":"))
-                + "\n"
+            handle.write(encoded + "\n")
+
+    def _rotate_oversized_history(self, reference_at: datetime) -> None:
+        if (
+            self.path.is_file()
+            and self.path.stat().st_size > MAX_INCIDENT_HISTORY_BYTES
+        ):
+            self._rotate_history(reference_at)
+
+    def _rotate_history(self, reference_at: datetime) -> None:
+        """Preserve an oversized diagnostic file without parsing it at startup."""
+        if not self.path.is_file():
+            return
+        timestamp = reference_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+        archived = self.path.with_name(
+            f"{self.path.stem}.oversized-{timestamp}{self.path.suffix}"
+        )
+        sequence = 1
+        while archived.exists():
+            archived = self.path.with_name(
+                f"{self.path.stem}.oversized-{timestamp}-{sequence}{self.path.suffix}"
             )
+            sequence += 1
+        self.path.replace(archived)
+        print(
+            json.dumps(
+                {
+                    "event": "picot_v2_incident_history_rotated",
+                    "reason": "size_limit",
+                    "archived_path": str(archived),
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
 
     def _compact_expired_details(self, reference_at: datetime) -> None:
         """Keep full evidence for 36 hours and retain basic facts thereafter."""
@@ -303,6 +379,21 @@ class PlanningIncidentHistory:
                 temporary.open("w", encoding="utf-8") as target,
             ):
                 for raw_line in source:
+                    if len(raw_line) > MAX_INCIDENT_RECORD_BYTES:
+                        target.write(
+                            json.dumps(
+                                {
+                                    "schema_version": SCHEMA_VERSION,
+                                    "detail_level": "bounded",
+                                    "event": "oversized_incident_record_removed",
+                                    "oversized_record_bytes": len(raw_line),
+                                },
+                                separators=(",", ":"),
+                            )
+                            + "\n"
+                        )
+                        changed = True
+                        continue
                     try:
                         record = json.loads(raw_line)
                     except json.JSONDecodeError:

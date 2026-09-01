@@ -2055,3 +2055,31 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   scenarios plus 37 market, ADR-037 contract and charge-window scenarios.
   Python compilation and `git diff --check` passed. GitHub CI remains required
   for real pytest, Ruff and mypy evidence before merge.
+
+## 2026-09-01 — 2.0.0-dev.213 canonical SoC projection
+
+- Live dev.212 showed that the price-chart SoC line could disagree with the
+  chosen route. The first bad boundary was Projection/UI: it privately
+  re-simulated Execution Plan segments at maximum requested power instead of
+  presenting the Winning Energy Path's ADR-030 Projected Energy States.
+- Made every MEP market-route Energy Path publish the central-scenario storage
+  checkpoints already produced by the complete lower/central/upper physical
+  simulation. Native and freshly simulated incumbent paths retain their
+  central-scenario projected states under the same explicit assumption.
+- Removed the dashboard's private RTE, PV, household-load and segment-power SoC
+  calculation. The chart now prepends the measured starting SoC and then
+  renders the immutable projected states of the exact Winning Energy Path,
+  coloured by the owning Path Segment.
+- Kept Evaluation, commitment comparison, Execution Plans, dispatch and
+  Zendure mappings unchanged. The missing hybrid NOM/PV plus residual-grid
+  Candidate family remains a separate MEP Candidate Generation slice.
+- Regression coverage requires market paths to contain canonical projected
+  states and requires the published dashboard timeline to equal the Winning
+  Energy Path states exactly. Direct execution passed both focused canonical
+  projection scenarios, seven architecture-ownership scenarios, eight
+  version/configuration scenarios and three dashboard/JavaScript scenarios.
+  Python compilation and `git diff --check` passed. The recovered workspace
+  still lacks pytest, Ruff and mypy, so GitHub CI remains required before
+  merge.
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.

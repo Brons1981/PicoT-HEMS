@@ -1,4 +1,8 @@
-"""Pure read-only data projection for the PicoT v2 web UI."""
+"""Pure read-only projection of canonical PicoT v2 records.
+
+ADR-030 owns projected Energy States; the UI presents them without recalculation.
+See ADR-017, ADR-030 and the frozen canonical pipeline contract.
+"""
 
 from __future__ import annotations
 
@@ -5062,6 +5066,10 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         outcome.candidate_id: outcome
         for outcome in run.outcomes.outcomes
     }
+    energy_paths_by_id = {
+        path.path_id: path
+        for path in run.candidate_set.energy_paths
+    }
     winning_candidate_id = run.evaluation.winning_candidate_id
     winning_candidate = (
         candidates_by_id.get(winning_candidate_id)
@@ -5071,6 +5079,11 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
     winning_outcome = (
         outcomes_by_candidate.get(winning_candidate_id)
         if winning_candidate_id is not None
+        else None
+    )
+    winning_energy_path = (
+        energy_paths_by_id.get(run.evaluation.winning_energy_path_id)
+        if run.evaluation.winning_energy_path_id is not None
         else None
     )
     winning_execution_plans = tuple(sorted(
@@ -5159,105 +5172,33 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
     applicable_plan = due_plan or next_plan
     fallback_active = run.evaluation.status == "fallback_active"
     soc_timeline: list[dict[str, object]] = []
-    if initial_storage_state is not None and winning_execution_plan is not None:
-        limits = next(
-            (
-                item
-                for item in run.planning_input.storage_physical_limits
-                if item.execution_scope_id
-                == initial_storage_state.execution_scope_id
-                and item.capability_id == initial_storage_state.capability_id
-            ),
-            None,
-        )
-        current_energy_wh = initial_storage_state.current_stored_energy_wh
-        current_time = run.planning_input.captured_at
+    if initial_storage_state is not None and winning_energy_path is not None:
         soc_timeline.append({
-            "at": current_time.isoformat(),
+            "at": run.planning_input.captured_at.isoformat(),
             "soc_percent": round(initial_storage_state.current_soc * 100, 2),
             "primitive": "actual",
         })
-        rte_evidence = run.planning_input.storage_round_trip_efficiency
-        efficiency = (
-            rte_evidence.round_trip_efficiency
-            if rte_evidence is not None
-            and rte_evidence.status == "available"
-            and rte_evidence.round_trip_efficiency is not None
-            else 0.8
-        )
-
-        def interval_energy(
-            starts_at: datetime,
-            ends_at: datetime,
-            *,
-            pv: bool,
-        ) -> float:
-            intervals = (
-                run.planning_input.pv_energy_timeline.intervals
-                if pv and run.planning_input.pv_energy_timeline is not None
-                else run.planning_input.household_load_forecast.intervals
-                if not pv
-                and run.planning_input.household_load_forecast is not None
-                else ()
-            )
-            total = 0.0
-            for interval in intervals:
-                overlap_start = max(starts_at, interval.starts_at)
-                overlap_end = min(ends_at, interval.ends_at)
-                if overlap_end <= overlap_start:
-                    continue
-                fraction = (overlap_end - overlap_start).total_seconds() / (
-                    interval.ends_at - interval.starts_at
-                ).total_seconds()
-                value = (
-                    getattr(interval, "forecast_lower_energy_wh", None)
-                    if pv
-                    else getattr(interval, "expected_energy_wh", None)
-                )
-                total += (value or 0.0) * fraction
-            return total
-
-        for segment in winning_execution_plan.segments:
-            starts_at = max(segment.starts_at, current_time)
-            if segment.ends_at <= starts_at:
+        for state in winning_energy_path.projected_states:
+            if (
+                state.at <= run.planning_input.captured_at
+                or state.battery_soc is None
+            ):
                 continue
-            duration_hours = (segment.ends_at - starts_at).total_seconds() / 3600
-            pv_wh = interval_energy(starts_at, segment.ends_at, pv=True)
-            load_wh = interval_energy(starts_at, segment.ends_at, pv=False)
-            if segment.primitive.value == "charge_at_power":
-                delta_wh = (segment.requested_power_w or 0.0) * duration_hours
-                delta_wh *= efficiency
-            elif segment.primitive.value == "discharge_at_power":
-                delta_wh = -(segment.requested_power_w or 0.0) * duration_hours
-                delta_wh /= efficiency
-            elif segment.primitive.value == "balance_bidirectional":
-                net_wh = pv_wh - load_wh
-                delta_wh = net_wh * efficiency if net_wh >= 0 else net_wh / efficiency
-            elif segment.primitive.value == "balance_discharge_only":
-                delta_wh = min(0.0, pv_wh - load_wh) / efficiency
-            else:
-                delta_wh = 0.0
-            current_energy_wh += delta_wh
-            if limits is not None:
-                current_energy_wh = min(
-                    limits.maximum_soc * initial_storage_state.usable_capacity_wh,
-                    max(
-                        limits.minimum_soc
-                        * initial_storage_state.usable_capacity_wh,
-                        current_energy_wh,
-                    ),
-                )
-            soc_timeline.append({
-                "at": segment.ends_at.isoformat(),
-                "soc_percent": round(
-                    current_energy_wh
-                    / initial_storage_state.usable_capacity_wh
-                    * 100,
-                    2,
+            segment = next(
+                (
+                    item
+                    for item in winning_energy_path.segments
+                    if item.starts_at < state.at <= item.ends_at
                 ),
-                "primitive": segment.primitive.value,
+                None,
+            )
+            soc_timeline.append({
+                "at": state.at.isoformat(),
+                "soc_percent": round(state.battery_soc * 100, 2),
+                "primitive": (
+                    segment.primitive.value if segment is not None else "projected"
+                ),
             })
-            current_time = segment.ends_at
     return {
         "run_id": run.planning_input.run_id,
         "snapshot_id": run.planning_input.snapshot_id,

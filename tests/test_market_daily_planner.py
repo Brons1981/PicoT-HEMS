@@ -392,6 +392,16 @@ def test_mep_combines_grid_trade_with_hybrid_pv_residual_grid_parent() -> None:
         for assessment in hybrid_trades
         for evidence in assessment.scenario_evidence
     )
+    for hybrid_trade in hybrid_trades:
+        final_export_end = max(
+            interval.ends_at
+            for interval in hybrid_trade.intent_schedule.intervals
+            if interval.intent.value == "storage_export"
+        )
+        assert not any(
+            interval.intent.value == "nom" and interval.starts_at >= final_export_end
+            for interval in hybrid_trade.intent_schedule.intervals
+        )
 
 
 def test_mep_subdivides_broad_grid_trade_window_and_preserves_pv_room() -> None:
@@ -790,7 +800,8 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
         for scenario in grid_assessment.scenario_evidence
     )
     assert any(
-        interval.intent.value == "nom"
+        interval.intent.value == "household_support_only"
+        and interval.starts_at >= route.export_window_ends_at
         for interval in grid_assessment.intent_schedule.intervals
     )
     assert grid_assessment.physically_admissible is True

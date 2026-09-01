@@ -5,7 +5,13 @@ from types import SimpleNamespace
 import pytest
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
+from picot.domain.daily_reference_intent import (
+    DailyReferenceIntentInterval,
+    DailyReferenceIntentSchedule,
+    DailyStorageIntent,
+)
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.planner.mep_candidate_outcomes import _compose_committed_prefix
 from picot.v2.contracts import StorageRoundTripEfficiencyEvidence
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
@@ -589,10 +595,48 @@ def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
     commitment = store.load(scope_id)
     assert commitment is not None
     assert commitment.ends_at == commitment.segments[-1].ends_at
+    extended_horizon = commitment.ends_at + timedelta(hours=6)
+    assert snapshot.household_load_forecast is not None
+    assert snapshot.pv_energy_timeline is not None
+    household_template = snapshot.household_load_forecast.intervals[-1]
+    pv_template = snapshot.pv_energy_timeline.intervals[-1]
+    extra_household = tuple(
+        replace(
+            household_template,
+            interval_id=f"household-next-day-{index}",
+            starts_at=commitment.ends_at + index * timedelta(minutes=15),
+            ends_at=commitment.ends_at + (index + 1) * timedelta(minutes=15),
+        )
+        for index in range(24)
+    )
+    extra_pv = tuple(
+        replace(
+            pv_template,
+            interval_id=f"pv-next-day-{index}",
+            starts_at=commitment.ends_at + index * timedelta(minutes=15),
+            ends_at=commitment.ends_at + (index + 1) * timedelta(minutes=15),
+        )
+        for index in range(24)
+    )
+    extended_snapshot = replace(
+        snapshot,
+        horizon_end=extended_horizon,
+        price_points=(
+            replace(snapshot.price_points[0], ends_at=extended_horizon),
+        ),
+        household_load_forecast=replace(
+            snapshot.household_load_forecast,
+            intervals=(*snapshot.household_load_forecast.intervals, *extra_household),
+        ),
+        pv_energy_timeline=replace(
+            snapshot.pv_energy_timeline,
+            intervals=(*snapshot.pv_energy_timeline.intervals, *extra_pv),
+        ),
+    )
 
     continued = pipeline.run(
         planning_input=replace(
-            snapshot,
+            extended_snapshot,
             active_plan_commitments=(commitment,),
         )
     )
@@ -602,6 +646,28 @@ def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
         first.execution_plan_set.plans[0].plan_id
     )
     assert store.load(scope_id) == commitment
+    assert commitment.ends_at < extended_horizon
+    assert continued.execution_plan_set.plans[0].valid_until == extended_horizon
+    committed_prefix = tuple(
+        segment
+        for segment in continued.execution_plan_set.plans[0].segments
+        if segment.ends_at <= commitment.ends_at
+    )
+    assert tuple(
+        (segment.starts_at, segment.ends_at, segment.primitive.value)
+        for segment in committed_prefix
+    ) == tuple(
+        (segment.starts_at, segment.ends_at, segment.primitive)
+        for segment in commitment.segments
+    )
+    planned_suffix = tuple(
+        segment
+        for segment in continued.execution_plan_set.plans[0].segments
+        if segment.starts_at >= commitment.ends_at
+    )
+    assert planned_suffix
+    assert planned_suffix[0].starts_at == commitment.ends_at
+    assert planned_suffix[-1].ends_at == extended_horizon
 
     view = build_web_view(continued, project(continued))
     chosen_plan = view["planning_status"]["chosen_plan"]
@@ -621,6 +687,73 @@ def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
         commitment.reserve_respected_across_scenarios
     )
     assert chosen_plan["target_held_across_scenarios"] == (commitment.target_held_across_scenarios)
+
+
+def test_rolling_horizon_keeps_committed_prefix_and_challenger_suffix() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.51)
+    starts_at = snapshot.captured_at
+    commitment_ends_at = starts_at + timedelta(hours=2)
+    horizon_end = commitment_ends_at + timedelta(hours=2)
+    commitment = ActivePlanCommitment(
+        execution_scope_id="battery",
+        plan_id="committed-prefix",
+        plan_revision=1,
+        primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+        source_policy="pv_only",
+        starts_at=starts_at,
+        ends_at=commitment_ends_at,
+        target_energy_wh=8160.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(hours=1),
+                primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+                source_policy="pv_only",
+            ),
+            CommittedPlanSegment(
+                starts_at=starts_at + timedelta(hours=1),
+                ends_at=commitment_ends_at,
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+                source_policy="pv_preferred_grid_allowed",
+            ),
+        ),
+    )
+    challenger = DailyReferenceIntentSchedule(
+        schedule_id="tomorrow-challenger",
+        snapshot_id=snapshot.snapshot_id,
+        horizon_start=starts_at,
+        horizon_end=horizon_end,
+        intervals=(
+            DailyReferenceIntentInterval(
+                starts_at,
+                commitment_ends_at,
+                DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
+            ),
+            DailyReferenceIntentInterval(
+                commitment_ends_at,
+                horizon_end,
+                DailyStorageIntent.STORAGE_EXPORT,
+                storage_export_target_wh=1000.0,
+            ),
+        ),
+        method_version="test:v1",
+    )
+
+    composed = _compose_committed_prefix(
+        snapshot=snapshot,
+        commitment=commitment,
+        schedule=challenger,
+    )
+
+    assert composed is not None
+    assert tuple(interval.intent for interval in composed.intervals) == (
+        DailyStorageIntent.NOM,
+        DailyStorageIntent.GRID_REQUIREMENT,
+        DailyStorageIntent.STORAGE_EXPORT,
+    )
+    assert composed.intervals[-1].starts_at == commitment_ends_at
+    assert composed.intervals[-1].ends_at == horizon_end
+    assert composed.intervals[-1].storage_export_target_wh == 1000.0
 
 
 def test_charge_target_does_not_clear_later_export_commitment() -> None:

@@ -67,7 +67,12 @@ class MarketDailyPlannerRuntime:
         ) = None,
     ) -> None:
         self.conversion_model = conversion_model
-        self.trading_policy = trading_policy or MarketTradingPolicy()
+        # DEV.221 restores the bounded physical MEP basis first. Optional
+        # market export is reintroduced only through an explicit user rule in
+        # a later accepted slice; it must never be an implicit default.
+        self.trading_policy = trading_policy or MarketTradingPolicy(
+            market_routes_enabled=False
+        )
         self.micro_charge_suppression_fraction = micro_charge_suppression_fraction
         self.storage_inventory_provider = storage_inventory_provider
 

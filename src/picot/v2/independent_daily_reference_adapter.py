@@ -11,6 +11,14 @@ from picot.domain.capability_snapshot import (
     EnergyFlowDirection,
 )
 from picot.domain.current_storage_state import CurrentStorageState as DomainStorageState
+from picot.domain.daily_reference_charge_window import (
+    DailyReferenceChargeWindow,
+    DailyReferenceChargeWindowSet,
+)
+from picot.domain.daily_reference_intent import (
+    DailyReferenceIntentSchedule,
+    DailyStorageIntent,
+)
 from picot.domain.daily_reference_simulation import DailyReferenceSimulationSet, PVScenario
 from picot.domain.daily_reference_strategy_observation import (
     DailyReferenceStrategyObservation,
@@ -57,7 +65,7 @@ from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
 
-METHOD_VERSION = "v2-independent-daily-reference-adapter:v2"
+METHOD_VERSION = "v2-independent-daily-reference-adapter:v3"
 DAILY_REFERENCE_DURATION = timedelta(hours=24)
 
 
@@ -107,6 +115,7 @@ class IndependentDailyReferenceAdapter:
         maximum_duration: timedelta = DAILY_REFERENCE_DURATION,
         micro_charge_suppression_fraction: float = 0.01,
         required_by: datetime | None = None,
+        preferred_grid_windows: tuple[tuple[datetime, datetime], ...] = (),
     ) -> DailyReferenceStrategyObservation:
         """Run the complete observer chain from one immutable Planning Input."""
 
@@ -153,6 +162,12 @@ class IndependentDailyReferenceAdapter:
         )
         if charge_windows.discovery_status == "no_feasible_window":
             raise DailyReferenceInputError("daily_reference_charge_windows_unavailable")
+        charge_windows = self._select_representative_charge_paths(
+            charge_windows,
+            tariffs=tariffs,
+            required_by=required_by,
+            preferred_grid_windows=preferred_grid_windows,
+        )
         strategy_space = IndependentDailyStrategyGenerator().generate_from_charge_windows(
             charge_windows=charge_windows,
             household=inputs.household,
@@ -169,6 +184,141 @@ class IndependentDailyReferenceAdapter:
             maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
             maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
         )
+
+    @classmethod
+    def _select_representative_charge_paths(
+        cls,
+        charge_windows: DailyReferenceChargeWindowSet,
+        *,
+        tariffs: DailyReferenceTariffSchedule,
+        required_by: datetime | None,
+        preferred_grid_windows: tuple[tuple[datetime, datetime], ...],
+    ) -> DailyReferenceChargeWindowSet:
+        """Reduce physical alternatives before complete portfolio simulation.
+
+        ADR-017/024 require confidence and economic relevance to reduce the
+        search space before full simulation.  The physical discoverer may
+        prove many interval-minimal starts; MEP retains only the earliest
+        PV-only path plus one cheapest residual-grid path.  A hybrid path
+        supersedes pure grid charging when it exists.
+        """
+
+        if charge_windows.discovery_status != "discovered":
+            return charge_windows
+
+        nom_windows = tuple(
+            item
+            for item in charge_windows.windows
+            if item.intent is DailyStorageIntent.NOM
+        )
+        grid_windows = tuple(
+            item
+            for item in charge_windows.windows
+            if item.intent is DailyStorageIntent.GRID_REQUIREMENT
+        )
+        selected_nom = min(nom_windows, key=lambda item: item.starts_at, default=None)
+        preferred_hybrids = tuple(
+            item
+            for item in charge_windows.hybrid_schedules
+            if cls._starts_in_preferred_window(
+                cls._grid_start(item), preferred_grid_windows
+            )
+        )
+        eligible_hybrids = preferred_hybrids or charge_windows.hybrid_schedules
+        selected_hybrid = min(
+            eligible_hybrids,
+            key=lambda item: (
+                cls._grid_schedule_cost(item, tariffs),
+                -cls._grid_start(item).timestamp(),
+                item.schedule_id,
+            ),
+            default=None,
+        )
+        preferred_grid = tuple(
+            item
+            for item in grid_windows
+            if cls._starts_in_preferred_window(
+                item.starts_at, preferred_grid_windows
+            )
+        )
+        eligible_grid = preferred_grid or grid_windows
+        selected_grid = (
+            min(eligible_grid, key=lambda item: item.starts_at, default=None)
+            if required_by is None and selected_hybrid is None
+            else max(
+                eligible_grid,
+                key=lambda item: (item.starts_at, item.window_id),
+                default=None,
+            )
+            if not preferred_grid_windows
+            else min(
+                eligible_grid,
+                key=lambda item: (
+                    cls._grid_schedule_cost(item.schedule, tariffs),
+                    -item.starts_at.timestamp(),
+                    item.window_id,
+                ),
+                default=None,
+            )
+        )
+
+        retained_windows: list[DailyReferenceChargeWindow] = []
+        if selected_nom is not None:
+            retained_windows.append(selected_nom)
+        # Keep a proven grid window when no hybrid exists, or when it is needed
+        # to keep the discovered WindowSet non-empty beside a lone hybrid.
+        if selected_grid is not None and (
+            selected_hybrid is None or selected_nom is None
+        ):
+            retained_windows.append(selected_grid)
+        return DailyReferenceChargeWindowSet(
+            window_set_id=charge_windows.window_set_id,
+            snapshot_id=charge_windows.snapshot_id,
+            windows=tuple(retained_windows),
+            observer_only=True,
+            ranking_permitted=False,
+            method_version=METHOD_VERSION,
+            discovery_status="discovered",
+            hybrid_schedules=(
+                (selected_hybrid,) if selected_hybrid is not None else ()
+            ),
+        )
+
+    @staticmethod
+    def _grid_start(schedule: DailyReferenceIntentSchedule) -> datetime:
+        return next(
+            item.starts_at
+            for item in schedule.intervals
+            if item.intent is DailyStorageIntent.GRID_REQUIREMENT
+        )
+
+    @staticmethod
+    def _starts_in_preferred_window(
+        starts_at: datetime,
+        windows: tuple[tuple[datetime, datetime], ...],
+    ) -> bool:
+        return any(start <= starts_at < end for start, end in windows)
+
+    @staticmethod
+    def _grid_schedule_cost(
+        schedule: DailyReferenceIntentSchedule,
+        tariffs: DailyReferenceTariffSchedule,
+    ) -> float:
+        total_eur_per_kw = 0.0
+        for planned in schedule.intervals:
+            if planned.intent is not DailyStorageIntent.GRID_REQUIREMENT:
+                continue
+            for tariff in tariffs.intervals:
+                overlap_start = max(planned.starts_at, tariff.starts_at)
+                overlap_end = min(planned.ends_at, tariff.ends_at)
+                if overlap_end <= overlap_start:
+                    continue
+                total_eur_per_kw += (
+                    (overlap_end - overlap_start).total_seconds()
+                    / 3600.0
+                    * tariff.import_eur_per_kwh
+                )
+        return total_eur_per_kw
 
     def build_inputs(
         self,

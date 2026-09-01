@@ -606,12 +606,18 @@ class MarketDailyPlanner:
         )
         phase_started = perf_counter()
         reference_adapter = IndependentDailyReferenceAdapter()
+        preferred_grid_windows = tuple(
+            (item.starts_at, item.ends_at)
+            for item in opportunities.opportunities
+            if item.kind == LOWEST_PRICE_WINDOW
+        )
         native_observation = reference_adapter.observe(
             snapshot=snapshot,
             conversion_model=conversion_model,
             maximum_duration=maximum_duration,
             micro_charge_suppression_fraction=micro_charge_suppression_fraction,
             required_by=required_by,
+            preferred_grid_windows=preferred_grid_windows,
         )
         effective_required_by = required_by or _household_energy_requirement_deadline(
             native_observation
@@ -625,6 +631,7 @@ class MarketDailyPlanner:
                 maximum_duration=maximum_duration,
                 micro_charge_suppression_fraction=micro_charge_suppression_fraction,
                 required_by=effective_required_by,
+                preferred_grid_windows=preferred_grid_windows,
             )
         native_plan_ms = (perf_counter() - phase_started) * 1000.0
         horizon_end = native_observation.strategy_space.schedules[0].horizon_end

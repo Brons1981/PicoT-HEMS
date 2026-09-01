@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from picot.v2.contracts import PlanningInputSnapshot
 from picot.v2.live_pv_actual import LivePVActualDiagnostics
 
-METHOD_VERSION = "daily-measured-pv-basis:v2"
+METHOD_VERSION = "daily-measured-pv-basis:v3"
 MINIMUM_ACTUAL_INTERVALS = 4
 MINIMUM_CENTRAL_EVIDENCE_WH = 500.0
 
@@ -31,11 +31,12 @@ def apply_daily_measured_pv_basis(
     diagnostics: LivePVActualDiagnostics | None,
     local_timezone: ZoneInfo,
 ) -> tuple[PlanningInputSnapshot, DailyPVBasisDecision]:
-    """Plan from the lower/central midpoint and adapt today's basis to actuals.
+    """Plan between lower and central by confidence and adapt today to actuals.
 
     The returned snapshot is the PV basis for the sole canonical MEP planner.
-    Future dates remain on the midpoint; complete closed actual evidence may
-    move only the remaining current day to lower or central.
+    Every remaining forecast interval uses its source confidence as the
+    deterministic position between lower and central. Complete closed actual
+    evidence may move only the remaining current day to lower or central.
     """
 
     decision = _select_basis(diagnostics)
@@ -62,8 +63,10 @@ def apply_daily_measured_pv_basis(
             is_remaining_today = (
                 interval.starts_at.astimezone(local_timezone).date() == local_date
             )
-            midpoint_wh = (lower_wh + central_wh) / 2.0
-            selected_lower_wh = midpoint_wh
+            confidence_weighted_wh = lower_wh + interval.confidence * (
+                central_wh - lower_wh
+            )
+            selected_lower_wh = confidence_weighted_wh
             if is_remaining_today and decision.basis == "lower":
                 selected_lower_wh = lower_wh
             elif is_remaining_today and decision.basis == "central":

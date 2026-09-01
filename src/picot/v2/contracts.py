@@ -1186,7 +1186,7 @@ class MepCandidateOutcome:
 
     @property
     def pv_forecast_basis(self) -> str:
-        return "lower-central-upper"
+        return "confidence-weighted-lower-central"
 
 
 @dataclass(frozen=True, slots=True)

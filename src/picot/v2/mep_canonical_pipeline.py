@@ -795,7 +795,7 @@ def build_mep_canonical_run(
                 candidate_id=item.candidate_id,
                 energy_path_id=item.energy_path_id,
                 family=item.family.value,
-                pv_forecast_basis="lower-central-upper",
+                pv_forecast_basis="confidence-weighted-lower-central",
             )
             for item in comparable.candidate_set.candidates
         ]

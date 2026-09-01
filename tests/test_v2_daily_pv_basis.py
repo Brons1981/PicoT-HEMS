@@ -128,7 +128,7 @@ def _snapshot() -> PlanningInputSnapshot:
     )
 
 
-def test_daily_observer_promotes_today_to_central_and_keeps_tomorrow_midpoint() -> None:
+def test_daily_observer_promotes_today_to_central_and_confidence_weights_tomorrow() -> None:
     snapshot, decision = apply_daily_measured_pv_basis(
         _snapshot(),
         diagnostics=_diagnostics(actual_ratio=1.02),
@@ -142,7 +142,7 @@ def test_daily_observer_promotes_today_to_central_and_keeps_tomorrow_midpoint() 
     assert snapshot.pv_energy_timeline is not None
     today, tomorrow = snapshot.pv_energy_timeline.intervals
     assert today.forecast_lower_energy_wh == today.forecast_central_energy_wh == 600.0
-    assert tomorrow.forecast_lower_energy_wh == 350.0
+    assert tomorrow.forecast_lower_energy_wh == 440.0
     assert tomorrow.forecast_central_energy_wh == 500.0
 
 
@@ -161,7 +161,7 @@ def test_daily_observer_keeps_lower_when_actual_underperforms() -> None:
     assert snapshot.pv_energy_timeline is not None
     today, tomorrow = snapshot.pv_energy_timeline.intervals
     assert today.forecast_lower_energy_wh == 300.0
-    assert tomorrow.forecast_lower_energy_wh == 350.0
+    assert tomorrow.forecast_lower_energy_wh == 440.0
 
 
 def test_daily_observer_requires_sufficient_closed_actual_evidence() -> None:
@@ -182,11 +182,11 @@ def test_daily_observer_requires_sufficient_closed_actual_evidence() -> None:
     assert decision.reason == "actual_coverage_incomplete"
     assert snapshot.pv_energy_timeline is not None
     today, tomorrow = snapshot.pv_energy_timeline.intervals
-    assert today.forecast_lower_energy_wh == 450.0
-    assert tomorrow.forecast_lower_energy_wh == 350.0
+    assert today.forecast_lower_energy_wh == 540.0
+    assert tomorrow.forecast_lower_energy_wh == 440.0
 
 
-def test_daily_observer_uses_midpoint_before_actual_evidence_exists() -> None:
+def test_daily_observer_uses_confidence_before_actual_evidence_exists() -> None:
     snapshot, decision = apply_daily_measured_pv_basis(
         _snapshot(),
         diagnostics=None,
@@ -197,8 +197,8 @@ def test_daily_observer_uses_midpoint_before_actual_evidence_exists() -> None:
     assert decision.reason == "actual_evidence_unavailable"
     assert snapshot.pv_energy_timeline is not None
     today, tomorrow = snapshot.pv_energy_timeline.intervals
-    assert today.forecast_lower_energy_wh == 450.0
-    assert tomorrow.forecast_lower_energy_wh == 350.0
+    assert today.forecast_lower_energy_wh == 540.0
+    assert tomorrow.forecast_lower_energy_wh == 440.0
 
 
 def test_daily_observer_keeps_midpoint_when_actual_tracks_between_it_and_central() -> None:
@@ -212,5 +212,32 @@ def test_daily_observer_keeps_midpoint_when_actual_tracks_between_it_and_central
     assert decision.reason == "actual_tracking_supports_midpoint"
     assert snapshot.pv_energy_timeline is not None
     today, tomorrow = snapshot.pv_energy_timeline.intervals
-    assert today.forecast_lower_energy_wh == 450.0
-    assert tomorrow.forecast_lower_energy_wh == 350.0
+    assert today.forecast_lower_energy_wh == 540.0
+    assert tomorrow.forecast_lower_energy_wh == 440.0
+
+
+def test_daily_observer_moves_monotonically_from_lower_to_central_with_confidence() -> None:
+    original = _snapshot()
+    assert original.pv_energy_timeline is not None
+    today, tomorrow = original.pv_energy_timeline.intervals
+    confidence_snapshot = replace(
+        original,
+        pv_energy_timeline=replace(
+            original.pv_energy_timeline,
+            intervals=(
+                replace(today, confidence=0.25),
+                replace(tomorrow, confidence=1.0),
+            ),
+        ),
+    )
+
+    snapshot, _decision = apply_daily_measured_pv_basis(
+        confidence_snapshot,
+        diagnostics=None,
+        local_timezone=LOCAL_TIMEZONE,
+    )
+
+    assert snapshot.pv_energy_timeline is not None
+    weighted_today, weighted_tomorrow = snapshot.pv_energy_timeline.intervals
+    assert weighted_today.forecast_lower_energy_wh == 375.0
+    assert weighted_tomorrow.forecast_lower_energy_wh == 500.0

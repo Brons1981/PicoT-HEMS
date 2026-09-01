@@ -13,7 +13,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Condition, Lock
-from typing import TypedDict
+from typing import BinaryIO, TypedDict, cast
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -23,7 +23,7 @@ from picot.v2.contracts import (
     DelegatedStorageCandidateOutcome,
     PriceForecastPoint,
 )
-from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
+from picot.v2.diagnostic_downloads import incident_overview, write_diagnostic_zip
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.projection import Projection
 from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
@@ -980,9 +980,14 @@ DASHBOARD_HTML = """<!doctype html>
           <a href="downloads/planning-incidents.jsonl" download>
             Download incidenthistorie
           </a>
-          <a href="downloads/picot-diagnostics.zip" download>
+          <a
+            id="diagnostic-download-link"
+            href="downloads/picot-diagnostics.zip"
+            download
+          >
             Download alle diagnosebestanden
           </a>
+          <span id="diagnostic-download-status" role="status" aria-live="polite"></span>
         </div>
         <div id="planning-incident-history">
           Nog geen fallbackincidenten vastgelegd.
@@ -4084,6 +4089,10 @@ DASHBOARD_HTML = """<!doctype html>
       resetStorageModeOverride
     );
     element("reset-planning").addEventListener("click", resetPlanning);
+    element("diagnostic-download-link").addEventListener("click", () => {
+      element("diagnostic-download-status").textContent =
+        "Diagnosebestand wordt voorbereid; de download start zo.";
+    });
     initializeTabs();
     loadView().finally(watchViewUpdates);
     setInterval(loadView, 60000);
@@ -4409,21 +4418,46 @@ def create_web_server(
             self.end_headers()
             self.wfile.write(encoded)
 
-        def _send_download(
+        def _send_file_download(
             self,
-            body: bytes,
+            path: Path,
             *,
             content_type: str,
             filename: str,
         ) -> None:
+            file_size = path.stat().st_size
             self.send_response(int(HTTPStatus.OK))
             self.send_header("Content-Type", content_type)
-            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header(
+                "Content-Disposition",
+                f'attachment; filename="{filename}"',
+            )
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Length", str(file_size))
             self.end_headers()
-            self.wfile.write(body)
+            with path.open("rb") as source:
+                remaining = file_size
+                while remaining > 0:
+                    chunk = source.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+
+        def _send_diagnostic_zip(self, paths: tuple[Path, ...]) -> None:
+            self.send_response(int(HTTPStatus.OK))
+            self.send_header("Content-Type", "application/zip")
+            self.send_header(
+                "Content-Disposition",
+                'attachment; filename="picot-diagnostics.zip"',
+            )
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            write_diagnostic_zip(cast(BinaryIO, self.wfile), paths)
 
         def do_GET(self) -> None:
             parsed_url = urlsplit(self.path)
@@ -4482,19 +4516,15 @@ def create_web_server(
                         '{"status":"incident_history_not_found"}',
                     )
                     return
-                self._send_download(
-                    incident_path.read_bytes(),
+                self._send_file_download(
+                    incident_path,
                     content_type="application/x-ndjson",
                     filename=incident_path.name,
                 )
                 return
 
             if path == "/downloads/picot-diagnostics.zip":
-                self._send_download(
-                    diagnostic_zip(store.diagnostic_paths()),
-                    content_type="application/zip",
-                    filename="picot-diagnostics.zip",
-                )
+                self._send_diagnostic_zip(store.diagnostic_paths())
                 return
 
             if path != "/api/view":

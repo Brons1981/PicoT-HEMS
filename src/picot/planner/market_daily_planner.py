@@ -43,7 +43,7 @@ from picot.v2.opportunity_engine import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_generation", __name__)
-METHOD_VERSION = "market-daily-planner:v7"
+METHOD_VERSION = "market-daily-planner:v8"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
@@ -1304,6 +1304,7 @@ class MarketDailyPlanner:
             for parent_result in parent_results:
                 schedule = self._market_schedule(
                     parent_result.intent_schedule,
+                    snapshot=snapshot,
                     route=route,
                     maximum_discharge_output_power_w=(inputs.maximum_discharge_output_power_w),
                 )
@@ -1341,6 +1342,7 @@ class MarketDailyPlanner:
     def _market_schedule(
         baseline: DailyReferenceIntentSchedule,
         *,
+        snapshot: PlanningInputSnapshot,
         route: MarketCapacityRoute,
         maximum_discharge_output_power_w: float,
     ) -> DailyReferenceIntentSchedule:
@@ -1380,6 +1382,10 @@ class MarketDailyPlanner:
             remaining_output_wh -= target_wh
         schedule_id = f"mep-market:{route.route_id}:{baseline.schedule_id}"
         intervals_list: list[DailyReferenceIntentInterval] = []
+        final_export_end = max(
+            (ends_at for _starts_at, ends_at in export_targets),
+            default=None,
+        )
         for item in baseline.intervals:
             inside_explicit_charge = (
                 route.route_kind in {"grid_trade", "negative_capacity", "pv_trade_grid_recovery"}
@@ -1407,6 +1413,17 @@ class MarketDailyPlanner:
                 if inside_pv_preference_window
                 else item.intent
             )
+            if (
+                intent is DailyStorageIntent.NOM
+                and final_export_end is not None
+                and item.starts_at >= final_export_end
+                and not MarketDailyPlanner._has_possible_pv(
+                    snapshot,
+                    starts_at=item.starts_at,
+                    ends_at=item.ends_at,
+                )
+            ):
+                intent = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
             intervals_list.append(
                 DailyReferenceIntentInterval(
                     starts_at=item.starts_at,
@@ -1427,6 +1444,33 @@ class MarketDailyPlanner:
             horizon_end=baseline.horizon_end,
             intervals=intervals,
             method_version=METHOD_VERSION,
+        )
+
+    @staticmethod
+    def _has_possible_pv(
+        snapshot: PlanningInputSnapshot,
+        *,
+        starts_at: datetime,
+        ends_at: datetime,
+    ) -> bool:
+        timeline = snapshot.pv_energy_timeline
+        if timeline is None:
+            return True
+        overlapping = tuple(
+            interval
+            for interval in timeline.intervals
+            if interval.starts_at < ends_at and interval.ends_at > starts_at
+        )
+        if not overlapping:
+            return True
+        return any(
+            (
+                interval.forecast_upper_energy_wh
+                if interval.forecast_upper_energy_wh is not None
+                else interval.pv_energy_wh
+            )
+            > 1e-6
+            for interval in overlapping
         )
 
     @staticmethod

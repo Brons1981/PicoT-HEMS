@@ -66,8 +66,8 @@ def test_diagnostic_zip_only_contains_existing_allow_list_files(tmp_path) -> Non
     incident = tmp_path / "incidents.jsonl"
     provenance = tmp_path / "provenance.json"
     missing = tmp_path / "missing.jsonl"
-    incident.write_text("incident\n", encoding="utf-8")
-    provenance.write_text("{}", encoding="utf-8")
+    incident.write_bytes(b"incident\n")
+    provenance.write_bytes(b"{}")
 
     payload = diagnostic_zip((incident, missing, provenance))
 

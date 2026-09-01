@@ -15,7 +15,7 @@ from picot.domain.daily_reference_strategy_space import (
 )
 from picot.domain.household_load_forecast import HouseholdLoadForecast
 
-METHOD_VERSION = "independent-daily-strategy-generator:v1"
+METHOD_VERSION = "independent-daily-strategy-generator:v2"
 BASELINE_INTENT = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
 DEFAULT_ACTIVE_INTENTS = (
     DailyStorageIntent.NOM,
@@ -117,10 +117,33 @@ class IndependentDailyStrategyGenerator:
         ):
             raise ValueError("Daily charge windows and household horizon must match.")
         intents = tuple(
-            dict.fromkeys(item.intent for item in charge_windows.windows)
+            dict.fromkeys(
+                (
+                    *(item.intent for item in charge_windows.windows),
+                    *(
+                        interval.intent
+                        for schedule in charge_windows.hybrid_schedules
+                        for interval in schedule.intervals
+                        if interval.intent
+                        in {DailyStorageIntent.NOM, DailyStorageIntent.GRID_REQUIREMENT}
+                    ),
+                )
+            )
         )
         lengths = tuple(
-            dict.fromkeys(item.interval_count for item in charge_windows.windows)
+            dict.fromkeys(
+                (
+                    *(item.interval_count for item in charge_windows.windows),
+                    *(
+                        sum(
+                            interval.intent
+                            in {DailyStorageIntent.NOM, DailyStorageIntent.GRID_REQUIREMENT}
+                            for interval in schedule.intervals
+                        )
+                        for schedule in charge_windows.hybrid_schedules
+                    ),
+                )
+            )
         )
         return DailyReferenceStrategySpace(
             strategy_space_id=(
@@ -134,6 +157,7 @@ class IndependentDailyStrategyGenerator:
             schedules=(
                 self._baseline(charge_windows.snapshot_id, household),
                 *(item.schedule for item in charge_windows.windows),
+                *charge_windows.hybrid_schedules,
             ),
             observer_only=True,
             ranking_permitted=False,

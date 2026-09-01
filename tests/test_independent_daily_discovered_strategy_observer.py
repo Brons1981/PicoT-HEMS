@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from test_independent_daily_reference_portfolio import (
+    _tariffs_for_schedule_snapshot,
+)
+from test_independent_daily_simulator import _household, _storage, _timeline
+
 from picot.domain.daily_reference_intent import DailyStorageIntent
 from picot.domain.daily_reference_simulation import PVScenario
 from picot.domain.storage_conversion_model import StorageConversionModel
@@ -12,10 +17,6 @@ from picot.planner.independent_daily_strategy_generator import (
 from picot.planner.independent_daily_strategy_observer import (
     IndependentDailyStrategyObserver,
 )
-from test_independent_daily_reference_portfolio import (
-    _tariffs_for_schedule_snapshot,
-)
-from test_independent_daily_simulator import _household, _storage, _timeline
 
 
 def _physical_inputs():
@@ -63,7 +64,9 @@ def test_physical_charge_windows_flow_through_complete_observer_chain() -> None:
     )
 
     assert strategy_space.source_charge_window_set_id == windows.window_set_id
-    assert len(strategy_space.schedules) == len(windows.windows) + 1
+    assert len(strategy_space.schedules) == (
+        len(windows.windows) + len(windows.hybrid_schedules) + 1
+    )
     assert all(
         item.intent is DailyStorageIntent.GRID_REQUIREMENT
         for item in windows.windows

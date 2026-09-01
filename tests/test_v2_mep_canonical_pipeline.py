@@ -169,6 +169,56 @@ def test_mep_winner_flows_through_canonical_path_and_plan_store(tmp_path) -> Non
     )
 
 
+def test_low_pv_snapshot_publishes_valid_pv_first_residual_grid_candidate(
+    tmp_path,
+) -> None:
+    """Dev.214: MEP offers PV capture before only the residual grid recovery."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.5)
+    pipeline, _store = _pipeline(tmp_path)
+
+    run = pipeline.run(planning_input=snapshot)
+
+    valid_ids = {
+        outcome.candidate_id
+        for outcome in run.outcomes.outcomes
+        if outcome.validity == "valid"
+        and outcome.daily_target_reached
+        and outcome.household_reserve_respected
+    }
+    hybrid_paths = tuple(
+        path
+        for candidate in run.candidate_set.candidates
+        for path in run.candidate_set.energy_paths
+        if candidate.energy_path_id == path.path_id
+        and candidate.family == "priority_first"
+        and candidate.candidate_id in valid_ids
+        and {segment.primitive for segment in path.segments}.issuperset(
+            {
+                ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                ExecutionPrimitive.CHARGE_AT_POWER,
+            }
+        )
+    )
+    assert hybrid_paths
+    pv_first = next(
+        path
+        for path in hybrid_paths
+        if any(
+            segment.starts_at == snapshot.captured_at
+            and segment.ends_at == snapshot.captured_at + timedelta(hours=1)
+            and segment.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+            for segment in path.segments
+        )
+    )
+    hybrid_grid_seconds = sum(
+        (segment.ends_at - segment.starts_at).total_seconds()
+        for segment in pv_first.segments
+        if segment.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+    )
+    assert hybrid_grid_seconds == timedelta(minutes=75).total_seconds()
+
+
 def test_dashboard_presents_mep_execution_plan_with_comparable_outcomes(
     tmp_path,
 ) -> None:

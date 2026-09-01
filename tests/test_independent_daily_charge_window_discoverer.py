@@ -11,6 +11,9 @@ from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.independent_daily_charge_window_discoverer import (
     IndependentDailyChargeWindowDiscoverer,
 )
+from picot.planner.independent_daily_intent_simulator import (
+    IndependentDailyIntentSimulator,
+)
 
 
 def _discover(
@@ -205,3 +208,94 @@ def test_discoverer_excludes_windows_that_miss_required_by() -> None:
         item.conservative_target_reached_at <= required_by
         for item in result.windows
     )
+
+
+def test_discoverer_builds_pv_first_hybrid_with_only_residual_grid_recovery() -> None:
+    """Low PV must remain useful before a minimal conservative grid recovery."""
+
+    household = _household()
+    scenarios = tuple(
+        replace(
+            source,
+            timeline=replace(
+                source.timeline,
+                intervals=tuple(
+                    replace(
+                        interval,
+                        energy_wh=(
+                            {
+                                PVScenario.LOWER: 250.0,
+                                PVScenario.CENTRAL: 300.0,
+                                PVScenario.UPPER: 350.0,
+                            }[source.scenario]
+                            if index < 3
+                            else 0.0
+                        ),
+                    )
+                    for index, interval in enumerate(source.timeline.intervals)
+                ),
+            ),
+        )
+        for source in (_timeline(scenario) for scenario in PVScenario)
+    )
+    conversion = StorageConversionModel(
+        model_id="conversion",
+        charge_efficiency=1.0,
+        discharge_efficiency=1.0,
+        evidence_ids=("conversion",),
+        method_version="test:v1",
+    )
+
+    result = IndependentDailyChargeWindowDiscoverer().discover(
+        snapshot_id="snapshot-hybrid",
+        household=household,
+        pv_scenarios=scenarios,
+        storage_state=_storage(0.5),
+        conversion_model=conversion,
+        minimum_storage_energy_wh=816.0,
+        target_storage_energy_wh=8160.0,
+        maximum_charge_input_power_w=2400.0,
+        maximum_discharge_output_power_w=2400.0,
+    )
+
+    hybrid = next(
+        schedule
+        for schedule in result.hybrid_schedules
+        if DailyStorageIntent.NOM
+        in {interval.intent for interval in schedule.intervals}
+        and DailyStorageIntent.GRID_REQUIREMENT
+        in {interval.intent for interval in schedule.intervals}
+        and next(
+            interval.starts_at
+            for interval in schedule.intervals
+            if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+        )
+        >= household.intervals[3].starts_at
+    )
+    intents = tuple(interval.intent for interval in hybrid.intervals)
+    assert intents[:3] == (DailyStorageIntent.NOM,) * 3
+
+    simulation = IndependentDailyIntentSimulator().simulate(
+        snapshot_id="snapshot-hybrid",
+        household=household,
+        pv_scenarios=scenarios,
+        storage_state=_storage(0.5),
+        conversion_model=conversion,
+        intent_schedule=hybrid,
+        minimum_storage_energy_wh=816.0,
+        target_storage_energy_wh=8160.0,
+        maximum_charge_input_power_w=2400.0,
+        maximum_discharge_output_power_w=2400.0,
+    )
+    assert all(item.target_reached_at is not None for item in simulation.trajectories)
+    assert {
+        trajectory.scenario: sum(
+            interval.grid_to_storage_input_wh
+            for interval in trajectory.intervals
+        )
+        for trajectory in simulation.trajectories
+    } == {
+        PVScenario.LOWER: 3630.0,
+        PVScenario.CENTRAL: 3480.0,
+        PVScenario.UPPER: 3330.0,
+    }

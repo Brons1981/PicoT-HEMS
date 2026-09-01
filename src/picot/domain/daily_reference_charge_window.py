@@ -79,6 +79,7 @@ class DailyReferenceChargeWindowSet:
     ranking_permitted: bool
     method_version: str
     discovery_status: str = "discovered"
+    hybrid_schedules: tuple[DailyReferenceIntentSchedule, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.window_set_id.strip() or not self.snapshot_id.strip():
@@ -98,6 +99,20 @@ class DailyReferenceChargeWindowSet:
             raise ValueError("Daily charge windows must be unique.")
         if any(item.schedule.snapshot_id != self.snapshot_id for item in self.windows):
             raise ValueError("Daily charge windows must share one snapshot.")
+        hybrid_ids = tuple(item.schedule_id for item in self.hybrid_schedules)
+        if len(hybrid_ids) != len(set(hybrid_ids)):
+            raise ValueError("Daily hybrid charge schedules must be unique.")
+        if any(item.snapshot_id != self.snapshot_id for item in self.hybrid_schedules):
+            raise ValueError("Daily hybrid charge schedules must share one snapshot.")
+        if any(
+            {
+                DailyStorageIntent.NOM,
+                DailyStorageIntent.GRID_REQUIREMENT,
+            }
+            - {interval.intent for interval in schedule.intervals}
+            for schedule in self.hybrid_schedules
+        ):
+            raise ValueError("Daily hybrid schedules require NOM and grid recovery.")
         if not self.observer_only or self.ranking_permitted:
             raise ValueError(
                 "Daily charge windows must remain observer-only and unranked."

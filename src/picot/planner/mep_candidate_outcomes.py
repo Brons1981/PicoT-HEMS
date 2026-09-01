@@ -6,7 +6,7 @@ See ADR-024, ADR-030, ADR-031, ADR-032, ADR-037, V2ADR-055 and V2ADR-062.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 
@@ -78,7 +78,6 @@ from picot.v2.plan_commitment_store import ActivePlanCommitment, CommittedPlanSe
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_outcomes", __name__)
 METHOD_VERSION = "mep-canonical-candidate-outcomes:v2"
-MAX_UNIQUE_COMPOSED_SUFFIX_SIMULATIONS = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -625,78 +624,6 @@ def _committed_schedule(
     )
 
 
-def _compose_committed_prefix(
-    *,
-    snapshot: PlanningInputSnapshot,
-    commitment: ActivePlanCommitment,
-    schedule: DailyReferenceIntentSchedule,
-) -> DailyReferenceIntentSchedule | None:
-    """Keep the admitted prefix and use a challenger only after it ends."""
-
-    intents = {
-        ExecutionPrimitive.BALANCE_DISCHARGE_ONLY.value: DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
-        ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value: DailyStorageIntent.NOM,
-        ExecutionPrimitive.STANDBY.value: DailyStorageIntent.STANDBY,
-        ExecutionPrimitive.CHARGE_AT_POWER.value: DailyStorageIntent.GRID_REQUIREMENT,
-        ExecutionPrimitive.DISCHARGE_AT_POWER.value: DailyStorageIntent.STORAGE_EXPORT,
-    }
-    intervals: list[DailyReferenceIntentInterval] = []
-    for original in schedule.intervals:
-        cursor = original.starts_at
-        while cursor < original.ends_at:
-            if cursor >= commitment.ends_at:
-                intervals.append(replace(original, starts_at=cursor))
-                break
-            segment = next(
-                (
-                    item
-                    for item in commitment.segments
-                    if item.starts_at <= cursor < item.ends_at
-                ),
-                None,
-            )
-            if segment is None or segment.primitive not in intents:
-                return None
-            ends_at = min(original.ends_at, segment.ends_at, commitment.ends_at)
-            intent = intents[segment.primitive]
-            export_target = (
-                segment.storage_export_target_wh or 0.0
-                if intent is DailyStorageIntent.STORAGE_EXPORT
-                else 0.0
-            )
-            if intent is DailyStorageIntent.STORAGE_EXPORT and export_target <= 0.0:
-                return None
-            intervals.append(
-                DailyReferenceIntentInterval(cursor, ends_at, intent, export_target)
-            )
-            cursor = ends_at
-    return DailyReferenceIntentSchedule(
-        schedule_id=_id(
-            "mep-prefix-composed-schedule",
-            f"{commitment.plan_id}|{schedule.schedule_id}|{schedule.horizon_end.isoformat()}",
-        ),
-        snapshot_id=snapshot.snapshot_id,
-        horizon_start=schedule.horizon_start,
-        horizon_end=schedule.horizon_end,
-        intervals=tuple(intervals),
-        method_version=f"{METHOD_VERSION}+committed-prefix:v1",
-    )
-
-
-def _schedule_signature(
-    schedule: DailyReferenceIntentSchedule,
-) -> tuple[tuple[datetime, datetime, str, float], ...]:
-    return tuple(
-        (
-            interval.starts_at,
-            interval.ends_at,
-            interval.intent.value,
-            interval.storage_export_target_wh,
-        )
-        for interval in schedule.intervals
-    )
-
-
 def _simulate_committed(
     *,
     snapshot: PlanningInputSnapshot,
@@ -789,55 +716,6 @@ def produce_mep_comparable_portfolio(
                 route_ids.get(assessment.route_id, ()),
                 (assessment.route_id, assessment.market_schedule_id),
             )
-        )
-
-    if incumbent is not None and reference.horizon_end > incumbent.ends_at:
-        composed_rows: list[_CandidateRow] = []
-        simulations_by_schedule: dict[
-            tuple[tuple[datetime, datetime, str, float], ...],
-            tuple[DailyReferenceIntentSchedule, DailyReferenceStrategyResult],
-        ] = {}
-        for row in rows:
-            composed = _compose_committed_prefix(
-                snapshot=snapshot,
-                commitment=incumbent,
-                schedule=row.schedule,
-            )
-            if composed is None:
-                composed_rows.append(row)
-                continue
-            signature = _schedule_signature(composed)
-            cached = simulations_by_schedule.get(signature)
-            if cached is None:
-                if (
-                    len(simulations_by_schedule)
-                    >= MAX_UNIQUE_COMPOSED_SUFFIX_SIMULATIONS
-                ):
-                    continue
-                composed_result = _simulate_committed(
-                    snapshot=snapshot,
-                    schedule=composed,
-                    conversion_model=conversion_model,
-                )
-                simulations_by_schedule[signature] = (composed, composed_result)
-            else:
-                composed, composed_result = cached
-            composed_rows.append(
-                replace(
-                    row,
-                    schedule=composed,
-                    result=composed_result,
-                    committed_prefix_composed=True,
-                )
-            )
-        rows = composed_rows
-        baseline_candidate_id = native_candidates[
-            baseline.intent_schedule.schedule_id
-        ].candidate_id
-        baseline = next(
-            row.result
-            for row in rows
-            if row.candidate_id == baseline_candidate_id and row.result is not None
         )
 
     incumbent_id: str | None = None

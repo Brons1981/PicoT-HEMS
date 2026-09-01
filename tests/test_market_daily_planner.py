@@ -664,7 +664,7 @@ def test_stored_energy_export_windows_all_retain_absolute_price_peak() -> None:
         ),
     )
 
-    result = MarketDailyPlanner().plan(
+    result, diagnostics = MarketDailyPlanner().plan_with_diagnostics(
         snapshot=replace(snapshot, price_points=points),
         conversion_model=_conversion(),
         storage_inventory=inventory,
@@ -689,6 +689,7 @@ def test_stored_energy_export_windows_all_retain_absolute_price_peak() -> None:
         if assessment.route_id in {route.route_id for route in routes}
     )
     assert any(item.admitted for item in assessments)
+    assert diagnostics.route_assessment_count <= diagnostics.market_route_count * 7
 
 
 def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> None:

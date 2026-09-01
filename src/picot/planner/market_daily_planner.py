@@ -1279,10 +1279,22 @@ class MarketDailyPlanner:
         }
         baseline_schedule_id = native_observation.strategy_space.schedules[0].schedule_id
         baseline_result = results[baseline_schedule_id]
+        native_candidates = {
+            item.intent_schedule_id: item
+            for item in native_observation.observer_result.candidate_set.candidates
+        }
+        hybrid_candidates = tuple(
+            item
+            for schedule_id, item in native_candidates.items()
+            if "hybrid-pv-grid" in schedule_id
+            and item.average_charge_window_price_eur_per_kwh is not None
+        )
+        hybrid_schedule_ids = {item.intent_schedule_id for item in hybrid_candidates}
         hybrid_results = tuple(
             result
             for result in results.values()
             if result.intent_schedule.schedule_id != baseline_schedule_id
+            and result.intent_schedule.schedule_id in hybrid_schedule_ids
             and {
                 interval.intent for interval in result.intent_schedule.intervals
             }.issuperset(
@@ -1292,50 +1304,154 @@ class MarketDailyPlanner:
                 }
             )
         )
-        parent_results = (baseline_result, *hybrid_results)
         adapter = IndependentDailyReferenceAdapter()
         inputs = adapter.build_inputs(
             snapshot,
             horizon_end=tariffs.horizon_end,
             maximum_duration=maximum_duration,
         )
+
+        def representative_hybrid_parents(
+            route: MarketCapacityRoute,
+        ) -> tuple[DailyReferenceStrategyResult, ...]:
+            """Retain one non-dominated hybrid for each route timing role."""
+
+            representatives: dict[
+                str,
+                tuple[tuple[float, float], DailyReferenceStrategyResult],
+            ] = {}
+            export_start = route.export_window_starts_at or route.window_starts_at
+            export_end = route.export_window_ends_at or route.window_ends_at
+            for result in hybrid_results:
+                grid = tuple(
+                    interval
+                    for interval in result.intent_schedule.intervals
+                    if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+                )
+                if not grid:
+                    continue
+                grid_start = grid[0].starts_at
+                grid_end = grid[-1].ends_at
+                role = (
+                    "before_export"
+                    if grid_end <= export_start
+                    else "after_export"
+                    if grid_start >= export_end
+                    else "overlapping_export"
+                )
+                candidate = native_candidates[result.intent_schedule.schedule_id]
+                price = candidate.average_charge_window_price_eur_per_kwh
+                if price is None:
+                    continue
+                # Keep both timing boundaries at the best price. Overlaying a
+                # market window may consume one boundary while the other still
+                # proves recovery. This is a semantic frontier, not a top-N
+                # truncation, and remains bounded to two paths per timing role.
+                for boundary, timing in (
+                    ("earliest", grid_start.timestamp()),
+                    ("latest", -grid_start.timestamp()),
+                ):
+                    key = f"{role}:{boundary}"
+                    score = (price, timing)
+                    retained = representatives.get(key)
+                    if retained is None or score < retained[0]:
+                        representatives[key] = (score, result)
+            return tuple(
+                dict.fromkeys(item[1] for item in representatives.values())
+            )
+
         assessments: list[MarketRouteAssessment] = []
         for route in routes:
-            for parent_result in parent_results:
+            # Stored-inventory export and negative-capacity routes already
+            # describe a complete acquisition-independent path. Combining
+            # every such route with every hybrid recovery parent creates a
+            # Cartesian product of paths that represent a different route
+            # family and made rolling-horizon planning grow explosively.
+            # Acquisition-linked trade routes retain the hybrid parents added
+            # by DEV.215 so PV + residual grid + evening trade remains a
+            # first-class complete Energy Path.
+            applicable_parents = (
+                (baseline_result,)
+                if route.route_kind in {"stored_energy_export", "negative_capacity"}
+                else (baseline_result, *representative_hybrid_parents(route))
+            )
+            simulated_by_effective_path: dict[
+                tuple[tuple[datetime, datetime, str, float], ...],
+                DailyReferenceStrategyResult,
+            ] = {}
+            assessment_by_effective_path: dict[
+                tuple[
+                    tuple[tuple[datetime, datetime, str, float], ...],
+                    str,
+                ],
+                MarketRouteAssessment,
+            ] = {}
+            for parent_result in applicable_parents:
                 schedule = self._market_schedule(
                     parent_result.intent_schedule,
                     snapshot=snapshot,
                     route=route,
                     maximum_discharge_output_power_w=(inputs.maximum_discharge_output_power_w),
                 )
-                market_result = (
-                    IndependentDailyReferencePortfolioProducer()
-                    .produce(
-                        snapshot_id=snapshot.snapshot_id,
-                        household=inputs.household,
-                        pv_scenarios=inputs.pv_scenarios,
-                        storage_state=inputs.storage,
-                        conversion_model=conversion_model,
-                        tariffs=tariffs,
-                        intent_schedules=(schedule,),
-                        minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
-                        target_storage_energy_wh=inputs.target_storage_energy_wh,
-                        maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
-                        maximum_discharge_output_power_w=(inputs.maximum_discharge_output_power_w),
+                signature = tuple(
+                    (
+                        interval.starts_at,
+                        interval.ends_at,
+                        interval.intent.value,
+                        interval.storage_export_target_wh,
                     )
-                    .strategy_results[0]
+                    for interval in schedule.intervals
                 )
-                assessments.append(
-                    self._assessment(
-                        route=route,
-                        parent_result=parent_result,
-                        market_result=market_result,
-                        wear_eur_per_export_kwh=trading_policy.wear_eur_per_export_kwh,
-                        minimum_total_route_profit_eur=(
-                            trading_policy.minimum_total_route_profit_eur
-                        ),
+                market_result = simulated_by_effective_path.get(signature)
+                if market_result is None:
+                    market_result = (
+                        IndependentDailyReferencePortfolioProducer()
+                        .produce(
+                            snapshot_id=snapshot.snapshot_id,
+                            household=inputs.household,
+                            pv_scenarios=inputs.pv_scenarios,
+                            storage_state=inputs.storage,
+                            conversion_model=conversion_model,
+                            tariffs=tariffs,
+                            intent_schedules=(schedule,),
+                            minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+                            target_storage_energy_wh=inputs.target_storage_energy_wh,
+                            maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+                            maximum_discharge_output_power_w=(
+                                inputs.maximum_discharge_output_power_w
+                            ),
+                        )
+                        .strategy_results[0]
                     )
+                    simulated_by_effective_path[signature] = market_result
+                assessment = self._assessment(
+                    route=route,
+                    parent_result=parent_result,
+                    market_result=market_result,
+                    assessed_schedule=schedule,
+                    wear_eur_per_export_kwh=trading_policy.wear_eur_per_export_kwh,
+                    minimum_total_route_profit_eur=(
+                        trading_policy.minimum_total_route_profit_eur
+                    ),
                 )
+                parent_kind = (
+                    "hybrid"
+                    if parent_result.intent_schedule.schedule_id != baseline_schedule_id
+                    else "baseline"
+                )
+                assessment_key = (signature, parent_kind)
+                retained = assessment_by_effective_path.get(assessment_key)
+                if retained is None or (
+                    assessment.admitted,
+                    assessment.worst_case_incremental_result_eur,
+                    assessment.minimum_incremental_result_eur_per_exported_kwh,
+                ) > (
+                    retained.admitted,
+                    retained.worst_case_incremental_result_eur,
+                    retained.minimum_incremental_result_eur_per_exported_kwh,
+                ):
+                    assessment_by_effective_path[assessment_key] = assessment
+            assessments.extend(assessment_by_effective_path.values())
         return tuple(assessments)
 
     @staticmethod
@@ -1479,6 +1595,7 @@ class MarketDailyPlanner:
         route: MarketCapacityRoute,
         parent_result: DailyReferenceStrategyResult,
         market_result: DailyReferenceStrategyResult,
+        assessed_schedule: DailyReferenceIntentSchedule | None = None,
         wear_eur_per_export_kwh: float,
         minimum_total_route_profit_eur: float,
     ) -> MarketRouteAssessment:
@@ -1493,9 +1610,10 @@ class MarketDailyPlanner:
         wear_values: list[float] = []
         scenario_evidence: list[MarketRouteScenarioEvidence] = []
         market_trajectories = {item.scenario: item for item in market_run.simulation.trajectories}
+        schedule = assessed_schedule or market_result.intent_schedule
         explicit_charge_intervals = {
             (item.starts_at, item.ends_at)
-            for item in market_result.intent_schedule.intervals
+            for item in schedule.intervals
             if item.intent is DailyStorageIntent.GRID_REQUIREMENT
         }
         for scenario in PVScenario:
@@ -1607,8 +1725,8 @@ class MarketDailyPlanner:
         return MarketRouteAssessment(
             route_id=route.route_id,
             source_native_schedule_id=parent_result.intent_schedule.schedule_id,
-            market_schedule_id=market_result.intent_schedule.schedule_id,
-            intent_schedule=market_result.intent_schedule,
+            market_schedule_id=schedule.schedule_id,
+            intent_schedule=schedule,
             physically_admissible=physically_admissible,
             incremental_wear_eur=max(wear_values),
             worst_case_incremental_result_eur=worst_result,

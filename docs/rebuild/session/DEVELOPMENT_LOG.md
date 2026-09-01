@@ -985,6 +985,34 @@ Live verification, 2026-08-22:
 
 Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 
+## 2026-09-01 — 2.0.0-dev.222 household reserve and next-day PV path
+
+- Live dev.221 showed an unnecessary late grid charge from roughly 82% to the
+  effective maximum and only a generic household-support segment for the next
+  day. The diagnostic download was also truncated before its ZIP central
+  directory, so it contained no current dev.221 detail poll.
+- Restored ADR-037's separation between desired PV capture and required stored
+  household energy. Grid necessity now uses the configured lower SoC plus the
+  configurable `household_unexpected_reserve_percent` User Rule (default 10%),
+  capped by the effective maximum. Free battery capacity is no longer treated
+  as required grid energy.
+- Kept a separate conservative PV-capture Candidate. Every interval with PV on
+  the confidence-selected lower/central basis is published as NOM, including
+  next-day PV intervals, even when that PV cannot fill the battery completely.
+- A grid or hybrid Candidate is invalid when the baseline already preserves the
+  household requirement at its deadline. Grid completion remains available
+  when the projected path actually falls below the requirement.
+- Diagnostic ZIPs are now completely constructed before HTTP headers are sent
+  and include an exact `Content-Length`; clients cannot receive an archive
+  whose central directory is still being written.
+- Regression coverage proves no grid fill from 60% or 82% when household and
+  reserve are covered, a delayed next-day NOM/PV segment, retained necessary
+  grid recovery for a late invalid incumbent, and a complete downloadable ZIP.
+- Pre-release verification: all 1124 tests passed, including embedded
+  JavaScript syntax validation; Ruff, mypy and `git diff --check` passed.
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
 ## 2026-09-01 — 2.0.0-dev.221 bounded physical MEP recovery
 
 - Restored ADR-001 through ADR-037 as the authoritative planning boundary and

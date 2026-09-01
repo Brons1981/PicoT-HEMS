@@ -13,7 +13,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Condition, Lock
-from typing import BinaryIO, TypedDict, cast
+from typing import TypedDict
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -23,7 +23,7 @@ from picot.v2.contracts import (
     DelegatedStorageCandidateOutcome,
     PriceForecastPoint,
 )
-from picot.v2.diagnostic_downloads import incident_overview, write_diagnostic_zip
+from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.projection import Projection
 from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
@@ -59,10 +59,7 @@ def _power_history_display_points(
         covered_seconds: float
         average: float | None
         if series.history_semantics == "state_hold":
-            while (
-                point_index < len(points)
-                and points[point_index].sampled_at <= bucket_start
-            ):
+            while point_index < len(points) and points[point_index].sampled_at <= bucket_start:
                 held_point = points[point_index]
                 point_index += 1
             current = held_point
@@ -72,10 +69,7 @@ def _power_history_display_points(
             used_evidence: list[str] = []
             if current is not None:
                 used_evidence.append(current.evidence_id)
-            while (
-                point_index < len(points)
-                and points[point_index].sampled_at < bucket_end
-            ):
+            while point_index < len(points) and points[point_index].sampled_at < bucket_end:
                 transition = points[point_index]
                 if current is not None and cursor is not None:
                     duration = (transition.sampled_at - cursor).total_seconds()
@@ -90,23 +84,13 @@ def _power_history_display_points(
                 duration = (bucket_end - cursor).total_seconds()
                 weighted_power_seconds += current.power_w * duration
                 covered_seconds += duration
-            average = (
-                weighted_power_seconds / covered_seconds
-                if covered_seconds > 0
-                else None
-            )
+            average = weighted_power_seconds / covered_seconds if covered_seconds > 0 else None
             evidence_ids = tuple(dict.fromkeys(used_evidence))
         else:
-            while (
-                point_index < len(points)
-                and points[point_index].sampled_at < bucket_start
-            ):
+            while point_index < len(points) and points[point_index].sampled_at < bucket_start:
                 point_index += 1
             bucket_points = []
-            while (
-                point_index < len(points)
-                and points[point_index].sampled_at < bucket_end
-            ):
+            while point_index < len(points) and points[point_index].sampled_at < bucket_end:
                 bucket_points.append(points[point_index])
                 point_index += 1
             covered_seconds = (bucket_end - bucket_start).total_seconds()
@@ -118,14 +102,14 @@ def _power_history_display_points(
             evidence_ids = tuple(point.evidence_id for point in bucket_points)
         if average is not None:
             bucket_seconds = (bucket_end - bucket_start).total_seconds()
-            result.append({
-                "sampled_at": (
-                    bucket_start + (bucket_end - bucket_start) / 2
-                ).isoformat(),
-                "power_w": average,
-                "coverage_ratio": min(1.0, covered_seconds / bucket_seconds),
-                "derived_from_evidence_ids": list(evidence_ids),
-            })
+            result.append(
+                {
+                    "sampled_at": (bucket_start + (bucket_end - bucket_start) / 2).isoformat(),
+                    "power_w": average,
+                    "coverage_ratio": min(1.0, covered_seconds / bucket_seconds),
+                    "derived_from_evidence_ids": list(evidence_ids),
+                }
+            )
         bucket_start = bucket_end
     return result
 
@@ -158,9 +142,7 @@ def _self_consumption_history_view(
             "available": False,
             "status": power_history.status,
             "error": (
-                "missing_roles:" + ",".join(missing_roles)
-                if missing_roles
-                else power_history.error
+                "missing_roles:" + ",".join(missing_roles) if missing_roles else power_history.error
             ),
             "starts_at": power_history.starts_at.isoformat(),
             "ends_at": power_history.ends_at.isoformat(),
@@ -179,14 +161,8 @@ def _self_consumption_history_view(
         )
         for role in ("pv_generation", "grid_export", "grid_import")
     }
-    pv_by_time = {
-        point["sampled_at"]: point
-        for point in display_by_role["pv_generation"]
-    }
-    export_by_time = {
-        point["sampled_at"]: point
-        for point in display_by_role["grid_export"]
-    }
+    pv_by_time = {point["sampled_at"]: point for point in display_by_role["pv_generation"]}
+    export_by_time = {point["sampled_at"]: point for point in display_by_role["grid_export"]}
     local_pv_points: list[_DisplayPowerPoint] = []
     for sampled_at, pv_point in pv_by_time.items():
         export_point = export_by_time.get(sampled_at)
@@ -194,18 +170,24 @@ def _self_consumption_history_view(
             continue
         pv_power_w = max(0.0, pv_point["power_w"])
         grid_export_w = max(0.0, export_point["power_w"])
-        local_pv_points.append({
-            "sampled_at": sampled_at,
-            "power_w": min(pv_power_w, max(0.0, pv_power_w - grid_export_w)),
-            "coverage_ratio": min(
-                pv_point["coverage_ratio"],
-                export_point["coverage_ratio"],
-            ),
-            "derived_from_evidence_ids": list(dict.fromkeys([
-                *pv_point["derived_from_evidence_ids"],
-                *export_point["derived_from_evidence_ids"],
-            ])),
-        })
+        local_pv_points.append(
+            {
+                "sampled_at": sampled_at,
+                "power_w": min(pv_power_w, max(0.0, pv_power_w - grid_export_w)),
+                "coverage_ratio": min(
+                    pv_point["coverage_ratio"],
+                    export_point["coverage_ratio"],
+                ),
+                "derived_from_evidence_ids": list(
+                    dict.fromkeys(
+                        [
+                            *pv_point["derived_from_evidence_ids"],
+                            *export_point["derived_from_evidence_ids"],
+                        ]
+                    )
+                ),
+            }
+        )
 
     current_pv_w = max(0.0, by_role["pv_generation"].points[-1].power_w)
     current_export_w = max(0.0, by_role["grid_export"].points[-1].power_w)
@@ -217,9 +199,7 @@ def _self_consumption_history_view(
         "error": None,
         "starts_at": power_history.starts_at.isoformat(),
         "ends_at": power_history.ends_at.isoformat(),
-        "display_interval_seconds": int(
-            SELF_CONSUMPTION_DISPLAY_INTERVAL.total_seconds()
-        ),
+        "display_interval_seconds": int(SELF_CONSUMPTION_DISPLAY_INTERVAL.total_seconds()),
         "definition": "clamp(pv_generation_w-grid_export_w,0,pv_generation_w)",
         "current_values": {
             "pv_generation": current_pv_w,
@@ -257,36 +237,30 @@ def _power_history_view(
     starts_at = power_history.starts_at if power_history is not None else None
     ends_at = power_history.ends_at if power_history is not None else None
     return {
-        "available": power_history is not None
-        and power_history.status == "available",
+        "available": power_history is not None and power_history.status == "available",
         "status": power_history.status if power_history is not None else "unavailable",
         "error": power_history.error if power_history is not None else None,
         "starts_at": starts_at.isoformat() if starts_at is not None else None,
         "ends_at": ends_at.isoformat() if ends_at is not None else None,
-        "method_version": (
-            power_history.method_version if power_history is not None else None
-        ),
+        "method_version": (power_history.method_version if power_history is not None else None),
         "display_aggregation": "five_minute_average",
-        "display_interval_seconds": int(
-            POWER_HISTORY_DISPLAY_INTERVAL.total_seconds()
-        ),
+        "display_interval_seconds": int(POWER_HISTORY_DISPLAY_INTERVAL.total_seconds()),
         "display_curve": "linear_between_bucket_averages",
-        "pv_actual_display_interval_seconds": int(
-            PV_ACTUAL_DISPLAY_INTERVAL.total_seconds()
-        ),
-        "pv_actual_display_points": next((
-            _power_history_display_points(
-                series,
-                starts_at=starts_at,
-                ends_at=ends_at,
-                interval=PV_ACTUAL_DISPLAY_INTERVAL,
-            )
-            for series in power_history.series
-            if series.role == "pv_generation"
-        ), [])
-        if power_history is not None
-        and starts_at is not None
-        and ends_at is not None
+        "pv_actual_display_interval_seconds": int(PV_ACTUAL_DISPLAY_INTERVAL.total_seconds()),
+        "pv_actual_display_points": next(
+            (
+                _power_history_display_points(
+                    series,
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    interval=PV_ACTUAL_DISPLAY_INTERVAL,
+                )
+                for series in power_history.series
+                if series.role == "pv_generation"
+            ),
+            [],
+        )
+        if power_history is not None and starts_at is not None and ends_at is not None
         else [],
         "series": [
             {
@@ -980,14 +954,9 @@ DASHBOARD_HTML = """<!doctype html>
           <a href="downloads/planning-incidents.jsonl" download>
             Download incidenthistorie
           </a>
-          <a
-            id="diagnostic-download-link"
-            href="downloads/picot-diagnostics.zip"
-            download
-          >
+          <a href="downloads/picot-diagnostics.zip" download>
             Download alle diagnosebestanden
           </a>
-          <span id="diagnostic-download-status" role="status" aria-live="polite"></span>
         </div>
         <div id="planning-incident-history">
           Nog geen fallbackincidenten vastgelegd.
@@ -4089,10 +4058,6 @@ DASHBOARD_HTML = """<!doctype html>
       resetStorageModeOverride
     );
     element("reset-planning").addEventListener("click", resetPlanning);
-    element("diagnostic-download-link").addEventListener("click", () => {
-      element("diagnostic-download-status").textContent =
-        "Diagnosebestand wordt voorbereid; de download start zo.";
-    });
     initializeTabs();
     loadView().finally(watchViewUpdates);
     setInterval(loadView, 60000);
@@ -4113,13 +4078,9 @@ class WebViewStore:
         self._retired_comparison_history: dict[str, object] | None = None
         self._financial_results: dict[str, object] | None = None
         self._revision = 0
-        self._reset_storage_mode_override: (
-            Callable[[str], dict[str, object]] | None
-        ) = None
+        self._reset_storage_mode_override: Callable[[str], dict[str, object]] | None = None
         self._reset_planning: Callable[[str], dict[str, object]] | None = None
-        self._mark_planner_stress: (
-            Callable[[str, str], dict[str, object]] | None
-        ) = None
+        self._mark_planner_stress: Callable[[str, str], dict[str, object]] | None = None
         self._diagnostic_paths: tuple[Path, ...] = ()
         self._incident_history_path: Path | None = None
 
@@ -4141,10 +4102,7 @@ class WebViewStore:
             if not isinstance(sources, list):
                 return
             for index, candidate in enumerate(sources):
-                if (
-                    isinstance(candidate, dict)
-                    and candidate.get("semantic_role") == "grid_power"
-                ):
+                if isinstance(candidate, dict) and candidate.get("semantic_role") == "grid_power":
                     sources[index] = dict(source)
                     return
 
@@ -4154,9 +4112,7 @@ class WebViewStore:
     ) -> None:
         self._overlay_fast_grid_power_source(view)
         if self._retired_comparison_history is not None:
-            view["retired_comparison_history"] = dict(
-                self._retired_comparison_history
-            )
+            view["retired_comparison_history"] = dict(self._retired_comparison_history)
         if self._financial_results is not None:
             view["financial_results"] = dict(self._financial_results)
         self._latest_json = json.dumps(view, separators=(",", ":"))
@@ -4214,8 +4170,7 @@ class WebViewStore:
                 attributes["sources"] = copied
                 attributes["source_count"] = len(copied)
                 attributes["source_available_count"] = sum(
-                    isinstance(source, dict)
-                    and source.get("availability") == "available"
+                    isinstance(source, dict) and source.get("availability") == "available"
                     for source in copied
                 )
                 break
@@ -4367,9 +4322,7 @@ def create_web_server(
     *,
     host: str,
     port: int,
-    reset_storage_mode_override: (
-        Callable[[str], dict[str, object]] | None
-    ) = None,
+    reset_storage_mode_override: (Callable[[str], dict[str, object]] | None) = None,
     reset_planning: Callable[[str], dict[str, object]] | None = None,
 ) -> ThreadingHTTPServer:
     """Create, but do not start, the read-only observer HTTP server."""
@@ -4418,14 +4371,13 @@ def create_web_server(
             self.end_headers()
             self.wfile.write(encoded)
 
-        def _send_file_download(
+        def _send_download(
             self,
-            path: Path,
+            body: bytes,
             *,
             content_type: str,
             filename: str,
         ) -> None:
-            file_size = path.stat().st_size
             self.send_response(int(HTTPStatus.OK))
             self.send_header("Content-Type", content_type)
             self.send_header(
@@ -4434,30 +4386,9 @@ def create_web_server(
             )
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Length", str(file_size))
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            with path.open("rb") as source:
-                remaining = file_size
-                while remaining > 0:
-                    chunk = source.read(min(1024 * 1024, remaining))
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    remaining -= len(chunk)
-
-        def _send_diagnostic_zip(self, paths: tuple[Path, ...]) -> None:
-            self.send_response(int(HTTPStatus.OK))
-            self.send_header("Content-Type", "application/zip")
-            self.send_header(
-                "Content-Disposition",
-                'attachment; filename="picot-diagnostics.zip"',
-            )
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Connection", "close")
-            self.end_headers()
-            self.close_connection = True
-            write_diagnostic_zip(cast(BinaryIO, self.wfile), paths)
+            self.wfile.write(body)
 
         def do_GET(self) -> None:
             parsed_url = urlsplit(self.path)
@@ -4485,23 +4416,13 @@ def create_web_server(
                     return
                 self._send_json(
                     HTTPStatus.OK,
-                    (
-                        '{"revision":'
-                        + str(current_revision)
-                        + ',"view":'
-                        + latest
-                        + "}"
-                    ),
+                    ('{"revision":' + str(current_revision) + ',"view":' + latest + "}"),
                 )
                 return
 
             if path == "/api/diagnostics/incidents":
                 incident_path = store.incident_history_path()
-                overview = (
-                    incident_overview(incident_path)
-                    if incident_path is not None
-                    else []
-                )
+                overview = incident_overview(incident_path) if incident_path is not None else []
                 self._send_json(
                     HTTPStatus.OK,
                     json.dumps(overview, separators=(",", ":")),
@@ -4516,15 +4437,19 @@ def create_web_server(
                         '{"status":"incident_history_not_found"}',
                     )
                     return
-                self._send_file_download(
-                    incident_path,
+                self._send_download(
+                    incident_path.read_bytes(),
                     content_type="application/x-ndjson",
                     filename=incident_path.name,
                 )
                 return
 
             if path == "/downloads/picot-diagnostics.zip":
-                self._send_diagnostic_zip(store.diagnostic_paths())
+                self._send_download(
+                    diagnostic_zip(store.diagnostic_paths()),
+                    content_type="application/zip",
+                    filename="picot-diagnostics.zip",
+                )
                 return
 
             if path != "/api/view":
@@ -4563,28 +4488,17 @@ def create_web_server(
             reset = (
                 reset_planning or store.planning_reset()
                 if path == "/api/planning/reset"
-                else reset_storage_mode_override
-                or store.storage_mode_override_reset()
+                else reset_storage_mode_override or store.storage_mode_override_reset()
             )
             stress = (
-                store.planner_stress_marker()
-                if path == "/api/planner-comparison/stress"
-                else None
+                store.planner_stress_marker() if path == "/api/planner-comparison/stress" else None
             )
             if stress is not None:
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                     payload = json.loads(self.rfile.read(length))
-                    marker_id = (
-                        payload.get("marker_id")
-                        if isinstance(payload, dict)
-                        else None
-                    )
-                    note = (
-                        payload.get("note", "")
-                        if isinstance(payload, dict)
-                        else ""
-                    )
+                    marker_id = payload.get("marker_id") if isinstance(payload, dict) else None
+                    note = payload.get("note", "") if isinstance(payload, dict) else ""
                     if not isinstance(marker_id, str) or not isinstance(note, str):
                         raise ValueError
                     result = stress(marker_id, note)
@@ -4613,10 +4527,7 @@ def create_web_server(
                 if not isinstance(payload, dict):
                     raise ValueError("reset payload must be an object")
                 reset_id = payload.get("reset_id")
-                if (
-                    not isinstance(reset_id, str)
-                    or not reset_id.strip()
-                ):
+                if not isinstance(reset_id, str) or not reset_id.strip():
                     raise ValueError("reset_id is required")
             except (json.JSONDecodeError, TypeError, ValueError):
                 self._send_json(
@@ -4697,14 +4608,8 @@ def pipeline_result_nl(
         return "Uitvoering is niet gestart; PicoT kijkt alleen mee."
     if stage == 7:
         blockers = attributes.get("blockers")
-        if (
-            isinstance(blockers, (list, tuple))
-            and "manual_override_active" in blockers
-        ):
-            return (
-                "Uitvoering is geblokkeerd omdat een handmatige "
-                "instelling actief is."
-            )
+        if isinstance(blockers, (list, tuple)) and "manual_override_active" in blockers:
+            return "Uitvoering is geblokkeerd omdat een handmatige instelling actief is."
         normal_result = attributes.get("normal_result")
         if isinstance(normal_result, str) and normal_result.strip():
             return normal_result
@@ -4810,10 +4715,7 @@ def _period_nl(starts_at: object, ends_at: object) -> str:
     timezone = ZoneInfo("Europe/Amsterdam")
     start = starts_at.astimezone(timezone)
     end = ends_at.astimezone(timezone)
-    return (
-        f"{start:%d-%m-%Y %H:%M} tot "
-        f"{end:%d-%m-%Y %H:%M}"
-    )
+    return f"{start:%d-%m-%Y %H:%M} tot {end:%d-%m-%Y %H:%M}"
 
 
 def _opportunity_label(kind: str) -> tuple[str, str]:
@@ -4850,8 +4752,7 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
                 "confidence_nl": f"Zekerheid {confidence}%",
                 "reason_nl": reason.capitalize() + ".",
                 "summary_nl": (
-                    f"{period}: € {price}/kWh, zekerheid {confidence}%. "
-                    f"Relevant omdat {reason}."
+                    f"{period}: € {price}/kWh, zekerheid {confidence}%. Relevant omdat {reason}."
                 ),
             }
         )
@@ -4859,23 +4760,16 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
         {
             "label_nl": label,
             "count": len(items),
-            "summary_nl": (
-                f"{len(items)}× {label.lower()}: {group_reasons[label]}."
-            ),
+            "summary_nl": (f"{len(items)}× {label.lower()}: {group_reasons[label]}."),
             "items": items,
         }
         for label, items in sorted(grouped.items())
     ]
 
-    outcomes_by_candidate = {
-        outcome.candidate_id: outcome for outcome in run.outcomes.outcomes
-    }
-    paths_by_id = {
-        path.path_id: path for path in run.candidate_set.energy_paths
-    }
+    outcomes_by_candidate = {outcome.candidate_id: outcome for outcome in run.outcomes.outcomes}
+    paths_by_id = {path.path_id: path for path in run.candidate_set.energy_paths}
     pv_candidate_count = sum(
-        candidate.family == "pv_charge_only"
-        for candidate in run.candidate_set.candidates
+        candidate.family == "pv_charge_only" for candidate in run.candidate_set.candidates
     )
     local_capture_date = run.planning_input.captured_at.astimezone(
         ZoneInfo("Europe/Amsterdam")
@@ -4893,17 +4787,13 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
             local_timezone = ZoneInfo("Europe/Amsterdam")
             segments_by_date: dict[date, list[PathSegment]] = {}
             for segment in path.segments:
-                segment_date = segment.starts_at.astimezone(
-                    local_timezone
-                ).date()
+                segment_date = segment.starts_at.astimezone(local_timezone).date()
                 segments_by_date.setdefault(segment_date, []).append(segment)
             phase_dates = tuple(segments_by_date)
             phases: list[dict[str, object]] = []
             for phase_index, phase_date in enumerate(phase_dates):
                 phase_segments = segments_by_date[phase_date]
-                phase_start = min(
-                    segment.starts_at for segment in phase_segments
-                )
+                phase_start = min(segment.starts_at for segment in phase_segments)
                 phase_end = max(segment.ends_at for segment in phase_segments)
                 if phase_date == local_capture_date:
                     phase_label = (
@@ -4913,9 +4803,7 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
                     )
                 elif phase_date == local_capture_date + timedelta(days=1):
                     phase_label = (
-                        "Morgen aanvullen met PV"
-                        if phase_index > 0
-                        else "Morgen laden met PV"
+                        "Morgen aanvullen met PV" if phase_index > 0 else "Morgen laden met PV"
                     )
                 else:
                     phase_label = f"{phase_date:%d-%m} laden met PV"
@@ -4928,9 +4816,7 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
                         "segment_count": len(phase_segments),
                     }
                 )
-            window_date = outcome.charge_window_starts_at.astimezone(
-                local_timezone
-            ).date()
+            window_date = outcome.charge_window_starts_at.astimezone(local_timezone).date()
             day_prefix = ""
             if pv_candidate_count > 1:
                 if window_date == local_capture_date:
@@ -4948,9 +4834,7 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
                 local_capture_date in phase_dates
                 and local_capture_date + timedelta(days=1) in phase_dates
             ):
-                label = (
-                    "Vandaag en morgen laden met verwachte zonne-energie"
-                )
+                label = "Vandaag en morgen laden met verwachte zonne-energie"
             period = _period_nl(
                 outcome.charge_window_starts_at,
                 outcome.charge_window_ends_at,
@@ -4960,14 +4844,15 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
                 f"{_number_nl(outcome.pv_storage_contribution_wh / 1000)} kWh"
             )
             grid_energy = (
-                "Verwacht netladen: "
-                f"{_number_nl(outcome.grid_storage_contribution_wh / 1000)} kWh"
+                f"Verwacht netladen: {_number_nl(outcome.grid_storage_contribution_wh / 1000)} kWh"
             )
-            remaining_to_target_kwh = max(
-                0.0,
-                outcome.required_energy_wh
-                - outcome.storage_energy_at_requirement_wh,
-            ) / 1000
+            remaining_to_target_kwh = (
+                max(
+                    0.0,
+                    outcome.required_energy_wh - outcome.storage_energy_at_requirement_wh,
+                )
+                / 1000
+            )
             reason = (
                 (
                     "Gekozen omdat het batterijdoel met verwachte PV en zonder "
@@ -5046,8 +4931,7 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
         )
         decision_reason = (
             "Dit plan haalt het batterijdoel met verwachte PV en zonder netladen."
-            if winning_outcome is not None
-            and winning_outcome.requirement_satisfied
+            if winning_outcome is not None and winning_outcome.requirement_satisfied
             else (
                 "Dit plan slaat zoveel mogelijk verwachte PV op zonder netladen; "
                 "het volledige batterijdoel is binnen de deadline niet haalbaar."
@@ -5089,22 +4973,13 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
 def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
     """Expose one pipeline run as facts without deriving new conclusions."""
     candidates_by_id = {
-        candidate.candidate_id: candidate
-        for candidate in run.candidate_set.candidates
+        candidate.candidate_id: candidate for candidate in run.candidate_set.candidates
     }
-    outcomes_by_candidate = {
-        outcome.candidate_id: outcome
-        for outcome in run.outcomes.outcomes
-    }
-    energy_paths_by_id = {
-        path.path_id: path
-        for path in run.candidate_set.energy_paths
-    }
+    outcomes_by_candidate = {outcome.candidate_id: outcome for outcome in run.outcomes.outcomes}
+    energy_paths_by_id = {path.path_id: path for path in run.candidate_set.energy_paths}
     winning_candidate_id = run.evaluation.winning_candidate_id
     winning_candidate = (
-        candidates_by_id.get(winning_candidate_id)
-        if winning_candidate_id is not None
-        else None
+        candidates_by_id.get(winning_candidate_id) if winning_candidate_id is not None else None
     )
     winning_outcome = (
         outcomes_by_candidate.get(winning_candidate_id)
@@ -5116,18 +4991,18 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         if run.evaluation.winning_energy_path_id is not None
         else None
     )
-    winning_execution_plans = tuple(sorted(
-        (
-            plan
-            for plan in run.execution_plan_set.plans
-            if plan.winning_candidate_id == winning_candidate_id
-        ),
-        key=lambda plan: (plan.valid_from, plan.valid_until, plan.plan_id),
-    ))
+    winning_execution_plans = tuple(
+        sorted(
+            (
+                plan
+                for plan in run.execution_plan_set.plans
+                if plan.winning_candidate_id == winning_candidate_id
+            ),
+            key=lambda plan: (plan.valid_from, plan.valid_until, plan.plan_id),
+        )
+    )
     winning_execution_plan = (
-        winning_execution_plans[0]
-        if len(winning_execution_plans) == 1
-        else None
+        winning_execution_plans[0] if len(winning_execution_plans) == 1 else None
     )
     winning_commitment = (
         next(
@@ -5135,8 +5010,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 commitment
                 for commitment in run.planning_input.active_plan_commitments
                 if commitment.plan_id == winning_execution_plan.plan_id
-                and commitment.execution_scope_id
-                == winning_execution_plan.execution_scope_id
+                and commitment.execution_scope_id == winning_execution_plan.execution_scope_id
             ),
             None,
         )
@@ -5154,8 +5028,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         None,
     )
     storage_states_by_id = {
-        state.storage_state_id: state
-        for state in run.planning_input.current_storage_states
+        state.storage_state_id: state for state in run.planning_input.current_storage_states
     }
     initial_storage_state = (
         storage_states_by_id.get(requirement.storage_state_id)
@@ -5165,8 +5038,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 state
                 for state in run.planning_input.current_storage_states
                 if winning_execution_plan is not None
-                and state.execution_scope_id
-                == winning_execution_plan.execution_scope_id
+                and state.execution_scope_id == winning_execution_plan.execution_scope_id
             ),
             None,
         )
@@ -5203,16 +5075,15 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
     fallback_active = run.evaluation.status == "fallback_active"
     soc_timeline: list[dict[str, object]] = []
     if initial_storage_state is not None and winning_energy_path is not None:
-        soc_timeline.append({
-            "at": run.planning_input.captured_at.isoformat(),
-            "soc_percent": round(initial_storage_state.current_soc * 100, 2),
-            "primitive": "actual",
-        })
+        soc_timeline.append(
+            {
+                "at": run.planning_input.captured_at.isoformat(),
+                "soc_percent": round(initial_storage_state.current_soc * 100, 2),
+                "primitive": "actual",
+            }
+        )
         for state in winning_energy_path.projected_states:
-            if (
-                state.at <= run.planning_input.captured_at
-                or state.battery_soc is None
-            ):
+            if state.at <= run.planning_input.captured_at or state.battery_soc is None:
                 continue
             segment = next(
                 (
@@ -5222,21 +5093,19 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 ),
                 None,
             )
-            soc_timeline.append({
-                "at": state.at.isoformat(),
-                "soc_percent": round(state.battery_soc * 100, 2),
-                "primitive": (
-                    segment.primitive.value if segment is not None else "projected"
-                ),
-            })
+            soc_timeline.append(
+                {
+                    "at": state.at.isoformat(),
+                    "soc_percent": round(state.battery_soc * 100, 2),
+                    "primitive": (segment.primitive.value if segment is not None else "projected"),
+                }
+            )
     return {
         "run_id": run.planning_input.run_id,
         "snapshot_id": run.planning_input.snapshot_id,
         "captured_at": run.planning_input.captured_at.isoformat(),
         "initial_soc": (
-            initial_storage_state.current_soc
-            if initial_storage_state is not None
-            else None
+            initial_storage_state.current_soc if initial_storage_state is not None else None
         ),
         "soc_timeline": soc_timeline if not fallback_active else [],
         "valid_until": (
@@ -5246,14 +5115,8 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         ),
         "attention": {
             "required": fallback_active,
-            "code": (
-                "fallback_no_actionable_plan" if fallback_active else None
-            ),
-            "title": (
-                "Geen uitvoerbaar plan beschikbaar"
-                if fallback_active
-                else None
-            ),
+            "code": ("fallback_no_actionable_plan" if fallback_active else None),
+            "title": ("Geen uitvoerbaar plan beschikbaar" if fallback_active else None),
             "message": (
                 "De veilige terugvalmodus blijft actief; aandacht vereist."
                 if fallback_active
@@ -5263,21 +5126,13 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         "strategy": {
             "status": regime.regime if regime is not None else "not_available",
             "reason": regime.reason if regime is not None else "not_available",
-            "objective_order": (
-                list(regime.objective_order) if regime is not None else []
-            ),
-            "forecast_confidence": (
-                regime.forecast_confidence if regime is not None else None
-            ),
+            "objective_order": (list(regime.objective_order) if regime is not None else []),
+            "forecast_confidence": (regime.forecast_confidence if regime is not None else None),
             "forecast_confidence_available": (
-                regime.forecast_confidence_available
-                if regime is not None
-                else False
+                regime.forecast_confidence_available if regime is not None else False
             ),
             "forecast_confidence_method_version": (
-                regime.forecast_confidence_method_version
-                if regime is not None
-                else None
+                regime.forecast_confidence_method_version if regime is not None else None
             ),
             "storage_target_at_risk": (
                 regime.storage_target_at_risk if regime is not None else None
@@ -5292,34 +5147,20 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             ),
             "reason": run.evaluation.reason,
             "decisive_step": run.evaluation.decisive_step,
-            "confidence": (
-                winning_outcome.confidence
-                if winning_outcome is not None
-                else None
-            ),
+            "confidence": (winning_outcome.confidence if winning_outcome is not None else None),
         },
         "storage_target": {
             "required_energy_wh": (
-                requirement.required_energy_wh
-                if requirement is not None
-                else None
+                requirement.required_energy_wh if requirement is not None else None
             ),
-            "required_soc": (
-                requirement.required_soc if requirement is not None else None
-            ),
+            "required_soc": (requirement.required_soc if requirement is not None else None),
             "required_by": (
-                requirement.required_by.isoformat()
-                if requirement is not None
-                else None
+                requirement.required_by.isoformat() if requirement is not None else None
             ),
             "reason": requirement.reason if requirement is not None else None,
-            "confidence": (
-                requirement.confidence if requirement is not None else None
-            ),
+            "confidence": (requirement.confidence if requirement is not None else None),
             "requirement_satisfied": (
-                winning_outcome.requirement_satisfied
-                if winning_outcome is not None
-                else None
+                winning_outcome.requirement_satisfied if winning_outcome is not None else None
             ),
             "projected_energy_wh": (
                 winning_outcome.storage_energy_at_requirement_wh
@@ -5327,9 +5168,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 else None
             ),
             "pv_contribution_wh": (
-                winning_outcome.pv_storage_contribution_wh
-                if winning_outcome is not None
-                else None
+                winning_outcome.pv_storage_contribution_wh if winning_outcome is not None else None
             ),
             "grid_contribution_wh": (
                 winning_outcome.grid_storage_contribution_wh
@@ -5341,29 +5180,23 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "status": run.execution_record.status,
             "reason": run.execution_record.reason,
             "timing": (
-                "active" if due_plan is not None
-                else "scheduled" if next_plan is not None
+                "active"
+                if due_plan is not None
+                else "scheduled"
+                if next_plan is not None
                 else "not_available"
             ),
             "valid_from": (
-                applicable_plan.valid_from.isoformat()
-                if applicable_plan is not None
-                else None
+                applicable_plan.valid_from.isoformat() if applicable_plan is not None else None
             ),
             "valid_until": (
-                applicable_plan.valid_until.isoformat()
-                if applicable_plan is not None
-                else None
+                applicable_plan.valid_until.isoformat() if applicable_plan is not None else None
             ),
             "planned_primitive": (
-                applicable_plan.planned_primitive.value
-                if applicable_plan is not None
-                else None
+                applicable_plan.planned_primitive.value if applicable_plan is not None else None
             ),
             "planned_vendor_mode": (
-                applicable_plan.planned_vendor_mode
-                if applicable_plan is not None
-                else None
+                applicable_plan.planned_vendor_mode if applicable_plan is not None else None
             ),
             "primitive_status": run.primitive_boundary.status,
             "blockers": list(run.primitive_boundary.blockers),
@@ -5395,7 +5228,9 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 ],
             }
             for plan in winning_execution_plans
-        ] if not fallback_active else [],
+        ]
+        if not fallback_active
+        else [],
         "chosen_plan": {
             "plan_id": (
                 winning_execution_plan.plan_id
@@ -5473,9 +5308,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 if winning_candidate is not None and not fallback_active
                 else None
             ),
-            "decisive_step": (
-                run.evaluation.decisive_step if not fallback_active else None
-            ),
+            "decisive_step": (run.evaluation.decisive_step if not fallback_active else None),
             "reason": run.evaluation.reason if not fallback_active else None,
             "charge_window_starts_at": (
                 winning_outcome.charge_window_starts_at.isoformat()
@@ -5507,9 +5340,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "initial_storage_energy_wh": (
                 initial_storage_energy_wh if not fallback_active else None
             ),
-            "energy_to_target_wh": (
-                energy_to_target_wh if not fallback_active else None
-            ),
+            "energy_to_target_wh": (energy_to_target_wh if not fallback_active else None),
             "storage_energy_at_window_start_wh": (
                 winning_outcome.storage_energy_at_window_start_wh
                 if winning_outcome is not None and not fallback_active
@@ -5602,9 +5433,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 )
             ),
             "requirement_confidence": (
-                requirement.confidence
-                if requirement is not None and not fallback_active
-                else None
+                requirement.confidence if requirement is not None and not fallback_active else None
             ),
             "confidence_assessment": (
                 {
@@ -5612,9 +5441,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                     "limiting_component": (
                         winning_outcome.confidence_assessment.limiting_component
                     ),
-                    "method_version": (
-                        winning_outcome.confidence_assessment.method_version
-                    ),
+                    "method_version": (winning_outcome.confidence_assessment.method_version),
                     "components": [
                         {
                             "name": component.name,
@@ -5622,9 +5449,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                             "method_version": component.method_version,
                             "evidence_ids": list(component.evidence_ids),
                         }
-                        for component in (
-                            winning_outcome.confidence_assessment.components
-                        )
+                        for component in (winning_outcome.confidence_assessment.components)
                     ],
                 }
                 if winning_outcome is not None
@@ -5649,7 +5474,9 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 }
                 for plan in winning_execution_plans
                 for segment in plan.segments
-            ] if not fallback_active else [],
+            ]
+            if not fallback_active
+            else [],
         },
         "alternatives": [
             {
@@ -5658,60 +5485,34 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 "family": candidate.family,
                 "selected": (
                     not fallback_active
-                    and
-                    candidate.candidate_id
-                    == run.evaluation.winning_candidate_id
+                    and candidate.candidate_id == run.evaluation.winning_candidate_id
                 ),
                 "charge_window_starts_at": (
-                    outcome.charge_window_starts_at.isoformat()
-                    if outcome is not None
-                    else None
+                    outcome.charge_window_starts_at.isoformat() if outcome is not None else None
                 ),
                 "charge_window_ends_at": (
-                    outcome.charge_window_ends_at.isoformat()
-                    if outcome is not None
-                    else None
+                    outcome.charge_window_ends_at.isoformat() if outcome is not None else None
                 ),
                 "storage_energy_at_window_end_wh": (
-                    outcome.storage_energy_at_window_end_wh
-                    if outcome is not None
-                    else None
+                    outcome.storage_energy_at_window_end_wh if outcome is not None else None
                 ),
                 "storage_energy_at_requirement_wh": (
-                    outcome.storage_energy_at_requirement_wh
-                    if outcome is not None
-                    else None
+                    outcome.storage_energy_at_requirement_wh if outcome is not None else None
                 ),
                 "requirement_satisfied": (
-                    outcome.requirement_satisfied
-                    if outcome is not None
-                    else None
+                    outcome.requirement_satisfied if outcome is not None else None
                 ),
                 "charge_target_satisfied": (
-                    outcome.charge_target_satisfied
-                    if outcome is not None
-                    else None
+                    outcome.charge_target_satisfied if outcome is not None else None
                 ),
-                "reserve_satisfied": (
-                    outcome.reserve_satisfied
-                    if outcome is not None
-                    else None
-                ),
-                "recoverability": (
-                    outcome.recoverability if outcome is not None else None
-                ),
-                "confidence": (
-                    outcome.confidence if outcome is not None else None
-                ),
+                "reserve_satisfied": (outcome.reserve_satisfied if outcome is not None else None),
+                "recoverability": (outcome.recoverability if outcome is not None else None),
+                "confidence": (outcome.confidence if outcome is not None else None),
                 "pv_contribution_wh": (
-                    outcome.pv_storage_contribution_wh
-                    if outcome is not None
-                    else None
+                    outcome.pv_storage_contribution_wh if outcome is not None else None
                 ),
                 "grid_contribution_wh": (
-                    outcome.grid_storage_contribution_wh
-                    if outcome is not None
-                    else None
+                    outcome.grid_storage_contribution_wh if outcome is not None else None
                 ),
             }
             for candidate in run.candidate_set.candidates
@@ -5732,20 +5533,14 @@ def build_web_view(
     planning_input = run.planning_input
     timeline = planning_input.pv_energy_timeline
     household_forecast = planning_input.household_load_forecast
-    household_intervals = (
-        household_forecast.intervals
-        if household_forecast is not None
-        else ()
-    )
+    household_intervals = household_forecast.intervals if household_forecast is not None else ()
     market_timezone = ZoneInfo("Europe/Amsterdam")
-    display_starts_at = planning_input.captured_at.astimezone(
-        market_timezone
-    ).replace(hour=0, minute=0, second=0, microsecond=0)
+    display_starts_at = planning_input.captured_at.astimezone(market_timezone).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     display_ends_at = display_starts_at + timedelta(days=2)
     selected_display_price_points = (
-        planning_input.price_points
-        if display_price_points is None
-        else display_price_points
+        planning_input.price_points if display_price_points is None else display_price_points
     )
     price_points = tuple(
         sorted(
@@ -5758,11 +5553,7 @@ def build_web_view(
         )
     )
     price_opportunities = run.opportunities.opportunities
-    intervals = (
-        timeline.intervals
-        if timeline is not None
-        else ()
-    )
+    intervals = timeline.intervals if timeline is not None else ()
 
     pipeline = [
         {
@@ -5791,10 +5582,7 @@ def build_web_view(
         "summary_nl": (
             f"Pipeline werkt correct – {healthy_count}/{len(pipeline)} groen."
             if healthy_count == len(pipeline)
-            else (
-                "Pipeline heeft een probleem – "
-                f"{len(pipeline) - healthy_count} stap(pen) rood."
-            )
+            else (f"Pipeline heeft een probleem – {len(pipeline) - healthy_count} stap(pen) rood.")
         ),
     }
     execution_attributes = pipeline[5]["attributes"]
@@ -5802,55 +5590,28 @@ def build_web_view(
     observer_only = execution_attributes.get("observer_only", True)
     pv_energy_timeline: dict[str, object] = {
         "available": timeline is not None,
-        "timeline_id": (
-            timeline.timeline_id
-            if timeline is not None
-            else None
-        ),
+        "timeline_id": (timeline.timeline_id if timeline is not None else None),
         "run_id": planning_input.run_id,
         "snapshot_id": planning_input.snapshot_id,
         "interval_count": len(intervals),
-        "total_wh": sum(
-            interval.pv_energy_wh
-            for interval in intervals
-        ),
-        "starts_at": (
-            intervals[0].starts_at.isoformat()
-            if intervals
-            else None
-        ),
-        "ends_at": (
-            intervals[-1].ends_at.isoformat()
-            if intervals
-            else None
-        ),
+        "total_wh": sum(interval.pv_energy_wh for interval in intervals),
+        "starts_at": (intervals[0].starts_at.isoformat() if intervals else None),
+        "ends_at": (intervals[-1].ends_at.isoformat() if intervals else None),
         "intervals": [
             {
                 "interval_id": interval.interval_id,
                 "starts_at": interval.starts_at.isoformat(),
                 "ends_at": interval.ends_at.isoformat(),
                 "pv_energy_wh": interval.pv_energy_wh,
-                "forecast_lower_energy_wh": (
-                    interval.forecast_lower_energy_wh
-                ),
-                "forecast_central_energy_wh": (
-                    interval.forecast_central_energy_wh
-                ),
-                "forecast_upper_energy_wh": (
-                    interval.forecast_upper_energy_wh
-                ),
+                "forecast_lower_energy_wh": (interval.forecast_lower_energy_wh),
+                "forecast_central_energy_wh": (interval.forecast_central_energy_wh),
+                "forecast_upper_energy_wh": (interval.forecast_upper_energy_wh),
                 "forecast_range_status": interval.forecast_range_status,
                 "evidence_type": interval.evidence_type,
                 "confidence": interval.confidence,
-                "actual_evidence_ids": list(
-                    interval.actual_evidence_ids
-                ),
-                "forecast_evidence_ids": list(
-                    interval.forecast_evidence_ids
-                ),
-                "conversion_method_version": (
-                    interval.conversion_method_version
-                ),
+                "actual_evidence_ids": list(interval.actual_evidence_ids),
+                "forecast_evidence_ids": list(interval.forecast_evidence_ids),
+                "conversion_method_version": (interval.conversion_method_version),
             }
             for interval in intervals
         ],
@@ -5858,46 +5619,25 @@ def build_web_view(
 
     household_load_forecast: dict[str, object] = {
         "available": household_forecast is not None,
-        "forecast_id": (
-            household_forecast.forecast_id
-            if household_forecast is not None
-            else None
-        ),
+        "forecast_id": (household_forecast.forecast_id if household_forecast is not None else None),
         "run_id": planning_input.run_id,
         "snapshot_id": planning_input.snapshot_id,
         "interval_count": len(household_intervals),
-        "total_wh": sum(
-            interval.expected_energy_wh
-            for interval in household_intervals
-        ),
+        "total_wh": sum(interval.expected_energy_wh for interval in household_intervals),
         "average_confidence": (
-            sum(
-                interval.confidence
-                for interval in household_intervals
-            )
-            / len(household_intervals)
+            sum(interval.confidence for interval in household_intervals) / len(household_intervals)
             if household_intervals
             else 0.0
         ),
         "starts_at": (
-            household_intervals[0].starts_at.isoformat()
-            if household_intervals
-            else None
+            household_intervals[0].starts_at.isoformat() if household_intervals else None
         ),
-        "ends_at": (
-            household_intervals[-1].ends_at.isoformat()
-            if household_intervals
-            else None
-        ),
+        "ends_at": (household_intervals[-1].ends_at.isoformat() if household_intervals else None),
         "fallback_active": (
-            household_forecast.fallback_active
-            if household_forecast is not None
-            else False
+            household_forecast.fallback_active if household_forecast is not None else False
         ),
         "fallback_reason": (
-            household_forecast.fallback_reason
-            if household_forecast is not None
-            else None
+            household_forecast.fallback_reason if household_forecast is not None else None
         ),
         "intervals": [
             {
@@ -5944,21 +5684,11 @@ def build_web_view(
                 "confidence": opportunity.confidence,
                 "lifecycle_status": opportunity.lifecycle_status,
                 "metrics": {
-                    "duration_seconds": (
-                        opportunity.metrics.duration_seconds
-                    ),
-                    "average_price_eur_per_kwh": (
-                        opportunity.metrics.average_price_eur_per_kwh
-                    ),
-                    "minimum_price_eur_per_kwh": (
-                        opportunity.metrics.minimum_price_eur_per_kwh
-                    ),
-                    "maximum_price_eur_per_kwh": (
-                        opportunity.metrics.maximum_price_eur_per_kwh
-                    ),
-                    "boundary_eur_per_kwh": (
-                        opportunity.metrics.boundary_eur_per_kwh
-                    ),
+                    "duration_seconds": (opportunity.metrics.duration_seconds),
+                    "average_price_eur_per_kwh": (opportunity.metrics.average_price_eur_per_kwh),
+                    "minimum_price_eur_per_kwh": (opportunity.metrics.minimum_price_eur_per_kwh),
+                    "maximum_price_eur_per_kwh": (opportunity.metrics.maximum_price_eur_per_kwh),
+                    "boundary_eur_per_kwh": (opportunity.metrics.boundary_eur_per_kwh),
                 },
             }
             for opportunity in price_opportunities

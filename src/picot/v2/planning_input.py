@@ -762,6 +762,17 @@ def assemble_planning_input(
         ...,
     ] = (),
 ) -> PlanningInputBundle:
+    options = load_options(options_path)
+    raw_unexpected_reserve_percent = options.get(
+        "household_unexpected_reserve_percent", 10.0
+    )
+    household_unexpected_reserve_fraction = (
+        float(raw_unexpected_reserve_percent) / 100.0
+        if not isinstance(raw_unexpected_reserve_percent, bool)
+        and isinstance(raw_unexpected_reserve_percent, (int, float))
+        and 0.0 <= float(raw_unexpected_reserve_percent) <= 100.0
+        else 0.10
+    )
     started = datetime.now(UTC)
     reader = HomeAssistantStateReader(token)
     selected = bindings if bindings is not None else load_bindings(options_path)
@@ -1054,6 +1065,9 @@ def assemble_planning_input(
             else ()
         ),
         storage_round_trip_efficiency=storage_round_trip_efficiency,
+        household_unexpected_reserve_fraction=(
+            household_unexpected_reserve_fraction
+        ),
     )
     return PlanningInputBundle(
         snapshot,

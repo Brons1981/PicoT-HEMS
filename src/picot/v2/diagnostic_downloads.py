@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from io import BytesIO
 from pathlib import Path
-from typing import BinaryIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
 MAX_INCIDENT_EVENTS = 20
@@ -50,16 +49,11 @@ def _tail_lines(path: Path, count: int) -> list[str]:
 def diagnostic_zip(paths: tuple[Path, ...]) -> bytes:
     """Build one archive from existing files in the explicit runtime allow-list."""
     output = BytesIO()
-    write_diagnostic_zip(output, paths)
-    return output.getvalue()
-
-
-def write_diagnostic_zip(output: BinaryIO, paths: tuple[Path, ...]) -> None:
-    """Stream an allow-listed archive without buffering every source file."""
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
         for path in paths:
             if path.is_file():
                 archive.write(path, arcname=path.name)
+    return output.getvalue()
 
 
 def _compact_incident(record: dict[str, object]) -> dict[str, object]:

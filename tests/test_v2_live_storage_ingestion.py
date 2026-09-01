@@ -239,6 +239,7 @@ def test_default_assembly_loads_storage_config_from_same_options(
                 "storage_maximum_soc_percent": 100.0,
                 "storage_maximum_charge_power_w": 2400.0,
                 "storage_maximum_discharge_power_w": 2400.0,
+                "household_unexpected_reserve_percent": 15.0,
             }
         ),
         encoding="utf-8",
@@ -297,6 +298,7 @@ def test_default_assembly_loads_storage_config_from_same_options(
     assert limits.maximum_charge_input_power_w == pytest.approx(2400.0)
     assert limits.maximum_discharge_output_power_w == pytest.approx(2400.0)
     assert limits.evidence_ids == ("addon-configuration:storage-physical-limits",)
+    assert bundle.snapshot.household_unexpected_reserve_fraction == pytest.approx(0.15)
 
 
 def test_existing_options_gain_daily_reference_physical_defaults(

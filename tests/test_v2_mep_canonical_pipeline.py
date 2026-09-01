@@ -39,9 +39,7 @@ def _pipeline(
     pipeline = CanonicalPipeline(
         market_daily_planner_runtime=MarketDailyPlannerRuntime(
             _conversion(),
-            trading_policy=MarketTradingPolicy(
-                market_routes_enabled=market_routes_enabled
-            ),
+            trading_policy=MarketTradingPolicy(market_routes_enabled=market_routes_enabled),
         ),
         commitment_store=store,
         plan_switching_margin_eur=switching_margin_eur,
@@ -216,8 +214,7 @@ def test_mep_winner_flows_through_canonical_path_and_plan_store(tmp_path) -> Non
         and execution_segment.purpose == path_segment.purpose
         and execution_segment.evidence_ids == path_segment.evidence_ids
         and execution_segment.requested_power_w == path_segment.requested_power_w
-        and execution_segment.charge_source_policy
-        is path_segment.charge_source_policy
+        and execution_segment.charge_source_policy is path_segment.charge_source_policy
         for execution_segment, path_segment in zip(
             execution_plan.segments,
             winning_path.segments,
@@ -244,10 +241,10 @@ def test_mep_winner_flows_through_canonical_path_and_plan_store(tmp_path) -> Non
     )
 
 
-def test_low_pv_snapshot_publishes_valid_pv_first_residual_grid_candidate(
+def test_low_pv_snapshot_uses_available_pv_without_unnecessary_residual_grid(
     tmp_path,
 ) -> None:
-    """Dev.214: MEP offers PV capture before only the residual grid recovery."""
+    """DEV.222: PV capture remains useful without filling free capacity from grid."""
 
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.5)
     pipeline, _store = _pipeline(tmp_path)
@@ -261,24 +258,22 @@ def test_low_pv_snapshot_publishes_valid_pv_first_residual_grid_candidate(
         and outcome.daily_target_reached
         and outcome.household_reserve_respected
     }
-    hybrid_paths = tuple(
+    pv_paths = tuple(
         path
         for candidate in run.candidate_set.candidates
         for path in run.candidate_set.energy_paths
         if candidate.energy_path_id == path.path_id
         and candidate.family == "priority_first"
         and candidate.candidate_id in valid_ids
-        and {segment.primitive for segment in path.segments}.issuperset(
-            {
-                ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
-                ExecutionPrimitive.CHARGE_AT_POWER,
-            }
-        )
+        and ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+        in {segment.primitive for segment in path.segments}
+        and ExecutionPrimitive.CHARGE_AT_POWER
+        not in {segment.primitive for segment in path.segments}
     )
-    assert hybrid_paths
+    assert pv_paths
     pv_first = next(
         path
-        for path in hybrid_paths
+        for path in pv_paths
         if any(
             segment.starts_at == snapshot.captured_at
             and segment.ends_at == snapshot.captured_at + timedelta(hours=1)
@@ -286,12 +281,9 @@ def test_low_pv_snapshot_publishes_valid_pv_first_residual_grid_candidate(
             for segment in path.segments
         )
     )
-    hybrid_grid_seconds = sum(
-        (segment.ends_at - segment.starts_at).total_seconds()
-        for segment in pv_first.segments
-        if segment.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+    assert all(
+        segment.primitive is not ExecutionPrimitive.CHARGE_AT_POWER for segment in pv_first.segments
     )
-    assert hybrid_grid_seconds == timedelta(minutes=75).total_seconds()
 
 
 def test_dev221_default_runtime_excludes_optional_market_routes(tmp_path) -> None:
@@ -342,18 +334,12 @@ def test_dev221_default_runtime_excludes_optional_market_routes(tmp_path) -> Non
         and outcome.household_reserve_respected
     }
     assert valid_ids
-    assert all(
-        candidate.family != "market_route"
-        for candidate in run.candidate_set.candidates
-    )
-    assert {
-        candidate.pv_forecast_basis
-        for candidate in run.candidate_set.candidates
-    } == {"confidence-weighted-lower-central"}
+    assert all(candidate.family != "market_route" for candidate in run.candidate_set.candidates)
+    assert {candidate.pv_forecast_basis for candidate in run.candidate_set.candidates} == {
+        "confidence-weighted-lower-central"
+    }
     assert len(run.candidate_set.candidates) <= 3
-    assert run.planning_input.horizon_end == (
-        run.planning_input.captured_at + timedelta(hours=36)
-    )
+    assert run.planning_input.horizon_end == (run.planning_input.captured_at + timedelta(hours=36))
 
 
 def test_dashboard_presents_mep_execution_plan_with_comparable_outcomes(
@@ -400,15 +386,27 @@ def test_dashboard_presents_mep_execution_plan_with_comparable_outcomes(
     charge_segments = [
         segment
         for segment in run.execution_plan_set.plans[0].segments
-        if segment.primitive.value == "charge_at_power"
+        if segment.primitive
+        in {
+            ExecutionPrimitive.CHARGE_AT_POWER,
+            ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+        }
     ]
     assert chosen_plan["plan_id"] == run.execution_plan_set.plans[0].plan_id
     assert chosen_plan["execution_scope_id"] == (run.execution_plan_set.plans[0].execution_scope_id)
     assert chosen_plan["initial_storage_energy_wh"] == (
         snapshot.current_storage_states[0].current_stored_energy_wh
     )
-    assert chosen_plan["charge_window_starts_at"] == (charge_segments[0].starts_at.isoformat())
-    assert chosen_plan["charge_window_ends_at"] == (charge_segments[-1].ends_at.isoformat())
+    assert chosen_plan["charge_window_starts_at"] == (
+        charge_segments[0].starts_at.isoformat() if charge_segments else None
+    )
+    assert chosen_plan["charge_window_ends_at"] is not None
+    assert datetime.fromisoformat(chosen_plan["charge_window_ends_at"]) >= (
+        charge_segments[-1].ends_at
+    )
+    assert datetime.fromisoformat(chosen_plan["charge_window_ends_at"]) <= (
+        run.execution_plan_set.plans[0].segments[-1].ends_at
+    )
     assert "renderBatteryEnergyPlan(" in DASHBOARD_HTML
     assert "view.planning_status?.execution_plans" in DASHBOARD_HTML
     assert "selectedExecutionPlanWindows(view)" in DASHBOARD_HTML
@@ -418,24 +416,26 @@ def test_dashboard_presents_mep_execution_plan_with_comparable_outcomes(
         for path in run.candidate_set.energy_paths
         if path.path_id == run.evaluation.winning_energy_path_id
     )
-    expected_soc_timeline = [{
-        "at": snapshot.captured_at.isoformat(),
-        "soc_percent": 51.0,
-        "primitive": "actual",
-    }]
+    expected_soc_timeline = [
+        {
+            "at": snapshot.captured_at.isoformat(),
+            "soc_percent": 51.0,
+            "primitive": "actual",
+        }
+    ]
     for state in winning_path.projected_states:
         if state.at <= snapshot.captured_at or state.battery_soc is None:
             continue
         segment = next(
-            item
-            for item in winning_path.segments
-            if item.starts_at < state.at <= item.ends_at
+            item for item in winning_path.segments if item.starts_at < state.at <= item.ends_at
         )
-        expected_soc_timeline.append({
-            "at": state.at.isoformat(),
-            "soc_percent": round(state.battery_soc * 100, 2),
-            "primitive": segment.primitive.value,
-        })
+        expected_soc_timeline.append(
+            {
+                "at": state.at.isoformat(),
+                "soc_percent": round(state.battery_soc * 100, 2),
+                "primitive": segment.primitive.value,
+            }
+        )
     assert view["planning_status"]["soc_timeline"] == expected_soc_timeline
 
 
@@ -517,10 +517,7 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
     assert all(path.projected_states for path in market_paths)
     assert all(
         state.storage_energy_wh
-        == pytest.approx(
-            state.battery_soc
-            * snapshot.current_storage_states[0].usable_capacity_wh
-        )
+        == pytest.approx(state.battery_soc * snapshot.current_storage_states[0].usable_capacity_wh)
         for path in market_paths
         for state in path.projected_states
         if state.battery_soc is not None and state.storage_energy_wh is not None
@@ -562,15 +559,13 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
         for outcome in valid_market_outcomes
         if outcome.daily_target_reached_at is not None
     )
-    assert all(
-        outcome.household_reserve_respected for outcome in valid_market_outcomes
-    )
+    assert all(outcome.household_reserve_respected for outcome in valid_market_outcomes)
 
 
-def test_mep_separates_daily_maximum_target_from_household_reserve(
+def test_mep_uses_household_lower_bound_plus_unexpected_reserve_for_grid_need(
     tmp_path,
 ) -> None:
-    """ADR-037: 100% remains the target; reserve is a separate hard outcome."""
+    """ADR-037: stored energy need is not the battery's free capacity."""
 
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.60)
     pipeline, _store = _pipeline(tmp_path)
@@ -578,15 +573,60 @@ def test_mep_separates_daily_maximum_target_from_household_reserve(
     run = pipeline.run(planning_input=snapshot)
 
     requirement = run.candidate_set.storage_requirements[0]
-    assert requirement.requirement_kind == "daily_storage_target"
-    assert requirement.satisfaction_mode == "reached_by"
-    assert requirement.required_soc == 1.0
+    assert requirement.requirement_kind == "household_energy"
+    assert requirement.satisfaction_mode == "available_at"
+    assert requirement.required_soc == pytest.approx(0.20)
+    assert requirement.reserve_contribution_wh == pytest.approx(816.0)
     valid_outcomes = tuple(
         outcome for outcome in run.outcomes.outcomes if outcome.validity == "valid"
     )
     assert valid_outcomes
     assert all(outcome.daily_target_reached for outcome in valid_outcomes)
     assert all(outcome.household_reserve_respected for outcome in valid_outcomes)
+    chosen = run.execution_plan_set.plans[0]
+    assert all(
+        segment.primitive is not ExecutionPrimitive.CHARGE_AT_POWER for segment in chosen.segments
+    )
+    assert any(
+        segment.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL for segment in chosen.segments
+    )
+
+
+def test_mep_publishes_next_day_pv_capture_without_unnecessary_grid_charge(
+    tmp_path,
+) -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.82)
+    assert snapshot.pv_energy_timeline is not None
+    delayed_pv = replace(
+        snapshot.pv_energy_timeline,
+        intervals=tuple(
+            replace(
+                item,
+                pv_energy_wh=(1000.0 if 24 <= index < 28 else 0.0),
+                forecast_lower_energy_wh=(800.0 if 24 <= index < 28 else 0.0),
+                forecast_central_energy_wh=(1000.0 if 24 <= index < 28 else 0.0),
+                forecast_upper_energy_wh=(1200.0 if 24 <= index < 28 else 0.0),
+            )
+            for index, item in enumerate(snapshot.pv_energy_timeline.intervals)
+        ),
+    )
+    pipeline, _store = _pipeline(tmp_path)
+
+    run = pipeline.run(planning_input=replace(snapshot, pv_energy_timeline=delayed_pv))
+
+    chosen = run.execution_plan_set.plans[0]
+    assert all(
+        segment.primitive is not ExecutionPrimitive.CHARGE_AT_POWER for segment in chosen.segments
+    )
+    pv_segments = tuple(
+        segment
+        for segment in chosen.segments
+        if segment.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+    )
+    assert pv_segments
+    assert min(item.starts_at for item in pv_segments) >= (
+        snapshot.captured_at + timedelta(hours=12)
+    )
 
 
 def test_rolling_horizon_compares_fresh_challengers_without_rewriting_them(
@@ -626,9 +666,7 @@ def test_rolling_horizon_compares_fresh_challengers_without_rewriting_them(
     extended_snapshot = replace(
         snapshot,
         horizon_end=extended_horizon,
-        price_points=(
-            replace(snapshot.price_points[0], ends_at=extended_horizon),
-        ),
+        price_points=(replace(snapshot.price_points[0], ends_at=extended_horizon),),
         household_load_forecast=replace(
             snapshot.household_load_forecast,
             intervals=(*snapshot.household_load_forecast.intervals, *extra_household),
@@ -1128,9 +1166,7 @@ def test_household_requirement_invalidates_late_incumbent_before_evaluation(
     assert incumbent_outcome.validity == "invalid"
     assert incumbent_outcome.daily_target_reached is False
     assert incumbent_outcome.daily_target_reached_at is None
-    assert "daily_storage_target_not_reached_by_deadline" in (
-        incumbent_outcome.invalidity_reasons
-    )
+    assert "daily_storage_target_not_reached_by_deadline" in (incumbent_outcome.invalidity_reasons)
     assert run.evaluation.commitment_decision == "replaced"
     assert run.evaluation.winning_candidate_id != incumbent_outcome.candidate_id
     replacement = store.load("battery")
@@ -1186,11 +1222,7 @@ def test_identical_incumbent_and_challenger_use_equal_wear_adjusted_finance(
         market_timezone="UTC",
     )
     first = pipeline.run(planning_input=priced, price_opportunity_config=config)
-    valid_ids = {
-        item.candidate_id
-        for item in first.outcomes.outcomes
-        if item.validity == "valid"
-    }
+    valid_ids = {item.candidate_id for item in first.outcomes.outcomes if item.validity == "valid"}
     market_candidate = next(
         candidate
         for candidate in first.candidate_set.candidates

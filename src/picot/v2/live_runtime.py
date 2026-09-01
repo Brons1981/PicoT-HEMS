@@ -2253,10 +2253,14 @@ def main() -> None:
         wear_eur_per_export_kwh=float(
             options.get("market_daily_wear_eur_per_kwh", 0.05)
         ),
-        # DEV.221 intentionally restores only the physical MEP basis. The
-        # legacy option remains readable but cannot enable optional export
-        # until the accepted SoC-budget User Rule is implemented.
-        market_routes_enabled=False,
+        maximum_trading_soc_fraction=(
+            float(options.get("market_daily_maximum_trading_soc_percent", 25.0))
+            / 100.0
+        ),
+        additional_reserve_fraction=0.10,
+        # DEV.225 restores optional charge-and-export paths only after the
+        # SoC budget has bounded candidate construction.
+        market_routes_enabled=True,
     )
     micro_charge_suppression_fraction = (
         float(options.get("micro_charge_suppression_percent", 2.0)) / 100.0

@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_224() -> None:
-    assert __version__ == "2.0.0-dev.224"
+def test_v2_release_version_is_dev_225() -> None:
+    assert __version__ == "2.0.0-dev.225"
 
 
 def test_mep_has_one_fallback_rte_configuration() -> None:
@@ -31,6 +31,7 @@ def test_mep_has_one_fallback_rte_configuration() -> None:
     assert '  market_daily_rte_entity: "sensor.zendure_2400_ac_rte_totaal"' in text
     assert "  market_daily_trading_margin_percent: 10.0" in text
     assert "  market_daily_wear_eur_per_kwh: 0.05" in text
+    assert "  market_daily_maximum_trading_soc_percent: 25.0" in text
     assert "  micro_charge_suppression_percent: 2.0" in text
     assert "  plan_switching_margin_eur: 0.05" in text
     assert "  household_unexpected_reserve_percent: 10.0" in text
@@ -38,10 +39,20 @@ def test_mep_has_one_fallback_rte_configuration() -> None:
     assert "  market_daily_rte_entity: str" in text
     assert "  market_daily_trading_margin_percent: float(0,100)" in text
     assert "  market_daily_wear_eur_per_kwh: float(0,1)" in text
+    assert "  market_daily_maximum_trading_soc_percent: float(0,100)" in text
     assert "  micro_charge_suppression_percent: float(0,100)" in text
     assert "  plan_switching_margin_eur: float(0,)" in text
     assert "  household_unexpected_reserve_percent: float(0,100)" in text
     assert "  battery_purchase_eur: float(0,)" in text
+
+
+def test_dev225_live_runtime_enables_only_bounded_market_routes() -> None:
+    source_path = Path(__file__).parents[1] / "src" / "picot" / "v2" / "live_runtime.py"
+    source = source_path.read_text(encoding="utf-8")
+
+    assert 'options.get("market_daily_maximum_trading_soc_percent", 25.0)' in source
+    assert "additional_reserve_fraction=0.10" in source
+    assert "market_routes_enabled=True" in source
 
 
 def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:

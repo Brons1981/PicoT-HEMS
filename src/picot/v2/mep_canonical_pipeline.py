@@ -38,6 +38,7 @@ from picot.v2.contracts import (
     ExecutionRecord,
     OpportunitySet,
     PlanningInputSnapshot,
+    PVChargeProgressEvidence,
     VendorBoundaryResult,
 )
 from picot.v2.execution_plan_projection import project_execution_plan_set
@@ -55,6 +56,7 @@ from picot.v2.plan_commitment_store import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("pipeline_composition", __name__)
+PV_CHARGE_PROGRESS_METHOD_VERSION = "pv-charge-progress:v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +263,40 @@ def _defer_charge_revision(
     following = segments[due_index + 1]
     if following.primitive != ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value:
         return None
-    duration = due.ends_at - snapshot.captured_at
+    storage = next(
+        (
+            item
+            for item in snapshot.current_storage_states
+            if item.execution_scope_id == commitment.execution_scope_id
+        ),
+        None,
+    )
+    limits = next(
+        (
+            item
+            for item in snapshot.storage_physical_limits
+            if storage is not None
+            and item.execution_scope_id == commitment.execution_scope_id
+            and item.capability_id == storage.capability_id
+        ),
+        None,
+    )
+    if storage is None or limits is None:
+        return None
+    remaining_target_wh = max(
+        0.0,
+        commitment.target_energy_wh - storage.current_stored_energy_wh,
+    )
+    rte = snapshot.storage_round_trip_efficiency
+    conservative_charge_efficiency = (
+        rte.round_trip_efficiency
+        if rte is not None and rte.status == "available" and rte.round_trip_efficiency is not None
+        else 0.8
+    )
+    required_grid_input_wh = remaining_target_wh / conservative_charge_efficiency
+    duration = timedelta(hours=required_grid_input_wh / limits.maximum_charge_input_power_w)
+    if duration <= timedelta(0):
+        return None
     canonical_interval = timedelta(minutes=15)
     shifted_end = following.ends_at - canonical_interval
     shifted_start = shifted_end - duration
@@ -321,22 +356,35 @@ def _measured_pv_basis_covers_remaining_acquisition(
     path: EnergyPath,
     due_segment: PathSegment,
 ) -> bool:
-    """Keep NOM when measured-PV promotion already proves target recovery.
+    """Keep NOM while actual SoC plus conservative future PV can reach target."""
 
-    The daily measured-PV stage expresses a central promotion by replacing the
-    remaining current-day lower lane with central. This gate consumes that
-    canonical evidence without selecting a new forecast basis. It is deliberately
-    conservative: incomplete ranges, a non-NOM current mode, or insufficient
-    lower-lane surplus all leave the approved explicit charge request untouched.
-    """
+    return _pv_charge_progress_evidence(
+        snapshot=snapshot,
+        path=path,
+        due_segment=due_segment,
+    ).decision == "defer_grid_charge"
+
+
+def _pv_charge_progress_evidence(
+    *,
+    snapshot: PlanningInputSnapshot,
+    path: EnergyPath,
+    due_segment: PathSegment,
+) -> PVChargeProgressEvidence:
+    def unavailable(reason: str) -> PVChargeProgressEvidence:
+        return PVChargeProgressEvidence(
+            method_version=PV_CHARGE_PROGRESS_METHOD_VERSION,
+            decision="keep_grid_charge",
+            reason=reason,
+        )
 
     if due_segment.primitive is not ExecutionPrimitive.CHARGE_AT_POWER:
-        return False
+        return unavailable("not_a_grid_charge_segment")
     mode = snapshot.storage_mode_capability_evidence
     if mode is None or mode.current_vendor_mode != "Nul op de meter":
-        return False
+        return unavailable("current_mode_is_not_nom")
     if snapshot.pv_energy_timeline is None or snapshot.household_load_forecast is None:
-        return False
+        return unavailable("future_pv_or_household_forecast_unavailable")
     storage = next(
         (
             item
@@ -356,14 +404,14 @@ def _measured_pv_basis_covers_remaining_acquisition(
         None,
     )
     if storage is None or limits is None:
-        return False
+        return unavailable("storage_state_or_limits_unavailable")
     ordered = tuple(sorted(path.segments, key=lambda item: item.order))
     due_index = next(
         (index for index, item in enumerate(ordered) if item.segment_id == due_segment.segment_id),
         None,
     )
     if due_index is None:
-        return False
+        return unavailable("due_segment_not_in_winning_path")
     acquisition_end = due_segment.ends_at
     for segment in ordered[due_index + 1 :]:
         if segment.starts_at != acquisition_end or segment.primitive not in {
@@ -378,13 +426,8 @@ def _measured_pv_basis_covers_remaining_acquisition(
         for item in snapshot.pv_energy_timeline.intervals
         if item.ends_at > window_start and item.starts_at < acquisition_end
     )
-    if not future_pv or any(
-        item.forecast_lower_energy_wh is None
-        or item.forecast_central_energy_wh is None
-        or abs(item.forecast_lower_energy_wh - item.forecast_central_energy_wh) > 1e-6
-        for item in future_pv
-    ):
-        return False
+    if not future_pv or any(item.forecast_lower_energy_wh is None for item in future_pv):
+        return unavailable("conservative_future_pv_range_incomplete")
     pv_surplus_wh = sum(
         (item.forecast_lower_energy_wh or 0.0)
         * _overlap_fraction(
@@ -410,16 +453,35 @@ def _measured_pv_basis_covers_remaining_acquisition(
         if rte is not None and rte.status == "available" and rte.round_trip_efficiency is not None
         else 0.8
     )
-    projected_energy_wh = (
-        storage.current_stored_energy_wh
-        + max(
-            0.0,
-            pv_surplus_wh,
-        )
-        * conservative_charge_efficiency
-    )
+    conservative_pv_to_storage_wh = max(0.0, pv_surplus_wh) * conservative_charge_efficiency
     target_energy_wh = limits.maximum_soc * storage.usable_capacity_wh
-    return projected_energy_wh + 1e-6 >= target_energy_wh
+    remaining_target_wh = max(0.0, target_energy_wh - storage.current_stored_energy_wh)
+    required_grid_input_wh = remaining_target_wh / conservative_charge_efficiency
+    latest_safe_start = acquisition_end - timedelta(minutes=15) - timedelta(
+        hours=required_grid_input_wh / limits.maximum_charge_input_power_w
+    )
+    pv_covers_target = conservative_pv_to_storage_wh + 1e-6 >= remaining_target_wh
+    before_latest_safe_start = snapshot.captured_at < latest_safe_start
+    return PVChargeProgressEvidence(
+        method_version=PV_CHARGE_PROGRESS_METHOD_VERSION,
+        decision=(
+            "defer_grid_charge"
+            if pv_covers_target and before_latest_safe_start
+            else "keep_grid_charge"
+        ),
+        reason=(
+            "conservative_pv_can_cover_remaining_target"
+            if pv_covers_target and before_latest_safe_start
+            else "latest_safe_grid_start_reached"
+            if pv_covers_target
+            else "conservative_pv_cannot_cover_remaining_target"
+        ),
+        remaining_target_energy_wh=remaining_target_wh,
+        conservative_pv_to_storage_wh=conservative_pv_to_storage_wh,
+        required_grid_input_energy_wh=required_grid_input_wh,
+        acquisition_deadline=acquisition_end,
+        latest_safe_grid_charge_starts_at=latest_safe_start,
+    )
 
 
 def _first_action_phase(
@@ -941,6 +1003,7 @@ def build_mep_canonical_run(
     mode_evidence = snapshot.storage_mode_capability_evidence
     provenance = snapshot.storage_mode_control_provenance
     blockers: list[str] = []
+    pv_charge_progress = None
     if due_segment is not None:
         if mode_evidence is None:
             blockers.append("storage_mode_capability_evidence_unavailable")
@@ -953,14 +1016,15 @@ def build_mep_canonical_run(
             blockers.append("manual_override_provenance_unverified")
         elif provenance.manual_override_active:
             blockers.append("manual_override_active")
-        if (
-            winning_path is not None
-            and due_path_segment is not None
-            and _measured_pv_basis_covers_remaining_acquisition(
+        if winning_path is not None and due_path_segment is not None:
+            pv_charge_progress = _pv_charge_progress_evidence(
                 snapshot=snapshot,
                 path=winning_path,
                 due_segment=due_path_segment,
             )
+        if (
+            pv_charge_progress is not None
+            and pv_charge_progress.decision == "defer_grid_charge"
         ):
             blockers.append("measured_pv_progress_covers_grid_charge")
         if not control_change_allowed:
@@ -1002,6 +1066,7 @@ def build_mep_canonical_run(
             mode_evidence.method_version if mode_evidence is not None else None
         ),
         blockers=tuple(blockers),
+        pv_charge_progress=pv_charge_progress,
     )
     if measured_progress_deferred and commitment_store is not None and due_path_segment is not None:
         active_commitment = commitment_store.load(due_path_segment.execution_scope_id)

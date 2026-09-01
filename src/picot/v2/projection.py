@@ -718,6 +718,35 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "planned_vendor_mode": pb.planned_vendor_mode,
                 "mapping_method_version": pb.mapping_method_version,
                 "blockers": list(pb.blockers),
+                "pv_charge_progress": (
+                    {
+                        "method_version": pb.pv_charge_progress.method_version,
+                        "decision": pb.pv_charge_progress.decision,
+                        "reason": pb.pv_charge_progress.reason,
+                        "remaining_target_energy_wh": (
+                            pb.pv_charge_progress.remaining_target_energy_wh
+                        ),
+                        "conservative_pv_to_storage_wh": (
+                            pb.pv_charge_progress.conservative_pv_to_storage_wh
+                        ),
+                        "required_grid_input_energy_wh": (
+                            pb.pv_charge_progress.required_grid_input_energy_wh
+                        ),
+                        "acquisition_deadline": (
+                            pb.pv_charge_progress.acquisition_deadline.isoformat()
+                            if pb.pv_charge_progress.acquisition_deadline is not None
+                            else None
+                        ),
+                        "latest_safe_grid_charge_starts_at": (
+                            pb.pv_charge_progress.latest_safe_grid_charge_starts_at.isoformat()
+                            if pb.pv_charge_progress.latest_safe_grid_charge_starts_at
+                            is not None
+                            else None
+                        ),
+                    }
+                    if pb.pv_charge_progress is not None
+                    else None
+                ),
                 "normal_result": (
                     "De uitvoerbare opdracht is voorbereid; PicoT kijkt "
                     "nog mee en stuurt niets naar Zendure."

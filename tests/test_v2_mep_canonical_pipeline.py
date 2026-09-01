@@ -14,6 +14,7 @@ from picot.v2.mep_canonical_pipeline import (
     _complete_acquisition_revision,
     _defer_charge_revision,
     _measured_pv_basis_covers_remaining_acquisition,
+    _pv_charge_progress_evidence,
 )
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.pipeline import CanonicalPipeline
@@ -36,7 +37,13 @@ def _pipeline(tmp_path, *, switching_margin_eur: float = 0.05):
     return pipeline, store
 
 
-def _pv_admission_fixture(*, promoted_to_central: bool) -> tuple[object, object, object]:
+def _pv_admission_fixture(
+    *,
+    promoted_to_central: bool,
+    lower_wh: float | None = None,
+    captured_at_offset: timedelta = timedelta(0),
+    current_stored_energy_wh: float = 7000.0,
+) -> tuple[object, object, object]:
     starts_at = datetime.fromisoformat("2026-08-30T10:00:00+00:00")
     ends_at = starts_at + timedelta(hours=1)
     due_segment = SimpleNamespace(
@@ -48,15 +55,17 @@ def _pv_admission_fixture(*, promoted_to_central: bool) -> tuple[object, object,
         primitive=ExecutionPrimitive.CHARGE_AT_POWER,
     )
     central_wh = 2000.0
-    lower_wh = central_wh if promoted_to_central else 400.0
+    conservative_wh = (
+        lower_wh if lower_wh is not None else central_wh if promoted_to_central else 400.0
+    )
     snapshot = SimpleNamespace(
-        captured_at=starts_at,
+        captured_at=starts_at + captured_at_offset,
         storage_mode_capability_evidence=SimpleNamespace(current_vendor_mode="Nul op de meter"),
         current_storage_states=(
             SimpleNamespace(
                 execution_scope_id="battery",
                 capability_id="storage",
-                current_stored_energy_wh=7000.0,
+                current_stored_energy_wh=current_stored_energy_wh,
                 usable_capacity_wh=8160.0,
             ),
         ),
@@ -65,6 +74,7 @@ def _pv_admission_fixture(*, promoted_to_central: bool) -> tuple[object, object,
                 execution_scope_id="battery",
                 capability_id="storage",
                 maximum_soc=1.0,
+                maximum_charge_input_power_w=2400.0,
             ),
         ),
         pv_energy_timeline=SimpleNamespace(
@@ -72,7 +82,7 @@ def _pv_admission_fixture(*, promoted_to_central: bool) -> tuple[object, object,
                 SimpleNamespace(
                     starts_at=starts_at,
                     ends_at=ends_at,
-                    forecast_lower_energy_wh=lower_wh,
+                    forecast_lower_energy_wh=conservative_wh,
                     forecast_central_energy_wh=central_wh,
                 ),
             )
@@ -112,6 +122,59 @@ def test_lagging_actual_pv_does_not_block_planned_grid_charge() -> None:
         path=path,
         due_segment=due_segment,
     )
+
+
+def test_missing_pv_measurements_fail_safe_to_planned_grid_charge() -> None:
+    snapshot, path, due_segment = _pv_admission_fixture(promoted_to_central=True)
+    snapshot.pv_energy_timeline = None
+
+    evidence = _pv_charge_progress_evidence(
+        snapshot=snapshot,
+        path=path,
+        due_segment=due_segment,
+    )
+
+    assert evidence.decision == "keep_grid_charge"
+    assert evidence.reason == "future_pv_or_household_forecast_unavailable"
+
+
+def test_conservative_pv_can_defer_grid_without_full_forecast_promotion() -> None:
+    """Dev.217 uses actual SoC plus the lower PV lane, not exact lane equality."""
+
+    snapshot, path, due_segment = _pv_admission_fixture(
+        promoted_to_central=False,
+        lower_wh=1800.0,
+    )
+
+    evidence = _pv_charge_progress_evidence(
+        snapshot=snapshot,
+        path=path,
+        due_segment=due_segment,
+    )
+
+    assert evidence.decision == "defer_grid_charge"
+    assert evidence.reason == "conservative_pv_can_cover_remaining_target"
+    assert evidence.remaining_target_energy_wh == pytest.approx(1160.0)
+    assert evidence.conservative_pv_to_storage_wh == pytest.approx(1245.0)
+    assert evidence.required_grid_input_energy_wh == pytest.approx(1397.590361)
+    assert evidence.latest_safe_grid_charge_starts_at is not None
+
+
+def test_grid_charge_is_not_deferred_after_latest_safe_start() -> None:
+    snapshot, path, due_segment = _pv_admission_fixture(
+        promoted_to_central=True,
+        captured_at_offset=timedelta(minutes=30),
+        current_stored_energy_wh=7500.0,
+    )
+
+    evidence = _pv_charge_progress_evidence(
+        snapshot=snapshot,
+        path=path,
+        due_segment=due_segment,
+    )
+
+    assert evidence.decision == "keep_grid_charge"
+    assert evidence.reason == "latest_safe_grid_start_reached"
 
 
 def test_mep_winner_flows_through_canonical_path_and_plan_store(tmp_path) -> None:
@@ -769,7 +832,7 @@ def test_completed_pre_export_acquisition_preserves_post_export_recovery() -> No
 
 
 def test_measured_progress_revision_moves_charge_to_last_safe_slot() -> None:
-    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.87)
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.90)
     starts_at = snapshot.captured_at
     nom_end = starts_at + timedelta(hours=5)
     export_start = nom_end + timedelta(hours=1)
@@ -817,7 +880,8 @@ def test_measured_progress_revision_moves_charge_to_last_safe_slot() -> None:
         if segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
     )
     assert shifted_charge.ends_at == nom_end - timedelta(minutes=15)
-    assert shifted_charge.starts_at == shifted_charge.ends_at - timedelta(minutes=30)
+    expected_duration = timedelta(hours=(816.0 / 0.8) / 2400.0)
+    assert shifted_charge.starts_at == shifted_charge.ends_at - expected_duration
     assert revised.segments[0].primitive == (ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value)
     assert revised.segments[-1].primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value
 

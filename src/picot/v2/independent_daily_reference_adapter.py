@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from picot.domain.capability_snapshot import (
@@ -16,6 +16,7 @@ from picot.domain.daily_reference_charge_window import (
     DailyReferenceChargeWindowSet,
 )
 from picot.domain.daily_reference_intent import (
+    DailyReferenceIntentInterval,
     DailyReferenceIntentSchedule,
     DailyStorageIntent,
 )
@@ -65,7 +66,7 @@ from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
 
-METHOD_VERSION = "v2-independent-daily-reference-adapter:v3"
+METHOD_VERSION = "v2-independent-daily-reference-adapter:v4"
 DAILY_REFERENCE_DURATION = timedelta(hours=24)
 
 
@@ -172,6 +173,35 @@ class IndependentDailyReferenceAdapter:
             charge_windows=charge_windows,
             household=inputs.household,
         )
+        if charge_windows.hybrid_schedules:
+            component_schedule_ids = {item.schedule.schedule_id for item in charge_windows.windows}
+            strategy_space = replace(
+                strategy_space,
+                schedules=tuple(
+                    item
+                    for item in strategy_space.schedules
+                    if item.schedule_id not in component_schedule_ids
+                ),
+            )
+        pv_capture_schedule = self._pv_capture_schedule(
+            snapshot_id=snapshot.snapshot_id,
+            household=inputs.household,
+            pv_scenarios=inputs.pv_scenarios,
+        )
+        if (
+            strategy_space.charge_requirement_status == "required"
+            and pv_capture_schedule is not None
+            and all(
+                item.intervals != pv_capture_schedule.intervals for item in strategy_space.schedules
+            )
+        ):
+            strategy_space = replace(
+                strategy_space,
+                schedules=(*strategy_space.schedules, pv_capture_schedule),
+                active_intents=tuple(
+                    dict.fromkeys((*strategy_space.active_intents, DailyStorageIntent.NOM))
+                ),
+            )
         return IndependentDailyStrategyObserver().observe(
             strategy_space=strategy_space,
             household=inputs.household,
@@ -207,9 +237,7 @@ class IndependentDailyReferenceAdapter:
             return charge_windows
 
         nom_windows = tuple(
-            item
-            for item in charge_windows.windows
-            if item.intent is DailyStorageIntent.NOM
+            item for item in charge_windows.windows if item.intent is DailyStorageIntent.NOM
         )
         grid_windows = tuple(
             item
@@ -220,9 +248,7 @@ class IndependentDailyReferenceAdapter:
         preferred_hybrids = tuple(
             item
             for item in charge_windows.hybrid_schedules
-            if cls._starts_in_preferred_window(
-                cls._grid_start(item), preferred_grid_windows
-            )
+            if cls._starts_in_preferred_window(cls._grid_start(item), preferred_grid_windows)
         )
         eligible_hybrids = preferred_hybrids or charge_windows.hybrid_schedules
         selected_hybrid = min(
@@ -237,9 +263,7 @@ class IndependentDailyReferenceAdapter:
         preferred_grid = tuple(
             item
             for item in grid_windows
-            if cls._starts_in_preferred_window(
-                item.starts_at, preferred_grid_windows
-            )
+            if cls._starts_in_preferred_window(item.starts_at, preferred_grid_windows)
         )
         eligible_grid = preferred_grid or grid_windows
         selected_grid = (
@@ -265,11 +289,9 @@ class IndependentDailyReferenceAdapter:
         retained_windows: list[DailyReferenceChargeWindow] = []
         if selected_nom is not None:
             retained_windows.append(selected_nom)
-        # Keep a proven grid window when no hybrid exists, or when it is needed
-        # to keep the discovered WindowSet non-empty beside a lone hybrid.
-        if selected_grid is not None and (
-            selected_hybrid is None or selected_nom is None
-        ):
+        # The WindowSet contract retains one proven component beside a hybrid;
+        # the Strategy Generator publishes only the composed path.
+        if selected_grid is not None and (selected_hybrid is None or selected_nom is None):
             retained_windows.append(selected_grid)
         return DailyReferenceChargeWindowSet(
             window_set_id=charge_windows.window_set_id,
@@ -279,9 +301,44 @@ class IndependentDailyReferenceAdapter:
             ranking_permitted=False,
             method_version=METHOD_VERSION,
             discovery_status="discovered",
-            hybrid_schedules=(
-                (selected_hybrid,) if selected_hybrid is not None else ()
-            ),
+            hybrid_schedules=((selected_hybrid,) if selected_hybrid is not None else ()),
+        )
+
+    @staticmethod
+    def _pv_capture_schedule(
+        *,
+        snapshot_id: str,
+        household: DomainHouseholdForecast,
+        pv_scenarios: tuple[ScenarioTimeline, ...],
+    ) -> DailyReferenceIntentSchedule | None:
+        """Publish one physical NOM path exactly where conservative PV exists."""
+
+        conservative = next(item for item in pv_scenarios if item.scenario is PVScenario.LOWER)
+        intervals = tuple(
+            DailyReferenceIntentInterval(
+                starts_at=load.starts_at,
+                ends_at=load.ends_at,
+                intent=(
+                    DailyStorageIntent.NOM
+                    if pv.energy_wh > 1e-6
+                    else DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+                ),
+            )
+            for load, pv in zip(
+                household.intervals,
+                conservative.timeline.intervals,
+                strict=True,
+            )
+        )
+        if not any(item.intent is DailyStorageIntent.NOM for item in intervals):
+            return None
+        return DailyReferenceIntentSchedule(
+            schedule_id=f"daily-strategy:{snapshot_id}:conservative-pv-capture",
+            snapshot_id=snapshot_id,
+            horizon_start=household.horizon_start,
+            horizon_end=household.horizon_end,
+            intervals=intervals,
+            method_version=METHOD_VERSION,
         )
 
     @staticmethod
@@ -422,18 +479,10 @@ class IndependentDailyReferenceAdapter:
             household=household,
             pv_scenarios=pv_scenarios,
             storage=domain_storage,
-            minimum_storage_energy_wh=(
-                limits.minimum_soc * storage.usable_capacity_wh
-            ),
-            target_storage_energy_wh=(
-                limits.maximum_soc * storage.usable_capacity_wh
-            ),
-            maximum_charge_input_power_w=(
-                limits.maximum_charge_input_power_w
-            ),
-            maximum_discharge_output_power_w=(
-                limits.maximum_discharge_output_power_w
-            ),
+            minimum_storage_energy_wh=(limits.minimum_soc * storage.usable_capacity_wh),
+            target_storage_energy_wh=(limits.maximum_soc * storage.usable_capacity_wh),
+            maximum_charge_input_power_w=(limits.maximum_charge_input_power_w),
+            maximum_discharge_output_power_w=(limits.maximum_discharge_output_power_w),
         )
 
     @staticmethod
@@ -460,8 +509,7 @@ class IndependentDailyReferenceAdapter:
         source_intervals = tuple(
             interval
             for interval in forecast.intervals
-            if interval.starts_at < horizon_end
-            and interval.ends_at > captured_at
+            if interval.starts_at < horizon_end and interval.ends_at > captured_at
         )
         if not source_intervals:
             raise DailyReferenceInputError("daily_reference_household_empty")
@@ -487,21 +535,15 @@ class IndependentDailyReferenceAdapter:
                 if item.starts_at < ends_at and item.ends_at > starts_at
             )
             covered_seconds = sum(
-                (
-                    min(item.ends_at, ends_at) - max(item.starts_at, starts_at)
-                ).total_seconds()
+                (min(item.ends_at, ends_at) - max(item.starts_at, starts_at)).total_seconds()
                 for item in overlapping
             )
             required_seconds = (ends_at - starts_at).total_seconds()
             if not overlapping or covered_seconds != required_seconds:
-                raise DailyReferenceInputError(
-                    "daily_reference_household_horizon_incomplete"
-                )
+                raise DailyReferenceInputError("daily_reference_household_horizon_incomplete")
             expected_energy_wh = sum(
                 item.expected_energy_wh
-                * (
-                    min(item.ends_at, ends_at) - max(item.starts_at, starts_at)
-                ).total_seconds()
+                * (min(item.ends_at, ends_at) - max(item.starts_at, starts_at)).total_seconds()
                 / (item.ends_at - item.starts_at).total_seconds()
                 for item in overlapping
             )

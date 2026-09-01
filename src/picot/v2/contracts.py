@@ -650,8 +650,11 @@ class PlanningInputSnapshot:
     storage_physical_limits: tuple[StoragePhysicalLimits, ...] = ()
     storage_round_trip_efficiency: StorageRoundTripEfficiencyEvidence | None = None
     active_plan_commitments: tuple[ActivePlanCommitment, ...] = ()
+    household_unexpected_reserve_fraction: float = 0.10
 
     def __post_init__(self) -> None:
+        if not 0.0 <= self.household_unexpected_reserve_fraction <= 1.0:
+            raise ValueError("household unexpected reserve must be between 0 and 1")
         scope_ids = tuple(
             item.execution_scope_id for item in self.active_plan_commitments
         )

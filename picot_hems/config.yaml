@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.221"
+version: "2.0.0-dev.222"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -43,6 +43,7 @@ options:
   household_cost_optimization_weight: 80
   household_self_consumption_weight: 70
   household_reserve_availability_weight: 60
+  household_unexpected_reserve_percent: 10.0
   household_trading_enabled: false
   household_adaptive_priority_enabled: true
   household_low_pv_confidence_threshold: 0.50
@@ -99,6 +100,7 @@ schema:
   household_cost_optimization_weight: int(0,100)
   household_self_consumption_weight: int(0,100)
   household_reserve_availability_weight: int(0,100)
+  household_unexpected_reserve_percent: float(0,100)
   household_trading_enabled: bool
   household_adaptive_priority_enabled: bool
   household_low_pv_confidence_threshold: float(0,1)

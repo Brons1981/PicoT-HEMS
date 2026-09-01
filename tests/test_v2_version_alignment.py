@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_221() -> None:
-    assert __version__ == "2.0.0-dev.221"
+def test_v2_release_version_is_dev_222() -> None:
+    assert __version__ == "2.0.0-dev.222"
 
 
 def test_mep_has_one_fallback_rte_configuration() -> None:
@@ -33,21 +33,21 @@ def test_mep_has_one_fallback_rte_configuration() -> None:
     assert "  market_daily_wear_eur_per_kwh: 0.05" in text
     assert "  micro_charge_suppression_percent: 2.0" in text
     assert "  plan_switching_margin_eur: 0.05" in text
+    assert "  household_unexpected_reserve_percent: 10.0" in text
     assert "  battery_purchase_eur: 2407.40" in text
     assert "  market_daily_rte_entity: str" in text
     assert "  market_daily_trading_margin_percent: float(0,100)" in text
     assert "  market_daily_wear_eur_per_kwh: float(0,1)" in text
     assert "  micro_charge_suppression_percent: float(0,100)" in text
     assert "  plan_switching_margin_eur: float(0,)" in text
+    assert "  household_unexpected_reserve_percent: float(0,100)" in text
     assert "  battery_purchase_eur: float(0,)" in text
 
 
 def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:
     config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
     lines = config_path.read_text(encoding="utf-8").splitlines()
-    option_lines = lines[
-        lines.index("options:") + 1 : lines.index("schema:")
-    ]
+    option_lines = lines[lines.index("options:") + 1 : lines.index("schema:")]
     options = {
         key.strip(): value.strip().strip('"')
         for line in option_lines
@@ -63,9 +63,7 @@ def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:
 def test_v2_addon_exposes_validated_storage_power_sources() -> None:
     config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
     lines = config_path.read_text(encoding="utf-8").splitlines()
-    option_lines = lines[
-        lines.index("options:") + 1 : lines.index("schema:")
-    ]
+    option_lines = lines[lines.index("options:") + 1 : lines.index("schema:")]
     schema_lines = lines[lines.index("schema:") + 1 :]
     options = {
         key.strip(): value.strip().strip('"')
@@ -126,12 +124,11 @@ def test_v2_addon_exposes_pipeline_dashboard_via_ingress() -> None:
     assert top_level.get("panel_icon") == "mdi:chart-timeline-variant"
     assert top_level.get("panel_title") == "PicoT Pipeline"
 
+
 def test_v2_addon_exposes_household_load_fallback_power() -> None:
     config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
     lines = config_path.read_text(encoding="utf-8").splitlines()
-    option_lines = lines[
-        lines.index("options:") + 1 : lines.index("schema:")
-    ]
+    option_lines = lines[lines.index("options:") + 1 : lines.index("schema:")]
     schema_lines = lines[lines.index("schema:") + 1 :]
     options = {
         key.strip(): value.strip().strip('"')
@@ -142,22 +139,14 @@ def test_v2_addon_exposes_household_load_fallback_power() -> None:
 
     assert options.get("household_load_fallback_power_w") == "500.0"
     assert options.get("household_load_fallback_confidence") == "0.50"
-    assert (
-        "  household_load_fallback_power_w: float(0,)"
-        in schema_lines
-    )
-    assert (
-        "  household_load_fallback_confidence: float(0,1)"
-        in schema_lines
-    )
+    assert "  household_load_fallback_power_w: float(0,)" in schema_lines
+    assert "  household_load_fallback_confidence: float(0,1)" in schema_lines
 
 
 def test_v2_addon_exposes_explicit_pv_local_timezone() -> None:
     config_path = Path(__file__).parents[1] / "picot_hems" / "config.yaml"
     lines = config_path.read_text(encoding="utf-8").splitlines()
-    option_lines = lines[
-        lines.index("options:") + 1 : lines.index("schema:")
-    ]
+    option_lines = lines[lines.index("options:") + 1 : lines.index("schema:")]
     schema_lines = lines[lines.index("schema:") + 1 :]
     options = {
         key.strip(): value.strip().strip('"')

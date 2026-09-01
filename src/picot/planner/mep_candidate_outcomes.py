@@ -72,12 +72,13 @@ from picot.v2.contracts import (
     ProjectedHouseholdEnergyBalanceInterval,
     StorageEnergyRequirement,
 )
+from picot.v2.energy_requirements import derive_storage_energy_requirement
 from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
 from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
 from picot.v2.plan_commitment_store import ActivePlanCommitment, CommittedPlanSegment
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_outcomes", __name__)
-METHOD_VERSION = "mep-canonical-candidate-outcomes:v2"
+METHOD_VERSION = "mep-canonical-candidate-outcomes:v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,9 +348,7 @@ def _native_metrics(
     wear_eur_per_export_kwh: float,
 ) -> tuple[float, float, float, float, float]:
     run = result.run
-    baseline_assessments = {
-        item.scenario: item for item in baseline.run.assessment.assessments
-    }
+    baseline_assessments = {item.scenario: item for item in baseline.run.assessment.assessments}
     assessments = {item.scenario: item for item in run.assessment.assessments}
     financial = min(
         item.net_financial_result_eur
@@ -398,9 +397,7 @@ def _storage_requirement_evidence(
         and item.capability_id == storage.capability_id
     )
     trajectory = next(
-        item
-        for item in baseline.run.simulation.trajectories
-        if item.scenario is PVScenario.LOWER
+        item for item in baseline.run.simulation.trajectories if item.scenario is PVScenario.LOWER
     )
     balance_id = _id(
         "mep-projected-household-balance",
@@ -412,14 +409,10 @@ def _storage_requirement_evidence(
             ends_at=item.ends_at,
             current_usable_storage_energy_wh=item.storage_energy_at_start_wh,
             expected_usable_pv_energy_wh=item.usable_pv_wh,
-            planned_grid_energy_wh=(
-                item.grid_to_household_wh + item.grid_to_storage_input_wh
-            ),
+            planned_grid_energy_wh=(item.grid_to_household_wh + item.grid_to_storage_input_wh),
             household_load_forecast_energy_wh=item.household_demand_wh,
             known_future_demand_energy_wh=0.0,
-            conversion_losses_wh=(
-                item.storage_charge_loss_wh + item.storage_discharge_loss_wh
-            ),
+            conversion_losses_wh=(item.storage_charge_loss_wh + item.storage_discharge_loss_wh),
             other_planned_household_energy_flows_wh=-(
                 item.pv_to_grid_wh + item.storage_to_grid_output_wh
             ),
@@ -436,42 +429,37 @@ def _storage_requirement_evidence(
         storage_state_id=storage.storage_state_id,
         intervals=intervals,
     )
-    relevant = tuple(
-        item for item in intervals if item.starts_at < portfolio.required_by
-    )
-    evidence_ids = tuple(
-        dict.fromkeys(
-            (
-                balance_id,
-                *(
-                    evidence_id
-                    for interval in relevant
-                    for evidence_id in interval.evidence_ids
-                ),
-                METHOD_VERSION,
-            )
-        )
-    )
-    target_energy_wh = limits.maximum_soc * storage.usable_capacity_wh
-    requirement = StorageEnergyRequirement(
-        requirement_id=_id(
-            "mep-storage-requirement",
-            f"{balance_id}|{target_energy_wh}|{portfolio.required_by.isoformat()}",
+    replenishment_at = next(
+        (
+            item.starts_at
+            for item in intervals
+            if item.expected_usable_pv_energy_wh > item.household_load_forecast_energy_wh
         ),
-        run_id=snapshot.run_id,
-        snapshot_id=snapshot.snapshot_id,
-        storage_state_id=storage.storage_state_id,
-        projected_balance_id=balance_id,
-        required_energy_wh=target_energy_wh,
-        required_soc=limits.maximum_soc,
-        required_by=portfolio.required_by,
-        reason="daily_storage_target_before_household_dependency",
-        confidence=min((item.confidence for item in relevant), default=0.0),
-        evidence_ids=evidence_ids,
-        reserve_contribution_wh=limits.minimum_soc * storage.usable_capacity_wh,
-        confidence_method_version="mep-daily-target-minimum-confidence:v1",
-        requirement_kind="daily_storage_target",
-        satisfaction_mode="reached_by",
+        portfolio.required_by,
+    )
+    required_by = min(portfolio.required_by, replenishment_at)
+    relevant = tuple(item for item in intervals if item.starts_at < required_by)
+    requirement_balance = ProjectedHouseholdEnergyBalance(
+        balance_id=balance.balance_id,
+        run_id=balance.run_id,
+        snapshot_id=balance.snapshot_id,
+        storage_state_id=balance.storage_state_id,
+        intervals=relevant or intervals[:1],
+    )
+    reserve_contribution_wh = (
+        snapshot.household_unexpected_reserve_fraction * storage.usable_capacity_wh
+    )
+    target_energy_wh = min(
+        limits.maximum_soc * storage.usable_capacity_wh,
+        limits.minimum_soc * storage.usable_capacity_wh + reserve_contribution_wh,
+    )
+    requirement = derive_storage_energy_requirement(
+        balance=requirement_balance,
+        target_energy_wh=target_energy_wh,
+        usable_capacity_wh=storage.usable_capacity_wh,
+        required_by=required_by,
+        reason="HOUSEHOLD_LOWER_BOUND_AND_UNEXPECTED_RESERVE",
+        reserve_contribution_wh=reserve_contribution_wh,
     )
     return balance, requirement
 
@@ -483,52 +471,40 @@ def _daily_target_evidence(
     requirement: StorageEnergyRequirement,
     current_storage_energy_wh: float,
 ) -> tuple[bool, datetime | None]:
-    """Return conservative daily-target completion evidence across scenarios."""
-
-    if current_storage_energy_wh + 1e-6 >= requirement.required_energy_wh:
-        reached_at = (
-            result.intent_schedule.horizon_start
-            if result is not None
-            else (
-                market.intent_schedule.horizon_start
-                if market is not None
-                else requirement.required_by
-            )
-        )
-        return True, reached_at
+    """Return storage energy available at the household requirement deadline."""
     if market is not None:
-        reached_at_by_scenario = tuple(
-            next(
+        energy_by_scenario = tuple(
+            max(
                 (
-                    checkpoint.at
+                    (checkpoint.at, checkpoint.energy_wh)
                     for checkpoint in scenario.storage_energy_checkpoints
                     if checkpoint.at <= requirement.required_by
-                    and checkpoint.energy_wh + 1e-6 >= requirement.required_energy_wh
                 ),
-                None,
-            )
+                default=(market.intent_schedule.horizon_start, current_storage_energy_wh),
+            )[1]
             for scenario in market.scenario_evidence
         )
-        if any(reached_at is None for reached_at in reached_at_by_scenario):
+        if any(
+            energy_wh + 1e-6 < requirement.required_energy_wh for energy_wh in energy_by_scenario
+        ):
             return False, None
-        return True, max(
-            reached_at
-            for reached_at in reached_at_by_scenario
-            if reached_at is not None
-        )
+        return True, requirement.required_by
     if result is None:
         return False, None
-    reached_at_by_scenario = tuple(
-        trajectory.target_reached_at for trajectory in result.run.simulation.trajectories
+    energy_by_scenario = tuple(
+        max(
+            (
+                (interval.ends_at, interval.storage_energy_at_end_wh)
+                for interval in trajectory.intervals
+                if interval.ends_at <= requirement.required_by
+            ),
+            default=(trajectory.horizon_start, current_storage_energy_wh),
+        )[1]
+        for trajectory in result.run.simulation.trajectories
     )
-    if any(
-        reached_at is None or reached_at > requirement.required_by
-        for reached_at in reached_at_by_scenario
-    ):
+    if any(energy_wh + 1e-6 < requirement.required_energy_wh for energy_wh in energy_by_scenario):
         return False, None
-    return True, max(
-        reached_at for reached_at in reached_at_by_scenario if reached_at is not None
-    )
+    return True, requirement.required_by
 
 
 def _recoverability(
@@ -752,6 +728,12 @@ def produce_mep_comparable_portfolio(
     outcomes: list[DomainCandidateOutcome] = []
     diagnostics: list[MepCandidateOutcome] = []
     limits = snapshot.storage_physical_limits[0]
+    baseline_requirement_met, _baseline_requirement_at = _daily_target_evidence(
+        result=baseline,
+        market=None,
+        requirement=storage_requirement,
+        current_storage_energy_wh=(snapshot.current_storage_states[0].current_stored_energy_wh),
+    )
     for row in rows:
         candidate_id = row.candidate_id
         schedule = row.schedule
@@ -807,8 +789,6 @@ def produce_mep_comparable_portfolio(
             if not built.reserve_respected_across_scenarios:
                 reasons.append("reserve_not_respected")
             household_reserve_respected = built.reserve_respected_across_scenarios
-            if not built.target_reached_across_scenarios:
-                reasons.append("target_not_reached")
         else:
             financial = self_consumption = reserve = 0.0
             confidence = 0.0
@@ -819,12 +799,12 @@ def produce_mep_comparable_portfolio(
             result=result,
             market=(market if not row.committed_prefix_composed else None),
             requirement=storage_requirement,
-            current_storage_energy_wh=(
-                snapshot.current_storage_states[0].current_stored_energy_wh
-            ),
+            current_storage_energy_wh=(snapshot.current_storage_states[0].current_stored_energy_wh),
         )
         if not daily_target_reached:
             reasons.append("daily_storage_target_not_reached_by_deadline")
+        if grid_to_storage > 1e-6 and baseline_requirement_met:
+            reasons.append("grid_supplementation_not_required_for_household_reserve")
         family = _family(native, incumbent=committed is not None)
         constraint_ids = tuple(
             dict.fromkeys((*limits.evidence_ids, storage_requirement.requirement_id))
@@ -938,7 +918,7 @@ def produce_mep_comparable_portfolio(
                 (
                     committed.target_energy_wh
                     if committed is not None
-                    else limits.maximum_soc * snapshot.current_storage_states[0].usable_capacity_wh
+                    else storage_requirement.required_energy_wh
                 ),
                 storage_requirement.required_by,
                 daily_target_reached,

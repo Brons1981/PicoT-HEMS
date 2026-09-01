@@ -27,9 +27,7 @@ def test_read_only_web_server_exposes_latest_view_and_rejects_writes() -> None:
 
         assert waiting.value.code == 503
         assert waiting.value.headers.get_content_type() == "application/json"
-        assert json.loads(waiting.value.read()) == {
-            "status": "waiting_for_first_run"
-        }
+        assert json.loads(waiting.value.read()) == {"status": "waiting_for_first_run"}
         waiting.value.close()
 
         store.publish(
@@ -127,7 +125,7 @@ def test_web_server_exposes_auto_refreshing_read_only_dashboard() -> None:
     assert 'id="diagnostic-download-status"' in html
     assert "Diagnosebestand wordt voorbereid" in html
     assert "formatMeasurement" in html
-    assert 'formatMeasurement(source.raw_state, source.raw_unit)' in html
+    assert "formatMeasurement(source.raw_state, source.raw_unit)" in html
 
 
 def test_web_server_exposes_incident_overview_and_downloads(tmp_path) -> None:
@@ -153,9 +151,7 @@ def test_web_server_exposes_incident_overview_and_downloads(tmp_path) -> None:
             overview = json.loads(response.read())
         assert overview[0]["event"] == "fallback_started"
 
-        with urlopen(
-            f"{base}/downloads/planning-incidents.jsonl", timeout=2
-        ) as response:
+        with urlopen(f"{base}/downloads/planning-incidents.jsonl", timeout=2) as response:
             assert response.headers.get_content_type() == "application/x-ndjson"
             assert "attachment" in response.headers["Content-Disposition"]
             assert response.read() == incident.read_bytes()
@@ -163,7 +159,7 @@ def test_web_server_exposes_incident_overview_and_downloads(tmp_path) -> None:
         with urlopen(f"{base}/downloads/picot-diagnostics.zip", timeout=2) as response:
             payload = response.read()
             assert response.headers.get_content_type() == "application/zip"
-            assert response.headers.get("Content-Length") is None
+            assert int(response.headers["Content-Length"]) == len(payload)
         with ZipFile(BytesIO(payload)) as archive:
             assert archive.namelist() == [incident.name, provenance.name]
     finally:
@@ -184,10 +180,7 @@ def test_realtime_update_endpoint_returns_published_revision_and_view() -> None:
             "pipeline": [],
         }
     )
-    url = (
-        f"http://127.0.0.1:{server.server_port}"
-        "/api/view/updates?revision=0"
-    )
+    url = f"http://127.0.0.1:{server.server_port}/api/view/updates?revision=0"
 
     try:
         with urlopen(url, timeout=2) as response:
@@ -215,17 +208,16 @@ def test_dashboard_accepts_only_explicit_passive_stress_marker() -> None:
     captured = []
     store = WebViewStore()
     store.set_planner_stress_marker(
-        lambda marker_id, note: captured.append((marker_id, note))
-        or {"status": "recorded", "observer_only": True}
+        lambda marker_id, note: (
+            captured.append((marker_id, note)) or {"status": "recorded", "observer_only": True}
+        )
     )
     server = create_web_server(store, host="127.0.0.1", port=0)
     thread = Thread(target=server.serve_forever)
     thread.start()
     request = Request(
         f"http://127.0.0.1:{server.server_port}/api/planner-comparison/stress",
-        data=json.dumps(
-            {"marker_id": "stress-1", "note": "handmatig"}
-        ).encode(),
+        data=json.dumps({"marker_id": "stress-1", "note": "handmatig"}).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )

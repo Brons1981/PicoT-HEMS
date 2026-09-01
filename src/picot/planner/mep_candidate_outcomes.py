@@ -78,6 +78,7 @@ from picot.v2.plan_commitment_store import ActivePlanCommitment, CommittedPlanSe
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_outcomes", __name__)
 METHOD_VERSION = "mep-canonical-candidate-outcomes:v2"
+MAX_UNIQUE_COMPOSED_SUFFIX_SIMULATIONS = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -682,6 +683,20 @@ def _compose_committed_prefix(
     )
 
 
+def _schedule_signature(
+    schedule: DailyReferenceIntentSchedule,
+) -> tuple[tuple[datetime, datetime, str, float], ...]:
+    return tuple(
+        (
+            interval.starts_at,
+            interval.ends_at,
+            interval.intent.value,
+            interval.storage_export_target_wh,
+        )
+        for interval in schedule.intervals
+    )
+
+
 def _simulate_committed(
     *,
     snapshot: PlanningInputSnapshot,
@@ -778,6 +793,10 @@ def produce_mep_comparable_portfolio(
 
     if incumbent is not None and reference.horizon_end > incumbent.ends_at:
         composed_rows: list[_CandidateRow] = []
+        simulations_by_schedule: dict[
+            tuple[tuple[datetime, datetime, str, float], ...],
+            tuple[DailyReferenceIntentSchedule, DailyReferenceStrategyResult],
+        ] = {}
         for row in rows:
             composed = _compose_committed_prefix(
                 snapshot=snapshot,
@@ -787,15 +806,27 @@ def produce_mep_comparable_portfolio(
             if composed is None:
                 composed_rows.append(row)
                 continue
+            signature = _schedule_signature(composed)
+            cached = simulations_by_schedule.get(signature)
+            if cached is None:
+                if (
+                    len(simulations_by_schedule)
+                    >= MAX_UNIQUE_COMPOSED_SUFFIX_SIMULATIONS
+                ):
+                    continue
+                composed_result = _simulate_committed(
+                    snapshot=snapshot,
+                    schedule=composed,
+                    conversion_model=conversion_model,
+                )
+                simulations_by_schedule[signature] = (composed, composed_result)
+            else:
+                composed, composed_result = cached
             composed_rows.append(
                 replace(
                     row,
                     schedule=composed,
-                    result=_simulate_committed(
-                        snapshot=snapshot,
-                        schedule=composed,
-                        conversion_model=conversion_model,
-                    ),
+                    result=composed_result,
                     committed_prefix_composed=True,
                 )
             )

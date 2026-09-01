@@ -5,13 +5,17 @@ from types import SimpleNamespace
 import pytest
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
+import picot.planner.mep_candidate_outcomes as mep_candidate_outcomes
 from picot.domain.daily_reference_intent import (
     DailyReferenceIntentInterval,
     DailyReferenceIntentSchedule,
     DailyStorageIntent,
 )
 from picot.domain.execution_primitive import ExecutionPrimitive
-from picot.planner.mep_candidate_outcomes import _compose_committed_prefix
+from picot.planner.mep_candidate_outcomes import (
+    MAX_UNIQUE_COMPOSED_SUFFIX_SIMULATIONS,
+    _compose_committed_prefix,
+)
 from picot.v2.contracts import StorageRoundTripEfficiencyEvidence
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
@@ -587,7 +591,10 @@ def test_mep_separates_daily_maximum_target_from_household_reserve(
     assert all(outcome.household_reserve_respected for outcome in valid_outcomes)
 
 
-def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
+def test_canonical_commitment_survives_next_mep_calculation(
+    tmp_path,
+    monkeypatch,
+) -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.51)
     pipeline, store = _pipeline(tmp_path)
     first = pipeline.run(planning_input=snapshot)
@@ -633,6 +640,19 @@ def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
             intervals=(*snapshot.pv_energy_timeline.intervals, *extra_pv),
         ),
     )
+    simulation_calls = 0
+    original_simulation = mep_candidate_outcomes._simulate_committed
+
+    def counting_simulation(**kwargs):
+        nonlocal simulation_calls
+        simulation_calls += 1
+        return original_simulation(**kwargs)
+
+    monkeypatch.setattr(
+        mep_candidate_outcomes,
+        "_simulate_committed",
+        counting_simulation,
+    )
 
     continued = pipeline.run(
         planning_input=replace(
@@ -668,6 +688,8 @@ def test_canonical_commitment_survives_next_mep_calculation(tmp_path) -> None:
     assert planned_suffix
     assert planned_suffix[0].starts_at == commitment.ends_at
     assert planned_suffix[-1].ends_at == extended_horizon
+    assert simulation_calls <= MAX_UNIQUE_COMPOSED_SUFFIX_SIMULATIONS + 1
+    assert simulation_calls == 2
 
     view = build_web_view(continued, project(continued))
     chosen_plan = view["planning_status"]["chosen_plan"]

@@ -219,6 +219,72 @@ def test_low_pv_snapshot_publishes_valid_pv_first_residual_grid_candidate(
     assert hybrid_grid_seconds == timedelta(minutes=75).total_seconds()
 
 
+def test_hybrid_parent_publishes_valid_complete_market_path(tmp_path) -> None:
+    """Dev.215: market trade extends PV capture plus residual grid recovery."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    split = snapshot.captured_at + timedelta(hours=12)
+    horizon_end = snapshot.captured_at + timedelta(hours=24)
+    source = snapshot.price_points[0]
+    priced = replace(
+        snapshot,
+        storage_round_trip_efficiency=StorageRoundTripEfficiencyEvidence(
+            status="available",
+            round_trip_efficiency=0.83,
+            observed_at=snapshot.captured_at,
+            source_entity_id="sensor.test_storage_rte",
+            evidence_id="test-storage-rte",
+            method_version="test-storage-rte:v1",
+        ),
+        price_points=(
+            replace(source, point_id="cheap", ends_at=split, value_eur_per_kwh=0.05),
+            replace(
+                source,
+                point_id="expensive",
+                starts_at=split,
+                ends_at=horizon_end,
+                value_eur_per_kwh=2.00,
+            ),
+        ),
+    )
+    pipeline, _store = _pipeline(tmp_path)
+
+    run = pipeline.run(
+        planning_input=priced,
+        price_opportunity_config=PriceOpportunityConfig(
+            low_price_margin_eur_per_kwh=0.10,
+            high_price_margin_eur_per_kwh=0.10,
+            config_version="test-price-opportunities:v1",
+            market_timezone="UTC",
+        ),
+    )
+
+    valid_ids = {
+        outcome.candidate_id
+        for outcome in run.outcomes.outcomes
+        if outcome.validity == "valid"
+        and outcome.daily_target_reached
+        and outcome.household_reserve_respected
+    }
+    complete_market_paths = tuple(
+        path
+        for candidate in run.candidate_set.candidates
+        for path in run.candidate_set.energy_paths
+        if candidate.energy_path_id == path.path_id
+        and candidate.family == "market_route"
+        and candidate.candidate_id in valid_ids
+        and {segment.primitive for segment in path.segments}.issuperset(
+            {
+                ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                ExecutionPrimitive.CHARGE_AT_POWER,
+                ExecutionPrimitive.DISCHARGE_AT_POWER,
+            }
+        )
+    )
+
+    assert complete_market_paths
+
+
 def test_dashboard_presents_mep_execution_plan_with_comparable_outcomes(
     tmp_path,
 ) -> None:

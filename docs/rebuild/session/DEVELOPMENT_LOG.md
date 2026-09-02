@@ -985,6 +985,29 @@ Live verification, 2026-08-22:
 
 Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 
+## 2026-09-02 — 2.0.0-dev.226 household-safe stored-energy trading
+
+- Kept ADR-001 through ADR-037 as the only authoritative design set. No
+  terminal replacement-value policy or later ADR/V2ADR rule was introduced.
+- Corrected the DEV.225 trading hourglass for energy already present in the
+  battery. Its export budget is now bounded by the lower-PV baseline energy
+  remaining after the complete projected household path, the technical lower
+  SoC, the household unexpected reserve and the configured additional reserve.
+- Kept linked grid-charge-and-export routes independently bounded by the user
+  trading percentage because those routes acquire their own trading energy.
+- Removed `stored_energy_export` from the PV-preference overlay. A high export
+  price is an Opportunity, not evidence of available PV, and therefore no
+  longer creates a NOM/PV interval before evening export.
+- Added regressions for the household-safe stored-energy budget, unchanged
+  linked trading budget, and absence of NOM when PV is unavailable.
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
+- Local verification: all 29 market-planner tests and all 37 canonical MEP
+  pipeline/version tests passed. Ruff passed on every changed Python file,
+  mypy passed on the planner and all 59 canonical v2 source files, and
+  `git diff --check` passed.
+
 ## 2026-09-02 — 2.0.0-dev.225 bounded market SoC path
 
 - Restored MEP market charging and export only behind the explicit

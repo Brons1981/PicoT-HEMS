@@ -66,6 +66,163 @@ def test_mep_bounds_grid_charge_and_export_to_user_soc_budget() -> None:
     )
 
 
+def test_mep_bounds_stored_export_after_household_path_and_reserves() -> None:
+    """ADR-017/037: trading cannot consume energy needed by the household path."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.64)
+    assert snapshot.household_load_forecast is not None
+    export_start = snapshot.captured_at + timedelta(hours=13)
+    export_end = export_start + timedelta(hours=1)
+    source = snapshot.price_points[0]
+    priced = replace(
+        snapshot,
+        household_load_forecast=replace(
+            snapshot.household_load_forecast,
+            intervals=tuple(
+                replace(item, expected_energy_wh=0.0)
+                for item in snapshot.household_load_forecast.intervals
+            ),
+        ),
+        price_points=(
+            replace(
+                source,
+                point_id="before-export",
+                ends_at=export_start,
+                value_eur_per_kwh=0.20,
+            ),
+            replace(
+                source,
+                point_id="export",
+                starts_at=export_start,
+                ends_at=export_end,
+                value_eur_per_kwh=0.55,
+            ),
+            replace(
+                source,
+                point_id="after-export",
+                starts_at=export_end,
+                ends_at=snapshot.captured_at + timedelta(hours=24),
+                value_eur_per_kwh=0.30,
+            ),
+        ),
+    )
+    conversion = _conversion()
+    policy = MarketTradingPolicy(
+        maximum_trading_soc_fraction=0.25,
+        additional_reserve_fraction=0.10,
+    )
+
+    portfolio, _ = MarketDailyPlanner().generate_with_diagnostics(
+        snapshot=priced,
+        conversion_model=conversion,
+        trading_policy=policy,
+    )
+    baseline_id = portfolio.native_observation.strategy_space.schedules[0].schedule_id
+    baseline = next(
+        item
+        for item in portfolio.native_observation.observer_result.portfolio.strategy_results
+        if item.intent_schedule.schedule_id == baseline_id
+    )
+    lower = next(
+        item
+        for item in baseline.run.simulation.trajectories
+        if item.scenario.value == "lower"
+    )
+    storage = snapshot.current_storage_states[0]
+    limits = snapshot.storage_physical_limits[0]
+    protected_end_wh = storage.usable_capacity_wh * (
+        limits.minimum_soc
+        + snapshot.household_unexpected_reserve_fraction
+        + policy.additional_reserve_fraction
+    )
+    household_safe_output_wh = max(
+        0.0,
+        (lower.intervals[-1].storage_energy_at_end_wh - protected_end_wh)
+        * conversion.discharge_efficiency,
+    )
+    routes = tuple(
+        item
+        for item in portfolio.market_routes
+        if item.route_kind == "stored_energy_export"
+    )
+
+    assert routes
+    assert all(
+        item.required_pre_window_discharge_output_wh
+        <= household_safe_output_wh + 1e-6
+        for item in routes
+    )
+
+
+def test_stored_export_does_not_create_nom_without_pv() -> None:
+    """ADR-024/031: an export opportunity is not evidence of available PV."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
+    assert snapshot.pv_energy_timeline is not None
+    assert snapshot.household_load_forecast is not None
+    export_start = snapshot.captured_at + timedelta(hours=13)
+    export_end = export_start + timedelta(hours=1)
+    source = snapshot.price_points[0]
+    priced = replace(
+        snapshot,
+        household_load_forecast=replace(
+            snapshot.household_load_forecast,
+            intervals=tuple(
+                replace(item, expected_energy_wh=0.0)
+                for item in snapshot.household_load_forecast.intervals
+            ),
+        ),
+        pv_energy_timeline=replace(
+            snapshot.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    item,
+                    pv_energy_wh=0.0,
+                    forecast_lower_energy_wh=0.0,
+                    forecast_central_energy_wh=0.0,
+                    forecast_upper_energy_wh=0.0,
+                )
+                for item in snapshot.pv_energy_timeline.intervals
+            ),
+        ),
+        price_points=(
+            replace(source, point_id="before", ends_at=export_start, value_eur_per_kwh=0.20),
+            replace(
+                source,
+                point_id="export",
+                starts_at=export_start,
+                ends_at=export_end,
+                value_eur_per_kwh=0.55,
+            ),
+            replace(
+                source,
+                point_id="after",
+                starts_at=export_end,
+                ends_at=snapshot.captured_at + timedelta(hours=24),
+                value_eur_per_kwh=0.30,
+            ),
+        ),
+    )
+
+    portfolio, _ = MarketDailyPlanner().generate_with_diagnostics(
+        snapshot=priced,
+        conversion_model=_conversion(),
+    )
+    routes = {item.route_id: item for item in portfolio.market_routes}
+    stored = tuple(
+        item
+        for item in portfolio.route_assessments
+        if routes[item.route_id].route_kind == "stored_energy_export"
+    )
+
+    assert stored
+    assert all(
+        interval.intent.value != "nom"
+        for assessment in stored
+        for interval in assessment.intent_schedule.intervals
+    )
+
+
 def test_mep_builds_native_plan_when_no_market_extension_applies() -> None:
     snapshot = _snapshot(maximum_soc=0.7)
 
@@ -580,6 +737,7 @@ def test_export_marginal_return_breaks_complete_route_subcent_tie() -> None:
 
 def test_stored_energy_export_windows_all_retain_absolute_price_peak() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=1.0)
+    assert snapshot.household_load_forecast is not None
     source = snapshot.price_points[0]
     peak_start = snapshot.captured_at + timedelta(hours=6)
     points = (
@@ -635,7 +793,17 @@ def test_stored_energy_export_windows_all_retain_absolute_price_peak() -> None:
     )
 
     result, diagnostics = MarketDailyPlanner().plan_with_diagnostics(
-        snapshot=replace(snapshot, price_points=points),
+        snapshot=replace(
+            snapshot,
+            household_load_forecast=replace(
+                snapshot.household_load_forecast,
+                intervals=tuple(
+                    replace(item, expected_energy_wh=0.0)
+                    for item in snapshot.household_load_forecast.intervals
+                ),
+            ),
+            price_points=points,
+        ),
         conversion_model=_conversion(),
         storage_inventory=inventory,
     )

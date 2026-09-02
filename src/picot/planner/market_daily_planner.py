@@ -43,7 +43,7 @@ from picot.v2.opportunity_engine import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_generation", __name__)
-METHOD_VERSION = "market-daily-planner:v8"
+METHOD_VERSION = "market-daily-planner:v9"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
@@ -780,6 +780,34 @@ class MarketDailyPlanner:
         trading_export_budget_wh = (
             trading_stored_energy_budget_wh * conversion_model.discharge_efficiency
         )
+        baseline_schedule_id = native_observation.strategy_space.schedules[0].schedule_id
+        baseline_result = next(
+            item
+            for item in native_observation.observer_result.portfolio.strategy_results
+            if item.intent_schedule.schedule_id == baseline_schedule_id
+        )
+        baseline_lower = next(
+            item
+            for item in baseline_result.run.simulation.trajectories
+            if item.scenario is PVScenario.LOWER
+        )
+        protected_horizon_end_energy_wh = min(
+            maximum_energy_wh,
+            minimum_energy_wh
+            + storage.usable_capacity_wh
+            * (
+                snapshot.household_unexpected_reserve_fraction
+                + trading_policy.additional_reserve_fraction
+            ),
+        )
+        household_path_surplus_output_wh = max(
+            0.0,
+            (
+                baseline_lower.intervals[-1].storage_energy_at_end_wh
+                - protected_horizon_end_energy_wh
+            )
+            * conversion_model.discharge_efficiency,
+        )
         result: list[MarketCapacityRoute] = []
         for opportunity_window in negative_groups:
             group = opportunity_window.intervals
@@ -987,7 +1015,11 @@ class MarketDailyPlanner:
             0.0,
             (current_energy_wh - minimum_energy_wh) * conversion_model.discharge_efficiency,
         )
-        free_stored_output_wh = min(free_stored_output_wh, trading_export_budget_wh)
+        free_stored_output_wh = min(
+            free_stored_output_wh,
+            trading_export_budget_wh,
+            household_path_surplus_output_wh,
+        )
         fallback_acquisition_rate = min(
             (item.import_eur_per_kwh for window in low_windows for item in window.intervals),
             default=0.0,
@@ -1617,7 +1649,6 @@ class MarketDailyPlanner:
                     "grid_trade",
                     "pv_trade",
                     "pv_trade_grid_recovery",
-                    "stored_energy_export",
                 }
                 and item.starts_at < route.opportunity_window_ends_at
                 and item.ends_at > route.opportunity_window_starts_at

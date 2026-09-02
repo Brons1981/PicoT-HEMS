@@ -1540,16 +1540,8 @@ class MarketDailyPlanner:
             # by DEV.215 so PV + residual grid + evening trade remains a
             # first-class complete Energy Path.
             hybrid_parents = representative_hybrid_parents(route)
-            route_uses_grid_charge = (
-                route.maximum_charge_input_wh > 0.0
-                and route.route_kind
-                in {"grid_trade", "negative_capacity", "pv_trade_grid_recovery"}
-            )
             applicable_parents = (
-                hybrid_parents
-                if trading_policy.preserve_pv_during_grid_charge
-                and route_uses_grid_charge
-                else (baseline_result,)
+                (baseline_result,)
                 if route.route_kind in {"stored_energy_export", "negative_capacity"}
                 else (baseline_result, *hybrid_parents)
             )
@@ -1713,10 +1705,10 @@ class MarketDailyPlanner:
             intent = (
                 DailyStorageIntent.GRID_REQUIREMENT
                 if inside_explicit_charge
-                else DailyStorageIntent.NOM
-                if inside_projected_pv
                 else DailyStorageIntent.STORAGE_EXPORT
                 if (item.starts_at, item.ends_at) in export_targets
+                else DailyStorageIntent.NOM
+                if inside_projected_pv
                 else DailyStorageIntent.NOM
                 if inside_pv_preference_window
                 else item.intent

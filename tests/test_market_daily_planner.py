@@ -606,7 +606,7 @@ def test_mep_combines_grid_trade_with_hybrid_pv_residual_grid_parent() -> None:
         )
 
 
-def test_pv_preservation_rule_excludes_baseline_grid_trade_and_keeps_full_pv_window(
+def test_pv_preservation_rule_projects_nom_onto_existing_market_route(
 ) -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     split = snapshot.captured_at + timedelta(hours=12)
@@ -645,12 +645,24 @@ def test_pv_preservation_rule_excludes_baseline_grid_trade_and_keeps_full_pv_win
         if assessment.route_id in grid_route_ids
     )
     assert grid_assessments
+    baseline_trades = tuple(
+        assessment
+        for assessment in grid_assessments
+        if "baseline-household-support" in assessment.source_native_schedule_id
+    )
+    assert baseline_trades
+    assert any(
+        assessment.admitted
+        and assessment.physically_admissible
+        and any(
+            interval.intent is DailyStorageIntent.STORAGE_EXPORT
+            for interval in assessment.intent_schedule.intervals
+        )
+        for assessment in baseline_trades
+    )
     assert all(
         "hybrid-pv-grid" in assessment.source_native_schedule_id
-        for assessment in grid_assessments
-    )
-    assert not any(
-        "baseline-household-support" in assessment.source_native_schedule_id
+        or "baseline-household-support" in assessment.source_native_schedule_id
         for assessment in grid_assessments
     )
     assert snapshot.pv_energy_timeline is not None
@@ -660,7 +672,7 @@ def test_pv_preservation_rule_excludes_baseline_grid_trade_and_keeps_full_pv_win
         if interval.pv_energy_wh > 0.0
     )
     assert pv_intervals
-    for assessment in grid_assessments:
+    for assessment in baseline_trades:
         for interval in assessment.intent_schedule.intervals:
             if any(
                 interval.starts_at < pv.ends_at and interval.ends_at > pv.starts_at
@@ -669,6 +681,7 @@ def test_pv_preservation_rule_excludes_baseline_grid_trade_and_keeps_full_pv_win
                 assert interval.intent in {
                     DailyStorageIntent.NOM,
                     DailyStorageIntent.GRID_REQUIREMENT,
+                    DailyStorageIntent.STORAGE_EXPORT,
                 }
 
 

@@ -44,6 +44,10 @@ financiële toelatingswaarden rechtstreeks door de gebruiker instelbaar:
   standaard `10.0`.
 - `market_daily_wear_eur_per_kwh`: toegerekende batterijslijtage per geëxporteerde
   kWh; standaard `0.05` euro.
+- `market_daily_maximum_trading_soc_percent`: maximaal deel van de bruikbare
+  batterijcapaciteit dat één marktpad mag laden en ontladen; standaard `25.0`.
+  PicoT begrenst dit verder met de onderste SoC-grens, de huishoudreserve en
+  een aanvullende reserve van 10 procentpunt.
 
 Start de add-on na een wijziging opnieuw. In **PicoT Pipeline → Strategie** toont
 iedere onderzochte marktroute de herstelprijs, RTE-correctie, handelsmarge,

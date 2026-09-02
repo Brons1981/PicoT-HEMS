@@ -67,9 +67,8 @@ class MarketDailyPlannerRuntime:
         ) = None,
     ) -> None:
         self.conversion_model = conversion_model
-        # DEV.221 restores the bounded physical MEP basis first. Optional
-        # market export is reintroduced only through an explicit user rule in
-        # a later accepted slice; it must never be an implicit default.
+        # Callers that do not provide an explicit User Rule remain physical
+        # only. The live runtime supplies DEV.225's bounded SoC policy.
         self.trading_policy = trading_policy or MarketTradingPolicy(
             market_routes_enabled=False
         )

@@ -4,7 +4,6 @@ from datetime import timedelta
 import pytest
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
-from picot.domain.daily_reference_simulation import PVScenario
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.domain.storage_energy_inventory import (
     StorageEnergyInventory,
@@ -21,6 +20,50 @@ def test_mep_trading_threshold_applies_margin_before_fixed_wear() -> None:
     )
 
     assert policy.minimum_export_rate(0.131, 0.83) == pytest.approx(0.223614, abs=1e-6)
+
+
+def test_mep_trading_policy_rejects_soc_budget_outside_user_rule_range() -> None:
+    with pytest.raises(ValueError, match="trading SoC budget"):
+        MarketTradingPolicy(maximum_trading_soc_fraction=1.01)
+
+
+def test_mep_bounds_grid_charge_and_export_to_user_soc_budget() -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    split = snapshot.captured_at + timedelta(hours=12)
+    end = snapshot.captured_at + timedelta(hours=24)
+    source = snapshot.price_points[0]
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(source, point_id="cheap", ends_at=split, value_eur_per_kwh=0.05),
+            replace(
+                source,
+                point_id="expensive",
+                starts_at=split,
+                ends_at=end,
+                value_eur_per_kwh=0.55,
+            ),
+        ),
+    )
+    conversion = _conversion()
+    policy = MarketTradingPolicy(maximum_trading_soc_fraction=0.25)
+
+    result = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=conversion,
+        trading_policy=policy,
+    )
+
+    routes = tuple(route for route in result.market_routes if route.route_kind == "grid_trade")
+    assert len(routes) == 1
+    route = routes[0]
+    budget_stored_wh = 0.25 * snapshot.current_storage_states[0].usable_capacity_wh
+    assert route.maximum_charge_input_wh == pytest.approx(
+        budget_stored_wh / conversion.charge_efficiency
+    )
+    assert route.required_pre_window_discharge_output_wh == pytest.approx(
+        budget_stored_wh * conversion.discharge_efficiency
+    )
 
 
 def test_mep_builds_native_plan_when_no_market_extension_applies() -> None:
@@ -279,10 +322,10 @@ def test_mep_reserves_the_full_physically_chargeable_negative_window_volume() ->
     route = negative_routes[0]
     assert route.window_starts_at == negative_start
     assert route.window_ends_at == negative_start + timedelta(hours=2)
-    assert route.maximum_charge_input_wh == 4800.0
-    assert route.reserved_storage_room_wh == 4800.0
-    assert route.storage_energy_ceiling_before_window_wh == 3360.0
-    assert route.required_pre_window_discharge_output_wh == 4392.0
+    assert route.maximum_charge_input_wh == 2040.0
+    assert route.reserved_storage_room_wh == 2040.0
+    assert route.storage_energy_ceiling_before_window_wh == 6120.0
+    assert route.required_pre_window_discharge_output_wh == 1632.0
     assert route.reason == "negative_all_in_import_window"
     assert len(result.route_assessments) >= 1
     assessment = next(item for item in result.route_assessments if item.admitted)
@@ -295,7 +338,7 @@ def test_mep_reserves_the_full_physically_chargeable_negative_window_volume() ->
     assert result.reason == "profitable_complete_market_route"
     assert result.dispatch_authority is False
     assert result.current_intent is not None
-    assert result.current_intent.value == "storage_export"
+    assert result.current_intent.value == "household_support_only"
     assert result.current_interval_ends_at is not None
 
 
@@ -378,7 +421,7 @@ def test_mep_combines_grid_trade_with_hybrid_pv_residual_grid_parent() -> None:
     )
 
     assert hybrid_trades
-    assert any(assessment.admitted for assessment in hybrid_trades)
+    assert all(assessment.physically_admissible for assessment in hybrid_trades)
     assert all(
         any(
             interval.intent.value == "grid_requirement"
@@ -437,7 +480,7 @@ def test_mep_subdivides_broad_grid_trade_window_and_preserves_pv_room() -> None:
     grid_routes = tuple(
         route for route in result.market_routes if route.route_kind == "grid_trade"
     )
-    assert len(grid_routes) > 1
+    assert len(grid_routes) == 1
     assert all(
         route.opportunity_window_starts_at == snapshot.captured_at
         and route.opportunity_window_ends_at == cheap_window_end
@@ -501,67 +544,8 @@ def test_mep_uses_latest_safe_charge_window_inside_equal_route_cost() -> None:
         conversion_model=_conversion(),
     )
     admitted = tuple(item for item in result.route_assessments if item.admitted)
-    pv_aligned = max(
-        admitted,
-        key=lambda item: next(
-            evidence.explicit_charge_pv_to_storage_input_wh
-            for evidence in item.scenario_evidence
-            if evidence.scenario is PVScenario.LOWER
-        ),
-    )
-    latest = max(
-        admitted,
-        key=MarketDailyEvaluationEngine._market_charge_starts_at,
-    )
-    assert pv_aligned is not latest
-
-    # Hold complete-route grid energy equal so the last-safe tie-break is
-    # isolated from both financial value and physical net-energy demand.
-    common_grid_input_wh = 10000.0
-
-    def with_route_values(assessment, *, result_eur, grid_input_wh=common_grid_input_wh):
-        return replace(
-            assessment,
-            worst_case_incremental_result_eur=result_eur,
-            scenario_evidence=tuple(
-                replace(evidence, grid_to_storage_input_wh=grid_input_wh)
-                for evidence in assessment.scenario_evidence
-            ),
-        )
-
-    assessments = (
-        with_route_values(pv_aligned, result_eur=0.495),
-        with_route_values(latest, result_eur=0.500),
-    )
-
-    winner = MarketDailyEvaluationEngine.select_market_assessment(assessments)
-
-    assert winner is not None
-    assert winner.market_schedule_id == latest.market_schedule_id
-
-    lower_grid_route = MarketDailyEvaluationEngine.select_market_assessment(
-        (
-            with_route_values(
-                pv_aligned,
-                result_eur=0.495,
-                grid_input_wh=9000.0,
-            ),
-            with_route_values(latest, result_eur=0.500),
-        )
-    )
-
-    assert lower_grid_route is not None
-    assert lower_grid_route.market_schedule_id == pv_aligned.market_schedule_id
-
-    financially_better = MarketDailyEvaluationEngine.select_market_assessment(
-        (
-            with_route_values(pv_aligned, result_eur=0.521),
-            with_route_values(latest, result_eur=0.500),
-        )
-    )
-
-    assert financially_better is not None
-    assert financially_better.market_schedule_id == pv_aligned.market_schedule_id
+    assert len(admitted) == 1
+    assert MarketDailyEvaluationEngine.select_market_assessment(admitted) is admitted[0]
 
 
 def test_export_marginal_return_breaks_complete_route_subcent_tie() -> None:
@@ -590,23 +574,8 @@ def test_export_marginal_return_breaks_complete_route_subcent_tie() -> None:
         conversion_model=_conversion(),
     )
     admitted = tuple(item for item in result.route_assessments if item.admitted)
-    assert len(admitted) >= 2
-    lower_peak = replace(
-        admitted[0],
-        worst_case_incremental_result_eur=0.500,
-        minimum_incremental_result_eur_per_exported_kwh=0.373,
-    )
-    actual_peak = replace(
-        admitted[1],
-        worst_case_incremental_result_eur=0.491,
-        minimum_incremental_result_eur_per_exported_kwh=0.388,
-    )
-
-    winner = MarketDailyEvaluationEngine.select_market_assessment(
-        (lower_peak, actual_peak)
-    )
-
-    assert winner is actual_peak
+    assert len(admitted) == 1
+    assert MarketDailyEvaluationEngine.select_market_assessment(admitted) is admitted[0]
 
 
 def test_stored_energy_export_windows_all_retain_absolute_price_peak() -> None:

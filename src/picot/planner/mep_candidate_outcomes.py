@@ -803,7 +803,7 @@ def produce_mep_comparable_portfolio(
         )
         if not daily_target_reached:
             reasons.append("daily_storage_target_not_reached_by_deadline")
-        if grid_to_storage > 1e-6 and baseline_requirement_met:
+        if grid_to_storage > 1e-6 and baseline_requirement_met and market is None:
             reasons.append("grid_supplementation_not_required_for_household_reserve")
         family = _family(native, incumbent=committed is not None)
         constraint_ids = tuple(

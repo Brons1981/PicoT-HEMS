@@ -110,6 +110,8 @@ class MarketTradingPolicy:
     margin_fraction: float = 0.10
     wear_eur_per_export_kwh: float = 0.05
     market_routes_enabled: bool = True
+    maximum_trading_soc_fraction: float = 0.25
+    additional_reserve_fraction: float = 0.10
     minimum_total_route_profit_eur: float = 0.05
 
     def __post_init__(self) -> None:
@@ -117,6 +119,10 @@ class MarketTradingPolicy:
             raise ValueError("MEP trading margin must be between 0 and 1")
         if not 0.0 <= self.wear_eur_per_export_kwh <= 1.0:
             raise ValueError("MEP wear cost must be between 0 and 1 EUR/kWh")
+        if not 0.0 <= self.maximum_trading_soc_fraction <= 1.0:
+            raise ValueError("MEP trading SoC budget must be between 0 and 1")
+        if not 0.0 <= self.additional_reserve_fraction <= 1.0:
+            raise ValueError("MEP additional reserve must be between 0 and 1")
         if not 0.0 <= self.minimum_total_route_profit_eur <= 100.0:
             raise ValueError("MEP minimum route profit must be between 0 and 100 EUR")
 
@@ -755,6 +761,25 @@ class MarketDailyPlanner:
         minimum_energy_wh = limits.minimum_soc * storage.usable_capacity_wh
         current_energy_wh = storage.current_soc * storage.usable_capacity_wh
         usable_storage_range_wh = maximum_energy_wh - minimum_energy_wh
+        # DEV.225 turns the User Rule into one bounded energy hourglass before
+        # any market path is built.  The configured percentage is additionally
+        # clamped by the physical lower bound, the household unexpected reserve
+        # and the explicitly accepted extra reserve.  Full scenario simulation
+        # remains authoritative for larger household requirements.
+        maximum_safe_trading_fraction = max(
+            0.0,
+            limits.maximum_soc
+            - limits.minimum_soc
+            - snapshot.household_unexpected_reserve_fraction
+            - trading_policy.additional_reserve_fraction,
+        )
+        trading_stored_energy_budget_wh = storage.usable_capacity_wh * min(
+            trading_policy.maximum_trading_soc_fraction,
+            maximum_safe_trading_fraction,
+        )
+        trading_export_budget_wh = (
+            trading_stored_energy_budget_wh * conversion_model.discharge_efficiency
+        )
         result: list[MarketCapacityRoute] = []
         for opportunity_window in negative_groups:
             group = opportunity_window.intervals
@@ -765,6 +790,10 @@ class MarketDailyPlanner:
             reserved_storage_room_wh = min(
                 usable_storage_range_wh,
                 maximum_charge_input_wh * conversion_model.charge_efficiency,
+                trading_stored_energy_budget_wh,
+            )
+            maximum_charge_input_wh = (
+                reserved_storage_room_wh / conversion_model.charge_efficiency
             )
             ceiling_wh = maximum_energy_wh - reserved_storage_room_wh
             required_stored_discharge_wh = max(0.0, current_energy_wh - ceiling_wh)
@@ -811,12 +840,33 @@ class MarketDailyPlanner:
                 _duration_hours(item) for item in opportunity_charge_window
             )
             for export_opportunity in high_windows:
-                export_window = export_opportunity.intervals
+                export_windows = _peak_anchored_export_windows(export_opportunity.intervals)
+                export_window = next(
+                    (
+                        window
+                        for window in export_windows
+                        if sum(
+                            limits.maximum_discharge_output_power_w
+                            * _duration_hours(interval)
+                            for interval in window
+                        )
+                        + 1e-6
+                        >= trading_export_budget_wh
+                    ),
+                    export_windows[-1] if export_windows else (),
+                )
+                if not export_window:
+                    continue
+                bounded_export_opportunity = _MarketOpportunityWindow(
+                    opportunity_id=export_opportunity.opportunity_id,
+                    intervals=export_window,
+                )
                 export_start = export_window[0].starts_at
                 export_end = export_window[-1].ends_at
                 export_hours = (export_end - export_start).total_seconds() / 3600
                 charge_input_wh = min(
                     usable_storage_range_wh / conversion_model.charge_efficiency,
+                    trading_stored_energy_budget_wh / conversion_model.charge_efficiency,
                     limits.maximum_charge_input_power_w * opportunity_charge_hours,
                     limits.maximum_discharge_output_power_w
                     * export_hours
@@ -832,6 +882,16 @@ class MarketDailyPlanner:
                     required_charge_input_wh=charge_input_wh,
                     maximum_charge_input_power_w=(limits.maximum_charge_input_power_w),
                 )
+                if charge_subwindows:
+                    charge_subwindows = (
+                        min(
+                            charge_subwindows,
+                            key=lambda window: (
+                                _average_import_rate(window),
+                                -window[0].starts_at.timestamp(),
+                            ),
+                        ),
+                    )
                 export_rate = sum(
                     item.export_eur_per_kwh * (item.ends_at - item.starts_at).total_seconds()
                     for item in export_window
@@ -852,7 +912,7 @@ class MarketDailyPlanner:
                             indicated_result,
                             charge_opportunity,
                             charge_window,
-                            export_opportunity,
+                            bounded_export_opportunity,
                             charge_input_wh,
                             export_output_wh,
                         )
@@ -927,12 +987,27 @@ class MarketDailyPlanner:
             0.0,
             (current_energy_wh - minimum_energy_wh) * conversion_model.discharge_efficiency,
         )
+        free_stored_output_wh = min(free_stored_output_wh, trading_export_budget_wh)
         fallback_acquisition_rate = min(
             (item.import_eur_per_kwh for window in low_windows for item in window.intervals),
             default=0.0,
         )
         for export_opportunity in high_windows:
-            for export_window in _peak_anchored_export_windows(export_opportunity.intervals):
+            export_windows = _peak_anchored_export_windows(export_opportunity.intervals)
+            bounded_export_window = next(
+                (
+                    window
+                    for window in export_windows
+                    if sum(
+                        limits.maximum_discharge_output_power_w * _duration_hours(interval)
+                        for interval in window
+                    )
+                    + 1e-6
+                    >= free_stored_output_wh
+                ),
+                export_windows[-1] if export_windows else (),
+            )
+            for export_window in ((bounded_export_window,) if bounded_export_window else ()):
                 export_start = export_window[0].starts_at
                 export_end = export_window[-1].ends_at
                 export_capacity_wh = sum(
@@ -1037,12 +1112,32 @@ class MarketDailyPlanner:
             default=0.0,
         )
         for export_opportunity in high_windows:
-            export_window = export_opportunity.intervals
+            export_windows = _peak_anchored_export_windows(export_opportunity.intervals)
+            export_window = next(
+                (
+                    window
+                    for window in export_windows
+                    if sum(
+                        limits.maximum_discharge_output_power_w * _duration_hours(interval)
+                        for interval in window
+                    )
+                    + 1e-6
+                    >= trading_export_budget_wh
+                ),
+                export_windows[-1] if export_windows else (),
+            )
+            if not export_window:
+                continue
+            export_opportunity = _MarketOpportunityWindow(
+                opportunity_id=export_opportunity.opportunity_id,
+                intervals=export_window,
+            )
             export_start = export_window[0].starts_at
             export_end = export_window[-1].ends_at
             export_hours = (export_end - export_start).total_seconds() / 3600
             export_output_wh = min(
                 usable_storage_range_wh,
+                trading_export_budget_wh,
                 limits.maximum_discharge_output_power_w * export_hours,
             )
             inventory_allocation = None

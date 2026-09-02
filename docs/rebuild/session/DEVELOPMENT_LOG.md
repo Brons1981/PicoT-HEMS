@@ -985,6 +985,31 @@ Live verification, 2026-08-22:
 
 Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 
+## 2026-09-02 — 2.0.0-dev.225 bounded market SoC path
+
+- Restored MEP market charging and export only behind the explicit
+  `market_daily_maximum_trading_soc_percent` User Rule, defaulting to 25%.
+- Converted that percentage to one stored-energy budget before Candidate
+  construction. PicoT further clamps the budget by the physical lower SoC,
+  the household unexpected reserve and an additional 10 percentage-point
+  reserve; full cross-scenario simulation remains the final safety authority.
+- A broad low-price opportunity now contributes one cheapest, latest-safe
+  charge window instead of every feasible start. A high-price opportunity
+  contributes one peak-anchored export hourglass sized to the same energy
+  budget. This removes the former Cartesian growth while preserving linked
+  charge-and-export accounting.
+- Market grid input is no longer rejected merely because the household reserve
+  was already met: its purpose is financial acquisition, and it must instead
+  pass the existing RTE, wear, margin, total-profit and physical-reserve tests.
+
+- Verification: 64 focused planner/pipeline/version tests passed; the full
+  suite passed 1128 tests, with its two environment-dependent checks then
+  repeated successfully using an isolated socket run and the bundled Node.js
+  runtime. Ruff passed on all changed files, mypy passed all 187 PicoT source
+  modules and `git diff --check` passed.
+
+Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+
 ## 2026-09-01 — 2.0.0-dev.222 household reserve and next-day PV path
 
 - Live dev.221 showed an unnecessary late grid charge from roughly 82% to the

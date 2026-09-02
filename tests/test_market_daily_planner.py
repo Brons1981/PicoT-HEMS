@@ -4,6 +4,7 @@ from datetime import timedelta
 import pytest
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
+from picot.domain.daily_reference_intent import DailyStorageIntent
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.domain.storage_energy_inventory import (
     StorageEnergyInventory,
@@ -889,6 +890,7 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
     )
     assert pv_routes
     assert grid_recovery_routes
+    assert len(grid_recovery_routes) == 1
     route = pv_routes[0]
     grid_recovery = grid_recovery_routes[0]
     assert route.export_window_starts_at == export_start
@@ -944,6 +946,12 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
         for interval in grid_assessment.intent_schedule.intervals
     )
     assert grid_assessment.physically_admissible is True
+    post_export = next(
+        interval
+        for interval in grid_assessment.intent_schedule.intervals
+        if interval.starts_at == route.export_window_ends_at
+    )
+    assert post_export.intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
 
 
 def test_mep_values_only_known_inventory_and_keeps_one_contiguous_export_window() -> None:

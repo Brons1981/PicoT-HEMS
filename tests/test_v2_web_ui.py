@@ -54,6 +54,7 @@ def test_strategy_dashboard_exposes_canonical_user_rules() -> None:
     assert 'id="rule-preserve-pv"' in DASHBOARD_HTML
     assert 'id="rule-trading-soc"' in DASHBOARD_HTML
     assert 'fetch("api/user-rules"' in DASHBOARD_HTML
+    assert 'id="rule-saldering-tax"' in DASHBOARD_HTML
 
 
 def test_web_view_store_overlays_user_rules() -> None:

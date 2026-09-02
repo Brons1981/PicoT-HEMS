@@ -1060,6 +1060,17 @@ DASHBOARD_HTML = """<!doctype html>
         </label>
         <label class="strategy-rule">
           <span class="strategy-rule-line">
+            <strong>Energiebelasting bij teruglevering verrekenen</strong>
+            <input id="rule-saldering-tax" type="checkbox">
+          </span>
+          <span class="muted">
+            Gebruik dit alleen zolang jouw resterende afname binnen de
+            contractperiode nog saldering toestaat. Omschakelen laat PicoT
+            dezelfde begrensde kandidaten opnieuw financieel beoordelen.
+          </span>
+        </label>
+        <label class="strategy-rule">
+          <span class="strategy-rule-line">
             <strong>Maximaal SoC voor handel</strong>
             <span><input id="rule-trading-soc" type="number" min="0" max="100" step="1"> %</span>
           </span>
@@ -3994,6 +4005,8 @@ DASHBOARD_HTML = """<!doctype html>
       element("rule-trading-soc").value = Number.isFinite(
         Number(rules.maximum_trading_soc_percent)
       ) ? Number(rules.maximum_trading_soc_percent) : 25;
+      element("rule-saldering-tax").checked =
+        rules.saldering_energy_tax_credit_enabled !== false;
       element("user-rules-status").textContent = rules.revision
         ? `Actieve revisie ${rules.revision}`
         : "Wachten op de actieve gebruikersregels…";
@@ -4017,6 +4030,8 @@ DASHBOARD_HTML = """<!doctype html>
           body: JSON.stringify({
             preserve_pv_during_grid_charge: element("rule-preserve-pv").checked,
             maximum_trading_soc_percent: maximumTradingSoc,
+            saldering_energy_tax_credit_enabled:
+              element("rule-saldering-tax").checked,
           }),
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);

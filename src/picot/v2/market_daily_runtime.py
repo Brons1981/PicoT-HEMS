@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from math import sqrt
+from threading import Lock
 from time import perf_counter
 
 from picot.domain.storage_conversion_model import StorageConversionModel
@@ -67,6 +68,7 @@ class MarketDailyPlannerRuntime:
         ) = None,
     ) -> None:
         self.conversion_model = conversion_model
+        self._policy_lock = Lock()
         # Callers that do not provide an explicit User Rule remain physical
         # only. The live runtime supplies DEV.225's bounded SoC policy.
         self.trading_policy = trading_policy or MarketTradingPolicy(
@@ -74,6 +76,11 @@ class MarketDailyPlannerRuntime:
         )
         self.micro_charge_suppression_fraction = micro_charge_suppression_fraction
         self.storage_inventory_provider = storage_inventory_provider
+
+    def set_trading_policy(self, policy: MarketTradingPolicy) -> None:
+        """Atomically activate one validated user-rule-derived policy."""
+        with self._policy_lock:
+            self.trading_policy = policy
 
     def planning_configuration(
         self,
@@ -85,8 +92,10 @@ class MarketDailyPlannerRuntime:
             or evidence.status != "available"
             or evidence.round_trip_efficiency is None
         ):
+            with self._policy_lock:
+                policy = self.trading_policy
             return self.conversion_model, replace(
-                self.trading_policy,
+                policy,
                 market_routes_enabled=False,
             )
         directional_efficiency = sqrt(evidence.round_trip_efficiency)
@@ -98,8 +107,12 @@ class MarketDailyPlannerRuntime:
                 evidence_ids=(evidence.evidence_id,),
                 method_version="measured-zendure-total-rte:v1",
             ),
-            self.trading_policy,
+            self._current_trading_policy(),
         )
+
+    def _current_trading_policy(self) -> MarketTradingPolicy:
+        with self._policy_lock:
+            return self.trading_policy
 
     def generate(
         self,

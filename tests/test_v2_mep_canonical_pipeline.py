@@ -34,12 +34,16 @@ def _pipeline(
     *,
     switching_margin_eur: float = 0.05,
     market_routes_enabled: bool = False,
+    preserve_pv_during_grid_charge: bool = False,
 ):
     store = ActivePlanCommitmentStore(tmp_path / "commitments.json")
     pipeline = CanonicalPipeline(
         market_daily_planner_runtime=MarketDailyPlannerRuntime(
             _conversion(),
-            trading_policy=MarketTradingPolicy(market_routes_enabled=market_routes_enabled),
+            trading_policy=MarketTradingPolicy(
+                market_routes_enabled=market_routes_enabled,
+                preserve_pv_during_grid_charge=preserve_pv_during_grid_charge,
+            ),
         ),
         commitment_store=store,
         plan_switching_margin_eur=switching_margin_eur,
@@ -661,6 +665,30 @@ def test_mep_uses_household_lower_bound_plus_unexpected_reserve_for_grid_need(
     assert any(
         segment.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL for segment in chosen.segments
     )
+
+
+def test_user_rule_admits_only_pv_preserving_grid_supplementation(tmp_path) -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.60)
+    pipeline, _store = _pipeline(
+        tmp_path,
+        market_routes_enabled=True,
+        preserve_pv_during_grid_charge=True,
+    )
+
+    run = pipeline.run(planning_input=snapshot)
+
+    hybrid = tuple(
+        item
+        for item in run.outcomes.outcomes
+        if "hybrid-pv-grid" in item.candidate_id
+    )
+    assert hybrid
+    assert all(
+        "grid_supplementation_not_required_for_household_reserve"
+        not in item.invalidity_reasons
+        for item in hybrid
+    )
+    assert any(item.validity == "valid" for item in hybrid)
 
 
 def test_mep_publishes_next_day_pv_capture_without_unnecessary_grid_charge(

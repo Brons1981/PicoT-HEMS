@@ -49,6 +49,26 @@ def test_dashboard_embedded_javascript_is_syntactically_valid() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_strategy_dashboard_exposes_canonical_user_rules() -> None:
+    assert 'id="user-rules-form"' in DASHBOARD_HTML
+    assert 'id="rule-preserve-pv"' in DASHBOARD_HTML
+    assert 'id="rule-trading-soc"' in DASHBOARD_HTML
+    assert 'fetch("api/user-rules"' in DASHBOARD_HTML
+
+
+def test_web_view_store_overlays_user_rules() -> None:
+    store = WebViewStore()
+    store.publish({"run_id": "run-1", "pipeline": []})
+    store.publish_user_rules({
+        "revision": 2,
+        "preserve_pv_during_grid_charge": True,
+        "maximum_trading_soc_percent": 27.0,
+    })
+    latest = json.loads(store.latest_json() or "{}")
+    assert latest["user_rules"]["revision"] == 2
+    assert latest["user_rules"]["maximum_trading_soc_percent"] == 27.0
+
+
 def test_web_view_serializes_nine_stages_and_full_pv_timeline() -> None:
     captured_at = datetime(2026, 8, 14, 10, 0, tzinfo=UTC)
     bootstrap = CanonicalPipeline().run(

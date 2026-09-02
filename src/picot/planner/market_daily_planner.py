@@ -113,6 +113,7 @@ class MarketTradingPolicy:
     maximum_trading_soc_fraction: float = 0.25
     additional_reserve_fraction: float = 0.10
     minimum_total_route_profit_eur: float = 0.05
+    preserve_pv_during_grid_charge: bool = False
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.margin_fraction <= 1.0:
@@ -474,6 +475,7 @@ class MarketDailyCandidatePortfolio:
     minimum_total_route_profit_eur: float
     method_version: str
     required_by: datetime
+    preserve_pv_during_grid_charge: bool = False
 
     def __post_init__(self) -> None:
         if self.native_observation.snapshot_id != self.snapshot_id:
@@ -624,6 +626,9 @@ class MarketDailyPlanner:
             micro_charge_suppression_fraction=micro_charge_suppression_fraction,
             required_by=required_by,
             preferred_grid_windows=preferred_grid_windows,
+            preserve_pv_during_grid_charge=(
+                trading_policy.preserve_pv_during_grid_charge
+            ),
         )
         effective_required_by = required_by or _household_energy_requirement_deadline(
             native_observation
@@ -638,6 +643,9 @@ class MarketDailyPlanner:
                 micro_charge_suppression_fraction=micro_charge_suppression_fraction,
                 required_by=effective_required_by,
                 preferred_grid_windows=preferred_grid_windows,
+                preserve_pv_during_grid_charge=(
+                    trading_policy.preserve_pv_during_grid_charge
+                ),
             )
         native_plan_ms = (perf_counter() - phase_started) * 1000.0
         horizon_end = native_observation.strategy_space.schedules[0].horizon_end
@@ -683,6 +691,9 @@ class MarketDailyPlanner:
             minimum_total_route_profit_eur=(trading_policy.minimum_total_route_profit_eur),
             method_version=METHOD_VERSION,
             required_by=effective_required_by,
+            preserve_pv_during_grid_charge=(
+                trading_policy.preserve_pv_during_grid_charge
+            ),
         )
         candidates = native_observation.observer_result.candidate_set.candidates
         diagnostics = MarketDailyPlannerDiagnostics(

@@ -85,7 +85,13 @@ def test_start_web_server_uses_ingress_binding_and_daemon_thread(
 
 def test_main_starts_one_web_server_before_pipeline_loop(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(
+        live_runtime,
+        "USER_RULES_PATH",
+        tmp_path / "picot_v2_user_rules.json",
+    )
     class StopLoop(Exception):
         pass
 
@@ -129,8 +135,9 @@ def test_main_starts_one_web_server_before_pipeline_loop(
         "picot_v2_storage_mode_transition_history.jsonl",
         "picot_v2_active_plan_commitments.json",
         "picot_v2_active_plan_commitment_incidents.jsonl",
-        "picot_v2_financial_results.json",
-    ]
+            "picot_v2_financial_results.json",
+            "picot_v2_user_rules.json",
+        ]
     assert stores[0].incident_history_path() == (
         live_runtime.PLANNING_INCIDENT_HISTORY_PATH
     )

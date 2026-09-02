@@ -130,6 +130,7 @@ from picot.v2.storage_mode_transition_history import (
     StorageModeTransitionEvent,
     StorageModeTransitionHistoryStore,
 )
+from picot.v2.user_rules import UserRuleProfile, UserRuleStore
 from picot.v2.web_ui import (
     WebViewStore,
     build_web_view,
@@ -166,6 +167,7 @@ FINANCIAL_RESULT_STATE_PATH = Path("/data/picot_v2_financial_results.json")
 MARKET_DAILY_LATEST_PATH = Path(
     "/data/picot_v2_market_daily_latest.json"
 )
+USER_RULES_PATH = Path("/data/picot_v2_user_rules.json")
 
 
 def _runtime_memory_kib() -> dict[str, int | None]:
@@ -2194,6 +2196,12 @@ def main() -> None:
         raise RuntimeError("Supervisor token is required")
 
     options = load_options()
+    user_rule_store = UserRuleStore(
+        USER_RULES_PATH,
+        migrated_trading_soc_percent=float(
+            options.get("market_daily_maximum_trading_soc_percent", 25.0)
+        ),
+    )
     price_config = _price_opportunity_config(options)
     household_objective_profile = _household_objective_profile(options)
     adaptive_household_policy = _adaptive_household_policy(options)
@@ -2246,22 +2254,26 @@ def main() -> None:
         evidence_ids=("addon-options:market-daily-efficiency",),
         method_version="live-mep-configured-conversion:v1",
     )
-    market_daily_trading_policy = MarketTradingPolicy(
-        margin_fraction=(
-            float(options.get("market_daily_trading_margin_percent", 10.0)) / 100.0
-        ),
-        wear_eur_per_export_kwh=float(
-            options.get("market_daily_wear_eur_per_kwh", 0.05)
-        ),
-        maximum_trading_soc_fraction=(
-            float(options.get("market_daily_maximum_trading_soc_percent", 25.0))
-            / 100.0
-        ),
-        additional_reserve_fraction=0.10,
-        # DEV.225 restores optional charge-and-export paths only after the
-        # SoC budget has bounded candidate construction.
-        market_routes_enabled=True,
-    )
+    def trading_policy(profile: UserRuleProfile) -> MarketTradingPolicy:
+        return MarketTradingPolicy(
+            margin_fraction=(
+                float(options.get("market_daily_trading_margin_percent", 10.0))
+                / 100.0
+            ),
+            wear_eur_per_export_kwh=float(
+                options.get("market_daily_wear_eur_per_kwh", 0.05)
+            ),
+            maximum_trading_soc_fraction=(
+                profile.maximum_trading_soc_percent / 100.0
+            ),
+            additional_reserve_fraction=0.10,
+            market_routes_enabled=True,
+            preserve_pv_during_grid_charge=(
+                profile.preserve_pv_during_grid_charge
+            ),
+        )
+
+    market_daily_trading_policy = trading_policy(user_rule_store.current())
     micro_charge_suppression_fraction = (
         float(options.get("micro_charge_suppression_percent", 2.0)) / 100.0
     )
@@ -2298,6 +2310,7 @@ def main() -> None:
             ACTIVE_PLAN_COMMITMENT_PATH,
             ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
             FINANCIAL_RESULT_STATE_PATH,
+            USER_RULES_PATH,
         ),
         incident_history_path=PLANNING_INCIDENT_HISTORY_PATH,
     )
@@ -2343,6 +2356,26 @@ def main() -> None:
         }
 
     web_view_store.set_planning_reset(reset_planning)
+
+    def update_user_rules(payload: dict[str, object]) -> dict[str, object]:
+        profile = user_rule_store.update(
+            preserve_pv_during_grid_charge=payload.get(
+                "preserve_pv_during_grid_charge"
+            ),
+            maximum_trading_soc_percent=payload.get(
+                "maximum_trading_soc_percent"
+            ),
+        )
+        market_daily_planner_runtime.set_trading_policy(trading_policy(profile))
+        web_view_store.publish_user_rules(profile.as_public_dict())
+        planning_reset_requested.set()
+        return {
+            "status": "user_rules_updated",
+            "user_rules": profile.as_public_dict(),
+        }
+
+    web_view_store.set_user_rule_update(update_user_rules)
+    web_view_store.publish_user_rules(user_rule_store.current().as_public_dict())
     pv_sunset_local_timezone = str(
         options.get("pv_local_timezone", "Europe/Amsterdam")
     ).strip()

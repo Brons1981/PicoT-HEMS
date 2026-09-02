@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -377,7 +378,9 @@ def test_planning_input_card_exposes_actual_pv_runtime_diagnostics(
 
 def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(live_runtime, "USER_RULES_PATH", tmp_path / "rules.json")
     bundle = _bundle(captured_at=CAPTURED_AT)
     requested_windows: list[tuple[datetime, datetime]] = []
     executed: list[
@@ -1031,7 +1034,9 @@ def test_planning_card_projects_cumulative_and_all_interval_evidence() -> None:
 
 def test_main_feeds_visible_sunset_evidence_into_attenuation_ranges(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(live_runtime, "USER_RULES_PATH", tmp_path / "rules.json")
     bundle = _bundle(captured_at=CLOSED_END)
     diagnostics = LivePVActualDiagnostics(
         history_status="unavailable",

@@ -78,7 +78,8 @@ from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdap
 from picot.v2.plan_commitment_store import ActivePlanCommitment, CommittedPlanSegment
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_outcomes", __name__)
-METHOD_VERSION = "mep-canonical-candidate-outcomes:v3"
+METHOD_VERSION = "mep-canonical-candidate-outcomes:v4"
+MAXIMUM_TARGET_TOLERANCE_WH = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,6 +508,50 @@ def _daily_target_evidence(
     return True, requirement.required_by
 
 
+def _confidence_weighted_peak_storage_energy_wh(
+    *,
+    result: DailyReferenceStrategyResult | None,
+    market: MarketRouteAssessment | None,
+) -> float:
+    """Return the lower-to-central weighted storage peak required by ADR-037.
+
+    High-confidence forecast intervals approach the central trajectory; low
+    confidence keeps the planning evidence close to the lower trajectory.  The
+    upper trajectory remains assessment evidence and is not used to force a
+    charging target before reality warrants it.
+    """
+
+    if market is not None:
+        scenarios = {item.scenario: item for item in market.scenario_evidence}
+        lower = scenarios[PVScenario.LOWER]
+        central = scenarios[PVScenario.CENTRAL]
+        central_by_at = {item.at: item.energy_wh for item in central.storage_energy_checkpoints}
+        weighted = tuple(
+            checkpoint.energy_wh
+            + lower.minimum_confidence
+            * (central_by_at.get(checkpoint.at, checkpoint.energy_wh) - checkpoint.energy_wh)
+            for checkpoint in lower.storage_energy_checkpoints
+        )
+        return max(weighted, default=lower.storage_energy_at_horizon_end_wh)
+    if result is None:
+        return 0.0
+    trajectories = {item.scenario: item for item in result.run.simulation.trajectories}
+    lower_intervals = trajectories[PVScenario.LOWER].intervals
+    central_by_end = {
+        item.ends_at: item.storage_energy_at_end_wh
+        for item in trajectories[PVScenario.CENTRAL].intervals
+    }
+    return max(
+        (
+            item.storage_energy_at_end_wh
+            + item.confidence
+            * (central_by_end[item.ends_at] - item.storage_energy_at_end_wh)
+            for item in lower_intervals
+        ),
+        default=0.0,
+    )
+
+
 def _recoverability(
     *,
     schedule: DailyReferenceIntentSchedule,
@@ -728,6 +773,41 @@ def produce_mep_comparable_portfolio(
     outcomes: list[DomainCandidateOutcome] = []
     diagnostics: list[MepCandidateOutcome] = []
     limits = snapshot.storage_physical_limits[0]
+    effective_maximum_energy_wh = (
+        limits.maximum_soc * snapshot.current_storage_states[0].usable_capacity_wh
+    )
+    pv_only_can_reach_effective_maximum = any(
+        _confidence_weighted_peak_storage_energy_wh(
+            result=row.result,
+            market=(row.market if not row.committed_prefix_composed else None),
+        )
+        + MAXIMUM_TARGET_TOLERANCE_WH
+        >= effective_maximum_energy_wh
+        and (
+            max(
+                (
+                    item.grid_to_storage_input_wh
+                    for item in row.market.scenario_evidence
+                ),
+                default=0.0,
+            )
+            if row.market is not None and not row.committed_prefix_composed
+            else max(
+                (
+                    sum(
+                        interval.grid_to_storage_input_wh
+                        for interval in trajectory.intervals
+                    )
+                    for trajectory in row.result.run.simulation.trajectories
+                ),
+                default=0.0,
+            )
+            if row.result is not None
+            else effective_maximum_energy_wh
+        )
+        <= 1e-6
+        for row in rows
+    )
     baseline_requirement_met, _baseline_requirement_at = _daily_target_evidence(
         result=baseline,
         market=None,
@@ -803,6 +883,18 @@ def produce_mep_comparable_portfolio(
         )
         if not daily_target_reached:
             reasons.append("daily_storage_target_not_reached_by_deadline")
+        effective_maximum_reached = (
+            _confidence_weighted_peak_storage_energy_wh(
+                result=result,
+                market=(market if not row.committed_prefix_composed else None),
+            )
+            + MAXIMUM_TARGET_TOLERANCE_WH
+            >= effective_maximum_energy_wh
+        )
+        if pv_only_can_reach_effective_maximum and not effective_maximum_reached:
+            reasons.append(
+                "effective_maximum_not_reached_despite_sufficient_weighted_pv"
+            )
         if grid_to_storage > 1e-6 and baseline_requirement_met and market is None:
             reasons.append("grid_supplementation_not_required_for_household_reserve")
         family = _family(native, incumbent=committed is not None)

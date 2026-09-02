@@ -555,6 +555,61 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
     assert market_outcomes
 
 
+def test_sufficient_weighted_pv_forces_every_valid_path_to_effective_maximum(
+    tmp_path,
+) -> None:
+    """ADR-037: a lower target needs proof when PV can fill the battery."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.60)
+    assert snapshot.pv_energy_timeline is not None
+    abundant_pv = replace(
+        snapshot.pv_energy_timeline,
+        intervals=tuple(
+            replace(
+                interval,
+                pv_energy_wh=1000.0 if 4 <= index < 20 else 0.0,
+                forecast_lower_energy_wh=800.0 if 4 <= index < 20 else 0.0,
+                forecast_central_energy_wh=1000.0 if 4 <= index < 20 else 0.0,
+                forecast_upper_energy_wh=1200.0 if 4 <= index < 20 else 0.0,
+                confidence=0.8,
+            )
+            for index, interval in enumerate(snapshot.pv_energy_timeline.intervals)
+        ),
+    )
+    planning_input = replace(snapshot, pv_energy_timeline=abundant_pv)
+    pipeline, _store = _pipeline(tmp_path, market_routes_enabled=True)
+
+    run = pipeline.run(planning_input=planning_input)
+
+    paths_by_candidate = {
+        candidate.candidate_id: next(
+            path
+            for path in run.candidate_set.energy_paths
+            if path.path_id == candidate.energy_path_id
+        )
+        for candidate in run.candidate_set.candidates
+    }
+    valid = tuple(item for item in run.outcomes.outcomes if item.validity == "valid")
+    assert valid, tuple(
+        (item.candidate_id, item.invalidity_reasons)
+        for item in run.outcomes.outcomes
+    )
+    assert all(
+        max(
+            state.storage_energy_wh or 0.0
+            for state in paths_by_candidate[item.candidate_id].projected_states
+        )
+        == pytest.approx(8160.0)
+        for item in valid
+    )
+    assert any(
+        "effective_maximum_not_reached_despite_sufficient_weighted_pv"
+        in item.invalidity_reasons
+        for item in run.outcomes.outcomes
+        if item.validity == "invalid"
+    )
+
+
 def test_mep_uses_household_lower_bound_plus_unexpected_reserve_for_grid_need(
     tmp_path,
 ) -> None:

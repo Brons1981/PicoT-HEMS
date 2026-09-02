@@ -2243,3 +2243,14 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   huishoudreserve en 10 procentpunt extra reserve.
 - Geen nieuwe optimalisatiedoelstelling, verborgen score of alternatieve
   ADR-basis toegevoegd; normatief blijven uitsluitend ADR-001 t/m ADR-037.
+
+## 2026-09-03 — 2.0.0-dev.231 enforced PV-preserving market parent
+
+- Net-charging market routes must use a bounded hybrid PV/grid parent when the
+  canonical PV-preservation User Rule is enabled; the household-only baseline
+  can no longer bypass that rule.
+- Every projected PV interval remains NOM, with grid charging as the only
+  permitted overlay. Market export cannot replace PV capture inside that
+  window.
+- Added a regression test covering parent lineage and the complete projected
+  PV window without adding route combinations.

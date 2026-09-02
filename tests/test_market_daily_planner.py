@@ -606,6 +606,72 @@ def test_mep_combines_grid_trade_with_hybrid_pv_residual_grid_parent() -> None:
         )
 
 
+def test_pv_preservation_rule_excludes_baseline_grid_trade_and_keeps_full_pv_window(
+) -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    split = snapshot.captured_at + timedelta(hours=12)
+    end = snapshot.captured_at + timedelta(hours=24)
+    source = snapshot.price_points[0]
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(source, point_id="cheap", ends_at=split, value_eur_per_kwh=0.05),
+            replace(
+                source,
+                point_id="expensive",
+                starts_at=split,
+                ends_at=end,
+                value_eur_per_kwh=2.00,
+            ),
+        ),
+    )
+
+    portfolio, _ = MarketDailyPlanner().generate_with_diagnostics(
+        snapshot=priced,
+        conversion_model=_conversion(),
+        trading_policy=MarketTradingPolicy(preserve_pv_during_grid_charge=True),
+    )
+
+    grid_route_ids = {
+        route.route_id
+        for route in portfolio.market_routes
+        if route.maximum_charge_input_wh > 0.0
+        and route.route_kind
+        in {"grid_trade", "negative_capacity", "pv_trade_grid_recovery"}
+    }
+    grid_assessments = tuple(
+        assessment
+        for assessment in portfolio.route_assessments
+        if assessment.route_id in grid_route_ids
+    )
+    assert grid_assessments
+    assert all(
+        "hybrid-pv-grid" in assessment.source_native_schedule_id
+        for assessment in grid_assessments
+    )
+    assert not any(
+        "baseline-household-support" in assessment.source_native_schedule_id
+        for assessment in grid_assessments
+    )
+    assert snapshot.pv_energy_timeline is not None
+    pv_intervals = tuple(
+        interval
+        for interval in snapshot.pv_energy_timeline.intervals
+        if interval.pv_energy_wh > 0.0
+    )
+    assert pv_intervals
+    for assessment in grid_assessments:
+        for interval in assessment.intent_schedule.intervals:
+            if any(
+                interval.starts_at < pv.ends_at and interval.ends_at > pv.starts_at
+                for pv in pv_intervals
+            ):
+                assert interval.intent in {
+                    DailyStorageIntent.NOM,
+                    DailyStorageIntent.GRID_REQUIREMENT,
+                }
+
+
 def test_mep_subdivides_broad_grid_trade_window_and_preserves_pv_room() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     cheap_window_end = snapshot.captured_at + timedelta(hours=12)

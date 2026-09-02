@@ -15,8 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 
-SCHEMA_VERSION = 1
-METHOD_VERSION = "canonical-user-rules:v1"
+SCHEMA_VERSION = 2
+METHOD_VERSION = "canonical-user-rules:v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +25,7 @@ class UserRuleProfile:
     updated_at: datetime
     preserve_pv_during_grid_charge: bool
     maximum_trading_soc_percent: float
+    saldering_energy_tax_credit_enabled: bool
     source: str
 
     def __post_init__(self) -> None:
@@ -45,6 +46,7 @@ class UserRuleProfile:
             "updated_at": self.updated_at.isoformat(),
             "preserve_pv_during_grid_charge": self.preserve_pv_during_grid_charge,
             "maximum_trading_soc_percent": self.maximum_trading_soc_percent,
+            "saldering_energy_tax_credit_enabled": self.saldering_energy_tax_credit_enabled,
             "source": self.source,
         }
 
@@ -73,6 +75,7 @@ class UserRuleStore:
         *,
         preserve_pv_during_grid_charge: object,
         maximum_trading_soc_percent: object,
+        saldering_energy_tax_credit_enabled: object | None = None,
     ) -> UserRuleProfile:
         if not isinstance(preserve_pv_during_grid_charge, bool):
             raise ValueError("PV-preservation rule must be boolean")
@@ -80,12 +83,19 @@ class UserRuleStore:
             maximum_trading_soc_percent, (int, float)
         ):
             raise ValueError("Maximum trading SoC must be numeric")
+        if saldering_energy_tax_credit_enabled is None:
+            saldering_energy_tax_credit_enabled = (
+                self.current().saldering_energy_tax_credit_enabled
+            )
+        if not isinstance(saldering_energy_tax_credit_enabled, bool):
+            raise ValueError("Saldering energy-tax rule must be boolean")
         with self._lock:
             updated = UserRuleProfile(
                 revision=self._profile.revision + 1,
                 updated_at=self._now(),
                 preserve_pv_during_grid_charge=preserve_pv_during_grid_charge,
                 maximum_trading_soc_percent=float(maximum_trading_soc_percent),
+                saldering_energy_tax_credit_enabled=saldering_energy_tax_credit_enabled,
                 source="strategy_dashboard",
             )
             self._write(updated)
@@ -101,20 +111,25 @@ class UserRuleStore:
                 updated_at=self._now(),
                 preserve_pv_during_grid_charge=True,
                 maximum_trading_soc_percent=float(migrated_percent),
+                saldering_energy_tax_credit_enabled=True,
                 source="addon_option_migration",
             )
             self._write(profile)
             return profile
-        if not isinstance(raw, dict) or raw.get("schema_version") != SCHEMA_VERSION:
+        if not isinstance(raw, dict) or raw.get("schema_version") not in {1, SCHEMA_VERSION}:
             raise ValueError("Unsupported canonical user-rule document")
         preserve_pv = raw.get("preserve_pv_during_grid_charge")
         if not isinstance(preserve_pv, bool):
             raise ValueError("Stored PV-preservation rule must be boolean")
+        saldering_tax = raw.get("saldering_energy_tax_credit_enabled", True)
+        if not isinstance(saldering_tax, bool):
+            raise ValueError("Stored saldering energy-tax rule must be boolean")
         return UserRuleProfile(
             revision=int(raw["revision"]),
             updated_at=datetime.fromisoformat(str(raw["updated_at"])),
             preserve_pv_during_grid_charge=preserve_pv,
             maximum_trading_soc_percent=float(raw["maximum_trading_soc_percent"]),
+            saldering_energy_tax_credit_enabled=saldering_tax,
             source=str(raw["source"]),
         )
 

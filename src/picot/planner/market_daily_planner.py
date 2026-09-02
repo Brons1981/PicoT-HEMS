@@ -114,6 +114,7 @@ class MarketTradingPolicy:
     additional_reserve_fraction: float = 0.10
     minimum_total_route_profit_eur: float = 0.05
     preserve_pv_during_grid_charge: bool = False
+    saldering_energy_tax_credit_enabled: bool = True
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.margin_fraction <= 1.0:
@@ -629,6 +630,9 @@ class MarketDailyPlanner:
             preserve_pv_during_grid_charge=(
                 trading_policy.preserve_pv_during_grid_charge
             ),
+            saldering_energy_tax_credit_enabled=(
+                trading_policy.saldering_energy_tax_credit_enabled
+            ),
         )
         effective_required_by = required_by or _household_energy_requirement_deadline(
             native_observation
@@ -646,6 +650,9 @@ class MarketDailyPlanner:
                 preserve_pv_during_grid_charge=(
                     trading_policy.preserve_pv_during_grid_charge
                 ),
+                saldering_energy_tax_credit_enabled=(
+                    trading_policy.saldering_energy_tax_credit_enabled
+                ),
             )
         native_plan_ms = (perf_counter() - phase_started) * 1000.0
         horizon_end = native_observation.strategy_space.schedules[0].horizon_end
@@ -653,6 +660,9 @@ class MarketDailyPlanner:
         tariffs = IndependentDailyTariffAdapter().build(
             snapshot,
             horizon_end=horizon_end,
+            saldering_energy_tax_credit_enabled=(
+                trading_policy.saldering_energy_tax_credit_enabled
+            ),
         )
         tariff_build_ms = (perf_counter() - phase_started) * 1000.0
         phase_started = perf_counter()

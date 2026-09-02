@@ -2212,6 +2212,20 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   vergelijking behouden.
 - Normatieve basis blijft uitsluitend ADR-001 t/m ADR-037.
 
+## 2026-09-02 — 2.0.0-dev.230 full PV preservation and saldering rule
+
+- Corrected the PV-preservation User Rule: residual grid charging is now an
+  overlay inside the complete Solcast-derived NOM window instead of preserving
+  only the immediately adjacent intervals.
+- Added the persistent Strategy User Rule
+  `saldering_energy_tax_credit_enabled`. It defaults to enabled for backward
+  compatibility and can be changed from the Strategy dashboard.
+- The active tariff valuation removes the energy-tax credit immediately when
+  the rule is disabled; the statutory 2027 boundary remains fail-safe and
+  always disables it.
+- Candidate generation and physical MEP simulation remain single-pass; the
+  rule changes tariff valuation without adding candidate paths.
+
 ## 2026-09-02 — 2.0.0-dev.229 canonical user rules
 
 - Verplaatst de handels-SoC-voorkeur naar een persistent canoniek User Rule

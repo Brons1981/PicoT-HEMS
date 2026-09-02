@@ -1539,10 +1539,19 @@ class MarketDailyPlanner:
             # Acquisition-linked trade routes retain the hybrid parents added
             # by DEV.215 so PV + residual grid + evening trade remains a
             # first-class complete Energy Path.
+            hybrid_parents = representative_hybrid_parents(route)
+            route_uses_grid_charge = (
+                route.maximum_charge_input_wh > 0.0
+                and route.route_kind
+                in {"grid_trade", "negative_capacity", "pv_trade_grid_recovery"}
+            )
             applicable_parents = (
-                (baseline_result,)
+                hybrid_parents
+                if trading_policy.preserve_pv_during_grid_charge
+                and route_uses_grid_charge
+                else (baseline_result,)
                 if route.route_kind in {"stored_energy_export", "negative_capacity"}
-                else (baseline_result, *representative_hybrid_parents(route))
+                else (baseline_result, *hybrid_parents)
             )
             simulated_by_effective_path: dict[
                 tuple[tuple[datetime, datetime, str, float], ...],
@@ -1561,6 +1570,9 @@ class MarketDailyPlanner:
                     snapshot=snapshot,
                     route=route,
                     maximum_discharge_output_power_w=(inputs.maximum_discharge_output_power_w),
+                    preserve_pv_during_grid_charge=(
+                        trading_policy.preserve_pv_during_grid_charge
+                    ),
                 )
                 signature = tuple(
                     (
@@ -1630,6 +1642,7 @@ class MarketDailyPlanner:
         snapshot: PlanningInputSnapshot,
         route: MarketCapacityRoute,
         maximum_discharge_output_power_w: float,
+        preserve_pv_during_grid_charge: bool,
     ) -> DailyReferenceIntentSchedule:
         export_targets: dict[tuple[datetime, datetime], float] = {}
         remaining_output_wh = route.required_pre_window_discharge_output_wh
@@ -1688,9 +1701,20 @@ class MarketDailyPlanner:
                 and item.starts_at < route.opportunity_window_ends_at
                 and item.ends_at > route.opportunity_window_starts_at
             )
+            inside_projected_pv = (
+                preserve_pv_during_grid_charge
+                and route.maximum_charge_input_wh > 0.0
+                and MarketDailyPlanner._has_possible_pv(
+                    snapshot,
+                    starts_at=item.starts_at,
+                    ends_at=item.ends_at,
+                )
+            )
             intent = (
                 DailyStorageIntent.GRID_REQUIREMENT
                 if inside_explicit_charge
+                else DailyStorageIntent.NOM
+                if inside_projected_pv
                 else DailyStorageIntent.STORAGE_EXPORT
                 if (item.starts_at, item.ends_at) in export_targets
                 else DailyStorageIntent.NOM

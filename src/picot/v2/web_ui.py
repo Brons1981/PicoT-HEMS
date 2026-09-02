@@ -21,6 +21,7 @@ from picot.domain.energy_path import PathSegment
 from picot.v2.contracts import (
     CanonicalPipelineRun,
     DelegatedStorageCandidateOutcome,
+    MepCandidateOutcome,
     PriceForecastPoint,
 )
 from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
@@ -2893,6 +2894,27 @@ DASHBOARD_HTML = """<!doctype html>
           chosenPlan.required_storage_addition_wh, "Wh"
         )],
         ["Gebruikte PV-forecastbasis", chosenPlan.pv_forecast_basis],
+        ["Effectieve maximale doelenergie", formatMeasurement(
+          chosenPlan.effective_maximum_storage_energy_wh, "Wh"
+        )],
+        ["Gewogen voorspelde piekenergie", formatMeasurement(
+          chosenPlan.confidence_weighted_peak_storage_energy_wh, "Wh"
+        )],
+        ["Gewogen piekmoment", formatTimestamp(
+          chosenPlan.confidence_weighted_peak_at
+        )],
+        ["Effectief maximum vereist voor", formatTimestamp(
+          chosenPlan.effective_maximum_required_by
+        )],
+        ["Effectief maximum bereikt", chosenPlan.effective_maximum_reached],
+        ["Effectief maximum bereikt op", formatTimestamp(
+          chosenPlan.effective_maximum_reached_at
+        )],
+        ["Confidence effectief maximum", formatConfidence(
+          chosenPlan.effective_maximum_basis_confidence
+        )],
+        ["Reden effectief maximum", chosenPlan.effective_maximum_reason],
+        ["Evidence effectief maximum", chosenPlan.effective_maximum_evidence_id],
         ["Energie einde laadvenster", formatMeasurement(
           chosenPlan.storage_energy_at_window_end_wh, "Wh"
         )],
@@ -5391,6 +5413,62 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                     if winning_candidate is not None and not fallback_active
                     else None
                 )
+            ),
+            "effective_maximum_storage_energy_wh": (
+                winning_outcome.effective_maximum_storage_energy_wh
+                if isinstance(winning_outcome, MepCandidateOutcome)
+                and not fallback_active
+                else None
+            ),
+            "confidence_weighted_peak_storage_energy_wh": (
+                winning_outcome.confidence_weighted_peak_storage_energy_wh
+                if isinstance(winning_outcome, MepCandidateOutcome)
+                and not fallback_active
+                else None
+            ),
+            "confidence_weighted_peak_at": (
+                winning_outcome.confidence_weighted_peak_at.isoformat()
+                if isinstance(winning_outcome, MepCandidateOutcome)
+                and not fallback_active
+                else None
+            ),
+            "effective_maximum_required_by": (
+                winning_outcome.effective_maximum_required_by.isoformat()
+                if isinstance(winning_outcome, MepCandidateOutcome)
+                and winning_outcome.effective_maximum_required_by is not None
+                and not fallback_active
+                else None
+            ),
+            "effective_maximum_reached": (
+                winning_outcome.effective_maximum_reached
+                if isinstance(winning_outcome, MepCandidateOutcome)
+                and not fallback_active
+                else None
+            ),
+            "effective_maximum_reached_at": (
+                winning_outcome.effective_maximum_reached_at.isoformat()
+                if isinstance(winning_outcome, MepCandidateOutcome)
+                and winning_outcome.effective_maximum_reached_at is not None
+                and not fallback_active
+                else None
+            ),
+            "effective_maximum_basis_confidence": (
+                winning_outcome.effective_maximum_basis_confidence
+                if isinstance(winning_outcome, MepCandidateOutcome)
+                and not fallback_active
+                else None
+            ),
+            "effective_maximum_reason": (
+                winning_outcome.effective_maximum_reason
+                if isinstance(winning_outcome, MepCandidateOutcome)
+                and not fallback_active
+                else None
+            ),
+            "effective_maximum_evidence_id": (
+                winning_outcome.effective_maximum_evidence_id
+                if isinstance(winning_outcome, MepCandidateOutcome)
+                and not fallback_active
+                else None
             ),
             "storage_energy_at_window_end_wh": (
                 winning_outcome.storage_energy_at_window_end_wh

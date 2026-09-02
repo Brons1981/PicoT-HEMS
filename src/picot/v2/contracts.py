@@ -1071,6 +1071,15 @@ class MepCandidateOutcome:
     daily_target_reached: bool
     daily_target_reached_at: datetime | None
     household_reserve_respected: bool
+    effective_maximum_storage_energy_wh: float
+    confidence_weighted_peak_storage_energy_wh: float
+    confidence_weighted_peak_at: datetime
+    effective_maximum_required_by: datetime | None
+    effective_maximum_reached: bool
+    effective_maximum_reached_at: datetime | None
+    effective_maximum_basis_confidence: float
+    effective_maximum_reason: str
+    effective_maximum_evidence_id: str
 
     def __post_init__(self) -> None:
         if self.comparison_horizon_end <= self.comparison_horizon_start:
@@ -1116,6 +1125,35 @@ class MepCandidateOutcome:
             and self.daily_target_reached_at > self.daily_target_required_by
         ):
             raise ValueError("MEP daily target cannot be reached after its deadline")
+        if self.effective_maximum_storage_energy_wh <= 0.0:
+            raise ValueError("MEP effective maximum energy must be positive")
+        if not 0.0 <= self.confidence_weighted_peak_storage_energy_wh:
+            raise ValueError("MEP weighted storage peak must be non-negative")
+        if (
+            self.confidence_weighted_peak_at.tzinfo is None
+            or self.confidence_weighted_peak_at.utcoffset() is None
+        ):
+            raise ValueError("MEP weighted storage peak time must be timezone-aware")
+        if self.effective_maximum_required_by is not None and (
+            self.effective_maximum_required_by.tzinfo is None
+            or self.effective_maximum_required_by.utcoffset() is None
+        ):
+            raise ValueError("MEP effective maximum deadline must be timezone-aware")
+        if self.effective_maximum_reached != (
+            self.effective_maximum_reached_at is not None
+        ):
+            raise ValueError("MEP effective maximum result must reconcile with its time")
+        if (
+            self.effective_maximum_reached_at is not None
+            and self.effective_maximum_reached_at > self.comparison_horizon_end
+        ):
+            raise ValueError("MEP effective maximum must be reached within the horizon")
+        if not 0.0 <= self.effective_maximum_basis_confidence <= 1.0:
+            raise ValueError("MEP effective maximum confidence must be bounded")
+        if not self.effective_maximum_reason.strip():
+            raise ValueError("MEP effective maximum reason must be explicit")
+        if not self.effective_maximum_evidence_id.strip():
+            raise ValueError("MEP effective maximum evidence must be explicit")
         if not self.evidence_ids or any(not item.strip() for item in self.evidence_ids):
             raise ValueError("MEP outcome evidence IDs must be explicit")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):

@@ -2194,3 +2194,20 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Behoudt het fysieke 100%-SoC-doel los van de harde huishoudreserve; Evaluation blijft financiële, zelfverbruik- en reserve-uitkomsten vergelijken.
 - Legt vast dat uitvoering direct na export terugkeert naar slim huishoudelijk ontladen wanneer geen PV-venster actief is.
 - Normatieve basis blijft uitsluitend ADR-001 t/m ADR-037.
+
+## 2026-09-02 — 2.0.0-dev.228 confidence-weighted effective maximum
+
+- Houdt de vroege huishoudreserve als afzonderlijke harde ondergrens in stand.
+- Bepaalt per compleet MEP-pad de hoogste opslagstand op een expliciete,
+  confidence-gewogen forecastbasis tussen lower en central; upper blijft alleen
+  beschikbaar als scenario-evidence.
+- Wanneer een PV-only pad op die basis de effectieve fysieke bovengrens kan
+  bereiken, zijn paden die die bovengrens niet bereiken ongeldig. Evaluation
+  kiest daarna nog steeds uitsluitend tussen de geldige complete paden.
+- Publiceert per Candidate Outcome de effectieve maximale energie, gewogen
+  piek en piektijd, targetdeadline, bereiktijd, confidence, beslisreden en een
+  stabiel evidence-ID. De vroege huishoudreserve blijft afzonderlijk zichtbaar.
+- Voegt geen verborgen score, nieuw gebruikersgewicht of terminale
+  batterijwaarde toe. Bij onvoldoende PV blijft de bestaande financiële
+  vergelijking behouden.
+- Normatieve basis blijft uitsluitend ADR-001 t/m ADR-037.

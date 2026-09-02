@@ -78,7 +78,8 @@ from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdap
 from picot.v2.plan_commitment_store import ActivePlanCommitment, CommittedPlanSegment
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_outcomes", __name__)
-METHOD_VERSION = "mep-canonical-candidate-outcomes:v3"
+METHOD_VERSION = "mep-canonical-candidate-outcomes:v4"
+MAXIMUM_TARGET_TOLERANCE_WH = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +116,14 @@ class _CandidateRow:
     opportunity_ids: tuple[str, ...]
     evidence_ids: tuple[str, ...]
     committed_prefix_composed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _EffectiveMaximumEvidence:
+    peak_energy_wh: float
+    peak_at: datetime
+    reached_at: datetime | None
+    confidence: float
 
 
 def _id(prefix: str, seed: str) -> str:
@@ -507,6 +516,85 @@ def _daily_target_evidence(
     return True, requirement.required_by
 
 
+def _confidence_weighted_effective_maximum_evidence(
+    *,
+    result: DailyReferenceStrategyResult | None,
+    market: MarketRouteAssessment | None,
+    horizon_start: datetime,
+    current_storage_energy_wh: float,
+    target_energy_wh: float,
+) -> _EffectiveMaximumEvidence:
+    """Derive explicit lower-to-central weighted ADR-037 target evidence.
+
+    High-confidence forecast intervals approach the central trajectory; low
+    confidence keeps the planning evidence close to the lower trajectory.  The
+    upper trajectory remains assessment evidence and is not used to force a
+    charging target before reality warrants it.
+    """
+
+    if market is not None:
+        scenarios = {item.scenario: item for item in market.scenario_evidence}
+        lower = scenarios[PVScenario.LOWER]
+        central = scenarios[PVScenario.CENTRAL]
+        central_by_at = {item.at: item.energy_wh for item in central.storage_energy_checkpoints}
+        weighted = (
+            (horizon_start, current_storage_energy_wh, lower.minimum_confidence),
+            *tuple(
+                (
+                    checkpoint.at,
+                    checkpoint.energy_wh
+                    + lower.minimum_confidence
+                    * (
+                        central_by_at.get(checkpoint.at, checkpoint.energy_wh)
+                        - checkpoint.energy_wh
+                    ),
+                    lower.minimum_confidence,
+                )
+                for checkpoint in lower.storage_energy_checkpoints
+            ),
+        )
+    elif result is not None:
+        trajectories = {item.scenario: item for item in result.run.simulation.trajectories}
+        lower_intervals = trajectories[PVScenario.LOWER].intervals
+        central_by_end = {
+            item.ends_at: item.storage_energy_at_end_wh
+            for item in trajectories[PVScenario.CENTRAL].intervals
+        }
+        weighted = (
+            (horizon_start, current_storage_energy_wh, 1.0),
+            *tuple(
+                (
+                    item.ends_at,
+                    item.storage_energy_at_end_wh
+                    + item.confidence
+                    * (central_by_end[item.ends_at] - item.storage_energy_at_end_wh),
+                    item.confidence,
+                )
+                for item in lower_intervals
+            ),
+        )
+    else:
+        weighted = ((horizon_start, current_storage_energy_wh, 0.0),)
+    peak_at, peak_energy_wh, peak_confidence = max(
+        weighted,
+        key=lambda item: (item[1], -item[0].timestamp()),
+    )
+    reached_at = next(
+        (
+            at
+            for at, energy_wh, _confidence in weighted
+            if energy_wh + MAXIMUM_TARGET_TOLERANCE_WH >= target_energy_wh
+        ),
+        None,
+    )
+    return _EffectiveMaximumEvidence(
+        peak_energy_wh=peak_energy_wh,
+        peak_at=peak_at,
+        reached_at=reached_at,
+        confidence=peak_confidence,
+    )
+
+
 def _recoverability(
     *,
     schedule: DailyReferenceIntentSchedule,
@@ -531,6 +619,26 @@ def _recoverability(
         grid_to_storage_input_wh / usable_capacity_wh,
     )
     return grid_independence * 0.999999 + latest_fraction * 0.000001
+
+
+def _row_grid_to_storage_input_wh(row: _CandidateRow) -> float:
+    if row.market is not None and not row.committed_prefix_composed:
+        return max(
+            (item.grid_to_storage_input_wh for item in row.market.scenario_evidence),
+            default=0.0,
+        )
+    if row.result is not None:
+        return max(
+            (
+                sum(
+                    interval.grid_to_storage_input_wh
+                    for interval in trajectory.intervals
+                )
+                for trajectory in row.result.run.simulation.trajectories
+            ),
+            default=0.0,
+        )
+    return float("inf")
 
 
 def _committed_schedule(
@@ -728,6 +836,44 @@ def produce_mep_comparable_portfolio(
     outcomes: list[DomainCandidateOutcome] = []
     diagnostics: list[MepCandidateOutcome] = []
     limits = snapshot.storage_physical_limits[0]
+    effective_maximum_energy_wh = (
+        limits.maximum_soc * snapshot.current_storage_states[0].usable_capacity_wh
+    )
+    effective_maximum_evidence = {
+        row.candidate_id: _confidence_weighted_effective_maximum_evidence(
+            result=row.result,
+            market=(row.market if not row.committed_prefix_composed else None),
+            horizon_start=row.schedule.horizon_start,
+            current_storage_energy_wh=(
+                snapshot.current_storage_states[0].current_stored_energy_wh
+            ),
+            target_energy_wh=effective_maximum_energy_wh,
+        )
+        for row in rows
+    }
+    pv_only_maximum_reached_at = tuple(
+        evidence.reached_at
+        for row in rows
+        for evidence in (effective_maximum_evidence[row.candidate_id],)
+        if _row_grid_to_storage_input_wh(row) <= 1e-6
+        and evidence.reached_at is not None
+    )
+    pv_only_can_reach_effective_maximum = bool(pv_only_maximum_reached_at)
+    effective_maximum_required_by = (
+        min(pv_only_maximum_reached_at) if pv_only_maximum_reached_at else None
+    )
+    effective_maximum_evidence_id = _id(
+        "mep-effective-maximum-evidence",
+        "|".join(
+            (
+                snapshot.snapshot_id,
+                str(effective_maximum_energy_wh),
+                str(effective_maximum_required_by),
+                "confidence-weighted-lower-central",
+                METHOD_VERSION,
+            )
+        ),
+    )
     baseline_requirement_met, _baseline_requirement_at = _daily_target_evidence(
         result=baseline,
         market=None,
@@ -803,11 +949,23 @@ def produce_mep_comparable_portfolio(
         )
         if not daily_target_reached:
             reasons.append("daily_storage_target_not_reached_by_deadline")
+        maximum_evidence = effective_maximum_evidence[candidate_id]
+        effective_maximum_reached = maximum_evidence.reached_at is not None
+        if pv_only_can_reach_effective_maximum and not effective_maximum_reached:
+            reasons.append(
+                "effective_maximum_not_reached_despite_sufficient_weighted_pv"
+            )
         if grid_to_storage > 1e-6 and baseline_requirement_met and market is None:
             reasons.append("grid_supplementation_not_required_for_household_reserve")
         family = _family(native, incumbent=committed is not None)
         constraint_ids = tuple(
-            dict.fromkeys((*limits.evidence_ids, storage_requirement.requirement_id))
+            dict.fromkeys(
+                (
+                    *limits.evidence_ids,
+                    storage_requirement.requirement_id,
+                    effective_maximum_evidence_id,
+                )
+            )
         )
         path = _path(
             snapshot=snapshot,
@@ -896,7 +1054,7 @@ def produce_mep_comparable_portfolio(
                 recoverability,
                 outcome.execution_complexity,
                 switching,
-                evidence_ids,
+                tuple(dict.fromkeys((*evidence_ids, effective_maximum_evidence_id))),
                 METHOD_VERSION,
                 financial_equivalence_margin_eur,
                 next(
@@ -924,6 +1082,19 @@ def produce_mep_comparable_portfolio(
                 daily_target_reached,
                 daily_target_reached_at,
                 household_reserve_respected,
+                effective_maximum_energy_wh,
+                maximum_evidence.peak_energy_wh,
+                maximum_evidence.peak_at,
+                effective_maximum_required_by,
+                effective_maximum_reached,
+                maximum_evidence.reached_at,
+                maximum_evidence.confidence,
+                (
+                    "weighted_pv_only_can_reach_effective_maximum"
+                    if pv_only_can_reach_effective_maximum
+                    else "weighted_pv_only_cannot_reach_effective_maximum"
+                ),
+                effective_maximum_evidence_id,
             )
         )
     candidate_set = DomainCandidateSet(

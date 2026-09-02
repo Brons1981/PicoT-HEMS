@@ -2254,3 +2254,14 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   window.
 - Added a regression test covering parent lineage and the complete projected
   PV window without adding route combinations.
+
+## 2026-09-03 — 2.0.0-dev.232 preserve explicit market export overlay
+
+- Fixed the DEV.231 regression that allowed projected-PV NOM to overwrite an
+  explicit market-export interval, making an otherwise valid hybrid market
+  route physically inadmissible.
+- The bounded priority is now grid charge, explicit market export, projected
+  PV NOM, then the parent household intent. The User Rule is projected onto
+  the existing market route instead of replacing it with a different parent.
+- Added regression evidence that the existing baseline-derived grid-trade
+  route remains physically valid and admitted with NOM over projected PV.

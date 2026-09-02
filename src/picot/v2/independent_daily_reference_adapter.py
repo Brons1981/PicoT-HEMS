@@ -118,6 +118,7 @@ class IndependentDailyReferenceAdapter:
         required_by: datetime | None = None,
         preferred_grid_windows: tuple[tuple[datetime, datetime], ...] = (),
         preserve_pv_during_grid_charge: bool = False,
+        saldering_energy_tax_credit_enabled: bool = True,
     ) -> DailyReferenceStrategyObservation:
         """Run the complete observer chain from one immutable Planning Input."""
 
@@ -136,6 +137,9 @@ class IndependentDailyReferenceAdapter:
             tariffs = tariff_adapter.build(
                 snapshot,
                 horizon_end=published_horizon_end,
+                saldering_energy_tax_credit_enabled=(
+                    saldering_energy_tax_credit_enabled
+                ),
             )
         else:
             inputs = self._inputs(
@@ -338,7 +342,13 @@ class IndependentDailyReferenceAdapter:
             if interval.intent is DailyStorageIntent.NOM
         )
         capture_start = min(existing_nom, default=max(first_grid - 1, 0))
-        capture_end = min(last_grid + 1, len(schedule.intervals) - 1)
+        # The discoverer already bounded NOM to the complete Solcast surplus
+        # projection. Preserve that full window; the residual grid block is an
+        # overlay, not a reason to return to household support early.
+        capture_end = max(
+            max(existing_nom, default=0),
+            min(last_grid + 1, len(schedule.intervals) - 1),
+        )
         intervals = tuple(
             replace(interval, intent=DailyStorageIntent.NOM)
             if capture_start <= index <= capture_end

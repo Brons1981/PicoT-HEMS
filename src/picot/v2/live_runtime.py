@@ -2271,6 +2271,9 @@ def main() -> None:
             preserve_pv_during_grid_charge=(
                 profile.preserve_pv_during_grid_charge
             ),
+            saldering_energy_tax_credit_enabled=(
+                profile.saldering_energy_tax_credit_enabled
+            ),
         )
 
     market_daily_trading_policy = trading_policy(user_rule_store.current())
@@ -2364,6 +2367,9 @@ def main() -> None:
             ),
             maximum_trading_soc_percent=payload.get(
                 "maximum_trading_soc_percent"
+            ),
+            saldering_energy_tax_credit_enabled=payload.get(
+                "saldering_energy_tax_credit_enabled"
             ),
         )
         market_daily_planner_runtime.set_trading_policy(trading_policy(profile))

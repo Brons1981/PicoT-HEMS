@@ -68,6 +68,22 @@ def test_2026_tariff_separates_quarter_offset_and_cross_quarter_saldering() -> N
     )
 
 
+def test_user_rule_can_disable_2026_energy_tax_saldering() -> None:
+    snapshot = _snapshot(
+        datetime(2026, 9, 2, 12, 0, tzinfo=timezone(timedelta(hours=2)))
+    )
+    result = IndependentDailyTariffAdapter().build(
+        snapshot,
+        saldering_energy_tax_credit_enabled=False,
+    )
+
+    interval = result.intervals[0]
+    assert interval.saldering_tax_eur_per_kwh == 0.0
+    assert interval.same_interval_offset_eur_per_kwh == pytest.approx(0.30)
+    assert interval.export_eur_per_kwh == interval.cross_interval_export_eur_per_kwh
+    assert "user-rule-energy-tax-saldering-disabled" in interval.evidence_ids
+
+
 def test_2027_export_is_bare_market_price_plus_exact_contract_addition() -> None:
     result = IndependentDailyTariffAdapter().build(
         _snapshot(datetime(2027, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=1))))

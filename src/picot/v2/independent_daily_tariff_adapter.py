@@ -54,6 +54,7 @@ class IndependentDailyTariffAdapter:
         snapshot: PlanningInputSnapshot,
         *,
         horizon_end: datetime | None = None,
+        saldering_energy_tax_credit_enabled: bool = True,
     ) -> DailyReferenceTariffSchedule:
         selected_horizon_end = horizon_end or snapshot.horizon_end
         if (
@@ -101,7 +102,12 @@ class IndependentDailyTariffAdapter:
             boundaries.add(EXPORT_TAX_TRANSITION)
         ordered = tuple(sorted(boundaries))
         intervals = tuple(
-            self._interval(points, starts_at=left, ends_at=right)
+            self._interval(
+                points,
+                starts_at=left,
+                ends_at=right,
+                saldering_energy_tax_credit_enabled=saldering_energy_tax_credit_enabled,
+            )
             for left, right in zip(ordered, ordered[1:], strict=False)
         )
         return DailyReferenceTariffSchedule(
@@ -142,6 +148,7 @@ class IndependentDailyTariffAdapter:
         *,
         starts_at: datetime,
         ends_at: datetime,
+        saldering_energy_tax_credit_enabled: bool = True,
     ) -> DailyReferenceTariffInterval:
         point = next(
             item
@@ -163,6 +170,10 @@ class IndependentDailyTariffAdapter:
             saldering_tax_rate = 0.0
             export_rate = cross_interval_export_rate
             policy_evidence = "nl-export-bare-market-plus-0.02-2027"
+        elif not saldering_energy_tax_credit_enabled:
+            saldering_tax_rate = 0.0
+            export_rate = cross_interval_export_rate
+            policy_evidence = "user-rule-energy-tax-saldering-disabled"
         return DailyReferenceTariffInterval(
             starts_at=starts_at,
             ends_at=ends_at,

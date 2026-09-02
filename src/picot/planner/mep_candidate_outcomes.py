@@ -880,6 +880,29 @@ def produce_mep_comparable_portfolio(
         requirement=storage_requirement,
         current_storage_energy_wh=(snapshot.current_storage_states[0].current_stored_energy_wh),
     )
+
+    def preserves_pv_during_grid_charge(schedule: object) -> bool:
+        intervals = tuple(getattr(schedule, "intervals", ()))
+        grid_indexes = {
+            index
+            for index, interval in enumerate(intervals)
+            if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+        }
+        if not grid_indexes:
+            return True
+        first = min(grid_indexes)
+        last = max(grid_indexes)
+        if grid_indexes != set(range(first, last + 1)):
+            return False
+        before = intervals[first - 1] if first > 0 else None
+        after = intervals[last + 1] if last + 1 < len(intervals) else None
+        return (
+            before is not None
+            and before.intent is DailyStorageIntent.NOM
+            and after is not None
+            and after.intent is DailyStorageIntent.NOM
+        )
+
     for row in rows:
         candidate_id = row.candidate_id
         schedule = row.schedule
@@ -955,7 +978,18 @@ def produce_mep_comparable_portfolio(
             reasons.append(
                 "effective_maximum_not_reached_despite_sufficient_weighted_pv"
             )
-        if grid_to_storage > 1e-6 and baseline_requirement_met and market is None:
+        if (
+            grid_to_storage > 1e-6
+            and portfolio.preserve_pv_during_grid_charge
+            and not preserves_pv_during_grid_charge(schedule)
+        ):
+            reasons.append("user_rule_pv_preservation_not_satisfied")
+        elif (
+            grid_to_storage > 1e-6
+            and baseline_requirement_met
+            and market is None
+            and not portfolio.preserve_pv_during_grid_charge
+        ):
             reasons.append("grid_supplementation_not_required_for_household_reserve")
         family = _family(native, incumbent=committed is not None)
         constraint_ids = tuple(

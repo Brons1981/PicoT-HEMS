@@ -356,6 +356,42 @@ DASHBOARD_HTML = """<!doctype html>
       background: #151b23;
       color: #96a6b8;
     }
+    .strategy-rules {
+      display: grid;
+      gap: 14px;
+      max-width: 760px;
+      padding: 18px;
+      border: 1px solid #27313d;
+      border-radius: 12px;
+      background: #151b23;
+    }
+    .strategy-rule {
+      display: grid;
+      gap: 6px;
+    }
+    .strategy-rule-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+    .strategy-rule input[type="number"] {
+      width: 90px;
+      padding: 7px;
+      border: 1px solid #386f96;
+      border-radius: 7px;
+      background: #0f1c27;
+      color: #eef4fb;
+    }
+    .strategy-rules button {
+      justify-self: start;
+      padding: 9px 14px;
+      border: 1px solid #5db9f3;
+      border-radius: 8px;
+      background: #17466a;
+      color: #fff;
+      cursor: pointer;
+    }
     .observer {
       padding: 8px 12px;
       border: 1px solid #386f96;
@@ -1006,10 +1042,35 @@ DASHBOARD_HTML = """<!doctype html>
     <section
       id="tab-strategy" class="tab-panel" data-tab-panel="strategy" hidden
     >
-      <p class="empty-panel">
-        Plannerstrategie en gebruikerskeuzes worden hier zichtbaar zodra de
-        bijbehorende canonieke contracten beschikbaar zijn.
+      <h2>Gebruikersregels</h2>
+      <p class="muted">
+        Deze regels begrenzen eerst de geldige plannen. Daarna kiest PicoT het
+        financieel beste plan binnen die grenzen.
       </p>
+      <form id="user-rules-form" class="strategy-rules">
+        <label class="strategy-rule">
+          <span class="strategy-rule-line">
+            <strong>Beschikbare PV behouden bij netladen</strong>
+            <input id="rule-preserve-pv" type="checkbox">
+          </span>
+          <span class="muted">
+            Netenergie vult alleen het resterende opslagtekort; de omliggende
+            basisstand blijft zonne-energie opvangen.
+          </span>
+        </label>
+        <label class="strategy-rule">
+          <span class="strategy-rule-line">
+            <strong>Maximaal SoC voor handel</strong>
+            <span><input id="rule-trading-soc" type="number" min="0" max="100" step="1"> %</span>
+          </span>
+          <span id="rule-trading-limit" class="muted">
+            PicoT begrenst dit verder met de technische ondergrens,
+            huishoudreserve en 10% extra reserve.
+          </span>
+        </label>
+        <button id="save-user-rules" type="submit">Regels toepassen</button>
+        <span id="user-rules-status" class="muted" aria-live="polite"></span>
+      </form>
     </section>
     <section
       id="tab-technical" class="tab-panel" data-tab-panel="technical" hidden
@@ -3925,6 +3986,50 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
+    function renderUserRules(rules) {
+      const form = element("user-rules-form");
+      if (form.contains(document.activeElement)) return;
+      element("rule-preserve-pv").checked =
+        rules.preserve_pv_during_grid_charge !== false;
+      element("rule-trading-soc").value = Number.isFinite(
+        Number(rules.maximum_trading_soc_percent)
+      ) ? Number(rules.maximum_trading_soc_percent) : 25;
+      element("user-rules-status").textContent = rules.revision
+        ? `Actieve revisie ${rules.revision}`
+        : "Wachten op de actieve gebruikersregels…";
+    }
+
+    async function saveUserRules(event) {
+      event.preventDefault();
+      const status = element("user-rules-status");
+      const button = element("save-user-rules");
+      const maximumTradingSoc = Number(element("rule-trading-soc").value);
+      if (!Number.isFinite(maximumTradingSoc) || maximumTradingSoc < 0 || maximumTradingSoc > 100) {
+        status.textContent = "Kies een waarde tussen 0 en 100%.";
+        return;
+      }
+      button.disabled = true;
+      status.textContent = "Regels opslaan en planning opnieuw beoordelen…";
+      try {
+        const response = await fetch("api/user-rules", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            preserve_pv_during_grid_charge: element("rule-preserve-pv").checked,
+            maximum_trading_soc_percent: maximumTradingSoc,
+          }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        renderUserRules(result.user_rules ?? {});
+        status.textContent = "Regels opgeslagen; PicoT bouwt een nieuw plan.";
+      } catch (error) {
+        status.textContent = `Opslaan mislukt: ${error.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     function renderView(view) {
       const dashboardState = captureDashboardState();
       element("version").textContent = displayValue(view.picot_version);
@@ -3966,6 +4071,7 @@ DASHBOARD_HTML = """<!doctype html>
         view.storage_mode_transition_history ?? []
       );
       renderFinancialResults(view.financial_results ?? {});
+      renderUserRules(view.user_rules ?? {});
       loadPlanningIncidentHistory();
       renderPriceTimeline(
         view.price_timeline ?? {
@@ -4083,6 +4189,7 @@ DASHBOARD_HTML = """<!doctype html>
       resetStorageModeOverride
     );
     element("reset-planning").addEventListener("click", resetPlanning);
+    element("user-rules-form").addEventListener("submit", saveUserRules);
     initializeTabs();
     loadView().finally(watchViewUpdates);
     setInterval(loadView, 60000);
@@ -4102,10 +4209,14 @@ class WebViewStore:
         self._fast_grid_power_source: dict[str, object] | None = None
         self._retired_comparison_history: dict[str, object] | None = None
         self._financial_results: dict[str, object] | None = None
+        self._user_rules: dict[str, object] | None = None
         self._revision = 0
         self._reset_storage_mode_override: Callable[[str], dict[str, object]] | None = None
         self._reset_planning: Callable[[str], dict[str, object]] | None = None
         self._mark_planner_stress: Callable[[str, str], dict[str, object]] | None = None
+        self._update_user_rules: (
+            Callable[[dict[str, object]], dict[str, object]] | None
+        ) = None
         self._diagnostic_paths: tuple[Path, ...] = ()
         self._incident_history_path: Path | None = None
 
@@ -4140,6 +4251,8 @@ class WebViewStore:
             view["retired_comparison_history"] = dict(self._retired_comparison_history)
         if self._financial_results is not None:
             view["financial_results"] = dict(self._financial_results)
+        if self._user_rules is not None:
+            view["user_rules"] = dict(self._user_rules)
         serialized = json.dumps(view, separators=(",", ":"))
         if len(serialized) > MAX_WEB_VIEW_CHARACTERS:
             bounded = dict(view)
@@ -4286,6 +4399,31 @@ class WebViewStore:
             latest: object = json.loads(self._latest_json)
             if isinstance(latest, dict):
                 self._replace_latest_locked(latest)
+
+    def publish_user_rules(self, user_rules: dict[str, object]) -> None:
+        copied = json.loads(json.dumps(user_rules))
+        if not isinstance(copied, dict):
+            raise TypeError("user rules must serialize to an object")
+        with self._condition:
+            self._user_rules = copied
+            if self._latest_json is None:
+                return
+            latest = json.loads(self._latest_json)
+            if isinstance(latest, dict):
+                self._replace_latest_locked(latest)
+
+    def set_user_rule_update(
+        self,
+        update: Callable[[dict[str, object]], dict[str, object]],
+    ) -> None:
+        with self._lock:
+            self._update_user_rules = update
+
+    def user_rule_update(
+        self,
+    ) -> Callable[[dict[str, object]], dict[str, object]] | None:
+        with self._lock:
+            return self._update_user_rules
 
     def set_planner_stress_marker(
         self,
@@ -4531,8 +4669,36 @@ def create_web_server(
                 "/api/storage-mode-override/reset",
                 "/api/planning/reset",
                 "/api/planner-comparison/stress",
+                "/api/user-rules",
             }:
                 self._reject_write()
+                return
+            if path == "/api/user-rules":
+                update = store.user_rule_update()
+                if update is None:
+                    self._send_json(
+                        HTTPStatus.CONFLICT,
+                        '{"status":"user_rules_unavailable"}',
+                    )
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 4096:
+                        raise ValueError
+                    payload = json.loads(self.rfile.read(length))
+                    if not isinstance(payload, dict):
+                        raise ValueError
+                    result = update(payload)
+                except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        '{"status":"invalid_user_rules"}',
+                    )
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    json.dumps(result, separators=(",", ":")),
+                )
                 return
             reset = (
                 reset_planning or store.planning_reset()

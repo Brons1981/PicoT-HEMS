@@ -117,6 +117,7 @@ class IndependentDailyReferenceAdapter:
         micro_charge_suppression_fraction: float = 0.01,
         required_by: datetime | None = None,
         preferred_grid_windows: tuple[tuple[datetime, datetime], ...] = (),
+        preserve_pv_during_grid_charge: bool = False,
     ) -> DailyReferenceStrategyObservation:
         """Run the complete observer chain from one immutable Planning Input."""
 
@@ -168,6 +169,7 @@ class IndependentDailyReferenceAdapter:
             tariffs=tariffs,
             required_by=required_by,
             preferred_grid_windows=preferred_grid_windows,
+            preserve_pv_during_grid_charge=preserve_pv_during_grid_charge,
         )
         strategy_space = IndependentDailyStrategyGenerator().generate_from_charge_windows(
             charge_windows=charge_windows,
@@ -223,6 +225,7 @@ class IndependentDailyReferenceAdapter:
         tariffs: DailyReferenceTariffSchedule,
         required_by: datetime | None,
         preferred_grid_windows: tuple[tuple[datetime, datetime], ...],
+        preserve_pv_during_grid_charge: bool = False,
     ) -> DailyReferenceChargeWindowSet:
         """Reduce physical alternatives before complete portfolio simulation.
 
@@ -260,6 +263,8 @@ class IndependentDailyReferenceAdapter:
             ),
             default=None,
         )
+        if selected_hybrid is not None and preserve_pv_during_grid_charge:
+            selected_hybrid = cls._preserve_pv_around_grid_charge(selected_hybrid)
         preferred_grid = tuple(
             item
             for item in grid_windows
@@ -302,6 +307,49 @@ class IndependentDailyReferenceAdapter:
             method_version=METHOD_VERSION,
             discovery_status="discovered",
             hybrid_schedules=((selected_hybrid,) if selected_hybrid is not None else ()),
+        )
+
+    @staticmethod
+    def _preserve_pv_around_grid_charge(
+        schedule: DailyReferenceIntentSchedule,
+    ) -> DailyReferenceIntentSchedule:
+        """Keep PV capture admissible before and after residual grid charging.
+
+        The physical discoverer has already bounded the grid duration.  This
+        user-rule projection changes no grid energy; it only prevents a
+        household-discharge gap between the PV-capture path and that grid
+        block, and restores NOM for one interval afterwards.  That gives live
+        PV which exceeds the forecast an immediate storage path without
+        creating another combinatorial timing search.
+        """
+
+        grid_indexes = tuple(
+            index
+            for index, interval in enumerate(schedule.intervals)
+            if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+        )
+        if not grid_indexes:
+            return schedule
+        first_grid = grid_indexes[0]
+        last_grid = grid_indexes[-1]
+        existing_nom = tuple(
+            index
+            for index, interval in enumerate(schedule.intervals)
+            if interval.intent is DailyStorageIntent.NOM
+        )
+        capture_start = min(existing_nom, default=max(first_grid - 1, 0))
+        capture_end = min(last_grid + 1, len(schedule.intervals) - 1)
+        intervals = tuple(
+            replace(interval, intent=DailyStorageIntent.NOM)
+            if capture_start <= index <= capture_end
+            and interval.intent is not DailyStorageIntent.GRID_REQUIREMENT
+            else interval
+            for index, interval in enumerate(schedule.intervals)
+        )
+        return replace(
+            schedule,
+            schedule_id=f"{schedule.schedule_id}:preserve-pv",
+            intervals=intervals,
         )
 
     @staticmethod

@@ -2211,3 +2211,21 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   batterijwaarde toe. Bij onvoldoende PV blijft de bestaande financiële
   vergelijking behouden.
 - Normatieve basis blijft uitsluitend ADR-001 t/m ADR-037.
+
+## 2026-09-02 — 2.0.0-dev.229 canonical user rules
+
+- Verplaatst de handels-SoC-voorkeur naar een persistent canoniek User Rule
+  profiel op het Strategie-dashboard; de bestaande add-onwaarde is alleen de
+  eenmalige migratiebron.
+- Voegt de expliciete User Rule toe dat noodzakelijk netladen de omliggende
+  NOM/PV-opvang niet mag uitschakelen. De Candidate-laag vormt één begrensd
+  hybride pad waarin netenergie alleen het resterende tekort vult.
+- Past beide regels als harde kandidaatbegrenzing toe vóór Evaluation. De
+  Opportunity Engine blijft uitsluitend prijsvensters leveren en MEP blijft
+  complete fysieke paden vormen en simuleren.
+- Een wijziging wordt atomair opgeslagen, zichtbaar voorzien van revisie en
+  tijdstip, en activeert direct herplanning.
+- De handelszandloper blijft aanvullend begrensd door de technische ondergrens,
+  huishoudreserve en 10 procentpunt extra reserve.
+- Geen nieuwe optimalisatiedoelstelling, verborgen score of alternatieve
+  ADR-basis toegevoegd; normatief blijven uitsluitend ADR-001 t/m ADR-037.

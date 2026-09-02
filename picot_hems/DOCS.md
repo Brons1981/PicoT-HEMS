@@ -44,12 +44,19 @@ financiële toelatingswaarden rechtstreeks door de gebruiker instelbaar:
   standaard `10.0`.
 - `market_daily_wear_eur_per_kwh`: toegerekende batterijslijtage per geëxporteerde
   kWh; standaard `0.05` euro.
-- `market_daily_maximum_trading_soc_percent`: maximaal deel van de bruikbare
-  batterijcapaciteit dat één marktpad mag laden en ontladen; standaard `25.0`.
-  PicoT begrenst dit verder met de onderste SoC-grens, de huishoudreserve en
-  een aanvullende reserve van 10 procentpunt.
+- `market_daily_maximum_trading_soc_percent`: eenmalige migratiewaarde voor de
+  canonieke gebruikersregel **Maximaal SoC voor handel**; standaard `25.0`.
+  Na de eerste start wordt de regel beheerd via **PicoT Pipeline → Strategie**.
+  PicoT begrenst de ingestelde waarde verder met de onderste SoC-grens, de
+  huishoudreserve en een aanvullende reserve van 10 procentpunt.
 
-Start de add-on na een wijziging opnieuw. In **PicoT Pipeline → Strategie** toont
+De Strategie-pagina bevat ook **Beschikbare PV behouden bij netladen**. Wanneer
+deze regel actief is, blijft NOM rond het begrensde netlaadblok beschikbaar en
+vult het net alleen het resterende opslagtekort. Een wijziging wordt duurzaam
+opgeslagen en laat PicoT direct opnieuw plannen.
+
+Start de add-on na een wijziging van de overige add-onopties opnieuw. In
+**PicoT Pipeline → Strategie** toont
 iedere onderzochte marktroute de herstelprijs, RTE-correctie, handelsmarge,
 slijtage en de daaruit volgende minimale exportprijs. Zo blijft zichtbaar waarom
 de gewijzigde instelling een route wel of niet toelaat.

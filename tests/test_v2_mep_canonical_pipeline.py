@@ -608,6 +608,29 @@ def test_sufficient_weighted_pv_forces_every_valid_path_to_effective_maximum(
         for item in run.outcomes.outcomes
         if item.validity == "invalid"
     )
+    assert all(
+        item.effective_maximum_storage_energy_wh == pytest.approx(8160.0)
+        and item.effective_maximum_required_by is not None
+        and item.effective_maximum_reason
+        == "weighted_pv_only_can_reach_effective_maximum"
+        and item.effective_maximum_evidence_id in item.evidence_ids
+        for item in run.outcomes.outcomes
+    )
+    winning_outcome = next(
+        item
+        for item in run.outcomes.outcomes
+        if item.candidate_id == run.evaluation.winning_candidate_id
+    )
+    assert winning_outcome.effective_maximum_reached
+    assert winning_outcome.effective_maximum_reached_at is not None
+    view = build_web_view(run, project(run))
+    chosen = view["planning_status"]["chosen_plan"]
+    assert chosen["effective_maximum_storage_energy_wh"] == pytest.approx(8160.0)
+    assert chosen["effective_maximum_required_by"] is not None
+    assert chosen["effective_maximum_reached"] is True
+    assert chosen["effective_maximum_evidence_id"] == (
+        winning_outcome.effective_maximum_evidence_id
+    )
 
 
 def test_mep_uses_household_lower_bound_plus_unexpected_reserve_for_grid_need(

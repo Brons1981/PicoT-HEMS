@@ -2204,6 +2204,9 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Wanneer een PV-only pad op die basis de effectieve fysieke bovengrens kan
   bereiken, zijn paden die die bovengrens niet bereiken ongeldig. Evaluation
   kiest daarna nog steeds uitsluitend tussen de geldige complete paden.
+- Publiceert per Candidate Outcome de effectieve maximale energie, gewogen
+  piek en piektijd, targetdeadline, bereiktijd, confidence, beslisreden en een
+  stabiel evidence-ID. De vroege huishoudreserve blijft afzonderlijk zichtbaar.
 - Voegt geen verborgen score, nieuw gebruikersgewicht of terminale
   batterijwaarde toe. Bij onvoldoende PV blijft de bestaande financiële
   vergelijking behouden.

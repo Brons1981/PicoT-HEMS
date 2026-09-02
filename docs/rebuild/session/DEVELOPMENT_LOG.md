@@ -2187,3 +2187,10 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   merge.
 
 Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
+## 2026-09-02 — 2.0.0-dev.227 bounded market hourglasses
+
+- Begrenst netladen-naar-handel tot de financieel beste complete route.
+- Begrenst PV-handel en eventueel net-herstel tot één goedkoopste, zo laat mogelijk geplaatst energievenster.
+- Behoudt het fysieke 100%-SoC-doel los van de harde huishoudreserve; Evaluation blijft financiële, zelfverbruik- en reserve-uitkomsten vergelijken.
+- Legt vast dat uitvoering direct na export terugkeert naar slim huishoudelijk ontladen wanneer geen PV-venster actief is.
+- Normatieve basis blijft uitsluitend ADR-001 t/m ADR-037.

@@ -43,7 +43,7 @@ from picot.v2.opportunity_engine import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_generation", __name__)
-METHOD_VERSION = "market-daily-planner:v9"
+METHOD_VERSION = "market-daily-planner:v10"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
@@ -945,6 +945,9 @@ class MarketDailyPlanner:
                             export_output_wh,
                         )
                     )
+        # One energy hourglass is projected on one best charge/export pair.
+        # Alternative starts inside the same price valleys are not different
+        # Energy Paths; rolling replanning may move this single window later.
         for (
             _indicated_result,
             charge_opportunity,
@@ -956,7 +959,7 @@ class MarketDailyPlanner:
             trade_candidates,
             key=lambda item: item[0],
             reverse=True,
-        ):
+        )[:1]:
             export_window = export_opportunity.intervals
             charge_start = charge_window[0].starts_at
             charge_end = charge_window[-1].ends_at
@@ -1267,7 +1270,7 @@ class MarketDailyPlanner:
             pv_trade_candidates,
             key=lambda item: (item[0], item[3]),
             reverse=True,
-        ):
+        )[:1]:
             export_window = export_opportunity.intervals
             recovery_window = recovery_opportunity.intervals
             export_start = export_window[0].starts_at
@@ -1337,11 +1340,22 @@ class MarketDailyPlanner:
             # If PV cannot restore the full traded portion plus household
             # consumption, assess the same export with every interval-minimal
             # explicit-power subwindow inside the selected recovery Opportunity.
-            for grid_recovery_window in _minimal_charge_subwindows(
+            grid_recovery_windows = _minimal_charge_subwindows(
                 recovery_window,
                 required_charge_input_wh=recharge_input_wh,
                 maximum_charge_input_power_w=(limits.maximum_charge_input_power_w),
-            ):
+            )
+            if grid_recovery_windows:
+                grid_recovery_windows = (
+                    min(
+                        grid_recovery_windows,
+                        key=lambda window: (
+                            _average_import_rate(window),
+                            -window[0].starts_at.timestamp(),
+                        ),
+                    ),
+                )
+            for grid_recovery_window in grid_recovery_windows:
                 grid_recovery_start = grid_recovery_window[0].starts_at
                 grid_recovery_end = grid_recovery_window[-1].ends_at
                 grid_recharge_rate = _average_import_rate(grid_recovery_window)

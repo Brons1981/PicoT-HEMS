@@ -645,6 +645,10 @@ def test_pv_preservation_rule_projects_nom_onto_existing_market_route(
         if assessment.route_id in grid_route_ids
     )
     assert grid_assessments
+    native_schedules = (
+        portfolio.native_observation.observer_result.portfolio.strategy_results
+    )
+    assert native_schedules
     baseline_trades = tuple(
         assessment
         for assessment in grid_assessments
@@ -672,6 +676,26 @@ def test_pv_preservation_rule_projects_nom_onto_existing_market_route(
         if interval.pv_energy_wh > 0.0
     )
     assert pv_intervals
+    grid_days = {
+        interval.starts_at.date()
+        for result in native_schedules
+        for interval in result.intent_schedule.intervals
+        if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+    }
+    assert grid_days
+    for result in native_schedules:
+        for interval in result.intent_schedule.intervals:
+            if interval.starts_at.date() in grid_days and any(
+                interval.starts_at < pv.ends_at
+                and interval.ends_at > pv.starts_at
+                and (pv.forecast_upper_energy_wh or 0.0) > 0.0
+                for pv in pv_intervals
+            ):
+                assert interval.intent in {
+                    DailyStorageIntent.NOM,
+                    DailyStorageIntent.GRID_REQUIREMENT,
+                    DailyStorageIntent.STORAGE_EXPORT,
+                }
     for assessment in baseline_trades:
         for interval in assessment.intent_schedule.intervals:
             if any(

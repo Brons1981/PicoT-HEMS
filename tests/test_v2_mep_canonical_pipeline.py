@@ -6,8 +6,14 @@ import pytest
 from test_independent_daily_reference_adapter import _conversion, _snapshot
 
 import picot.planner.mep_candidate_outcomes as mep_candidate_outcomes
+from picot.domain.daily_reference_intent import (
+    DailyReferenceIntentInterval,
+    DailyReferenceIntentSchedule,
+    DailyStorageIntent,
+)
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.planner.market_daily_planner import MarketTradingPolicy
+from picot.planner.mep_candidate_outcomes import _preserves_pv_during_grid_charge
 from picot.v2.contracts import StorageRoundTripEfficiencyEvidence
 from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
@@ -689,6 +695,75 @@ def test_user_rule_admits_only_pv_preserving_grid_supplementation(tmp_path) -> N
         for item in hybrid
     )
     assert any(item.validity == "valid" for item in hybrid)
+
+
+def test_active_grid_commitment_retains_original_pv_preservation_context() -> None:
+    grid_start = datetime.fromisoformat("2026-09-03T13:30:00+02:00")
+    captured_at = grid_start + timedelta(minutes=1, seconds=8)
+    grid_end = grid_start + timedelta(minutes=30)
+    horizon_end = grid_end + timedelta(minutes=30)
+    schedule = DailyReferenceIntentSchedule(
+        schedule_id="mid-grid-commitment",
+        snapshot_id="snapshot",
+        horizon_start=captured_at,
+        horizon_end=horizon_end,
+        intervals=(
+            DailyReferenceIntentInterval(
+                captured_at,
+                grid_start + timedelta(minutes=15),
+                DailyStorageIntent.GRID_REQUIREMENT,
+            ),
+            DailyReferenceIntentInterval(
+                grid_start + timedelta(minutes=15),
+                grid_end,
+                DailyStorageIntent.GRID_REQUIREMENT,
+            ),
+            DailyReferenceIntentInterval(
+                grid_end,
+                grid_end + timedelta(minutes=15),
+                DailyStorageIntent.NOM,
+            ),
+            DailyReferenceIntentInterval(
+                grid_end + timedelta(minutes=15),
+                horizon_end,
+                DailyStorageIntent.NOM,
+            ),
+        ),
+        method_version="test:v1",
+    )
+    commitment = ActivePlanCommitment(
+        execution_scope_id="battery",
+        plan_id="pv-preserving-market-route",
+        plan_revision=1,
+        primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+        source_policy="not_applicable",
+        starts_at=grid_start - timedelta(hours=1),
+        ends_at=horizon_end,
+        target_energy_wh=8160.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=grid_start - timedelta(hours=1),
+                ends_at=grid_start,
+                primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+                source_policy=None,
+            ),
+            CommittedPlanSegment(
+                starts_at=grid_start,
+                ends_at=grid_end,
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+                source_policy=None,
+            ),
+            CommittedPlanSegment(
+                starts_at=grid_end,
+                ends_at=horizon_end,
+                primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value,
+                source_policy=None,
+            ),
+        ),
+    )
+
+    assert not _preserves_pv_during_grid_charge(schedule)
+    assert _preserves_pv_during_grid_charge(schedule, commitment=commitment)
 
 
 def test_mep_publishes_next_day_pv_capture_without_unnecessary_grid_charge(

@@ -78,7 +78,7 @@ from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdap
 from picot.v2.plan_commitment_store import ActivePlanCommitment, CommittedPlanSegment
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_outcomes", __name__)
-METHOD_VERSION = "mep-canonical-candidate-outcomes:v4"
+METHOD_VERSION = "mep-canonical-candidate-outcomes:v5"
 MAXIMUM_TARGET_TOLERANCE_WH = 1.0
 
 
@@ -708,6 +708,52 @@ def _committed_schedule(
     )
 
 
+def _preserves_pv_during_grid_charge(
+    schedule: DailyReferenceIntentSchedule,
+    *,
+    commitment: ActivePlanCommitment | None = None,
+) -> bool:
+    """Validate NOM around grid charge, including elapsed commitment context."""
+
+    intervals = schedule.intervals
+    grid_indexes = {
+        index
+        for index, interval in enumerate(intervals)
+        if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+    }
+    if not grid_indexes:
+        return True
+    first = min(grid_indexes)
+    last = max(grid_indexes)
+    if grid_indexes != set(range(first, last + 1)):
+        return False
+
+    before_is_nom = first > 0 and intervals[first - 1].intent is DailyStorageIntent.NOM
+    if not before_is_nom and commitment is not None:
+        first_grid_at = intervals[first].starts_at
+        original_grid = next(
+            (
+                segment
+                for segment in commitment.segments
+                if segment.primitive == ExecutionPrimitive.CHARGE_AT_POWER.value
+                and segment.starts_at <= first_grid_at < segment.ends_at
+            ),
+            None,
+        )
+        before_is_nom = original_grid is not None and any(
+            segment.ends_at == original_grid.starts_at
+            and segment.primitive == ExecutionPrimitive.BALANCE_BIDIRECTIONAL.value
+            for segment in commitment.segments
+        )
+
+    after = intervals[last + 1] if last + 1 < len(intervals) else None
+    return (
+        before_is_nom
+        and after is not None
+        and after.intent is DailyStorageIntent.NOM
+    )
+
+
 def _simulate_committed(
     *,
     snapshot: PlanningInputSnapshot,
@@ -756,14 +802,8 @@ def produce_mep_comparable_portfolio(
         item.intent_schedule_id: item
         for item in portfolio.native_observation.observer_result.candidate_set.candidates
     }
-    baseline = next(
-        item
-        for item in native_results.values()
-        if all(
-            interval.intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
-            for interval in item.intent_schedule.intervals
-        )
-    )
+    baseline_schedule_id = portfolio.native_observation.strategy_space.schedules[0].schedule_id
+    baseline = native_results[baseline_schedule_id]
     projected_balance, storage_requirement = _storage_requirement_evidence(
         snapshot=snapshot,
         portfolio=portfolio,
@@ -881,28 +921,6 @@ def produce_mep_comparable_portfolio(
         current_storage_energy_wh=(snapshot.current_storage_states[0].current_stored_energy_wh),
     )
 
-    def preserves_pv_during_grid_charge(schedule: object) -> bool:
-        intervals = tuple(getattr(schedule, "intervals", ()))
-        grid_indexes = {
-            index
-            for index, interval in enumerate(intervals)
-            if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
-        }
-        if not grid_indexes:
-            return True
-        first = min(grid_indexes)
-        last = max(grid_indexes)
-        if grid_indexes != set(range(first, last + 1)):
-            return False
-        before = intervals[first - 1] if first > 0 else None
-        after = intervals[last + 1] if last + 1 < len(intervals) else None
-        return (
-            before is not None
-            and before.intent is DailyStorageIntent.NOM
-            and after is not None
-            and after.intent is DailyStorageIntent.NOM
-        )
-
     for row in rows:
         candidate_id = row.candidate_id
         schedule = row.schedule
@@ -981,7 +999,10 @@ def produce_mep_comparable_portfolio(
         if (
             grid_to_storage > 1e-6
             and portfolio.preserve_pv_during_grid_charge
-            and not preserves_pv_during_grid_charge(schedule)
+            and not _preserves_pv_during_grid_charge(
+                schedule,
+                commitment=committed,
+            )
         ):
             reasons.append("user_rule_pv_preservation_not_satisfied")
         elif (

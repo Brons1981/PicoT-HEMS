@@ -57,13 +57,11 @@ def _household_energy_requirement_deadline(
     is not a CP deadline and it does not select a charging window.
     """
 
+    baseline_schedule_id = observation.strategy_space.schedules[0].schedule_id
     baseline = next(
         item
         for item in observation.observer_result.portfolio.strategy_results
-        if all(
-            interval.intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
-            for interval in item.intent_schedule.intervals
-        )
+        if item.intent_schedule.schedule_id == baseline_schedule_id
     )
     dependency_starts = tuple(
         interval.starts_at

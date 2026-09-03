@@ -565,6 +565,54 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
     assert market_outcomes
 
 
+def test_zero_soc_fallback_projects_storage_source_need_without_crashing(
+    tmp_path,
+) -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.0)
+    captured_at = snapshot.captured_at + timedelta(hours=7, minutes=30)
+    snapshot = replace(
+        snapshot,
+        captured_at=captured_at,
+        horizon_end=captured_at + timedelta(hours=36),
+        current_storage_states=tuple(
+            replace(state, measured_at=captured_at)
+            for state in snapshot.current_storage_states
+        ),
+        capability_snapshot_set=replace(
+            snapshot.capability_snapshot_set,
+            captured_at=captured_at,
+            capabilities=tuple(
+                replace(capability, fresh_at=captured_at)
+                for capability in snapshot.capability_snapshot_set.capabilities
+            ),
+        ),
+    )
+    pipeline, _store = _pipeline(
+        tmp_path,
+        market_routes_enabled=True,
+        preserve_pv_during_grid_charge=True,
+    )
+
+    run = pipeline.run(planning_input=snapshot)
+
+    assert run.candidate_set.derivation_status == "blocked"
+    assert run.evaluation.status == "fallback_active"
+    requirement = run.candidate_set.storage_requirements[0]
+    balance = run.candidate_set.projected_balances[0]
+    assert sum(
+        interval.planned_grid_energy_wh
+        for interval in balance.intervals
+        if interval.ends_at <= requirement.required_by
+    ) == 0.0
+
+    candidate_card = project(run).cards[2]
+
+    assert candidate_card.attributes["storage_source_need_count"] == 1
+    assert candidate_card.attributes["storage_source_needs"][0]["status"] == (
+        "grid_support_required"
+    )
+
+
 def test_sufficient_weighted_pv_forces_every_valid_path_to_effective_maximum(
     tmp_path,
 ) -> None:

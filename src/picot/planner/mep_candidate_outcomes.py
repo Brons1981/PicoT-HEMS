@@ -418,7 +418,10 @@ def _storage_requirement_evidence(
             ends_at=item.ends_at,
             current_usable_storage_energy_wh=item.storage_energy_at_start_wh,
             expected_usable_pv_energy_wh=item.usable_pv_wh,
-            planned_grid_energy_wh=(item.grid_to_household_wh + item.grid_to_storage_input_wh),
+            # ADR-037 source need is derived before a Candidate may use grid
+            # energy. Household residual import in the reference simulation is
+            # therefore evidence of unmet demand, not planned source energy.
+            planned_grid_energy_wh=0.0,
             household_load_forecast_energy_wh=item.household_demand_wh,
             known_future_demand_energy_wh=0.0,
             conversion_losses_wh=(item.storage_charge_loss_wh + item.storage_discharge_loss_wh),

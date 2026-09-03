@@ -2279,3 +2279,16 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - MEP still simulates the complete paths and Evaluation still selects among
   valid paths using the existing objectives and switching margin.
 - Normative basis remains exclusively ADR-001 through ADR-037.
+
+## 2026-09-03 — 2.0.0-dev.234 contain depleted-storage fallback projection
+
+- Keeps the ADR-037 storage source-need balance prior to Candidate grid-energy
+  planning, even when the household reference simulation requires residual
+  grid import after storage depletion.
+- Prevents a valid zero-SoC `mep_planning_blocked` fallback from terminating
+  the runtime while the read-only dashboard projection is built.
+- Adds regression coverage for a depleted storage snapshot, a blocked MEP
+  result, and successful projection of the remaining grid-support need.
+- Does not change Candidate construction, MEP simulation, Evaluation, plan
+  commitment, or device execution behaviour.
+- Normative basis remains exclusively ADR-001 through ADR-037.

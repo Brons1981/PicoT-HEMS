@@ -2265,3 +2265,17 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   the existing market route instead of replacing it with a different parent.
 - Added regression evidence that the existing baseline-derived grid-trade
   route remains physically valid and admitted with NOM over projected PV.
+
+## 2026-09-03 — 2.0.0-dev.233 preserve User Rule continuity
+
+- Projects the existing PV-preservation User Rule onto every already-bounded
+  Candidate Generation path on a day that needs residual grid charging.
+- Keeps all Solcast-upper positive-PV intervals in NOM while retaining explicit
+  grid charge and market export as higher-priority overlays. No candidate,
+  route, or timing alternative is added.
+- Validates a commitment that is already inside its grid-charge segment against
+  the original preceding NOM segment instead of rejecting it because the
+  rolling horizon no longer contains elapsed context.
+- MEP still simulates the complete paths and Evaluation still selects among
+  valid paths using the existing objectives and switching margin.
+- Normative basis remains exclusively ADR-001 through ADR-037.

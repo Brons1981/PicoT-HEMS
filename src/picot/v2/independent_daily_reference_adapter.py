@@ -24,6 +24,7 @@ from picot.domain.daily_reference_simulation import DailyReferenceSimulationSet,
 from picot.domain.daily_reference_strategy_observation import (
     DailyReferenceStrategyObservation,
 )
+from picot.domain.daily_reference_strategy_space import DailyReferenceStrategySpace
 from picot.domain.daily_reference_tariff import (
     DailyReferenceTariffSchedule,
 )
@@ -66,7 +67,7 @@ from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
 
-METHOD_VERSION = "v2-independent-daily-reference-adapter:v4"
+METHOD_VERSION = "v2-independent-daily-reference-adapter:v5"
 DAILY_REFERENCE_DURATION = timedelta(hours=24)
 
 
@@ -189,6 +190,12 @@ class IndependentDailyReferenceAdapter:
                     if item.schedule_id not in component_schedule_ids
                 ),
             )
+        if preserve_pv_during_grid_charge and charge_windows.hybrid_schedules:
+            strategy_space = self._preserve_pv_across_grid_charge_days(
+                strategy_space,
+                charge_windows=charge_windows,
+                pv_scenarios=inputs.pv_scenarios,
+            )
         pv_capture_schedule = self._pv_capture_schedule(
             snapshot_id=snapshot.snapshot_id,
             household=inputs.household,
@@ -220,6 +227,66 @@ class IndependentDailyReferenceAdapter:
             maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
             maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
         )
+
+    @staticmethod
+    def _preserve_pv_across_grid_charge_days(
+        strategy_space: DailyReferenceStrategySpace,
+        *,
+        charge_windows: DailyReferenceChargeWindowSet,
+        pv_scenarios: tuple[ScenarioTimeline, ...],
+    ) -> DailyReferenceStrategySpace:
+        """Project the User Rule onto every bounded path for the same day.
+
+        Candidate Generation already selected at most one residual-grid path.
+        Its grid day is therefore a deterministic boundary: every existing
+        candidate keeps storage bidirectional wherever the Solcast upper
+        scenario still permits PV on that day. Explicit grid charge and export
+        remain overlays. No schedules, routes, or timing alternatives are added.
+        """
+
+        grid_days = {
+            interval.starts_at.date()
+            for schedule in charge_windows.hybrid_schedules
+            for interval in schedule.intervals
+            if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+        }
+        if not grid_days:
+            return strategy_space
+        upper = next(item for item in pv_scenarios if item.scenario is PVScenario.UPPER)
+
+        def possible_pv(interval: DailyReferenceIntentInterval) -> bool:
+            return interval.starts_at.date() in grid_days and any(
+                pv.energy_wh > 1e-6
+                and interval.starts_at < pv.ends_at
+                and interval.ends_at > pv.starts_at
+                for pv in upper.timeline.intervals
+            )
+
+        schedules: list[DailyReferenceIntentSchedule] = []
+        for schedule in strategy_space.schedules:
+            intervals = tuple(
+                replace(interval, intent=DailyStorageIntent.NOM)
+                if possible_pv(interval)
+                and interval.intent
+                not in {
+                    DailyStorageIntent.GRID_REQUIREMENT,
+                    DailyStorageIntent.STORAGE_EXPORT,
+                }
+                else interval
+                for interval in schedule.intervals
+            )
+            schedules.append(
+                replace(
+                    schedule,
+                    schedule_id=(
+                        f"{schedule.schedule_id}:preserve-pv-day"
+                        if intervals != schedule.intervals
+                        else schedule.schedule_id
+                    ),
+                    intervals=intervals,
+                )
+            )
+        return replace(strategy_space, schedules=tuple(schedules))
 
     @classmethod
     def _select_representative_charge_paths(

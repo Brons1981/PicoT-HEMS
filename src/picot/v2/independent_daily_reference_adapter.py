@@ -66,8 +66,9 @@ from picot.v2.contracts import (
 from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
+from picot.v2.plan_commitment_store import active_pv_preservation_dates
 
-METHOD_VERSION = "v2-independent-daily-reference-adapter:v5"
+METHOD_VERSION = "v2-independent-daily-reference-adapter:v6"
 DAILY_REFERENCE_DURATION = timedelta(hours=24)
 
 
@@ -190,9 +191,10 @@ class IndependentDailyReferenceAdapter:
                     if item.schedule_id not in component_schedule_ids
                 ),
             )
-        if preserve_pv_during_grid_charge and charge_windows.hybrid_schedules:
+        if preserve_pv_during_grid_charge:
             strategy_space = self._preserve_pv_across_grid_charge_days(
                 strategy_space,
+                snapshot=snapshot,
                 charge_windows=charge_windows,
                 pv_scenarios=inputs.pv_scenarios,
             )
@@ -232,6 +234,7 @@ class IndependentDailyReferenceAdapter:
     def _preserve_pv_across_grid_charge_days(
         strategy_space: DailyReferenceStrategySpace,
         *,
+        snapshot: PlanningInputSnapshot,
         charge_windows: DailyReferenceChargeWindowSet,
         pv_scenarios: tuple[ScenarioTimeline, ...],
     ) -> DailyReferenceStrategySpace:
@@ -250,6 +253,14 @@ class IndependentDailyReferenceAdapter:
             for interval in schedule.intervals
             if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
         }
+        grid_days.update(
+            day
+            for commitment in snapshot.active_plan_commitments
+            for day in active_pv_preservation_dates(
+                commitment,
+                captured_at=snapshot.captured_at,
+            )
+        )
         if not grid_days:
             return strategy_space
         upper = next(item for item in pv_scenarios if item.scenario is PVScenario.UPPER)

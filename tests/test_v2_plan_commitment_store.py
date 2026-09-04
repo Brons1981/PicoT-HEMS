@@ -21,6 +21,7 @@ def test_active_commitment_survives_store_restart(tmp_path) -> None:
         starts_at=starts_at,
         ends_at=starts_at + timedelta(hours=2),
         target_energy_wh=8160.0,
+        pv_preservation_dates=(starts_at.date(),),
     )
 
     ActivePlanCommitmentStore(path).save(commitment)

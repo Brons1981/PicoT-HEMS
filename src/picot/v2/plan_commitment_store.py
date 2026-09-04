@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -132,6 +132,7 @@ class ActivePlanCommitment:
     household_load_intervals: tuple[CommittedHouseholdLoadInterval, ...] = ()
     storage_energy_checkpoints: tuple[CommittedStorageEnergyCheckpoint, ...] = ()
     candidate_family: str | None = None
+    pv_preservation_dates: tuple[date, ...] = ()
 
     def __post_init__(self) -> None:
         if any(
@@ -204,6 +205,30 @@ class ActivePlanCommitment:
             raise ValueError(
                 "committed storage checkpoints must be unique and ordered"
             )
+        if self.pv_preservation_dates != tuple(
+            sorted(set(self.pv_preservation_dates))
+        ):
+            raise ValueError("PV preservation dates must be unique and ordered")
+
+
+def active_pv_preservation_dates(
+    commitment: ActivePlanCommitment,
+    *,
+    captured_at: datetime,
+) -> tuple[date, ...]:
+    """Return active User Rule dates, including pre-DEV.235 commitments."""
+
+    current_date = captured_at.date()
+    derived = {
+        segment.starts_at.date()
+        for segment in commitment.segments
+        if segment.primitive == "charge_at_power"
+        and segment.starts_at.date() >= current_date
+    }
+    derived.update(
+        item for item in commitment.pv_preservation_dates if item >= current_date
+    )
+    return tuple(sorted(derived))
 
 
 class ActivePlanCommitmentStore:
@@ -235,6 +260,9 @@ class ActivePlanCommitmentStore:
             if commitment.selected_at is not None
             else None
         )
+        serialized["pv_preservation_dates"] = [
+            item.isoformat() for item in commitment.pv_preservation_dates
+        ]
         serialized["segments"] = [
             {
                 "starts_at": segment.starts_at.isoformat(),
@@ -482,5 +510,9 @@ def _deserialize(payload: dict[str, Any]) -> ActivePlanCommitment:
             str(payload["candidate_family"])
             if payload.get("candidate_family") is not None
             else None
+        ),
+        pv_preservation_dates=tuple(
+            date.fromisoformat(str(item))
+            for item in payload.get("pv_preservation_dates", ())
         ),
     )

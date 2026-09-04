@@ -814,6 +814,85 @@ def test_active_grid_commitment_retains_original_pv_preservation_context() -> No
     assert _preserves_pv_during_grid_charge(schedule, commitment=commitment)
 
 
+def test_elapsed_grid_charge_keeps_remaining_pv_nom_across_replans(tmp_path) -> None:
+    captured_at = _snapshot().captured_at + timedelta(minutes=30)
+    base_snapshot = _snapshot(maximum_soc=1.0, current_soc=0.60)
+    assert base_snapshot.capability_snapshot_set is not None
+    snapshot = replace(
+        base_snapshot,
+        captured_at=captured_at,
+        capability_snapshot_set=replace(
+            base_snapshot.capability_snapshot_set,
+            captured_at=captured_at,
+        ),
+    )
+    horizon_end = captured_at + timedelta(hours=23, minutes=30)
+    incumbent = ActivePlanCommitment(
+        execution_scope_id="battery",
+        plan_id="grid-route-before-replan",
+        plan_revision=1,
+        primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+        source_policy="pv_preferred_grid_allowed",
+        starts_at=captured_at - timedelta(minutes=45),
+        ends_at=horizon_end,
+        target_energy_wh=8160.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=captured_at - timedelta(minutes=45),
+                ends_at=captured_at - timedelta(minutes=15),
+                primitive=ExecutionPrimitive.CHARGE_AT_POWER.value,
+                source_policy="pv_preferred_grid_allowed",
+            ),
+            CommittedPlanSegment(
+                starts_at=captured_at - timedelta(minutes=15),
+                ends_at=horizon_end,
+                primitive=ExecutionPrimitive.BALANCE_DISCHARGE_ONLY.value,
+                source_policy=None,
+            ),
+        ),
+    )
+    pipeline, store = _pipeline(
+        tmp_path,
+        market_routes_enabled=True,
+        preserve_pv_during_grid_charge=True,
+    )
+    store.save(incumbent)
+
+    first = pipeline.run(
+        planning_input=replace(snapshot, active_plan_commitments=(incumbent,))
+    )
+
+    assert first.evaluation.commitment_decision == "replaced"
+    assert first.execution_plan_set.plans[0].segments[0].primitive is (
+        ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+    )
+    replacement = store.load("battery")
+    assert replacement is not None
+    assert replacement.pv_preservation_dates == (captured_at.date(),)
+
+    second_captured_at = captured_at + timedelta(minutes=15)
+    second_snapshot = replace(
+        snapshot,
+        captured_at=second_captured_at,
+        active_plan_commitments=(replacement,),
+        capability_snapshot_set=replace(
+            snapshot.capability_snapshot_set,
+            captured_at=second_captured_at,
+        ),
+    )
+    second = pipeline.run(planning_input=second_snapshot)
+
+    due = next(
+        segment
+        for segment in second.execution_plan_set.plans[0].segments
+        if segment.starts_at <= second_captured_at < segment.ends_at
+    )
+    assert due.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+    persisted_again = store.load("battery")
+    assert persisted_again is not None
+    assert persisted_again.pv_preservation_dates == (captured_at.date(),)
+
+
 def test_mep_publishes_next_day_pv_capture_without_unnecessary_grid_charge(
     tmp_path,
 ) -> None:

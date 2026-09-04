@@ -606,6 +606,161 @@ def test_mep_combines_grid_trade_with_hybrid_pv_residual_grid_parent() -> None:
         )
 
 
+def test_mep_builds_pv_first_market_route_before_considering_grid_supplement() -> None:
+    """ADR-017/024/031/037: place NOM first, then trade stored PV without grid."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    assert snapshot.pv_energy_timeline is not None
+    assert snapshot.household_load_forecast is not None
+    source_pv = snapshot.pv_energy_timeline.intervals[0]
+    source_price = snapshot.price_points[0]
+    cheapest_pv_start = snapshot.captured_at + timedelta(hours=4)
+    cheapest_pv_end = snapshot.captured_at + timedelta(hours=6)
+    pv_end = snapshot.captured_at + timedelta(hours=8)
+    export_end = snapshot.captured_at + timedelta(hours=9)
+    horizon_end = snapshot.captured_at + timedelta(hours=24)
+    priced = replace(
+        snapshot,
+        household_load_forecast=replace(
+            snapshot.household_load_forecast,
+            intervals=tuple(
+                replace(item, expected_energy_wh=0.0)
+                for item in snapshot.household_load_forecast.intervals
+            ),
+        ),
+        pv_energy_timeline=replace(
+            snapshot.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    source_pv,
+                    interval_id=f"pv-quarter-{index}",
+                    starts_at=snapshot.captured_at + index * timedelta(minutes=15),
+                    ends_at=snapshot.captured_at + (index + 1) * timedelta(minutes=15),
+                    pv_energy_wh=(600.0 if 8 <= index < 32 else 0.0),
+                    forecast_lower_energy_wh=(500.0 if 8 <= index < 32 else 0.0),
+                    forecast_central_energy_wh=(600.0 if 8 <= index < 32 else 0.0),
+                    forecast_upper_energy_wh=(700.0 if 8 <= index < 32 else 0.0),
+                    forecast_evidence_ids=(f"solcast-quarter-{index}",),
+                )
+                for index in range(96)
+            ),
+        ),
+        price_points=(
+            replace(
+                source_price,
+                point_id="before-pv-valley",
+                ends_at=cheapest_pv_start,
+                value_eur_per_kwh=0.30,
+            ),
+            replace(
+                source_price,
+                point_id="pv-valley",
+                starts_at=cheapest_pv_start,
+                ends_at=cheapest_pv_end,
+                value_eur_per_kwh=0.10,
+            ),
+            replace(
+                source_price,
+                point_id="after-pv-valley",
+                starts_at=cheapest_pv_end,
+                ends_at=pv_end,
+                value_eur_per_kwh=0.25,
+            ),
+            replace(
+                source_price,
+                point_id="evening-export-peak",
+                starts_at=pv_end,
+                ends_at=export_end,
+                value_eur_per_kwh=0.60,
+            ),
+            replace(
+                source_price,
+                point_id="after-export-peak",
+                starts_at=export_end,
+                ends_at=horizon_end,
+                value_eur_per_kwh=0.30,
+            ),
+        ),
+    )
+
+    portfolio, diagnostics = MarketDailyPlanner().generate_with_diagnostics(
+        snapshot=priced,
+        conversion_model=_conversion(),
+        trading_policy=MarketTradingPolicy(
+            preserve_pv_during_grid_charge=False,
+            saldering_energy_tax_credit_enabled=False,
+        ),
+    )
+
+    native_candidates = {
+        item.intent_schedule_id: item
+        for item in portfolio.native_observation.observer_result.candidate_set.candidates
+    }
+    pv_first_results = tuple(
+        result
+        for result in portfolio.native_observation.observer_result.portfolio.strategy_results
+        if DailyStorageIntent.NOM
+        in {interval.intent for interval in result.intent_schedule.intervals}
+        and DailyStorageIntent.GRID_REQUIREMENT
+        not in {interval.intent for interval in result.intent_schedule.intervals}
+        and native_candidates[result.intent_schedule.schedule_id].target_reached_across_scenarios
+    )
+    assert pv_first_results
+    selected_pv_first = min(
+        pv_first_results,
+        key=lambda result: (
+            native_candidates[
+                result.intent_schedule.schedule_id
+            ].average_charge_window_price_eur_per_kwh,
+            result.intent_schedule.schedule_id,
+        ),
+    )
+    selected_nom = tuple(
+        interval
+        for interval in selected_pv_first.intent_schedule.intervals
+        if interval.intent is DailyStorageIntent.NOM
+    )
+    assert selected_nom[0].starts_at == cheapest_pv_start, tuple(
+        (
+            result.intent_schedule.schedule_id,
+            native_candidates[
+                result.intent_schedule.schedule_id
+            ].average_charge_window_price_eur_per_kwh,
+            tuple(
+                (interval.starts_at, interval.ends_at)
+                for interval in result.intent_schedule.intervals
+                if interval.intent is DailyStorageIntent.NOM
+            ),
+        )
+        for result in pv_first_results
+    )
+    assert selected_nom[-1].ends_at <= pv_end
+    assert len(selected_nom) == 14
+
+    pv_route_ids = {
+        route.route_id
+        for route in portfolio.market_routes
+        if route.route_kind == "pv_surplus_export"
+        and route.maximum_charge_input_wh == 0.0
+    }
+    assert pv_route_ids
+    pv_trade_assessments = tuple(
+        assessment
+        for assessment in portfolio.route_assessments
+        if assessment.route_id in pv_route_ids
+        and assessment.source_native_schedule_id
+        == selected_pv_first.intent_schedule.schedule_id
+    )
+    assert pv_trade_assessments
+    assert any(assessment.admitted for assessment in pv_trade_assessments)
+    assert all(
+        DailyStorageIntent.GRID_REQUIREMENT
+        not in {interval.intent for interval in assessment.intent_schedule.intervals}
+        for assessment in pv_trade_assessments
+    )
+    assert diagnostics.route_assessment_count <= diagnostics.market_route_count * 8
+
+
 def test_pv_preservation_rule_projects_nom_onto_existing_market_route(
 ) -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)

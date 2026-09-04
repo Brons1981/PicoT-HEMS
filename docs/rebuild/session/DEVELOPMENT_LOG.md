@@ -2310,3 +2310,22 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   that the User Rule context survives commitment-store reloads.
 - No new route or timing alternatives are introduced; normative basis remains
   exclusively ADR-001 through ADR-037.
+
+## 2026-09-04 — 2.0.0-dev.236 PV-first market route
+
+- Retains the independently proven PV-only path even when Candidate Generation
+  also discovers a hybrid PV plus residual-grid path.
+- Places the interval-minimal NOM window where retaining PV has the lowest
+  foregone export value; equal alternatives remain bounded to one latest path.
+- Adds one bounded `pv_surplus_export` route: forecast PV is captured first and
+  only the protected surplus may be exported later, without invented grid
+  charging or a Cartesian expansion of route timings.
+- Uses incremental financial value only for route admission. Evaluation compares
+  admitted complete paths by their worst-case total financial result, because
+  increments against different native parents are not mutually comparable.
+- Ordinary grid arbitrage and grid-recovery routes remain available when valid;
+  the existing User Rule remains the explicit authority for a non-financial PV
+  preservation preference.
+- Opportunity Engine remains evidence-only, Candidate Generation constructs the
+  bounded paths, MEP simulates them and Evaluation selects the winner. Normative
+  basis remains exclusively ADR-001 through ADR-037.

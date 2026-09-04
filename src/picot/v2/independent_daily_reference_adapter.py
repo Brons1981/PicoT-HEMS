@@ -68,7 +68,7 @@ from picot.v2.independent_daily_tariff_adapter import (
 )
 from picot.v2.plan_commitment_store import active_pv_preservation_dates
 
-METHOD_VERSION = "v2-independent-daily-reference-adapter:v6"
+METHOD_VERSION = "v2-independent-daily-reference-adapter:v7"
 DAILY_REFERENCE_DURATION = timedelta(hours=24)
 
 
@@ -182,7 +182,15 @@ class IndependentDailyReferenceAdapter:
             household=inputs.household,
         )
         if charge_windows.hybrid_schedules:
-            component_schedule_ids = {item.schedule.schedule_id for item in charge_windows.windows}
+            # A hybrid supersedes only the isolated grid component.  The
+            # physically complete PV-only path must remain independently
+            # evaluable; otherwise merely discovering residual grid charging
+            # removes the cheaper PV-first alternative from the portfolio.
+            component_schedule_ids = {
+                item.schedule.schedule_id
+                for item in charge_windows.windows
+                if item.intent is DailyStorageIntent.GRID_REQUIREMENT
+            }
             strategy_space = replace(
                 strategy_space,
                 schedules=tuple(
@@ -313,9 +321,9 @@ class IndependentDailyReferenceAdapter:
 
         ADR-017/024 require confidence and economic relevance to reduce the
         search space before full simulation.  The physical discoverer may
-        prove many interval-minimal starts; MEP retains only the earliest
-        PV-only path plus one cheapest residual-grid path.  A hybrid path
-        supersedes pure grid charging when it exists.
+        prove many interval-minimal starts; MEP retains the PV-only path with
+        the lowest foregone export value plus one cheapest residual-grid path.
+        A hybrid path supersedes pure grid charging when it exists.
         """
 
         if charge_windows.discovery_status != "discovered":
@@ -329,7 +337,15 @@ class IndependentDailyReferenceAdapter:
             for item in charge_windows.windows
             if item.intent is DailyStorageIntent.GRID_REQUIREMENT
         )
-        selected_nom = min(nom_windows, key=lambda item: item.starts_at, default=None)
+        selected_nom = min(
+            nom_windows,
+            key=lambda item: (
+                cls._nom_schedule_cost(item.schedule, tariffs),
+                -item.starts_at.timestamp(),
+                item.window_id,
+            ),
+            default=None,
+        )
         preferred_hybrids = tuple(
             item
             for item in charge_windows.hybrid_schedules
@@ -510,6 +526,29 @@ class IndependentDailyReferenceAdapter:
                     (overlap_end - overlap_start).total_seconds()
                     / 3600.0
                     * tariff.import_eur_per_kwh
+                )
+        return total_eur_per_kw
+
+    @staticmethod
+    def _nom_schedule_cost(
+        schedule: DailyReferenceIntentSchedule,
+        tariffs: DailyReferenceTariffSchedule,
+    ) -> float:
+        """Value the PV retained by NOM at its foregone export tariff."""
+
+        total_eur_per_kw = 0.0
+        for planned in schedule.intervals:
+            if planned.intent is not DailyStorageIntent.NOM:
+                continue
+            for tariff in tariffs.intervals:
+                overlap_start = max(planned.starts_at, tariff.starts_at)
+                overlap_end = min(planned.ends_at, tariff.ends_at)
+                if overlap_end <= overlap_start:
+                    continue
+                total_eur_per_kw += (
+                    (overlap_end - overlap_start).total_seconds()
+                    / 3600.0
+                    * tariff.export_eur_per_kwh
                 )
         return total_eur_per_kw
 

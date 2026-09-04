@@ -76,19 +76,30 @@ class MarketDailyEvaluationEngine:
         cls,
         assessments: tuple[MarketRouteAssessment, ...],
     ) -> MarketRouteAssessment | None:
-        """Select one admitted market Candidate through the Evaluation boundary."""
+        """Select one admitted complete path through the Evaluation boundary."""
 
         admitted = tuple(item for item in assessments if item.admitted)
         if not admitted:
             return None
+
+        def worst_total_result(item: MarketRouteAssessment) -> float:
+            return min(
+                evidence.total_financial_result_eur
+                for evidence in item.scenario_evidence
+            )
+
+        # Incremental result decides whether a route is worth adding to its
+        # parent.  Winner selection must compare complete paths on their total
+        # result: increments against different native parents are not a shared
+        # financial baseline.
         best_financial_result_eur = max(
-            item.worst_case_incremental_result_eur for item in admitted
+            worst_total_result(item) for item in admitted
         )
         financially_equivalent = tuple(
             item
             for item in admitted
             if best_financial_result_eur
-            - item.worst_case_incremental_result_eur
+            - worst_total_result(item)
             <= FINANCIAL_EQUIVALENCE_EUR
         )
         return min(

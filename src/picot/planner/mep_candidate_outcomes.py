@@ -7,7 +7,7 @@ See ADR-024, ADR-030, ADR-031, ADR-032, ADR-037, V2ADR-055 and V2ADR-062.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from hashlib import sha256
 
 from picot.architecture_ownership import architecture_ownership
@@ -75,10 +75,14 @@ from picot.v2.contracts import (
 from picot.v2.energy_requirements import derive_storage_energy_requirement
 from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
 from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
-from picot.v2.plan_commitment_store import ActivePlanCommitment, CommittedPlanSegment
+from picot.v2.plan_commitment_store import (
+    ActivePlanCommitment,
+    CommittedPlanSegment,
+    active_pv_preservation_dates,
+)
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_outcomes", __name__)
-METHOD_VERSION = "mep-canonical-candidate-outcomes:v5"
+METHOD_VERSION = "mep-canonical-candidate-outcomes:v6"
 MAXIMUM_TARGET_TOLERANCE_WH = 1.0
 
 
@@ -757,6 +761,37 @@ def _preserves_pv_during_grid_charge(
     )
 
 
+def _preserves_pv_across_required_days(
+    schedule: DailyReferenceIntentSchedule,
+    *,
+    snapshot: PlanningInputSnapshot,
+    preservation_dates: frozenset[date],
+) -> bool:
+    """Require NOM for every remaining possible-PV interval on constrained days."""
+
+    if not preservation_dates or snapshot.pv_energy_timeline is None:
+        return True
+    possible_pv = tuple(
+        interval
+        for interval in snapshot.pv_energy_timeline.intervals
+        if interval.starts_at.date() in preservation_dates
+        and (interval.forecast_upper_energy_wh or 0.0) > 1e-6
+    )
+    return all(
+        interval.intent
+        in {
+            DailyStorageIntent.NOM,
+            DailyStorageIntent.GRID_REQUIREMENT,
+            DailyStorageIntent.STORAGE_EXPORT,
+        }
+        for interval in schedule.intervals
+        if any(
+            interval.starts_at < pv.ends_at and interval.ends_at > pv.starts_at
+            for pv in possible_pv
+        )
+    )
+
+
 def _simulate_committed(
     *,
     snapshot: PlanningInputSnapshot,
@@ -923,6 +958,14 @@ def produce_mep_comparable_portfolio(
         requirement=storage_requirement,
         current_storage_energy_wh=(snapshot.current_storage_states[0].current_stored_energy_wh),
     )
+    inherited_pv_preservation_dates = frozenset(
+        active_pv_preservation_dates(
+            incumbent,
+            captured_at=snapshot.captured_at,
+        )
+        if incumbent is not None
+        else ()
+    )
 
     for row in rows:
         candidate_id = row.candidate_id
@@ -999,14 +1042,34 @@ def produce_mep_comparable_portfolio(
             reasons.append(
                 "effective_maximum_not_reached_despite_sufficient_weighted_pv"
             )
-        if (
-            grid_to_storage > 1e-6
-            and portfolio.preserve_pv_during_grid_charge
-            and not _preserves_pv_during_grid_charge(
-                schedule,
-                commitment=committed,
+        row_pv_preservation_dates = frozenset(
+            (
+                *inherited_pv_preservation_dates,
+                *(
+                    interval.starts_at.date()
+                    for interval in schedule.intervals
+                    if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+                ),
             )
-        ):
+        )
+        pv_preservation_not_satisfied = (
+            portfolio.preserve_pv_during_grid_charge
+            and (
+                (
+                    grid_to_storage > 1e-6
+                    and not _preserves_pv_during_grid_charge(
+                        schedule,
+                        commitment=committed,
+                    )
+                )
+                or not _preserves_pv_across_required_days(
+                    schedule,
+                    snapshot=snapshot,
+                    preservation_dates=row_pv_preservation_dates,
+                )
+            )
+        )
+        if pv_preservation_not_satisfied:
             reasons.append("user_rule_pv_preservation_not_satisfied")
         elif (
             grid_to_storage > 1e-6

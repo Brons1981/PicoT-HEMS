@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from hashlib import sha256
 from time import perf_counter
 
@@ -54,6 +54,7 @@ from picot.v2.plan_commitment_store import (
     CommittedHouseholdLoadInterval,
     CommittedPlanSegment,
     CommittedStorageEnergyCheckpoint,
+    active_pv_preservation_dates,
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("pipeline_composition", __name__)
@@ -575,6 +576,7 @@ def _persist_plan(
     projected_result: DailyReferenceStrategyResult | None = None,
     candidate_family: str | None = None,
     prior_commitment: ActivePlanCommitment | None = None,
+    preserve_pv_during_grid_charge: bool,
     selection_reason: str,
 ) -> None:
     if store is None or not snapshot.current_storage_states:
@@ -640,6 +642,21 @@ def _persist_plan(
             "an admitted plan requires committed household-load and storage-energy "
             "materiality baselines"
         )
+    pv_preservation_dates: tuple[date, ...] = ()
+    if preserve_pv_during_grid_charge:
+        preservation_dates = {
+            interval.starts_at.date()
+            for interval in schedule.intervals
+            if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+        }
+        if prior_commitment is not None:
+            preservation_dates.update(
+                active_pv_preservation_dates(
+                    prior_commitment,
+                    captured_at=snapshot.captured_at,
+                )
+            )
+        pv_preservation_dates = tuple(sorted(preservation_dates))
     store.save(
         ActivePlanCommitment(
             execution_scope_id=storage.execution_scope_id,
@@ -719,6 +736,7 @@ def _persist_plan(
                 if native is not None
                 else "unknown"
             ),
+            pv_preservation_dates=pv_preservation_dates,
         )
     )
 
@@ -988,6 +1006,9 @@ def build_mep_canonical_run(
                     else None
                 ),
                 prior_commitment=(retained_commitment if replacement_reason is not None else None),
+                preserve_pv_during_grid_charge=(
+                    planner_outcome.portfolio.preserve_pv_during_grid_charge
+                ),
                 selection_reason=(
                     evaluation.decisive_step or "objective:mep_physical_and_market_evaluation"
                 ),

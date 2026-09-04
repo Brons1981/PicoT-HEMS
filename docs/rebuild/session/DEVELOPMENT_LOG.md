@@ -2292,3 +2292,21 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Does not change Candidate construction, MEP simulation, Evaluation, plan
   commitment, or device execution behaviour.
 - Normative basis remains exclusively ADR-001 through ADR-037.
+
+## 2026-09-04 — 2.0.0-dev.235 retain maximum PV after grid charge
+
+- Persists the User Rule day on the active MEP commitment, so an elapsed grid
+  charge does not remove the requirement during a later rolling replan.
+- Candidate Generation projects NOM onto every remaining Solcast-upper
+  positive-PV interval on that day. Explicit grid charge and market export
+  remain higher-priority overlays on the same complete path.
+- MEP rejects any challenger that would discard remaining possible PV on the
+  retained day, including a challenger that no longer contains the elapsed
+  grid-charge segment itself.
+- If forecast PV cannot fill the battery, the rule still captures the maximum
+  physically available PV instead of switching early to household-only
+  discharge. Evaluation continues to compare the remaining complete paths.
+- Adds a two-cycle regression proving that NOM survives successive replans and
+  that the User Rule context survives commitment-store reloads.
+- No new route or timing alternatives are introduced; normative basis remains
+  exclusively ADR-001 through ADR-037.

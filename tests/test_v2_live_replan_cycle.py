@@ -10,6 +10,7 @@ from picot.v2.contracts import (
     PVEnergyTimelineInterval,
 )
 from picot.v2.live_runtime import (
+    _commitment_boundary_wait_seconds,
     _commitment_execution_phase,
     _planning_input_signature,
     _should_run_cycle,
@@ -182,6 +183,52 @@ def test_commitment_phase_prefers_due_segment_over_late_legacy_plan_start() -> N
             "source_policy": None,
         },
     }
+
+
+def test_live_poll_wakes_when_fractional_export_hourglass_ends() -> None:
+    export_end = BASE + timedelta(seconds=46)
+    commitment = ActivePlanCommitment(
+        execution_scope_id="home-battery",
+        plan_id="fractional-export-plan",
+        plan_revision=1,
+        primitive="discharge_at_power",
+        source_policy="not_applicable",
+        starts_at=BASE,
+        ends_at=BASE + timedelta(minutes=15),
+        target_energy_wh=816.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=BASE,
+                ends_at=export_end,
+                primitive="discharge_at_power",
+                source_policy=None,
+                storage_export_target_wh=30.6666666667,
+            ),
+            CommittedPlanSegment(
+                starts_at=export_end,
+                ends_at=BASE + timedelta(minutes=15),
+                primitive="balance_discharge_only",
+                source_policy=None,
+            ),
+        ),
+    )
+
+    assert _commitment_boundary_wait_seconds(
+        commitment,
+        now=BASE + timedelta(seconds=10),
+        poll_interval_seconds=60.0,
+    ) == 36.0
+    assert _commitment_boundary_wait_seconds(
+        commitment,
+        now=export_end + timedelta(seconds=1),
+        poll_interval_seconds=60.0,
+    ) == 60.0
+    assert _commitment_boundary_wait_seconds(
+        commitment,
+        now=export_end + timedelta(seconds=1),
+        poll_interval_seconds=60.0,
+        cycle_started_at=BASE + timedelta(seconds=10),
+    ) == 0.0
 
 
 def test_identical_source_content_has_same_signature_across_fresh_snapshots() -> None:

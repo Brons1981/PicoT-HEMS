@@ -2,9 +2,10 @@ from dataclasses import replace
 from datetime import timedelta
 
 import pytest
-from test_independent_daily_reference_adapter import _conversion, _snapshot
+from test_independent_daily_reference_adapter import QUARTER, _conversion, _snapshot
 
 from picot.domain.daily_reference_intent import DailyStorageIntent
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.domain.storage_energy_inventory import (
     StorageEnergyInventory,
@@ -12,6 +13,8 @@ from picot.domain.storage_energy_inventory import (
 )
 from picot.planner.market_daily_evaluation_engine import MarketDailyEvaluationEngine
 from picot.planner.market_daily_planner import MarketDailyPlanner, MarketTradingPolicy
+from picot.planner.mep_candidate_outcomes import produce_mep_comparable_portfolio
+from picot.v2.mep_canonical_pipeline import _committed_execution_segments
 
 
 def test_mep_trading_threshold_applies_margin_before_fixed_wear() -> None:
@@ -759,6 +762,198 @@ def test_mep_builds_pv_first_market_route_before_considering_grid_supplement() -
         for assessment in pv_trade_assessments
     )
     assert diagnostics.route_assessment_count <= diagnostics.market_route_count * 8
+
+
+def test_mep_can_retain_one_pv_surplus_export_on_each_local_calendar_day() -> None:
+    """Two profitable trade days must not compete for one horizon-wide slot."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.9)
+    assert snapshot.pv_energy_timeline is not None
+    assert snapshot.household_load_forecast is not None
+    source_pv = snapshot.pv_energy_timeline.intervals[0]
+    source_load = snapshot.household_load_forecast.intervals[0]
+    source_price = snapshot.price_points[0]
+    first_export_start = snapshot.captured_at + timedelta(hours=8)
+    first_export_end = first_export_start + timedelta(hours=1)
+    second_export_start = snapshot.captured_at + timedelta(hours=32)
+    second_export_end = second_export_start + timedelta(hours=1)
+    horizon_end = snapshot.captured_at + timedelta(hours=36)
+    priced = replace(
+        snapshot,
+        horizon_end=horizon_end,
+        household_load_forecast=replace(
+            snapshot.household_load_forecast,
+            intervals=tuple(
+                replace(
+                    source_load,
+                    interval_id=f"load-quarter-{index}",
+                    starts_at=snapshot.captured_at + index * QUARTER,
+                    ends_at=snapshot.captured_at + (index + 1) * QUARTER,
+                    expected_energy_wh=0.0,
+                )
+                for index in range(144)
+            ),
+        ),
+        pv_energy_timeline=replace(
+            snapshot.pv_energy_timeline,
+            intervals=tuple(
+                replace(
+                    source_pv,
+                    interval_id=f"pv-quarter-{index}",
+                    starts_at=snapshot.captured_at + index * QUARTER,
+                    ends_at=snapshot.captured_at + (index + 1) * QUARTER,
+                    pv_energy_wh=(500.0 if index < 16 or 96 <= index < 112 else 0.0),
+                    forecast_lower_energy_wh=(
+                        450.0 if index < 16 or 96 <= index < 112 else 0.0
+                    ),
+                    forecast_central_energy_wh=(
+                        500.0 if index < 16 or 96 <= index < 112 else 0.0
+                    ),
+                    forecast_upper_energy_wh=(
+                        550.0 if index < 16 or 96 <= index < 112 else 0.0
+                    ),
+                    forecast_evidence_ids=(f"solcast-quarter-{index}",),
+                )
+                for index in range(144)
+            ),
+        ),
+        price_points=(
+            replace(
+                source_price,
+                point_id="before-first-export",
+                ends_at=first_export_start,
+                value_eur_per_kwh=0.20,
+            ),
+            replace(
+                source_price,
+                point_id="first-export",
+                starts_at=first_export_start,
+                ends_at=first_export_end,
+                value_eur_per_kwh=0.60,
+            ),
+            replace(
+                source_price,
+                point_id="between-exports",
+                starts_at=first_export_end,
+                ends_at=second_export_start,
+                value_eur_per_kwh=0.20,
+            ),
+            replace(
+                source_price,
+                point_id="second-export",
+                starts_at=second_export_start,
+                ends_at=second_export_end,
+                value_eur_per_kwh=0.70,
+            ),
+            replace(
+                source_price,
+                point_id="after-second-export",
+                starts_at=second_export_end,
+                ends_at=horizon_end,
+                value_eur_per_kwh=0.20,
+            ),
+        ),
+    )
+
+    portfolio, _ = MarketDailyPlanner().generate_with_diagnostics(
+        snapshot=priced,
+        conversion_model=_conversion(),
+        trading_policy=MarketTradingPolicy(
+            saldering_energy_tax_credit_enabled=False,
+        ),
+    )
+
+    admitted_export_days = tuple(
+        (
+            assessment.route_id,
+            assessment.admitted,
+            assessment.admission_reason,
+            tuple(
+                sorted(
+                    {
+                        interval.starts_at.date()
+                        for interval in assessment.intent_schedule.intervals
+                        if interval.intent is DailyStorageIntent.STORAGE_EXPORT
+                    }
+                )
+            ),
+        )
+        for assessment in portfolio.route_assessments
+        if "daily-chain" in assessment.route_id
+    )
+    admitted_daily_chains = tuple(
+        assessment
+        for assessment in portfolio.route_assessments
+        if assessment.admitted
+        and len(
+            {
+                interval.starts_at.date()
+                for interval in assessment.intent_schedule.intervals
+                if interval.intent is DailyStorageIntent.STORAGE_EXPORT
+            }
+        )
+        == 2
+    )
+    assert admitted_daily_chains, admitted_export_days
+    daily_chain = admitted_daily_chains[0]
+    comparable = produce_mep_comparable_portfolio(
+        snapshot=priced,
+        portfolio=portfolio,
+        conversion_model=_conversion(),
+        incumbent=None,
+        financial_equivalence_margin_eur=0.01,
+    )
+    source = next(
+        item
+        for item in comparable.sources
+        if item.market_assessment is daily_chain
+    )
+    candidate = next(
+        item
+        for item in comparable.candidate_set.candidates
+        if item.candidate_id == source.candidate_id
+    )
+    path = next(
+        item
+        for item in comparable.candidate_set.energy_paths
+        if item.path_id == candidate.energy_path_id
+    )
+    planned_export_wh = sum(
+        (segment.requested_power_w or 0.0)
+        * (segment.ends_at - segment.starts_at).total_seconds()
+        / 3600.0
+        for segment in path.segments
+        if segment.primitive.value == "discharge_at_power"
+    )
+    scheduled_export_wh = sum(
+        interval.storage_export_target_wh
+        for interval in daily_chain.intent_schedule.intervals
+        if interval.intent is DailyStorageIntent.STORAGE_EXPORT
+    )
+    assert planned_export_wh == pytest.approx(scheduled_export_wh)
+    assert any(
+        segment.ends_at - segment.starts_at < QUARTER
+        for segment in path.segments
+        if segment.primitive.value == "discharge_at_power"
+    )
+    committed = _committed_execution_segments(path.segments)
+    partial_export = next(
+        segment
+        for segment in committed
+        if segment.primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value
+        and segment.ends_at - segment.starts_at < QUARTER
+    )
+    assert partial_export.storage_export_target_wh == pytest.approx(
+        2400.0
+        * (partial_export.ends_at - partial_export.starts_at).total_seconds()
+        / 3600.0
+    )
+    safe_remainder = next(
+        segment
+        for segment in committed
+        if segment.starts_at == partial_export.ends_at
+    )
+    assert safe_remainder.primitive == ExecutionPrimitive.BALANCE_DISCHARGE_ONLY.value
 
 
 def test_pv_preservation_rule_projects_nom_onto_existing_market_route(

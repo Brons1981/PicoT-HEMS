@@ -15,6 +15,7 @@ from picot.v2.household_planning_regime import HouseholdPlanningRegime
 from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
+    CommittedPlanSegment,
 )
 from picot.v2.storage_capability_snapshot import (
     build_storage_capability_snapshot_set,
@@ -274,6 +275,142 @@ def test_canonical_runtime_dispatches_the_exact_approved_mode() -> None:
     assert result.adapter_boundary.status == "translated"
     assert result.vendor_result.status == "dispatched"
     assert result.vendor_result.command_id == "ha-command-test"
+
+
+def test_committed_boundary_dispatches_safe_remainder_before_replanning() -> None:
+    calls: list[tuple[object, object]] = []
+    runtime = CanonicalExecutionRuntime(
+        dispatch=lambda request, mapping: (
+            calls.append((request, mapping))
+            or CanonicalDispatchOutcome(
+                status="dispatched",
+                command_id="ha-command-hourglass-empty",
+            )
+        )
+    )
+    source = _live_run().planning_input
+    evidence = source.storage_mode_capability_evidence
+    assert evidence is not None
+    module = import_module("picot.v2.storage_mode_provenance")
+    provenance = module.initial_storage_mode_provenance(
+        observed_vendor_mode="Snel ontladen",
+        observed_at=BASE,
+    )
+    provenance = module.record_planner_mode_application(
+        provenance,
+        vendor_mode="Snel ontladen",
+        applied_at=BASE,
+        application_id="previous-market-export",
+    )
+    commitment = ActivePlanCommitment(
+        execution_scope_id="home-battery",
+        plan_id="fractional-export-plan",
+        plan_revision=2,
+        primitive="discharge_at_power",
+        source_policy="not_applicable",
+        starts_at=BASE - timedelta(minutes=15),
+        ends_at=BASE + timedelta(minutes=15),
+        target_energy_wh=816.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=BASE - timedelta(minutes=15),
+                ends_at=BASE,
+                primitive="discharge_at_power",
+                source_policy=None,
+                storage_export_target_wh=30.0,
+            ),
+            CommittedPlanSegment(
+                starts_at=BASE,
+                ends_at=BASE + timedelta(minutes=15),
+                primitive="balance_discharge_only",
+                source_policy=None,
+            ),
+        ),
+    )
+    snapshot = replace(
+        source,
+        storage_mode_capability_evidence=replace(
+            evidence,
+            current_vendor_mode="Snel ontladen",
+        ),
+        storage_mode_control_provenance=provenance,
+        active_plan_commitments=(commitment,),
+    )
+
+    result = runtime.advance_committed_boundary(
+        snapshot,
+        execution_enabled=True,
+    )
+
+    assert result.status == "dispatched"
+    assert result.command_id == "ha-command-hourglass-empty"
+    assert result.previous_vendor_mode == "Snel ontladen"
+    assert result.planned_vendor_mode == "Alleen slim ontladen"
+    assert len(calls) == 1
+    request, mapping = calls[0]
+    assert request.primitive is ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+    assert mapping.fixed_value == "Alleen slim ontladen"
+
+
+def test_committed_boundary_never_bypasses_manual_override() -> None:
+    calls: list[tuple[object, object]] = []
+    runtime = CanonicalExecutionRuntime(
+        dispatch=lambda request, mapping: (
+            calls.append((request, mapping))
+            or CanonicalDispatchOutcome("dispatched", "unexpected-command")
+        )
+    )
+    source = _live_run().planning_input
+    evidence = source.storage_mode_capability_evidence
+    assert evidence is not None
+    module = import_module("picot.v2.storage_mode_provenance")
+    provenance = module.record_planner_mode_application(
+        _planner_owned_standby(),
+        vendor_mode="Snel ontladen",
+        applied_at=BASE,
+        application_id="previous-market-export",
+    )
+    overridden = module.observe_storage_mode(
+        provenance,
+        observed_vendor_mode="Standby",
+        observed_at=BASE,
+    )
+    commitment = ActivePlanCommitment(
+        execution_scope_id="home-battery",
+        plan_id="manual-override-plan",
+        plan_revision=1,
+        primitive="balance_discharge_only",
+        source_policy="not_applicable",
+        starts_at=BASE,
+        ends_at=BASE + timedelta(minutes=15),
+        target_energy_wh=816.0,
+        segments=(
+            CommittedPlanSegment(
+                starts_at=BASE,
+                ends_at=BASE + timedelta(minutes=15),
+                primitive="balance_discharge_only",
+                source_policy=None,
+            ),
+        ),
+    )
+    snapshot = replace(
+        source,
+        storage_mode_capability_evidence=replace(
+            evidence,
+            current_vendor_mode="Standby",
+        ),
+        storage_mode_control_provenance=overridden,
+        active_plan_commitments=(commitment,),
+    )
+
+    result = runtime.advance_committed_boundary(
+        snapshot,
+        execution_enabled=True,
+    )
+
+    assert result.status == "blocked"
+    assert result.failure_reason == "manual_override_active"
+    assert calls == []
 
 
 def test_canonical_runtime_prefers_fast_charge_over_manual_power_mode() -> None:

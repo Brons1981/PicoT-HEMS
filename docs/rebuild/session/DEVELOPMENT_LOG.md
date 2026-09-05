@@ -2329,3 +2329,34 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Opportunity Engine remains evidence-only, Candidate Generation constructs the
   bounded paths, MEP simulates them and Evaluation selects the winner. Normative
   basis remains exclusively ADR-001 through ADR-037.
+
+## 2026-09-05 — 2.0.0-dev.237 bounded daily market chain
+
+- Replaces the horizon-wide single `pv_surplus_export` choice with at most one
+  bounded zero-grid export route per local calendar day. Profitable routes for
+  today and tomorrow therefore no longer suppress each other in a 36-hour run.
+- Candidate Generation adds only one daily-chain alternative, MEP simulates its
+  complete storage trajectory and Evaluation retains authority over physical
+  validity and financial selection. Opportunity Engine remains evidence-only.
+- Keeps the route energy target fractional. The financial schedule remains
+  tariff-aligned, while the executable Energy Path ends the final full-power
+  export segment exactly when its Wh budget is exhausted and returns the
+  remainder of that quarter to household support.
+- Persists those exact execution boundaries in the active commitment, so a
+  live loop wakes at the boundary. The Execution Engine dispatches the next
+  already-approved commitment segment before Candidate planning starts, so
+  the hourglass transition does not wait for a new Planner Run or the next
+  tariff-interval boundary.
+- The direct boundary path retains the normal execution guards: observer mode,
+  BMS calibration, missing capability evidence and manual override all block
+  dispatch. Successful changes retain provenance and transition history.
+- Increments the Candidate Outcome and commitment method versions so a stored
+  pre-fix commitment is replanned rather than silently retaining coarse export
+  timing.
+- Verified locally with 1,148 passing full-suite tests; the sole environment
+  failure (Node absent from the default PATH) passed separately with the
+  bundled Node runtime. An additional 50 direct-boundary, execution, polling
+  and live-runtime tests passed after adding the exact wake-up and pre-planner
+  dispatch. Ruff and mypy are green on all changed source files. CI and live
+  execution remain to be verified.
+- Normative basis remains exclusively ADR-001 through ADR-037.

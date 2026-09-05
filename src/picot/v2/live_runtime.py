@@ -1208,6 +1208,40 @@ def _wait_for_poll_or_reset(
         time.sleep(min(0.25, remaining))
 
 
+def _commitment_boundary_wait_seconds(
+    commitment: ActivePlanCommitment | None,
+    *,
+    now: datetime,
+    poll_interval_seconds: float,
+    cycle_started_at: datetime | None = None,
+) -> float:
+    """Wake at an exact plan boundary instead of waiting for the next poll."""
+
+    if commitment is None:
+        return poll_interval_seconds
+    boundaries = tuple(
+        boundary
+        for segment in commitment.segments
+        for boundary in (segment.starts_at, segment.ends_at)
+    )
+    if cycle_started_at is not None and any(
+        cycle_started_at < boundary <= now
+        for boundary in boundaries
+    ):
+        return 0.0
+    future_boundaries = tuple(
+        boundary for boundary in boundaries if boundary > now
+    )
+    if not future_boundaries and commitment.ends_at > now:
+        future_boundaries = (commitment.ends_at,)
+    if not future_boundaries:
+        return poll_interval_seconds
+    seconds_until_boundary = (
+        min(future_boundaries) - now
+    ).total_seconds()
+    return min(poll_interval_seconds, max(0.0, seconds_until_boundary))
+
+
 class PlanningResetBarrier:
     """Serialize reset with a Planner Run and expose its reset generation."""
 
@@ -2706,12 +2740,56 @@ def main() -> None:
             financial_result_ledger=financial_result_ledger,
         )
 
+    def advance_clock_boundaries(bundle: PlanningInputBundle) -> None:
+        outcome = canonical_execution_runtime.advance_committed_boundary(
+            bundle.snapshot,
+            execution_enabled=execution_enabled,
+        )
+        if outcome.status == "dispatched":
+            assert outcome.application_id is not None
+            assert outcome.plan_id is not None
+            assert outcome.previous_vendor_mode is not None
+            assert outcome.planned_vendor_mode is not None
+            storage_mode_provenance_runtime.record_planner_application(
+                outcome.planned_vendor_mode,
+                applied_at=bundle.snapshot.captured_at,
+                application_id=outcome.application_id,
+            )
+            _append_storage_mode_transition(
+                storage_mode_transition_history,
+                previous_vendor_mode=outcome.previous_vendor_mode,
+                requested_vendor_mode=outcome.planned_vendor_mode,
+                source="PicoT canonical commitment boundary",
+                reason="active canonical MEP segment boundary",
+                confidence=None,
+                run_id=bundle.snapshot.run_id,
+                snapshot_id=bundle.snapshot.snapshot_id,
+                evaluation_id=None,
+                plan_id=outcome.plan_id,
+                application_id=outcome.application_id,
+                occurred_at=bundle.snapshot.captured_at,
+            )
+        elif outcome.status == "dispatch_failed":
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_commitment_boundary_dispatch_failed",
+                        "snapshot_id": bundle.snapshot.snapshot_id,
+                        "plan_id": outcome.plan_id,
+                        "error": outcome.failure_reason,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
+
     runtime_monitor = RuntimeMonitorSession()
     material_replanning = MaterialReplanningObservationProducer(
         history=household_load_history,
     )
     previous_signature: str | None = None
     while True:
+        cycle_started_at = datetime.now(UTC)
         if planning_reset_requested.is_set():
             planning_reset_requested.clear()
             previous_signature = None
@@ -2725,13 +2803,23 @@ def main() -> None:
                 persist_observation=household_load_history.append,
                 refresh_unchanged=refresh_unchanged,
                 observe=publish_input_sources,
+                advance_clock_boundaries=advance_clock_boundaries,
                 runtime_monitor=runtime_monitor,
                 runtime_observations=material_replanning.observe,
             )
         )
+        execution_scope_id = str(
+            options.get("storage_execution_scope_id", "home-battery")
+        ).strip()
+        wait_seconds = _commitment_boundary_wait_seconds(
+            active_plan_commitment_store.load(execution_scope_id),
+            now=datetime.now(UTC),
+            poll_interval_seconds=poll_interval_seconds,
+            cycle_started_at=cycle_started_at,
+        )
         _wait_for_poll_or_reset(
             planning_reset_requested,
-            poll_interval_seconds,
+            wait_seconds,
         )
 
 

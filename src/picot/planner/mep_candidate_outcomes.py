@@ -7,7 +7,7 @@ See ADR-024, ADR-030, ADR-031, ADR-032, ADR-037, V2ADR-055 and V2ADR-062.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from hashlib import sha256
 
 from picot.architecture_ownership import architecture_ownership
@@ -82,7 +82,7 @@ from picot.v2.plan_commitment_store import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_outcomes", __name__)
-METHOD_VERSION = "mep-canonical-candidate-outcomes:v6"
+METHOD_VERSION = "mep-canonical-candidate-outcomes:v7"
 MAXIMUM_TARGET_TOLERANCE_WH = 1.0
 
 
@@ -209,6 +209,55 @@ def _path_intervals(
     return tuple(intervals)
 
 
+def _execution_path_intervals(
+    schedule: DailyReferenceIntentSchedule,
+    *,
+    maximum_discharge_output_power_w: float,
+) -> tuple[DailyReferenceIntentInterval, ...]:
+    """Project export-energy hourglasses to exact execution boundaries.
+
+    Financial simulation remains aligned to tariff intervals, while execution
+    stops a full-power export as soon as its Wh target is exhausted. The safe
+    remainder of that tariff interval returns to household support.
+    """
+
+    result: list[DailyReferenceIntentInterval] = []
+    for interval in _path_intervals(schedule):
+        if interval.intent is not DailyStorageIntent.STORAGE_EXPORT:
+            result.append(interval)
+            continue
+        interval_capacity_wh = (
+            maximum_discharge_output_power_w
+            * (interval.ends_at - interval.starts_at).total_seconds()
+            / 3600.0
+        )
+        if interval.storage_export_target_wh + 1e-6 >= interval_capacity_wh:
+            result.append(interval)
+            continue
+        export_ends_at = interval.starts_at + timedelta(
+            hours=(
+                interval.storage_export_target_wh
+                / maximum_discharge_output_power_w
+            )
+        )
+        result.append(
+            DailyReferenceIntentInterval(
+                starts_at=interval.starts_at,
+                ends_at=export_ends_at,
+                intent=DailyStorageIntent.STORAGE_EXPORT,
+                storage_export_target_wh=interval.storage_export_target_wh,
+            )
+        )
+        result.append(
+            DailyReferenceIntentInterval(
+                starts_at=export_ends_at,
+                ends_at=interval.ends_at,
+                intent=DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
+            )
+        )
+    return tuple(result)
+
+
 def _path(
     *,
     snapshot: PlanningInputSnapshot,
@@ -229,6 +278,12 @@ def _path(
         for item in snapshot.storage_physical_limits
         if item.execution_scope_id == storage.execution_scope_id
         and item.capability_id == storage.capability_id
+    )
+    execution_intervals = _execution_path_intervals(
+        schedule,
+        maximum_discharge_output_power_w=(
+            limits.maximum_discharge_output_power_w
+        ),
     )
     segments = tuple(
         PathSegment(
@@ -256,7 +311,7 @@ def _path(
                 else None
             ),
         )
-        for index, interval in enumerate(_path_intervals(schedule), start=1)
+        for index, interval in enumerate(execution_intervals, start=1)
     )
     states: tuple[ProjectedEnergyState, ...] = ()
     if market_assessment is not None:
@@ -674,31 +729,59 @@ def _committed_schedule(
         ExecutionPrimitive.DISCHARGE_AT_POWER.value: DailyStorageIntent.STORAGE_EXPORT,
     }
     for grid in reference.intervals:
-        segment = next(
-            (
-                item
-                for item in stored
-                if item.starts_at <= grid.starts_at and item.ends_at >= grid.ends_at
-            ),
-            None,
+        overlapping = tuple(
+            sorted(
+                (
+                    item
+                    for item in stored
+                    if item.starts_at < grid.ends_at
+                    and item.ends_at > grid.starts_at
+                ),
+                key=lambda item: item.starts_at,
+            )
         )
-        if segment is None:
+        coverage_end = grid.starts_at
+        for segment in overlapping:
+            if max(grid.starts_at, segment.starts_at) > coverage_end:
+                break
+            coverage_end = max(
+                coverage_end,
+                min(grid.ends_at, segment.ends_at),
+            )
+        complete_coverage = coverage_end >= grid.ends_at
+        export_segments = tuple(
+            segment
+            for segment in overlapping
+            if segment.primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value
+        )
+        if not complete_coverage:
             if grid.starts_at >= commitment.ends_at:
                 intent = DailyStorageIntent.NOM
             else:
                 reasons.append("committed_schedule_gap")
                 intent = DailyStorageIntent.STANDBY
             export_target = 0.0
-        elif segment.primitive not in intents:
+        elif export_segments:
+            export_target = sum(
+                segment.storage_export_target_wh or 0.0
+                for segment in export_segments
+            )
+            if export_target <= 0.0:
+                reasons.append("committed_export_target_missing")
+                intent = DailyStorageIntent.STANDBY
+            else:
+                intent = DailyStorageIntent.STORAGE_EXPORT
+        elif len({segment.primitive for segment in overlapping}) != 1:
+            reasons.append("committed_schedule_mixed_interval")
+            intent = DailyStorageIntent.STANDBY
+            export_target = 0.0
+        elif overlapping[0].primitive not in intents:
             reasons.append("committed_primitive_unsupported")
             intent = DailyStorageIntent.STANDBY
             export_target = 0.0
         else:
-            intent = intents[segment.primitive]
-            export_target = segment.storage_export_target_wh or 0.0
-            if intent is DailyStorageIntent.STORAGE_EXPORT and export_target <= 0.0:
-                reasons.append("committed_export_target_missing")
-                intent = DailyStorageIntent.STANDBY
+            intent = intents[overlapping[0].primitive]
+            export_target = 0.0
         intervals.append(
             DailyReferenceIntentInterval(grid.starts_at, grid.ends_at, intent, export_target)
         )

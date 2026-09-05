@@ -13,7 +13,7 @@ from typing import Any, cast
 from picot.architecture_ownership import architecture_ownership
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("plan_store", __name__)
-COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v8"
+COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v9"
 COMPARISON_PREVIOUS_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v7"
 MATERIALITY_PREVIOUS_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v6"
 TIMING_PREVIOUS_COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v5"

@@ -124,6 +124,35 @@ def _coalesce_committed_segments(
     return tuple(coalesced)
 
 
+def _committed_execution_segments(
+    segments: tuple[PathSegment, ...],
+) -> tuple[CommittedPlanSegment, ...]:
+    """Persist the executable boundaries, including partial export intervals."""
+
+    return _coalesce_committed_segments(
+        tuple(
+            CommittedPlanSegment(
+                starts_at=segment.starts_at,
+                ends_at=segment.ends_at,
+                primitive=segment.primitive.value,
+                source_policy=(
+                    segment.charge_source_policy.value
+                    if segment.charge_source_policy is not None
+                    else None
+                ),
+                storage_export_target_wh=(
+                    (segment.requested_power_w or 0.0)
+                    * (segment.ends_at - segment.starts_at).total_seconds()
+                    / 3600.0
+                    if segment.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+                    else None
+                ),
+            )
+            for segment in segments
+        )
+    )
+
+
 def _commitment_target_reached(
     snapshot: PlanningInputSnapshot,
     commitment: ActivePlanCommitment,
@@ -570,6 +599,7 @@ def _persist_plan(
     snapshot: PlanningInputSnapshot,
     plan: MarketDailyPlan | MarketDailyCandidatePortfolio,
     schedule: DailyReferenceIntentSchedule,
+    execution_segments: tuple[PathSegment, ...],
     plan_id: str,
     native: DailyReferenceCandidate | None,
     market: MarketRouteAssessment | None,
@@ -705,23 +735,7 @@ def _persist_plan(
                 if market is not None
                 else None
             ),
-            segments=_coalesce_committed_segments(
-                tuple(
-                    CommittedPlanSegment(
-                        starts_at=interval.starts_at,
-                        ends_at=interval.ends_at,
-                        primitive=primitive.value,
-                        source_policy=(source_policy.value if source_policy is not None else None),
-                        storage_export_target_wh=(
-                            interval.storage_export_target_wh
-                            if interval.intent is DailyStorageIntent.STORAGE_EXPORT
-                            else None
-                        ),
-                    )
-                    for interval in schedule.intervals
-                    for primitive, source_policy in (_intent_primitive(interval.intent),)
-                )
-            ),
+            segments=_committed_execution_segments(execution_segments),
             selection_reason=selection_reason,
             replaced_plan_id=(prior_commitment.plan_id if prior_commitment is not None else None),
             selected_at=snapshot.captured_at,
@@ -981,6 +995,8 @@ def build_mep_canonical_run(
         )
     plans = list(execution_plan_set.plans)
     if plans:
+        if winning_path is None:
+            raise ValueError("an executable plan requires its winning Energy Path")
         plan_id = plans[0].plan_id
         if (
             not incumbent_retained
@@ -992,6 +1008,7 @@ def build_mep_canonical_run(
                 snapshot=snapshot,
                 plan=planner_outcome.portfolio,
                 schedule=selected_schedule,
+                execution_segments=winning_path.segments,
                 plan_id=plan_id,
                 native=(None if selected_prefix_composed else native_winner),
                 market=(None if selected_prefix_composed else market_winner),

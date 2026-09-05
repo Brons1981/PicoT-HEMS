@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from time import perf_counter
 
 from picot.architecture_ownership import architecture_ownership
@@ -43,7 +43,7 @@ from picot.v2.opportunity_engine import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_generation", __name__)
-METHOD_VERSION = "market-daily-planner:v11"
+METHOD_VERSION = "market-daily-planner:v12"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
@@ -133,6 +133,24 @@ class MarketTradingPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketExportLeg:
+    """One independently bounded export leg inside a complete market path."""
+
+    opportunity_id: str
+    starts_at: datetime
+    ends_at: datetime
+    target_output_wh: float
+
+    def __post_init__(self) -> None:
+        if not self.opportunity_id.strip():
+            raise ValueError("MEP export-leg opportunity lineage must be explicit.")
+        if self.ends_at <= self.starts_at:
+            raise ValueError("MEP export leg must have positive duration.")
+        if self.target_output_wh <= 0.0:
+            raise ValueError("MEP export leg requires a positive energy target.")
+
+
+@dataclass(frozen=True, slots=True)
 class MarketCapacityRoute:
     """Bounded capacity preparation for one truly negative import window."""
 
@@ -159,6 +177,7 @@ class MarketCapacityRoute:
     inventory_deliverable_energy_wh: float | None = None
     inventory_acquisition_cost_eur: float | None = None
     inventory_sources: tuple[str, ...] = ()
+    export_legs: tuple[MarketExportLeg, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.opportunity_ids or any(not item.strip() for item in self.opportunity_ids):
@@ -192,6 +211,7 @@ class MarketCapacityRoute:
             "pv_trade",
             "pv_trade_grid_recovery",
             "pv_surplus_export",
+            "daily_export_chain",
             "stored_energy_export",
         }:
             raise ValueError("MEP market-route kind must be explicit.")
@@ -208,6 +228,31 @@ class MarketCapacityRoute:
             or self.inventory_acquisition_cost_eur is None
         ):
             raise ValueError("MEP inventory valuation must be complete.")
+        if self.export_legs:
+            if self.route_kind != "daily_export_chain":
+                raise ValueError("MEP export legs are reserved for a daily chain.")
+            if tuple(sorted(self.export_legs, key=lambda item: item.starts_at)) != (
+                self.export_legs
+            ):
+                raise ValueError("MEP export legs must be chronological.")
+            if any(
+                left.ends_at > right.starts_at
+                for left, right in zip(
+                    self.export_legs,
+                    self.export_legs[1:],
+                    strict=False,
+                )
+            ):
+                raise ValueError("MEP export legs must not overlap.")
+            if set(self.opportunity_ids) != {
+                item.opportunity_id for item in self.export_legs
+            }:
+                raise ValueError("MEP export-leg lineage must reconcile.")
+            if abs(
+                self.required_pre_window_discharge_output_wh
+                - sum(item.target_output_wh for item in self.export_legs)
+            ) > 1e-6:
+                raise ValueError("MEP export-leg energy must reconcile.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -890,7 +935,10 @@ class MarketDailyPlanner:
             native_observation,
             tariffs,
         )
-        pv_surplus_routes: list[tuple[float, MarketCapacityRoute]] = []
+        pv_surplus_routes_by_day: dict[
+            date,
+            list[tuple[float, MarketCapacityRoute]],
+        ] = {}
         if pv_first_result is not None:
             pv_first_lower = next(
                 item
@@ -969,7 +1017,10 @@ class MarketDailyPlanner:
                 indicated_result = export_output_wh / 1000.0 * (
                     export_rate - trading_policy.wear_eur_per_export_kwh
                 )
-                pv_surplus_routes.append(
+                local_day = export_start.astimezone(
+                    snapshot.captured_at.tzinfo
+                ).date()
+                pv_surplus_routes_by_day.setdefault(local_day, []).append(
                     (
                         indicated_result,
                         MarketCapacityRoute(
@@ -1005,8 +1056,11 @@ class MarketDailyPlanner:
                         ),
                     )
                 )
-        if pv_surplus_routes:
-            result.append(max(pv_surplus_routes, key=lambda item: item[0])[1])
+        selected_daily_pv_routes = tuple(
+            max(pv_surplus_routes_by_day[day], key=lambda item: item[0])[1]
+            for day in sorted(pv_surplus_routes_by_day)
+        )
+        result.extend(selected_daily_pv_routes)
 
         for opportunity_window in negative_groups:
             group = opportunity_window.intervals
@@ -1603,6 +1657,100 @@ class MarketDailyPlanner:
                         method_version=METHOD_VERSION,
                     )
                 )
+        # The rolling horizon may contain profitable export opportunities on
+        # two local calendar days. They are independent daily decisions, not
+        # alternatives competing for one horizon-wide route slot. Retain one
+        # best PV-compatible leg per day and simulate their single composite
+        # path. This adds one bounded candidate, regardless of the number of
+        # raw opportunities.
+        daily_export_routes: dict[date, list[MarketCapacityRoute]] = {}
+        for route in result:
+            if (
+                route.route_kind
+                not in {"pv_surplus_export", "pv_trade", "stored_energy_export"}
+                or route.maximum_charge_input_wh > 0.0
+                or route.export_window_starts_at is None
+                or route.export_window_ends_at is None
+            ):
+                continue
+            local_day = route.export_window_starts_at.astimezone(
+                snapshot.captured_at.tzinfo
+            ).date()
+            daily_export_routes.setdefault(local_day, []).append(route)
+        selected_daily_export_routes = tuple(
+            max(
+                daily_export_routes[day],
+                key=lambda route: (
+                    (route.average_export_eur_per_kwh or 0.0)
+                    * route.required_pre_window_discharge_output_wh,
+                    {
+                        "stored_energy_export": 0,
+                        "pv_trade": 1,
+                        "pv_surplus_export": 2,
+                    }[route.route_kind],
+                    route.route_id,
+                ),
+            )
+            for day in sorted(daily_export_routes)
+        )
+        if len(selected_daily_export_routes) > 1:
+            export_legs = tuple(
+                MarketExportLeg(
+                    opportunity_id=route.opportunity_ids[0],
+                    starts_at=route.export_window_starts_at,
+                    ends_at=route.export_window_ends_at,
+                    target_output_wh=(
+                        route.required_pre_window_discharge_output_wh
+                    ),
+                )
+                for route in selected_daily_export_routes
+                if route.export_window_starts_at is not None
+                and route.export_window_ends_at is not None
+            )
+            total_export_output_wh = sum(
+                leg.target_output_wh for leg in export_legs
+            )
+            weighted_export_rate = sum(
+                (route.average_export_eur_per_kwh or 0.0)
+                * route.required_pre_window_discharge_output_wh
+                for route in selected_daily_export_routes
+            ) / total_export_output_wh
+            result.append(
+                MarketCapacityRoute(
+                    route_id=(
+                        f"mep-daily-export-chain:{snapshot.snapshot_id}:"
+                        + ":".join(
+                            leg.starts_at.isoformat() for leg in export_legs
+                        )
+                    ),
+                    snapshot_id=snapshot.snapshot_id,
+                    opportunity_ids=tuple(
+                        leg.opportunity_id for leg in export_legs
+                    ),
+                    window_starts_at=export_legs[0].starts_at,
+                    window_ends_at=export_legs[-1].ends_at,
+                    maximum_charge_input_wh=0.0,
+                    reserved_storage_room_wh=0.0,
+                    storage_energy_ceiling_before_window_wh=maximum_energy_wh,
+                    required_pre_window_discharge_output_wh=(
+                        total_export_output_wh
+                    ),
+                    opportunity_window_starts_at=export_legs[0].starts_at,
+                    opportunity_window_ends_at=export_legs[-1].ends_at,
+                    charge_safety_margin_seconds=0.0,
+                    export_window_starts_at=export_legs[0].starts_at,
+                    export_window_ends_at=export_legs[-1].ends_at,
+                    route_kind="daily_export_chain",
+                    reason="retain_one_profitable_export_route_per_local_day",
+                    average_export_eur_per_kwh=weighted_export_rate,
+                    average_recharge_eur_per_kwh=None,
+                    minimum_export_eur_per_kwh=(
+                        trading_policy.wear_eur_per_export_kwh
+                    ),
+                    method_version=METHOD_VERSION,
+                    export_legs=export_legs,
+                )
+            )
         # Stable de-duplication: the same cheapest/highest pair can be reached
         # through overlapping rankings, but it must be simulated only once.
         return tuple({item.route_id: item for item in result}.values()), recovery_outside_horizon
@@ -1724,9 +1872,12 @@ class MarketDailyPlanner:
             hybrid_parents = representative_hybrid_parents(route)
             applicable_parents = (
                 (pv_first_result,)
-                if route.route_kind == "pv_surplus_export" and pv_first_result is not None
+                if route.route_kind
+                in {"pv_surplus_export", "daily_export_chain"}
+                and pv_first_result is not None
                 else ()
-                if route.route_kind == "pv_surplus_export"
+                if route.route_kind
+                in {"pv_surplus_export", "daily_export_chain"}
                 else
                 (baseline_result,)
                 if route.route_kind in {"stored_energy_export", "negative_capacity"}
@@ -1830,40 +1981,64 @@ class MarketDailyPlanner:
         preserve_pv_during_grid_charge: bool,
     ) -> DailyReferenceIntentSchedule:
         export_targets: dict[tuple[datetime, datetime], float] = {}
-        remaining_output_wh = route.required_pre_window_discharge_output_wh
-        candidate_intervals = (
+        explicit_export_requests = (
             tuple(
-                interval
-                for interval in baseline.intervals
-                if route.export_window_starts_at is not None
-                and route.export_window_ends_at is not None
-                and interval.starts_at < route.export_window_ends_at
-                and interval.ends_at > route.export_window_starts_at
+                (leg.starts_at, leg.ends_at, leg.target_output_wh)
+                for leg in route.export_legs
             )
-            if route.route_kind
-            in {
-                "grid_trade",
-                "pv_trade",
-                "pv_trade_grid_recovery",
-                "pv_surplus_export",
-                "stored_energy_export",
-            }
-            else tuple(
-                interval
-                for interval in reversed(baseline.intervals)
-                if interval.ends_at <= route.window_starts_at
+            if route.export_legs
+            else (
+                (
+                    route.export_window_starts_at,
+                    route.export_window_ends_at,
+                    route.required_pre_window_discharge_output_wh,
+                ),
             )
+            if route.export_window_starts_at is not None
+            and route.export_window_ends_at is not None
+            else ()
         )
-        for interval in candidate_intervals:
-            if remaining_output_wh <= 0.0:
-                break
-            duration_hours = (interval.ends_at - interval.starts_at).total_seconds() / 3600.0
-            target_wh = min(
-                remaining_output_wh,
-                maximum_discharge_output_power_w * duration_hours,
-            )
-            export_targets[(interval.starts_at, interval.ends_at)] = target_wh
-            remaining_output_wh -= target_wh
+        if explicit_export_requests:
+            for export_start, export_end, requested_output_wh in (
+                explicit_export_requests
+            ):
+                remaining_output_wh = requested_output_wh
+                candidate_intervals = tuple(
+                    interval
+                    for interval in baseline.intervals
+                    if interval.starts_at < export_end
+                    and interval.ends_at > export_start
+                )
+                for interval in candidate_intervals:
+                    if remaining_output_wh <= 0.0:
+                        break
+                    duration_hours = (
+                        interval.ends_at - interval.starts_at
+                    ).total_seconds() / 3600.0
+                    target_wh = min(
+                        remaining_output_wh,
+                        maximum_discharge_output_power_w * duration_hours,
+                    )
+                    export_targets[(interval.starts_at, interval.ends_at)] = (
+                        target_wh
+                    )
+                    remaining_output_wh -= target_wh
+        else:
+            remaining_output_wh = route.required_pre_window_discharge_output_wh
+            for interval in reversed(baseline.intervals):
+                if interval.ends_at > route.window_starts_at:
+                    continue
+                if remaining_output_wh <= 0.0:
+                    break
+                duration_hours = (
+                    interval.ends_at - interval.starts_at
+                ).total_seconds() / 3600.0
+                target_wh = min(
+                    remaining_output_wh,
+                    maximum_discharge_output_power_w * duration_hours,
+                )
+                export_targets[(interval.starts_at, interval.ends_at)] = target_wh
+                remaining_output_wh -= target_wh
         schedule_id = f"mep-market:{route.route_id}:{baseline.schedule_id}"
         intervals_list: list[DailyReferenceIntentInterval] = []
         final_export_end = max(
@@ -2087,7 +2262,12 @@ class MarketDailyPlanner:
             item.physically_complete
             and item.reserve_respected
             and (
-                route.route_kind in {"stored_energy_export", "pv_surplus_export"}
+                route.route_kind
+                in {
+                    "stored_energy_export",
+                    "pv_surplus_export",
+                    "daily_export_chain",
+                }
                 or item.storage_energy_at_horizon_end_wh + 1e-6
                 >= baseline_assessment[scenario].storage_energy_at_horizon_end_wh
             )

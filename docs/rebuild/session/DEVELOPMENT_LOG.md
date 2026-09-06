@@ -2360,3 +2360,25 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   dispatch. Ruff and mypy are green on all changed source files. CI and live
   execution remain to be verified.
 - Normative basis remains exclusively ADR-001 through ADR-037.
+
+## 2026-09-06 — 2.0.0-dev.238 optional Energy Devices catalog
+
+- Accepted V2ADR-064 for a separate, read-only energy-device profile producer.
+  The producer owns only user-selected Home Assistant sensor bindings, samples,
+  sessions and learned cards; it has no planning or execution authority.
+- Added the `PicoT Energy Devices` Home Assistant add-on with an ingress
+  registry, SQLite evidence store, session learning and one neutral catalog
+  state. Newly registered devices are cards immediately, even before enough
+  sessions exist for a reliable learned profile.
+- Added an optional PicoT catalog observer outside Planning Input Snapshot
+  assembly. Missing, malformed and unsupported catalogs yield zero cards and
+  cannot block or change a Planner Run.
+- Added an **Apparaten** dashboard tab. The user may select a discovered card,
+  place it on the 48-hour price timeline and remove it again. These placements
+  are durable but explicitly observer-only; they do not reset or influence MEP.
+- Deferred planning influence until a later slice can form a residual household
+  baseline and prove that registered-device energy is not counted twice.
+- V2ADR-064 refines the external source and optional optimisation boundary;
+  ADR-019, ADR-021, ADR-022, ADR-028, ADR-034 and ADR-037 retain their existing
+  ownership, while V2ADR-001 and V2ADR-055 retain single ingestion and sole MEP
+  planning authority.

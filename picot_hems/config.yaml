@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.237"
+version: "2.0.0-dev.238"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -67,6 +67,7 @@ options:
   micro_charge_suppression_percent: 2.0
   plan_switching_margin_eur: 0.05
   battery_purchase_eur: 2407.40
+  energy_device_catalog_entity: "sensor.picot_energy_devices_catalog"
   grid_power_observation_interval_seconds: 1
   live_poll_interval_seconds: 60
   execution_mode: "live"
@@ -125,6 +126,7 @@ schema:
   micro_charge_suppression_percent: float(0,100)
   plan_switching_margin_eur: float(0,)
   battery_purchase_eur: float(0,)
+  energy_device_catalog_entity: str
   grid_power_observation_interval_seconds: int(1,60)
   live_poll_interval_seconds: int(5,3600)
   execution_mode: list(observer|live)

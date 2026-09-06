@@ -392,6 +392,20 @@ DASHBOARD_HTML = """<!doctype html>
       color: #fff;
       cursor: pointer;
     }
+    .energy-device-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      margin: 14px 0;
+    }
+    .energy-device-card {
+      padding: 14px;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      background: #111923;
+    }
+    .energy-device-card[data-selected="true"] { border-color: #b96cff; }
+    .energy-device-placement-list { display: grid; gap: 8px; margin-top: 14px; }
     .observer {
       padding: 8px 12px;
       border: 1px solid #386f96;
@@ -795,6 +809,7 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.high { background: #df6b57; }
     .price-swatch.missing { background: #2b3541; }
     .price-swatch.canonical-nom { background: #35a862; }
+    .price-swatch.energy-device-placement { background: #b96cff; }
     .price-swatch.canonical-charge { background: #df5c57; }
     .price-swatch.canonical-trade { background: #aab2bd; }
     .price-swatch.canonical-support { background: #3994e6; }
@@ -826,6 +841,10 @@ DASHBOARD_HTML = """<!doctype html>
     .planner-window-chip.canonical-support {
       border-color: #3994e6;
       color: #62b8f5;
+    }
+    .planner-window-chip.energy-device-placement {
+      border-color: #b96cff;
+      color: #e2c5ff;
     }
     .price-chart-scroll { overflow-x: auto; }
     .price-chart {
@@ -863,6 +882,7 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .planner-window.canonical-charge { fill: #df5c57; }
     .price-chart .planner-window.canonical-trade { fill: #aab2bd; }
     .price-chart .planner-window.canonical-support { fill: #3994e6; }
+    .price-chart .planner-window.energy-device-placement { fill: #b96cff; }
     .price-chart .soc-line { fill: none; stroke-width: 3; }
     .price-chart .soc-line.canonical-nom { stroke: #35a862; }
     .price-chart .soc-line.canonical-charge { stroke: #df5c57; }
@@ -966,6 +986,10 @@ DASHBOARD_HTML = """<!doctype html>
         class="tab-button" type="button" data-tab="strategy"
         aria-selected="false"
       >Strategie</button>
+      <button
+        class="tab-button" type="button" data-tab="devices"
+        aria-selected="false"
+      >Apparaten</button>
       <button
         class="tab-button" type="button" data-tab="technical"
         aria-selected="false"
@@ -1082,6 +1106,43 @@ DASHBOARD_HTML = """<!doctype html>
         <button id="save-user-rules" type="submit">Regels toepassen</button>
         <span id="user-rules-status" class="muted" aria-live="polite"></span>
       </form>
+    </section>
+    <section
+      id="tab-devices" class="tab-panel" data-tab-panel="devices" hidden
+    >
+      <h2>Energie-apparaatkaarten</h2>
+      <p class="muted">
+        Nieuwe kaarten uit PicoT Energy Devices verschijnen hier automatisch.
+        Een kaart doet niets totdat je hem zelf op de tijdlijn plaatst. Deze
+        eerste versie bewaart plaatsingen alleen ter observatie en verandert
+        geen MEP-plan.
+      </p>
+      <p id="energy-device-catalog-status" class="status">
+        Wachten op de optionele apparaatcatalogus…
+      </p>
+      <div id="energy-device-cards" class="energy-device-grid"></div>
+      <form id="energy-device-placement-form" class="strategy-rules">
+        <label class="strategy-rule">
+          <strong>Geselecteerde kaart</strong>
+          <select id="energy-device-card-select" required></select>
+        </label>
+        <label class="strategy-rule">
+          <strong>Start</strong>
+          <input id="energy-device-start" type="datetime-local" required>
+        </label>
+        <label class="strategy-rule">
+          <strong>Duur</strong>
+          <span>
+            <input id="energy-device-duration" type="number" min="1" step="1" value="60">
+            minuten
+          </span>
+        </label>
+        <button id="add-energy-device-placement" type="submit">
+          Op tijdlijn plaatsen
+        </button>
+        <span id="energy-device-placement-status" class="muted" aria-live="polite"></span>
+      </form>
+      <div id="energy-device-placements" class="energy-device-placement-list"></div>
     </section>
     <section
       id="tab-technical" class="tab-panel" data-tab-panel="technical" hidden
@@ -1316,7 +1377,8 @@ DASHBOARD_HTML = """<!doctype html>
         ["canonical-nom", "NOM / PV laden"],
         ["canonical-charge", "Net import / snel laden"],
         ["canonical-trade", "MEP handel / terugleveren"],
-        ["canonical-support", "Slim huishoudelijk ontladen"]
+        ["canonical-support", "Slim huishoudelijk ontladen"],
+        ["energy-device-placement", "Geplaatst energie-apparaat"]
       ]) {
         const item = document.createElement("span");
         item.className = "price-legend-item";
@@ -3506,6 +3568,14 @@ DASHBOARD_HTML = """<!doctype html>
           });
         }
       }
+      for (const placement of view.energy_device_placements?.placements ?? []) {
+        windows.push({
+          starts_at: placement.starts_at,
+          ends_at: placement.ends_at,
+          kind: "energy-device-placement",
+          label: placement.name,
+        });
+      }
       return windows;
     }
 
@@ -4045,6 +4115,127 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
+    function renderEnergyDevices(catalog, placementView) {
+      const status = element("energy-device-catalog-status");
+      const cards = Array.isArray(catalog?.cards) ? catalog.cards : [];
+      status.dataset.state = catalog?.status === "available" ? "ready" : "waiting";
+      status.textContent = catalog?.status === "available"
+        ? `${cards.length} kaart(en) beschikbaar · uitsluitend na jouw selectie`
+        : "PicoT werkt normaal; de optionele apparaatcatalogus is niet beschikbaar.";
+
+      const cardContainer = element("energy-device-cards");
+      const select = element("energy-device-card-select");
+      const selectedCardId = select.value;
+      cardContainer.replaceChildren();
+      select.replaceChildren();
+      for (const card of cards) {
+        const article = document.createElement("article");
+        article.className = "energy-device-card";
+        article.dataset.selected = String(card.card_id === selectedCardId);
+        const heading = document.createElement("h3");
+        heading.textContent = card.name;
+        const state = document.createElement("p");
+        state.className = "muted";
+        state.textContent = card.profile_status === "ready"
+          ? `${card.completed_session_count} sessies · confidence ` +
+            formatConfidence(card.confidence)
+          : "Profiel wordt nog geleerd";
+        const energy = document.createElement("p");
+        energy.textContent = [
+          formatMeasurement(card.expected_power_w, "W"),
+          formatMeasurement(card.expected_energy_wh, "Wh"),
+          Number.isFinite(Number(card.expected_duration_seconds))
+            ? `${Math.round(Number(card.expected_duration_seconds) / 60)} minuten`
+            : "duur nog onbekend",
+        ].join(" · ");
+        article.append(heading, state, energy);
+        cardContainer.append(article);
+
+        const option = document.createElement("option");
+        option.value = card.card_id;
+        option.textContent = card.name;
+        option.dataset.durationSeconds = card.expected_duration_seconds ?? "";
+        select.append(option);
+      }
+      if (selectedCardId && cards.some((card) => card.card_id === selectedCardId)) {
+        select.value = selectedCardId;
+      }
+      if (!cards.length) {
+        cardContainer.textContent =
+          "Nog geen kaarten gevonden. Voeg eerst een meetpunt toe in " +
+          "PicoT Energy Devices.";
+        const option = document.createElement("option");
+        option.textContent = "Geen kaarten beschikbaar";
+        option.value = "";
+        select.append(option);
+      }
+
+      const placements = Array.isArray(placementView?.placements)
+        ? placementView.placements : [];
+      const placementContainer = element("energy-device-placements");
+      placementContainer.replaceChildren();
+      for (const placement of placements) {
+        const row = document.createElement("div");
+        row.className = "strategy-rule strategy-rule-line";
+        const label = document.createElement("span");
+        label.textContent = `${placement.name}: ` +
+          `${formatTimestamp(placement.starts_at)} – ` +
+          formatTimestamp(placement.ends_at);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Verwijderen";
+        remove.addEventListener("click", () => updateEnergyDevicePlacement({
+          action: "remove", placement_id: placement.placement_id,
+        }));
+        row.append(label, remove);
+        placementContainer.append(row);
+      }
+      if (!placements.length) {
+        placementContainer.textContent = "Nog geen apparaatkaarten op de tijdlijn geplaatst.";
+      }
+    }
+
+    async function updateEnergyDevicePlacement(payload) {
+      const status = element("energy-device-placement-status");
+      try {
+        const response = await fetch("api/energy-device-placements", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        status.textContent = "Tijdlijn bijgewerkt; het actieve MEP-plan is ongewijzigd.";
+        renderEnergyDevices(
+          result.energy_device_catalog ?? {},
+          result.energy_device_placements ?? {},
+        );
+      } catch (error) {
+        status.textContent = `Tijdlijn wijzigen mislukt: ${error.message}`;
+      }
+    }
+
+    function addEnergyDevicePlacement(event) {
+      event.preventDefault();
+      const cardId = element("energy-device-card-select").value;
+      const startsAt = new Date(element("energy-device-start").value);
+      const durationMinutes = Number(element("energy-device-duration").value);
+      if (
+        !cardId || Number.isNaN(startsAt.getTime()) ||
+        !Number.isFinite(durationMinutes) || durationMinutes <= 0
+      ) {
+        element("energy-device-placement-status").textContent =
+          "Kies een kaart, starttijd en geldige duur.";
+        return;
+      }
+      updateEnergyDevicePlacement({
+        action: "add",
+        card_id: cardId,
+        starts_at: startsAt.toISOString(),
+        ends_at: new Date(startsAt.getTime() + durationMinutes * 60000).toISOString(),
+      });
+    }
+
     function renderView(view) {
       const dashboardState = captureDashboardState();
       element("version").textContent = displayValue(view.picot_version);
@@ -4087,6 +4278,10 @@ DASHBOARD_HTML = """<!doctype html>
       );
       renderFinancialResults(view.financial_results ?? {});
       renderUserRules(view.user_rules ?? {});
+      renderEnergyDevices(
+        view.energy_device_catalog ?? {},
+        view.energy_device_placements ?? {},
+      );
       loadPlanningIncidentHistory();
       renderPriceTimeline(
         view.price_timeline ?? {
@@ -4205,6 +4400,15 @@ DASHBOARD_HTML = """<!doctype html>
     );
     element("reset-planning").addEventListener("click", resetPlanning);
     element("user-rules-form").addEventListener("submit", saveUserRules);
+    element("energy-device-placement-form").addEventListener(
+      "submit", addEnergyDevicePlacement
+    );
+    element("energy-device-card-select").addEventListener("change", (event) => {
+      const seconds = Number(event.target.selectedOptions[0]?.dataset.durationSeconds);
+      if (Number.isFinite(seconds) && seconds > 0) {
+        element("energy-device-duration").value = String(Math.max(1, Math.round(seconds / 60)));
+      }
+    });
     initializeTabs();
     loadView().finally(watchViewUpdates);
     setInterval(loadView, 60000);
@@ -4225,11 +4429,16 @@ class WebViewStore:
         self._retired_comparison_history: dict[str, object] | None = None
         self._financial_results: dict[str, object] | None = None
         self._user_rules: dict[str, object] | None = None
+        self._energy_device_catalog: dict[str, object] | None = None
+        self._energy_device_placements: dict[str, object] | None = None
         self._revision = 0
         self._reset_storage_mode_override: Callable[[str], dict[str, object]] | None = None
         self._reset_planning: Callable[[str], dict[str, object]] | None = None
         self._mark_planner_stress: Callable[[str, str], dict[str, object]] | None = None
         self._update_user_rules: (
+            Callable[[dict[str, object]], dict[str, object]] | None
+        ) = None
+        self._update_energy_device_placements: (
             Callable[[dict[str, object]], dict[str, object]] | None
         ) = None
         self._diagnostic_paths: tuple[Path, ...] = ()
@@ -4268,6 +4477,10 @@ class WebViewStore:
             view["financial_results"] = dict(self._financial_results)
         if self._user_rules is not None:
             view["user_rules"] = dict(self._user_rules)
+        if self._energy_device_catalog is not None:
+            view["energy_device_catalog"] = dict(self._energy_device_catalog)
+        if self._energy_device_placements is not None:
+            view["energy_device_placements"] = dict(self._energy_device_placements)
         serialized = json.dumps(view, separators=(",", ":"))
         if len(serialized) > MAX_WEB_VIEW_CHARACTERS:
             bounded = dict(view)
@@ -4439,6 +4652,54 @@ class WebViewStore:
     ) -> Callable[[dict[str, object]], dict[str, object]] | None:
         with self._lock:
             return self._update_user_rules
+
+    def publish_energy_device_catalog(self, catalog: dict[str, object]) -> None:
+        """Expose optional cards without touching planning input or a plan."""
+        copied = json.loads(json.dumps(catalog))
+        if not isinstance(copied, dict):
+            raise TypeError("energy-device catalog must serialize to an object")
+        if copied.get("observer_only") is not True or copied.get("planning_authority") is not False:
+            raise ValueError("energy-device catalog must remain observer-only")
+        with self._condition:
+            self._energy_device_catalog = copied
+            if self._latest_json is not None:
+                latest = json.loads(self._latest_json)
+                if isinstance(latest, dict):
+                    self._replace_latest_locked(latest)
+
+    def energy_device_catalog(self) -> dict[str, object] | None:
+        with self._lock:
+            return (
+                json.loads(json.dumps(self._energy_device_catalog))
+                if self._energy_device_catalog is not None
+                else None
+            )
+
+    def publish_energy_device_placements(self, placements: dict[str, object]) -> None:
+        copied = json.loads(json.dumps(placements))
+        if not isinstance(copied, dict):
+            raise TypeError("energy-device placements must serialize to an object")
+        if copied.get("observer_only") is not True or copied.get("planning_authority") is not False:
+            raise ValueError("energy-device placements must remain observer-only")
+        with self._condition:
+            self._energy_device_placements = copied
+            if self._latest_json is not None:
+                latest = json.loads(self._latest_json)
+                if isinstance(latest, dict):
+                    self._replace_latest_locked(latest)
+
+    def set_energy_device_placement_update(
+        self,
+        update: Callable[[dict[str, object]], dict[str, object]],
+    ) -> None:
+        with self._lock:
+            self._update_energy_device_placements = update
+
+    def energy_device_placement_update(
+        self,
+    ) -> Callable[[dict[str, object]], dict[str, object]] | None:
+        with self._lock:
+            return self._update_energy_device_placements
 
     def set_planner_stress_marker(
         self,
@@ -4685,8 +4946,36 @@ def create_web_server(
                 "/api/planning/reset",
                 "/api/planner-comparison/stress",
                 "/api/user-rules",
+                "/api/energy-device-placements",
             }:
                 self._reject_write()
+                return
+            if path == "/api/energy-device-placements":
+                update = store.energy_device_placement_update()
+                if update is None:
+                    self._send_json(
+                        HTTPStatus.CONFLICT,
+                        '{"status":"energy_device_placements_unavailable"}',
+                    )
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 8192:
+                        raise ValueError
+                    payload = json.loads(self.rfile.read(length))
+                    if not isinstance(payload, dict):
+                        raise ValueError
+                    result = update(payload)
+                except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        '{"status":"invalid_energy_device_placement"}',
+                    )
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    json.dumps(result, separators=(",", ":")),
+                )
                 return
             if path == "/api/user-rules":
                 update = store.user_rule_update()

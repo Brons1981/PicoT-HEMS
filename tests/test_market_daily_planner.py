@@ -503,7 +503,9 @@ def test_mep_reserves_the_full_physically_chargeable_negative_window_volume() ->
     assert result.current_interval_ends_at is not None
 
 
-def test_mep_builds_complete_2026_grid_trade_with_linked_saldering() -> None:
+def test_mep_grid_trade_uses_pv_first_hybrid_parent_when_available() -> None:
+    """ADR-024/037/041: compare trade on the complete acquisition path."""
+
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     split = snapshot.captured_at + timedelta(hours=12)
     end = snapshot.captured_at + timedelta(hours=24)
@@ -534,14 +536,81 @@ def test_mep_builds_complete_2026_grid_trade_with_linked_saldering() -> None:
         item
         for item in result.route_assessments
         if item.route_id in {route.route_id for route in grid_routes}
-        and "baseline-household-support" in item.source_native_schedule_id
     )
     assert grid_assessments
+    assert not any(
+        "baseline-household-support" in item.source_native_schedule_id
+        for item in grid_assessments
+    )
+    assert all(
+        "hybrid-pv-grid" in item.source_native_schedule_id
+        for item in grid_assessments
+    )
     assert all(item.admitted for item in grid_assessments)
+    assert all(
+        evidence.target_reached_during_horizon
+        for item in grid_assessments
+        for evidence in item.scenario_evidence
+    )
     assert all(
         item.worst_case_incremental_result_eur
         >= item.minimum_total_route_profit_eur
         for item in grid_assessments
+    )
+
+
+def test_mep_grid_trade_falls_back_to_baseline_when_pv_path_is_unavailable() -> None:
+    """A PV-first preference must not remove a valid no-PV grid trade."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    assert snapshot.pv_energy_timeline is not None
+    split = snapshot.captured_at + timedelta(hours=12)
+    source = snapshot.price_points[0]
+    no_pv = replace(
+        snapshot.pv_energy_timeline,
+        intervals=tuple(
+            replace(
+                interval,
+                pv_energy_wh=0.0,
+                forecast_lower_energy_wh=0.0,
+                forecast_central_energy_wh=0.0,
+                forecast_upper_energy_wh=0.0,
+            )
+            for interval in snapshot.pv_energy_timeline.intervals
+        ),
+    )
+    priced = replace(
+        snapshot,
+        pv_energy_timeline=no_pv,
+        price_points=(
+            replace(source, point_id="cheap", ends_at=split, value_eur_per_kwh=0.05),
+            replace(
+                source,
+                point_id="expensive",
+                starts_at=split,
+                ends_at=snapshot.captured_at + timedelta(hours=24),
+                value_eur_per_kwh=0.55,
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=_conversion(),
+    )
+
+    grid_route_ids = {
+        route.route_id for route in result.market_routes if route.route_kind == "grid_trade"
+    }
+    grid_assessments = tuple(
+        assessment
+        for assessment in result.route_assessments
+        if assessment.route_id in grid_route_ids
+    )
+    assert grid_assessments
+    assert all(
+        "baseline-household-support" in assessment.source_native_schedule_id
+        for assessment in grid_assessments
     )
 
 
@@ -999,12 +1068,10 @@ def test_pv_preservation_rule_projects_nom_onto_existing_market_route(
         portfolio.native_observation.observer_result.portfolio.strategy_results
     )
     assert native_schedules
-    baseline_trades = tuple(
-        assessment
+    assert all(
+        "hybrid-pv-grid" in assessment.source_native_schedule_id
         for assessment in grid_assessments
-        if "baseline-household-support" in assessment.source_native_schedule_id
     )
-    assert baseline_trades
     assert any(
         assessment.admitted
         and assessment.physically_admissible
@@ -1012,11 +1079,6 @@ def test_pv_preservation_rule_projects_nom_onto_existing_market_route(
             interval.intent is DailyStorageIntent.STORAGE_EXPORT
             for interval in assessment.intent_schedule.intervals
         )
-        for assessment in baseline_trades
-    )
-    assert all(
-        "hybrid-pv-grid" in assessment.source_native_schedule_id
-        or "baseline-household-support" in assessment.source_native_schedule_id
         for assessment in grid_assessments
     )
     assert snapshot.pv_energy_timeline is not None
@@ -1046,7 +1108,7 @@ def test_pv_preservation_rule_projects_nom_onto_existing_market_route(
                     DailyStorageIntent.GRID_REQUIREMENT,
                     DailyStorageIntent.STORAGE_EXPORT,
                 }
-    for assessment in baseline_trades:
+    for assessment in grid_assessments:
         for interval in assessment.intent_schedule.intervals:
             if any(
                 interval.starts_at < pv.ends_at and interval.ends_at > pv.starts_at

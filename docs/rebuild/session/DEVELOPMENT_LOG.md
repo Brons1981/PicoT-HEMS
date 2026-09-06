@@ -2382,3 +2382,22 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   ADR-019, ADR-021, ADR-022, ADR-028, ADR-034 and ADR-037 retain their existing
   ownership, while V2ADR-001 and V2ADR-055 retain single ingestion and sole MEP
   planning authority.
+
+## 2026-09-06 — 2.0.0-dev.241 energy-equivalent PV-first market route
+
+- Corrects the hybrid Candidate construction so residual grid charging can no
+  longer replace the NOM intervals that cover forecast PV surplus.
+- Builds `grid_trade` only on a bounded PV-first plus residual-grid parent when
+  such a complete path exists. The bare household baseline remains the fallback
+  for a no-PV situation, so valid winter grid trading is not removed.
+- Keeps the parent path's proven residual-grid segments when applying the
+  market overlay; only the explicit market charge and export are added.
+- Removes the former ambiguous nested parent-selection expression and retains
+  one explicit ownership chain: Candidate Generation forms the energy path,
+  MEP simulates it, Evaluation compares admitted paths, and commitment retains
+  the selected result.
+- Adds regressions for full-PV NOM precedence, equal-energy grid-trade parents,
+  target attainment across all PV scenarios, no-PV fallback, and the canonical
+  executable market path.
+- Does not add a planning loop, route family, timing search, User Rule, or
+  commitment override. Normative basis remains ADR-024, ADR-037 and ADR-041.

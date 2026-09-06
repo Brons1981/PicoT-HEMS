@@ -26,7 +26,7 @@ from picot.planner.independent_daily_intent_simulator import (
 )
 from picot.planner.independent_daily_simulator import ScenarioTimeline
 
-METHOD_VERSION = "independent-daily-charge-window-discoverer:v4"
+METHOD_VERSION = "independent-daily-charge-window-discoverer:v5"
 BASELINE_INTENT = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
 CHARGE_INTENTS = (
     DailyStorageIntent.NOM,
@@ -528,6 +528,15 @@ class IndependentDailyChargeWindowDiscoverer:
         grid_end_index: int,
         label: str,
     ) -> DailyReferenceIntentSchedule:
+        def intent_for_interval(index: int) -> DailyStorageIntent:
+            """Keep forecast PV first and add only residual grid recovery."""
+
+            if index < nom_end_index:
+                return DailyStorageIntent.NOM
+            if grid_start_index <= index < grid_end_index:
+                return DailyStorageIntent.GRID_REQUIREMENT
+            return BASELINE_INTENT
+
         return DailyReferenceIntentSchedule(
             schedule_id=(
                 f"daily-charge:{snapshot_id}:hybrid-pv-grid:"
@@ -541,13 +550,7 @@ class IndependentDailyChargeWindowDiscoverer:
                 DailyReferenceIntentInterval(
                     starts_at=item.starts_at,
                     ends_at=item.ends_at,
-                    intent=(
-                        DailyStorageIntent.GRID_REQUIREMENT
-                        if grid_start_index <= index < grid_end_index
-                        else DailyStorageIntent.NOM
-                        if index < nom_end_index
-                        else BASELINE_INTENT
-                    ),
+                    intent=intent_for_interval(index),
                 )
                 for index, item in enumerate(household.intervals)
             ),

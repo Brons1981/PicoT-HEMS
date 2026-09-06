@@ -43,7 +43,7 @@ from picot.v2.opportunity_engine import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_generation", __name__)
-METHOD_VERSION = "market-daily-planner:v12"
+METHOD_VERSION = "market-daily-planner:v13"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
@@ -1859,6 +1859,25 @@ class MarketDailyPlanner:
                 dict.fromkeys(item[1] for item in representatives.values())
             )
 
+        def applicable_parent_results(
+            route: MarketCapacityRoute,
+        ) -> tuple[DailyReferenceStrategyResult, ...]:
+            """Select energy-path parents before applying one market overlay."""
+
+            if route.route_kind in {"pv_surplus_export", "daily_export_chain"}:
+                return (pv_first_result,) if pv_first_result is not None else ()
+            if route.route_kind in {"stored_energy_export", "negative_capacity"}:
+                return (baseline_result,)
+
+            hybrid_parents = representative_hybrid_parents(route)
+            if route.route_kind == "grid_trade" and hybrid_parents:
+                # Grid trade is an overlay on the already formed PV-first plus
+                # residual-grid acquisition path. Also assessing the bare
+                # household baseline creates a second, lower-energy route and
+                # lets finance compare non-equivalent storage positions.
+                return hybrid_parents
+            return (baseline_result, *hybrid_parents)
+
         assessments: list[MarketRouteAssessment] = []
         for route in routes:
             # Stored-inventory export and negative-capacity routes already
@@ -1869,20 +1888,7 @@ class MarketDailyPlanner:
             # Acquisition-linked trade routes retain the hybrid parents added
             # by DEV.215 so PV + residual grid + evening trade remains a
             # first-class complete Energy Path.
-            hybrid_parents = representative_hybrid_parents(route)
-            applicable_parents = (
-                (pv_first_result,)
-                if route.route_kind
-                in {"pv_surplus_export", "daily_export_chain"}
-                and pv_first_result is not None
-                else ()
-                if route.route_kind
-                in {"pv_surplus_export", "daily_export_chain"}
-                else
-                (baseline_result,)
-                if route.route_kind in {"stored_energy_export", "negative_capacity"}
-                else (baseline_result, *hybrid_parents)
-            )
+            applicable_parents = applicable_parent_results(route)
             simulated_by_effective_path: dict[
                 tuple[tuple[datetime, datetime, str, float], ...],
                 DailyReferenceStrategyResult,
@@ -2071,17 +2077,22 @@ class MarketDailyPlanner:
                     ends_at=item.ends_at,
                 )
             )
-            intent = (
-                DailyStorageIntent.GRID_REQUIREMENT
-                if inside_explicit_charge
-                else DailyStorageIntent.STORAGE_EXPORT
-                if (item.starts_at, item.ends_at) in export_targets
-                else DailyStorageIntent.NOM
-                if inside_projected_pv
-                else DailyStorageIntent.NOM
-                if inside_pv_preference_window
-                else item.intent
-            )
+            if inside_explicit_charge:
+                intent = DailyStorageIntent.GRID_REQUIREMENT
+            elif (item.starts_at, item.ends_at) in export_targets:
+                intent = DailyStorageIntent.STORAGE_EXPORT
+            elif inside_projected_pv:
+                intent = DailyStorageIntent.NOM
+            elif (
+                inside_pv_preference_window
+                and item.intent is not DailyStorageIntent.GRID_REQUIREMENT
+            ):
+                intent = DailyStorageIntent.NOM
+            else:
+                # A market overlay may add its explicit charge and export,
+                # but it must not erase residual grid energy already proven
+                # necessary by the PV-first parent path.
+                intent = item.intent
             if (
                 intent is DailyStorageIntent.NOM
                 and final_export_end is not None

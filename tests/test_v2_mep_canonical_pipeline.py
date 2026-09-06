@@ -532,7 +532,7 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
         for state in path.projected_states
         if state.battery_soc is not None and state.storage_energy_wh is not None
     )
-    charge_index = next(
+    charge_candidates = tuple(
         (path, index)
         for path in market_paths
         for index, segment in enumerate(path.segments)
@@ -540,14 +540,28 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
         and segment.starts_at >= midday_pv.intervals[13].ends_at
         and segment.ends_at <= cheap_window_end - timedelta(minutes=15)
     )
-    path, charge_index = charge_index
+    assert charge_candidates
+    path, charge_index = max(
+        charge_candidates,
+        key=lambda item: item[0].segments[item[1]].starts_at,
+    )
     segments = path.segments
     charge = segments[charge_index]
     pv_peak_starts_at = midday_pv.intervals[10].starts_at
     pv_peak_ends_at = midday_pv.intervals[13].ends_at
     assert charge.starts_at > snapshot.captured_at
-    assert segments[charge_index - 1].starts_at <= pv_peak_starts_at
-    assert pv_peak_ends_at <= segments[charge_index - 1].ends_at
+    assert any(
+        segment.primitive.value == "balance_bidirectional"
+        and segment.starts_at <= pv_peak_starts_at
+        and pv_peak_ends_at <= segment.ends_at
+        for segment in segments
+    )
+    assert all(
+        segment.ends_at <= pv_peak_starts_at
+        or segment.starts_at >= pv_peak_ends_at
+        for segment in segments
+        if segment.primitive.value == "charge_at_power"
+    )
     assert charge.ends_at <= cheap_window_end - timedelta(minutes=15)
     assert charge.ends_at - charge.starts_at < timedelta(hours=12)
     assert charge.requested_power_w == 2400.0

@@ -258,6 +258,13 @@ def test_discoverer_builds_pv_first_hybrid_with_only_residual_grid_recovery() ->
         maximum_discharge_output_power_w=2400.0,
     )
 
+    assert result.hybrid_schedules
+    assert all(
+        tuple(interval.intent for interval in schedule.intervals[:3])
+        == (DailyStorageIntent.NOM,) * 3
+        for schedule in result.hybrid_schedules
+    )
+
     hybrid = next(
         schedule
         for schedule in result.hybrid_schedules

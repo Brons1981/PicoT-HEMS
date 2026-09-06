@@ -21,7 +21,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/picot"]
+packages = ["src/picot", "src/picot_energy_devices"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

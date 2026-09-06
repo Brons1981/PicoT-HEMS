@@ -92,6 +92,12 @@ def test_main_starts_one_web_server_before_pipeline_loop(
         "USER_RULES_PATH",
         tmp_path / "picot_v2_user_rules.json",
     )
+    monkeypatch.setattr(
+        live_runtime,
+        "ENERGY_DEVICE_PLACEMENTS_PATH",
+        tmp_path / "picot_v2_energy_device_placements.json",
+    )
+
     class StopLoop(Exception):
         pass
 
@@ -119,6 +125,11 @@ def test_main_starts_one_web_server_before_pipeline_loop(
         },
     )
     monkeypatch.setattr(live_runtime, "_start_web_server", fake_start)
+    monkeypatch.setattr(
+        live_runtime,
+        "_start_energy_device_catalog_observer",
+        lambda **kwargs: object(),
+    )
     monkeypatch.setattr(live_runtime, "_poll_live_cycle", stop_poll)
 
     with pytest.raises(StopLoop):
@@ -135,9 +146,10 @@ def test_main_starts_one_web_server_before_pipeline_loop(
         "picot_v2_storage_mode_transition_history.jsonl",
         "picot_v2_active_plan_commitments.json",
         "picot_v2_active_plan_commitment_incidents.jsonl",
-            "picot_v2_financial_results.json",
-            "picot_v2_user_rules.json",
-        ]
+        "picot_v2_financial_results.json",
+        "picot_v2_user_rules.json",
+        "picot_v2_energy_device_placements.json",
+    ]
     assert stores[0].incident_history_path() == (
         live_runtime.PLANNING_INCIDENT_HISTORY_PATH
     )

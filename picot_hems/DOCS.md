@@ -61,6 +61,18 @@ iedere onderzochte marktroute de herstelprijs, RTE-correctie, handelsmarge,
 slijtage en de daaruit volgende minimale exportprijs. Zo blijft zichtbaar waarom
 de gewijzigde instelling een route wel of niet toelaat.
 
+## Optionele energie-apparaatkaarten
+
+Wanneer de afzonderlijke add-on **PicoT Energy Devices** actief is, verschijnen
+zijn kaarten automatisch onder **PicoT Pipeline → Apparaten**. De catalogus is
+optioneel: PicoT plant en werkt normaal wanneer de add-on ontbreekt of tijdelijk
+niet beschikbaar is.
+
+Een kaart kan door de gebruiker op de prijs-/planningstijdlijn worden geplaatst.
+In DEV.238 zijn die plaatsingen uitsluitend zichtbaar en duurzaam opgeslagen;
+ze veranderen nog geen MEP-plan. Daardoor kan eerst betrouwbare apparaatdata
+worden verzameld zonder de live planner te beïnvloeden.
+
 ## Kleine topsessies
 
 `micro_charge_suppression_percent` bepaalt vanaf welk resterend percentage PicoT

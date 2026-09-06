@@ -2360,3 +2360,21 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   dispatch. Ruff and mypy are green on all changed source files. CI and live
   execution remain to be verified.
 - Normative basis remains exclusively ADR-001 through ADR-037.
+
+## 2026-09-06 — 2.0.0-dev.239 preserve safe daily market chain
+
+- Keeps an admitted zero-grid export chain valid when it deliberately finishes
+  below the effective maximum SoC while still satisfying the household energy
+  requirement and reserve in every simulated scenario.
+- Prevents the general ADR-037 maximum-target preference from invalidating the
+  V2ADR-058 exception for protected stored/PV energy immediately before a
+  profitable export segment.
+- Shares one explicit set of maximum-restoration-optional route kinds between
+  physical market admission and canonical Candidate Outcome validation, so the
+  two layers cannot silently apply different restoration semantics.
+- Adds a 36-hour regression with 95% measured SoC, an imminent export today,
+  limited PV tomorrow and a second export tomorrow. The combined route remains
+  valid and wins financially even though it does not return to 100% SoC.
+- Routes that miss the household target, violate reserve, are physically
+  inadmissible or require normal acquisition/recovery remain subject to the
+  existing maximum-target and safety checks.

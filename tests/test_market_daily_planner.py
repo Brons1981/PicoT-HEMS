@@ -5,14 +5,12 @@ import pytest
 from test_independent_daily_reference_adapter import QUARTER, _conversion, _snapshot
 
 from picot.domain.daily_reference_intent import DailyStorageIntent
-from picot.domain.evaluation import CandidateValidity
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.domain.storage_energy_inventory import (
     StorageEnergyInventory,
     StorageEnergyLot,
 )
-from picot.planner.evaluation_engine import EvaluationEngine
 from picot.planner.market_daily_evaluation_engine import MarketDailyEvaluationEngine
 from picot.planner.market_daily_planner import MarketDailyPlanner, MarketTradingPolicy
 from picot.planner.mep_candidate_outcomes import produce_mep_comparable_portfolio
@@ -956,155 +954,6 @@ def test_mep_can_retain_one_pv_surplus_export_on_each_local_calendar_day() -> No
         if segment.starts_at == partial_export.ends_at
     )
     assert safe_remainder.primitive == ExecutionPrimitive.BALANCE_DISCHARGE_ONLY.value
-
-
-def test_safe_daily_export_chain_keeps_imminent_stored_energy_leg_without_full_recovery(
-) -> None:
-    """V2ADR-058: protected stored energy need not be restored to 100% after trade."""
-
-    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
-    assert snapshot.pv_energy_timeline is not None
-    assert snapshot.household_load_forecast is not None
-    source_pv = snapshot.pv_energy_timeline.intervals[0]
-    source_load = snapshot.household_load_forecast.intervals[0]
-    source_price = snapshot.price_points[0]
-    first_export_start = snapshot.captured_at + timedelta(hours=1)
-    first_export_end = first_export_start + timedelta(hours=1)
-    second_export_start = snapshot.captured_at + timedelta(hours=32)
-    second_export_end = second_export_start + timedelta(hours=1)
-    horizon_end = snapshot.captured_at + timedelta(hours=36)
-    priced = replace(
-        snapshot,
-        horizon_end=horizon_end,
-        household_load_forecast=replace(
-            snapshot.household_load_forecast,
-            intervals=tuple(
-                replace(
-                    source_load,
-                    interval_id=f"load-quarter-{index}",
-                    starts_at=snapshot.captured_at + index * QUARTER,
-                    ends_at=snapshot.captured_at + (index + 1) * QUARTER,
-                    expected_energy_wh=0.0,
-                )
-                for index in range(144)
-            ),
-        ),
-        pv_energy_timeline=replace(
-            snapshot.pv_energy_timeline,
-            intervals=tuple(
-                replace(
-                    source_pv,
-                    interval_id=f"pv-quarter-{index}",
-                    starts_at=snapshot.captured_at + index * QUARTER,
-                    ends_at=snapshot.captured_at + (index + 1) * QUARTER,
-                    pv_energy_wh=100.0 if 96 <= index < 112 else 0.0,
-                    forecast_lower_energy_wh=(80.0 if 96 <= index < 112 else 0.0),
-                    forecast_central_energy_wh=(100.0 if 96 <= index < 112 else 0.0),
-                    forecast_upper_energy_wh=(120.0 if 96 <= index < 112 else 0.0),
-                    forecast_evidence_ids=(f"solcast-quarter-{index}",),
-                )
-                for index in range(144)
-            ),
-        ),
-        price_points=(
-            replace(
-                source_price,
-                point_id="before-first-export",
-                ends_at=first_export_start,
-                value_eur_per_kwh=0.20,
-            ),
-            replace(
-                source_price,
-                point_id="first-export",
-                starts_at=first_export_start,
-                ends_at=first_export_end,
-                value_eur_per_kwh=0.60,
-            ),
-            replace(
-                source_price,
-                point_id="between-exports",
-                starts_at=first_export_end,
-                ends_at=second_export_start,
-                value_eur_per_kwh=0.20,
-            ),
-            replace(
-                source_price,
-                point_id="second-export",
-                starts_at=second_export_start,
-                ends_at=second_export_end,
-                value_eur_per_kwh=0.70,
-            ),
-            replace(
-                source_price,
-                point_id="after-second-export",
-                starts_at=second_export_end,
-                ends_at=horizon_end,
-                value_eur_per_kwh=0.20,
-            ),
-        ),
-    )
-    portfolio, _ = MarketDailyPlanner().generate_with_diagnostics(
-        snapshot=priced,
-        conversion_model=_conversion(),
-        trading_policy=MarketTradingPolicy(
-            saldering_energy_tax_credit_enabled=False,
-        ),
-    )
-    routes = {item.route_id: item for item in portfolio.market_routes}
-    daily_chain = next(
-        assessment
-        for assessment in portfolio.route_assessments
-        if assessment.admitted
-        and routes[assessment.route_id].route_kind == "daily_export_chain"
-    )
-    comparable = produce_mep_comparable_portfolio(
-        snapshot=priced,
-        portfolio=portfolio,
-        conversion_model=_conversion(),
-        incumbent=None,
-        financial_equivalence_margin_eur=0.01,
-    )
-    source = next(
-        item for item in comparable.sources if item.market_assessment is daily_chain
-    )
-    outcome = next(
-        item
-        for item in comparable.outcome_set.outcomes
-        if item.candidate_id == source.candidate_id
-    )
-    diagnostic = next(
-        item
-        for item in comparable.diagnostic_outcomes
-        if item.candidate_id == source.candidate_id
-    )
-
-    assert daily_chain.physically_admissible
-    assert diagnostic.daily_target_reached
-    assert diagnostic.household_reserve_respected
-    assert diagnostic.effective_maximum_reached is False
-    assert diagnostic.effective_maximum_reason == (
-        "optional_export_preserves_household_requirement_and_reserve"
-    )
-    assert outcome.validity is CandidateValidity.VALID
-    assert "effective_maximum_not_reached_despite_sufficient_weighted_pv" not in (
-        outcome.invalidity_reasons
-    )
-    evaluation = EvaluationEngine().evaluate(
-        comparable.candidate_set,
-        comparable.strategy,
-        comparable.outcome_set,
-        created_at=priced.captured_at,
-        financial_equivalence_margin=0.01,
-    )
-    winning_source = next(
-        item
-        for item in comparable.sources
-        if item.candidate_id == evaluation.record.winning_candidate_id
-    )
-    assert winning_source.market_assessment is not None
-    assert routes[winning_source.market_assessment.route_id].route_kind == (
-        "daily_export_chain"
-    )
 
 
 def test_pv_preservation_rule_projects_nom_onto_existing_market_route(

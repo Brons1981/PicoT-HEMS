@@ -62,6 +62,7 @@ from picot.planner.independent_daily_reference_portfolio import (
     IndependentDailyReferencePortfolioProducer,
 )
 from picot.planner.market_daily_planner import (
+    MAXIMUM_SOC_RESTORATION_OPTIONAL_ROUTE_KINDS,
     MarketDailyCandidatePortfolio,
     MarketRouteAssessment,
 )
@@ -82,7 +83,7 @@ from picot.v2.plan_commitment_store import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_outcomes", __name__)
-METHOD_VERSION = "mep-canonical-candidate-outcomes:v7"
+METHOD_VERSION = "mep-canonical-candidate-outcomes:v8"
 MAXIMUM_TARGET_TOLERANCE_WH = 1.0
 
 
@@ -931,6 +932,7 @@ def produce_mep_comparable_portfolio(
         baseline=baseline,
     )
     route_ids = {item.route_id: item.opportunity_ids for item in portfolio.market_routes}
+    route_kinds = {item.route_id: item.route_kind for item in portfolio.market_routes}
     reference = next(iter(native_results.values())).intent_schedule
     source_rows: list[MepCandidateSource] = []
     rows: list[_CandidateRow] = []
@@ -1121,7 +1123,19 @@ def produce_mep_comparable_portfolio(
             reasons.append("daily_storage_target_not_reached_by_deadline")
         maximum_evidence = effective_maximum_evidence[candidate_id]
         effective_maximum_reached = maximum_evidence.reached_at is not None
-        if pv_only_can_reach_effective_maximum and not effective_maximum_reached:
+        maximum_target_shortfall_permitted = (
+            market is not None
+            and market.admitted
+            and route_kinds.get(market.route_id)
+            in MAXIMUM_SOC_RESTORATION_OPTIONAL_ROUTE_KINDS
+            and daily_target_reached
+            and household_reserve_respected
+        )
+        if (
+            pv_only_can_reach_effective_maximum
+            and not effective_maximum_reached
+            and not maximum_target_shortfall_permitted
+        ):
             reasons.append(
                 "effective_maximum_not_reached_despite_sufficient_weighted_pv"
             )
@@ -1294,9 +1308,14 @@ def produce_mep_comparable_portfolio(
                 maximum_evidence.reached_at,
                 maximum_evidence.confidence,
                 (
-                    "weighted_pv_only_can_reach_effective_maximum"
-                    if pv_only_can_reach_effective_maximum
-                    else "weighted_pv_only_cannot_reach_effective_maximum"
+                    "optional_export_preserves_household_requirement_and_reserve"
+                    if maximum_target_shortfall_permitted
+                    and not effective_maximum_reached
+                    else (
+                        "weighted_pv_only_can_reach_effective_maximum"
+                        if pv_only_can_reach_effective_maximum
+                        else "weighted_pv_only_cannot_reach_effective_maximum"
+                    )
                 ),
                 effective_maximum_evidence_id,
             )

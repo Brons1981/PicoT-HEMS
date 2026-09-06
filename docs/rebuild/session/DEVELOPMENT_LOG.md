@@ -2382,3 +2382,21 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   ADR-019, ADR-021, ADR-022, ADR-028, ADR-034 and ADR-037 retain their existing
   ownership, while V2ADR-001 and V2ADR-055 retain single ingestion and sole MEP
   planning authority.
+
+## 2026-09-06 — 2.0.0-dev.239 preserve safe daily market chain
+
+- Keeps an admitted zero-grid export chain valid when it deliberately finishes
+  below the effective maximum SoC while still satisfying the household energy
+  requirement and reserve in every simulated scenario.
+- Prevents the general ADR-037 maximum-target preference from invalidating the
+  V2ADR-058 exception for protected stored/PV energy immediately before a
+  profitable export segment.
+- Shares one explicit set of maximum-restoration-optional route kinds between
+  physical market admission and canonical Candidate Outcome validation, so the
+  two layers cannot silently apply different restoration semantics.
+- Adds a 36-hour regression with 95% measured SoC, an imminent export today,
+  limited PV tomorrow and a second export tomorrow. The combined route remains
+  valid and wins financially even though it does not return to 100% SoC.
+- Routes that miss the household target, violate reserve, are physically
+  inadmissible or require normal acquisition/recovery remain subject to the
+  existing maximum-target and safety checks.

@@ -4,6 +4,20 @@ All notable project changes are recorded in this file.
 
 ## [Unreleased]
 
+### DEV.238
+
+- Voeg de zelfstandige, read-only Home Assistant-add-on **PicoT Energy
+  Devices** toe voor het registreren van vermogenssensoren, verzamelen van
+  sessies en leren van compacte apparaatkaarten.
+- Publiceer alleen een neutrale observer-catalogus; de app kent geen PV,
+  batterij, tarieven, MEP, commitments of uitvoering en bedient geen apparaten.
+- Toon nieuwe kaarten automatisch in het PicoT-dashboard en laat de gebruiker
+  ze expliciet en observer-only op de prijs-/planningstijdlijn plaatsen.
+- Houd de catalogus volledig buiten de Planning Input Snapshot. Een ontbrekende
+  of ongeldige app verandert geen plan, commitment, herplanning of uitvoering.
+- Leg deze grens vast in V2ADR-064; daadwerkelijke invloed op MEP blijft een
+  latere slice die eerst dubbeltelling met historisch huisverbruik moet oplossen.
+
 ### DEV.237
 
 - Behoud maximaal één geldige handelsroute per lokale kalenderdag, zodat een

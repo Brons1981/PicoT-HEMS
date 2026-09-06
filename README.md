@@ -39,6 +39,10 @@ Late Phase 3 — Core architecture implemented; authoritative observation ingest
 
 See [`docs/architecture/CLOSED_LOOP_READINESS_AUDIT_2026-08-12.md`](docs/architecture/CLOSED_LOOP_READINESS_AUDIT_2026-08-12.md) for the current readiness assessment.
 
+The add-on repository also contains **PicoT Energy Devices**, an independent
+read-only profile producer for user-selected Home Assistant power and energy
+sensors. PicoT remains fully functional when this optional add-on is absent.
+
 ## Core principles
 
 - Robust and verifiable before clever or extensive

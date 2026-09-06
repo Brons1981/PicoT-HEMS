@@ -36,6 +36,11 @@ from picot.v2.daily_pv_basis import (
     DailyPVBasisDecision,
     apply_daily_measured_pv_basis,
 )
+from picot.v2.energy_device_cards import (
+    EnergyDeviceCatalog,
+    EnergyDevicePlacementStore,
+    HomeAssistantEnergyDeviceCatalogReader,
+)
 from picot.v2.fast_grid_power_observation import FastGridPowerObserver
 from picot.v2.financial_result_ledger import FinancialResultLedger
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
@@ -168,6 +173,9 @@ MARKET_DAILY_LATEST_PATH = Path(
     "/data/picot_v2_market_daily_latest.json"
 )
 USER_RULES_PATH = Path("/data/picot_v2_user_rules.json")
+ENERGY_DEVICE_PLACEMENTS_PATH = Path(
+    "/data/picot_v2_energy_device_placements.json"
+)
 
 
 def _runtime_memory_kib() -> dict[str, int | None]:
@@ -1877,6 +1885,30 @@ def _start_fast_grid_power_observer(
     return thread
 
 
+def _start_energy_device_catalog_observer(
+    *,
+    reader: HomeAssistantEnergyDeviceCatalogReader,
+    interval_seconds: float,
+    publish: Callable[[EnergyDeviceCatalog], None],
+) -> Thread:
+    """Observe the optional card catalog outside every Planner Run."""
+
+    poll_delay = Event()
+
+    def observe() -> None:
+        while True:
+            publish(reader.read())
+            poll_delay.wait(interval_seconds)
+
+    thread = Thread(
+        target=observe,
+        name="picot-v2-energy-device-catalog",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 def _execute_planning_bundle(
     *,
     token: str,
@@ -2240,6 +2272,22 @@ def main() -> None:
     household_objective_profile = _household_objective_profile(options)
     adaptive_household_policy = _adaptive_household_policy(options)
     web_view_store = WebViewStore()
+    energy_device_placement_store = EnergyDevicePlacementStore(
+        ENERGY_DEVICE_PLACEMENTS_PATH
+    )
+    energy_device_catalog_lock = Lock()
+    energy_device_catalog_reader = HomeAssistantEnergyDeviceCatalogReader(
+        token,
+        str(
+            options.get(
+                "energy_device_catalog_entity",
+                "sensor.picot_energy_devices_catalog",
+            )
+        ).strip(),
+    )
+    latest_energy_device_catalog = energy_device_catalog_reader.unavailable(
+        "catalog not observed yet"
+    )
     planning_reset_requested = Event()
     planning_reset_barrier = PlanningResetBarrier()
     household_load_history = HouseholdLoadHistoryStore(
@@ -2348,6 +2396,7 @@ def main() -> None:
             ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
             FINANCIAL_RESULT_STATE_PATH,
             USER_RULES_PATH,
+            ENERGY_DEVICE_PLACEMENTS_PATH,
         ),
         incident_history_path=PLANNING_INCIDENT_HISTORY_PATH,
     )
@@ -2416,6 +2465,30 @@ def main() -> None:
 
     web_view_store.set_user_rule_update(update_user_rules)
     web_view_store.publish_user_rules(user_rule_store.current().as_public_dict())
+    web_view_store.publish_energy_device_placements(
+        energy_device_placement_store.public_view()
+    )
+
+    def update_energy_device_placements(
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        with energy_device_catalog_lock:
+            catalog = latest_energy_device_catalog
+        placements = energy_device_placement_store.update(
+            payload,
+            available_cards=catalog.cards,
+        )
+        web_view_store.publish_energy_device_placements(placements)
+        return {
+            "status": "energy_device_timeline_updated",
+            "energy_device_catalog": catalog.as_public_dict(),
+            "energy_device_placements": placements,
+            "planner_unchanged": True,
+        }
+
+    web_view_store.set_energy_device_placement_update(
+        update_energy_device_placements
+    )
     pv_sunset_local_timezone = str(
         options.get("pv_local_timezone", "Europe/Amsterdam")
     ).strip()
@@ -2507,6 +2580,17 @@ def main() -> None:
         )
 
     _start_web_server(web_view_store)
+    def publish_energy_device_catalog(catalog: EnergyDeviceCatalog) -> None:
+        nonlocal latest_energy_device_catalog
+        with energy_device_catalog_lock:
+            latest_energy_device_catalog = catalog
+        web_view_store.publish_energy_device_catalog(catalog.as_public_dict())
+
+    _start_energy_device_catalog_observer(
+        reader=energy_device_catalog_reader,
+        interval_seconds=60.0,
+        publish=publish_energy_device_catalog,
+    )
     grid_power_entity = str(
         options.get("p1_power_entity", "")
     ).strip()

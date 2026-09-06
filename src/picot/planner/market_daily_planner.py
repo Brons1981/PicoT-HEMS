@@ -45,13 +45,6 @@ from picot.v2.opportunity_engine import (
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_generation", __name__)
 METHOD_VERSION = "market-daily-planner:v12"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
-MAXIMUM_SOC_RESTORATION_OPTIONAL_ROUTE_KINDS = frozenset(
-    {
-        "stored_energy_export",
-        "pv_surplus_export",
-        "daily_export_chain",
-    }
-)
 
 
 def _household_energy_requirement_deadline(
@@ -2269,7 +2262,12 @@ class MarketDailyPlanner:
             item.physically_complete
             and item.reserve_respected
             and (
-                route.route_kind in MAXIMUM_SOC_RESTORATION_OPTIONAL_ROUTE_KINDS
+                route.route_kind
+                in {
+                    "stored_energy_export",
+                    "pv_surplus_export",
+                    "daily_export_chain",
+                }
                 or item.storage_energy_at_horizon_end_wh + 1e-6
                 >= baseline_assessment[scenario].storage_energy_at_horizon_end_wh
             )

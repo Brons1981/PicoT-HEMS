@@ -2436,3 +2436,14 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Adds no route, planning loop, User Rule or commitment exception. The single
   source-independent trade hourglass and PV-first native planning ownership
   introduced by DEV.242 remain unchanged.
+
+
+## 2026-09-07 — MEP-2026-09-07 gekoppelde ADR-voorstellen
+
+- Gebruiker bevestigt dev.243 live. Actieve documentatiebranch: docs/session-2026-09-07-linked-adrs.
+- Uitsluitend ADR-001 t/m ADR-037 door gebruiker bevestigd als geaccepteerd en bevroren. Latere ADR/V2ADR-acceptatieteksten hierboven zijn historische verslagen, geen autoriteit voor deze nieuwe sessiereeks.
+- Toegevoegd: ADR-037.1 (dagelijks laadcommitment) en ADR-019.1 (handel als gebruikersregel met optioneel herstel), plus SESSION-2026-09-07-ADR-INDEX.md.
+- Status PROPOSED: sessieafspraken gedocumenteerd; exacte tekst nog ter beoordeling. Geen broncode, runtime of bestaande ADR gewijzigd.
+- Documentatiecommits tot 39e2d19b2a03035053edff5f9da70fa52c515e16 aangemaakt; geen CI- of live-verificatie van nieuwe functionaliteit.
+- Open specificatiepunten staan in beide voorstellen en mogen niet met verborgen defaults worden ingevuld.
+- Eerstvolgende actie: documenten beoordelen; daarnaast dev.243 observeren op de aangekondigde dag met weinig PV. Dit is een test van huidige code, niet van de nog niet geïmplementeerde ADR-voorstellen.

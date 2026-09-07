@@ -2447,3 +2447,13 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Documentatiecommits tot 39e2d19b2a03035053edff5f9da70fa52c515e16 aangemaakt; geen CI- of live-verificatie van nieuwe functionaliteit.
 - Open specificatiepunten staan in beide voorstellen en mogen niet met verborgen defaults worden ingevuld.
 - Eerstvolgende actie: documenten beoordelen; daarnaast dev.243 observeren op de aangekondigde dag met weinig PV. Dit is een test van huidige code, niet van de nog niet geïmplementeerde ADR-voorstellen.
+
+
+## 2026-09-07 — Acceptatie gekoppelde ADR's en start planningsherbouw
+
+- Gebruiker bevestigt vastlegging en start. ADR-037.1 en ADR-019.1 zijn ACCEPTED voor hun beschreven besluiten; expliciete open specificatiepunten blijven open.
+- ADR-001..037 blijven bevroren. Latere ADR's/V2ADR's krijgen geen impliciete autoriteit.
+- Pipeline behouden; geen reeks symptoomfixes op live dev.243. Toegevoegd MEP_REBUILD_START_2026-09-07.md met scope, eerste bronoorzaak en HA-verificatiematrix.
+- Diagnose run-51f77f69d6acd6b6 toont hybride NOM-voorrang die middagnetladen verhindert en vroege verwijdering van grid-alternatieven; commitment behoudt een gelijkwaardig opnieuw berekend avondpad.
+- Status: documentatie vastgelegd tot commit 6f2c08322f2ecbe304116b35f1b461a7f562d38d. Geen productiecode gewijzigd, geen tests uitgevoerd voor nieuwe functionaliteit, geen CI/LIVE-verificatie daarvan.
+- Eerste volgende actie: open contractspecificaties afronden en simulator/planner/commitmentgrenzen gericht inventariseren voor de eerste complete laadcyclus.

@@ -27,3 +27,7 @@ Geen van deze documenten verklaart de huidige MEP-code correct of reeds overeenk
 ## Acceptatie en verificatie — 2026-09-07
 
 De gebruiker heeft vastlegging en een start van de herbouw bevestigd. Acceptatie geldt voor de beschreven besluiten; open punten zijn geen impliciete implementatiekeuzes. De bestaande pipeline blijft behouden. Nieuwe planning geldt pas als LIVE_VERIFIED na controle via de werkelijke Home Assistant-keten. Offline succes alleen is onvoldoende. Opeenvolgende beslismomenten, opgeslagen commitments en herstarts horen bij de verificatie. Geen dagelijkse symptoomfixes op dev.243 als vervanging van de samenhangende herbouw.
+
+## Aanvullende precisering
+
+[ADR-037.2 — Leveringsdaggrens](ADR-037.2-delivery-day-boundary.md) is ACCEPTED: de gepubliceerde lokale leveringsdag begrenst de dagelijkse verplichting. ADR-037.1 blijft bevroren; zijn open periodepunt is hiermee gesloten.

@@ -2509,3 +2509,11 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Gebruiker bevestigt werkelijke PV op of onder LOWER (<=), niet 'rond LOWER'. Bovengrens blijft boven CENTRAL (>).
 - Alleen relevante uitvoeringsgevolgen leiden tot routeaanpassing. Open punt rond LOWER gesloten; vergelijkingsperiode en meetgaten nog uitwerken.
 - ADR-reeks en index bijgewerkt; geen runtimewijziging of nieuwe verificatieclaim.
+
+
+### ADR-019.2 — handelsomvang en spread bevestigd
+
+- Gebruiker bevestigt volume-afhankelijke spread: energiegewogen duur ontlaadvenster versus goedkoop fictief laadreferentievenster. Geen enkele hoogste/laagste kwartiervergelijking.
+- Handelspercentage betreft bruikbare capaciteit (voorbeeld 25% van 8,16 kWh = 2,04 kWh); percentage en minimumspread zijn gebruikersvelden.
+- Fictief referentieladen bepaalt geen werkelijke energiebron en creëert geen laadsegment. Werkelijk herstel en EUR 0,05/kWh nettomarge blijven afzonderlijke optionele toets.
+- Vastgelegd ADR-019.2; geen codewijziging of live-verificatie.

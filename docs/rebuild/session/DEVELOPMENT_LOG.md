@@ -2483,3 +2483,12 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Aanvullende/overbruggingssegmenten tellen niet, ook niet bij 100%. Hoofdopdrachtidentiteit blijft behouden tijdens optimalisatie en herstarts.
 - Toegevoegd ADR-037.3 zonder bevroren teksten te herschrijven. Geen runtimewijziging of verificatieclaim.
 - Open spanning expliciet benoemd: hoofdsegment mist 100% en aanvullend segment bereikt het wel. Aanvulling mag volgens de nieuwe afspraak niet afvinken; afhandeling nog uitwerken vóór implementatie.
+
+
+### ADR-037.4 — aangescherpt hoofdopdrachtcontract
+
+- Gebruiker bevestigt één blijvende hoofdopdracht met 100% in het gunstigste haalbare venster; route mag veranderen van PV-only naar lang NOM plus benodigde netaanvulling.
+- Netaanvulling om hoofdopdracht te voltooien hoort bij de afvinkbare route. Aparte overbrugging niet. Dit sluit de open spanning uit ADR-037.3.
+- Relevante SOC-afwijking, huisbelasting en mee-/tegenvallende PV zijn energietriggers; geen volledige herselectie zonder relevante gevolgen.
+- Toegevoegd ADR-037.4 zonder geaccepteerde teksten te herschrijven. Status DECIDED, geen runtimewijziging of CI/LIVE-verificatie.
+- Volgende stap: expliciete materialiteitscriteria/forecastbasis en afhandeling reeds vol bij start hoofdroute, eerste start en ontbrekende publicatie uitwerken.

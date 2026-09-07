@@ -41,3 +41,5 @@ De gebruiker heeft vastlegging en een start van de herbouw bevestigd. Acceptatie
 [ADR-037.6 — Expliciete PV-grenzen](ADR-037.6-explicit-pv-comparison-boundaries.md) is ACCEPTED: op of onder LOWER (<=), boven CENTRAL (>), over dezelfde verstreken periode. Vervangt 'rond LOWER' in ADR-037.5.
 
 [ADR-019.2 — Handelsomvang en fictieve referentiespread](ADR-019.2-volume-based-reference-spread.md) is ACCEPTED: vrij instelbaar capaciteitpercentage en minimumspread over passende energiegewogen vensters; goedkoop referentievenster is geen laadopdracht.
+
+[ADR-037.7 — Gemiste prijspublicatie](ADR-037.7-missed-publication-recovery.md) is ACCEPTED: bij opstart beschikbare leveringsdagen vergelijken met bestaande opdrachten; herstellen of eenmaal aanmaken, met NOM bij ontbrekende planningsgegevens.

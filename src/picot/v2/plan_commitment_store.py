@@ -11,8 +11,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from picot.architecture_ownership import architecture_ownership
+from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.daily_reference_charge_window import DailyMainChargeWindow
-from picot.domain.execution_plan import ExecutionPlan
+from picot.domain.energy_path import SocConstraint
+from picot.domain.execution_plan import ExecutionPlan, ExecutionPlanLifecycle, ExecutionPlanSegment
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.daily_charge_assignment import (
     DailyChargeAssignment,
     DailyChargeRevisionReason,
@@ -388,8 +391,8 @@ class ActivePlanCommitmentStore:
         """Bind explicit winning source segments, never infer ownership from mode.
 
         The canonical Plan Builder supplies the plan and its source-path IDs.
-        This records an initial main route; it does not complete the daily goal
-        from a forecast or replace an already bound route without a trigger.
+        The full immutable execution plan and ownership are written atomically.
+        This does not admit execution or complete the daily goal from a forecast.
         """
         assignment = next(
             (a for a in self.load_daily_assignments() if a.assignment_id == window.assignment_id),
@@ -412,19 +415,78 @@ class ActivePlanCommitmentStore:
         main_segments = tuple(
             DailyChargeSegment(s.segment_id, s.starts_at, s.ends_at) for s in matched
         )
-        if assignment.route_plan_id == plan.plan_id and assignment.main_segments == main_segments:
-            return assignment
-        if assignment.revision:
+        same_binding = (
+            assignment.route_plan_id == plan.plan_id and assignment.main_segments == main_segments
+        )
+        if same_binding and (plan.evaluation_id, plan.created_at) != (
+            assignment.revision_evidence_id, assignment.revised_at,
+        ):
+            raise ValueError("winning plan does not match the stored daily revision evidence")
+        if assignment.revision and not same_binding:
             raise ValueError("bound daily main route requires an explicit optimisation trigger")
-        bound = assignment.bind_main_route(
+        bound = assignment if same_binding else assignment.bind_main_route(
             plan_id=plan.plan_id,
             segments=main_segments,
             at=plan.created_at,
             reason=DailyChargeRevisionReason.INITIAL,
             evidence_id=plan.evaluation_id,
         )
-        self.save_daily_assignment(bound)
+        payload = self._load_payload()
+        plans = payload.setdefault("daily_execution_plans", {})
+        if not isinstance(plans, dict):
+            raise ValueError("daily execution plans must be an object")
+        serialized = _serialize_execution_plan(plan)
+        previous = plans.get(bound.assignment_id)
+        if previous is not None and previous != serialized:
+            raise ValueError("stored daily execution plan is immutable; revision required")
+        if same_binding and previous == serialized:
+            return bound
+        plans[bound.assignment_id] = serialized
+        payload.setdefault("daily_assignments", {})[bound.assignment_id] = _serialize_daily(bound)
+        self._write(payload)
         return bound
+
+    def load_daily_main_plan(self, assignment_id: str) -> ExecutionPlan | None:
+        """Recover the exact main route, without selecting or admitting execution.
+
+        A bound assignment without its plan is an explicit recovery error, not
+        permission to replace the route. Older identity-only records are kept.
+        """
+        assignment = next(
+            (a for a in self.load_daily_assignments() if a.assignment_id == assignment_id), None
+        )
+        if assignment is None:
+            raise ValueError("daily assignment does not exist")
+        try:
+            records = self._load_payload().get("daily_execution_plans", {})
+            if not isinstance(records, dict):
+                raise ValueError("daily execution plans must be an object")
+            raw = records.get(assignment_id)
+            if assignment.route_plan_id is None:
+                if raw is not None:
+                    raise ValueError("unbound daily assignment has an execution plan")
+                return None
+            if raw is None:
+                raise ValueError("bound daily assignment has no stored execution plan")
+            plan = _deserialize_execution_plan(raw)
+            if (plan.plan_id, plan.execution_scope_id, plan.evaluation_id, plan.created_at) != (
+                assignment.route_plan_id, assignment.execution_scope_id,
+                assignment.revision_evidence_id, assignment.revised_at,
+            ):
+                raise ValueError("stored execution plan does not match daily ownership")
+            segments = {s.segment_id: s for s in plan.segments}
+            for main in assignment.main_segments:
+                segment = segments.get(main.segment_id)
+                if segment is None or (segment.starts_at, segment.ends_at) != (
+                    main.starts_at, main.ends_at,
+                ):
+                    raise ValueError("stored execution plan does not preserve main segments")
+            return plan
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            self._record_incident("daily_main_plan_unreadable", exc)
+            raise ValueError(
+                "daily main plan unreadable; refusing to invent a replacement"
+            ) from exc
 
     def clear(self, execution_scope_id: str) -> None:
         payload = self._load_payload()
@@ -647,6 +709,44 @@ def _deserialize(payload: dict[str, Any]) -> ActivePlanCommitment:
             for item in payload.get("pv_preservation_dates", ())
         ),
     )
+
+
+def _serialize_execution_plan(plan: ExecutionPlan) -> dict[str, Any]:
+    record = asdict(plan)
+    for field in ("created_at", "valid_from", "valid_until"):
+        record[field] = getattr(plan, field).isoformat()
+    for segment in record["segments"]:
+        for field in ("starts_at", "ends_at"):
+            segment[field] = segment[field].isoformat()
+        segment["evidence_ids"] = list(segment["evidence_ids"])
+    # JSON normalization also prevents tuple/list differences from defeating
+    # idempotence immediately after an on-disk round trip.
+    return cast(dict[str, Any], json.loads(json.dumps(record)))
+
+
+def _deserialize_execution_plan(record: dict[str, Any]) -> ExecutionPlan:
+    data = dict(record)
+    for field in ("created_at", "valid_from", "valid_until"):
+        data[field] = datetime.fromisoformat(data[field])
+    data["lifecycle"] = ExecutionPlanLifecycle(data["lifecycle"])
+    segments = []
+    for raw in data["segments"]:
+        item = dict(raw)
+        for field in ("starts_at", "ends_at"):
+            item[field] = datetime.fromisoformat(item[field])
+        item["primitive"] = ExecutionPrimitive(item["primitive"])
+        item["charge_source_policy"] = (
+            ChargeSourcePolicy(item["charge_source_policy"])
+            if item["charge_source_policy"] is not None else None
+        )
+        item["soc_constraint"] = (
+            SocConstraint(**item["soc_constraint"])
+            if item["soc_constraint"] is not None else None
+        )
+        item["evidence_ids"] = tuple(item["evidence_ids"])
+        segments.append(ExecutionPlanSegment(**item))
+    data["segments"] = tuple(segments)
+    return ExecutionPlan(**data)
 
 
 def _serialize_daily(assignment: DailyChargeAssignment) -> dict[str, Any]:

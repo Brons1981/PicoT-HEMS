@@ -2436,3 +2436,92 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Adds no route, planning loop, User Rule or commitment exception. The single
   source-independent trade hourglass and PV-first native planning ownership
   introduced by DEV.242 remain unchanged.
+
+
+## 2026-09-07 — MEP-2026-09-07 gekoppelde ADR-voorstellen
+
+- Gebruiker bevestigt dev.243 live. Actieve documentatiebranch: docs/session-2026-09-07-linked-adrs.
+- Uitsluitend ADR-001 t/m ADR-037 door gebruiker bevestigd als geaccepteerd en bevroren. Latere ADR/V2ADR-acceptatieteksten hierboven zijn historische verslagen, geen autoriteit voor deze nieuwe sessiereeks.
+- Toegevoegd: ADR-037.1 (dagelijks laadcommitment) en ADR-019.1 (handel als gebruikersregel met optioneel herstel), plus SESSION-2026-09-07-ADR-INDEX.md.
+- Status PROPOSED: sessieafspraken gedocumenteerd; exacte tekst nog ter beoordeling. Geen broncode, runtime of bestaande ADR gewijzigd.
+- Documentatiecommits tot 39e2d19b2a03035053edff5f9da70fa52c515e16 aangemaakt; geen CI- of live-verificatie van nieuwe functionaliteit.
+- Open specificatiepunten staan in beide voorstellen en mogen niet met verborgen defaults worden ingevuld.
+- Eerstvolgende actie: documenten beoordelen; daarnaast dev.243 observeren op de aangekondigde dag met weinig PV. Dit is een test van huidige code, niet van de nog niet geïmplementeerde ADR-voorstellen.
+
+
+## 2026-09-07 — Acceptatie gekoppelde ADR's en start planningsherbouw
+
+- Gebruiker bevestigt vastlegging en start. ADR-037.1 en ADR-019.1 zijn ACCEPTED voor hun beschreven besluiten; expliciete open specificatiepunten blijven open.
+- ADR-001..037 blijven bevroren. Latere ADR's/V2ADR's krijgen geen impliciete autoriteit.
+- Pipeline behouden; geen reeks symptoomfixes op live dev.243. Toegevoegd MEP_REBUILD_START_2026-09-07.md met scope, eerste bronoorzaak en HA-verificatiematrix.
+- Diagnose run-51f77f69d6acd6b6 toont hybride NOM-voorrang die middagnetladen verhindert en vroege verwijdering van grid-alternatieven; commitment behoudt een gelijkwaardig opnieuw berekend avondpad.
+- Status: documentatie vastgelegd tot commit 6f2c08322f2ecbe304116b35f1b461a7f562d38d. Geen productiecode gewijzigd, geen tests uitgevoerd voor nieuwe functionaliteit, geen CI/LIVE-verificatie daarvan.
+- Eerste volgende actie: open contractspecificaties afronden en simulator/planner/commitmentgrenzen gericht inventariseren voor de eerste complete laadcyclus.
+
+
+### Vervolg — eerste hergebruikinventarisatie
+
+- Gelezen op main: independent_daily_intent_simulator.py en plan_commitment_store.py.
+- De intent-simulator accepteert een volledig opgegeven schema, actuele opslag, huisvraag, PV-scenario's, conversiemodel en vermogensgrenzen. Vensterselectie staat daarbuiten: kandidaat voor gericht hergebruik, nog niet numeriek/live geverifieerd.
+- ActivePlanCommitment bewaart plansegmenten, oude prognose en SOC-checkpoints, maar heeft geen expliciete dagelijkse publicatie-identiteit of blijvende waargenomen doelbehaald-status. Dit is de concrete uitbreidingsbehoefte binnen bestaande opslag.
+- De simulator begrenst ontlading op de minimumreserve en wijst resterende huisvraag aan het net toe. Alleen minimum-SOC controleren kan daardoor ongepland netverbruik missen; bewaking moet de resulterende netvraag en energietekort meenemen zonder een nieuw hard verbod op huisimport in te voeren.
+- Open ontwerpkeuze: periode koppelen aan de gepubliceerde leveringsdag of exact 24 uur vanaf publicatie. Voorstel ter bespreking: leveringsdag met vaste lokale grenzen; publicatie is alleen startsein. Nog niet besloten of geïmplementeerd.
+
+
+### Bevestigd: leveringsdag als doelperiode
+
+- Toegevoegd geaccepteerd ADR-037.2, sessiereeks MEP-2026-09-07, zonder bevroren ADR-037.1 te herschrijven.
+- Gepubliceerde lokale leveringsdag 00:00–00:00; publicatiemoment start de planning maar niet de doelperiode. Klokwisseldagen volgen 23/25 uur.
+- Resterend vandaag plus morgen is ongeveer 36 uur. Lopend commitment behouden; voltooiing wordt niet gereset door opnieuw ontvangen prijzen.
+- Uitsluitend documentatie, geen runtimewijziging of nieuwe verificatieclaim.
+- Volgende specificatiepunten: doelwaarneming bij start met volle batterij, ontbrekende publicatie/eerste start en grenzen van segmentaanpassing.
+
+
+### ADR-037.3 — hoofdopdracht is enige eigenaar van doelvoltooiing
+
+- Gebruiker verwerpt automatisch afvinken bij volle batterij aan begin leveringsdag. Alleen de na prijspublicatie oorspronkelijk vastgelegde hoofdopdracht kan het dagdoel voltooien.
+- Aanvullende/overbruggingssegmenten tellen niet, ook niet bij 100%. Hoofdopdrachtidentiteit blijft behouden tijdens optimalisatie en herstarts.
+- Toegevoegd ADR-037.3 zonder bevroren teksten te herschrijven. Geen runtimewijziging of verificatieclaim.
+- Open spanning expliciet benoemd: hoofdsegment mist 100% en aanvullend segment bereikt het wel. Aanvulling mag volgens de nieuwe afspraak niet afvinken; afhandeling nog uitwerken vóór implementatie.
+
+
+### ADR-037.4 — aangescherpt hoofdopdrachtcontract
+
+- Gebruiker bevestigt één blijvende hoofdopdracht met 100% in het gunstigste haalbare venster; route mag veranderen van PV-only naar lang NOM plus benodigde netaanvulling.
+- Netaanvulling om hoofdopdracht te voltooien hoort bij de afvinkbare route. Aparte overbrugging niet. Dit sluit de open spanning uit ADR-037.3.
+- Relevante SOC-afwijking, huisbelasting en mee-/tegenvallende PV zijn energietriggers; geen volledige herselectie zonder relevante gevolgen.
+- Toegevoegd ADR-037.4 zonder geaccepteerde teksten te herschrijven. Status DECIDED, geen runtimewijziging of CI/LIVE-verificatie.
+- Volgende stap: expliciete materialiteitscriteria/forecastbasis en afhandeling reeds vol bij start hoofdroute, eerste start en ontbrekende publicatie uitwerken.
+
+
+### ADR-037.5 — expliciete PV-basis en terugval
+
+- Gebruiker bevestigt (LOWER + CENTRAL) / 2 zonder extra confidence-weging.
+- Snellere SOC-stijging alleen geeft geen herplanning. Onvoldoende PV voor het bestaande laadsegment geeft optimalisatie; rond LOWER of boven CENTRAL geeft beoordeling op uitvoeringsgevolgen.
+- Werkelijke PV-energie vergelijken over exact dezelfde verstreken periode; geen losse vermogensmeting.
+- Werkelijke 100% bij start hoofdsegment mag hoofdopdracht afvinken. Alleen 100% bij middernacht/overbrugging blijft onvoldoende.
+- Ontbrekende planningsgegevens: NOM, behoud commitment, bestaande uitvoeringsgrenzen respecteren.
+- Status DECIDED; documentatie toegevoegd, geen runtime gewijzigd of live geverifieerd. Exacte vergelijkingsperiode, betekenis rond LOWER en meetgaten blijven expliciete specificatiepunten.
+
+
+### ADR-037.6 — grens verduidelijkt
+
+- Gebruiker bevestigt werkelijke PV op of onder LOWER (<=), niet 'rond LOWER'. Bovengrens blijft boven CENTRAL (>).
+- Alleen relevante uitvoeringsgevolgen leiden tot routeaanpassing. Open punt rond LOWER gesloten; vergelijkingsperiode en meetgaten nog uitwerken.
+- ADR-reeks en index bijgewerkt; geen runtimewijziging of nieuwe verificatieclaim.
+
+
+### ADR-019.2 — handelsomvang en spread bevestigd
+
+- Gebruiker bevestigt volume-afhankelijke spread: energiegewogen duur ontlaadvenster versus goedkoop fictief laadreferentievenster. Geen enkele hoogste/laagste kwartiervergelijking.
+- Handelspercentage betreft bruikbare capaciteit (voorbeeld 25% van 8,16 kWh = 2,04 kWh); percentage en minimumspread zijn gebruikersvelden.
+- Fictief referentieladen bepaalt geen werkelijke energiebron en creëert geen laadsegment. Werkelijk herstel en EUR 0,05/kWh nettomarge blijven afzonderlijke optionele toets.
+- Vastgelegd ADR-019.2; geen codewijziging of live-verificatie.
+
+
+### ADR-037.7 — gemiste prijspublicatie en opstart
+
+- Gebruiker bevestigt dat bestaande prijzen bij opstart voldoende aanleiding zijn om een ontbrekende dagelijkse hoofdopdracht alsnog te maken.
+- Leveringsdag per scope is de identiteit, niet ontvangsttijd. Bestaande opdracht en voltooiing herstellen; geen duplicaten of verzonnen eerdere voltooiing.
+- Late start gebruikt resterende haalbare vensters; onhaalbaarheid expliciet melden. Ontbrekende planningsgegevens geven NOM-terugval.
+- Documentatie bijgewerkt; implementatie en live-verificatie staan nog open. Volgende stap blijft eerste complete hoofdlaadcyclus binnen bestaande pipeline, met dev.243-casus en opeenvolgende HA-beslismomenten.

@@ -2401,3 +2401,25 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
   executable market path.
 - Does not add a planning loop, route family, timing search, User Rule, or
   commitment override. Normative basis remains ADR-024, ADR-037 and ADR-041.
+
+## 2026-09-07 — 2.0.0-dev.242 single market-trade hourglass
+
+- Accepts V2ADR-065 and replaces the overlapping PV, stored-energy,
+  grid-recovery and daily-chain export routes with one source-independent
+  `grid_trade` decision. The route name denotes grid export and no longer
+  implies or creates a grid-charge session.
+- Uses one projected availability budget above the physical and configured
+  reserves, one configured trading-SoC hourglass and one best peak-anchored
+  export window across the planning horizon.
+- Values recovery once from the canonical native plan. Forecast PV contributes
+  zero cost and residual grid input contributes its actual interval tariff, so
+  PV-only, mixed and grid-only days use the same energy-weighted calculation.
+- The market overlay changes only the selected export interval. It cannot add,
+  shorten or replace NOM or net-loading intervals; those remain exclusively
+  owned by the canonical Candidate path.
+- Removes `pv_trade`, `pv_trade_grid_recovery`, `pv_surplus_export`,
+  `stored_energy_export`, `daily_export_chain`, their route-parent matrix and
+  horizon-end equality exception matrix. `negative_capacity` remains separate.
+- Keeps one scenario assessment per retained route. Storage inventory origin is
+  no longer a route dependency, while full physical simulation and reserve
+  protection remain mandatory.

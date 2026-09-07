@@ -33,3 +33,5 @@ De gebruiker heeft vastlegging en een start van de herbouw bevestigd. Acceptatie
 [ADR-037.2 — Leveringsdaggrens](ADR-037.2-delivery-day-boundary.md) is ACCEPTED: de gepubliceerde lokale leveringsdag begrenst de dagelijkse verplichting. ADR-037.1 blijft bevroren; zijn open periodepunt is hiermee gesloten.
 
 [ADR-037.3 — Voltooiing door hoofdlaadopdracht](ADR-037.3-main-charge-completion.md) is ACCEPTED en beperkt de voltooiingsregel uit ADR-037.1/037.2: alleen de oorspronkelijke hoofdopdracht kan afvinken; aanvullende segmenten nooit.
+
+[ADR-037.4 — Blijvende hoofdopdracht en flexibele route](ADR-037.4-stable-main-assignment-flexible-route.md) is ACCEPTED. Behoud betreft opdrachtidentiteit, niet segmentindeling. Hoofdroute-netaanvulling kan bijdragen aan voltooiing; aparte overbrugging niet. Relevante SOC-, huisbelasting- en PV-veranderingen rechtvaardigen routeoptimalisatie.

@@ -40,7 +40,7 @@ from picot.v2.opportunity_engine import (
 )
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("mep_candidate_generation", __name__)
-METHOD_VERSION = "market-daily-planner:v14"
+METHOD_VERSION = "market-daily-planner:v15"
 MARKET_DAILY_MAXIMUM_DURATION = timedelta(hours=36)
 
 
@@ -689,7 +689,7 @@ class MarketDailyPlanner:
         recovery_result: DailyReferenceStrategyResult,
         *,
         tariffs: DailyReferenceTariffSchedule,
-    ) -> float:
+    ) -> float | None:
         """Value PV, mixed and grid recovery as one weighted input price."""
 
         lower = next(
@@ -697,7 +697,6 @@ class MarketDailyPlanner:
             for item in recovery_result.run.simulation.trajectories
             if item.scenario is PVScenario.LOWER
         )
-        tariff_by_interval = {(item.starts_at, item.ends_at): item for item in tariffs.intervals}
         pv_input_wh = sum(item.pv_to_storage_input_wh for item in lower.intervals)
         grid_input_wh = sum(item.grid_to_storage_input_wh for item in lower.intervals)
         total_input_wh = pv_input_wh + grid_input_wh
@@ -705,14 +704,51 @@ class MarketDailyPlanner:
             # Existing projected surplus has no acquisition dependency. Its
             # historic source is deliberately irrelevant to this trade.
             return 0.0
-        grid_cost_eur = sum(
-            item.grid_to_storage_input_wh
-            / 1000.0
-            * tariff_by_interval[(item.starts_at, item.ends_at)].import_eur_per_kwh
-            for item in lower.intervals
-            if item.grid_to_storage_input_wh > 0.0
-        )
+        grid_cost_eur = 0.0
+        for item in lower.intervals:
+            if item.grid_to_storage_input_wh <= 0.0:
+                continue
+            import_rate = MarketDailyPlanner._overlap_weighted_import_rate(
+                starts_at=item.starts_at,
+                ends_at=item.ends_at,
+                tariffs=tariffs,
+            )
+            if import_rate is None:
+                # A missing tariff slice may suppress this optional market
+                # comparison, but it must never invalidate the native plan.
+                return None
+            grid_cost_eur += item.grid_to_storage_input_wh / 1000.0 * import_rate
         return grid_cost_eur / (total_input_wh / 1000.0)
+
+    @staticmethod
+    def _overlap_weighted_import_rate(
+        *,
+        starts_at: datetime,
+        ends_at: datetime,
+        tariffs: DailyReferenceTariffSchedule,
+    ) -> float | None:
+        """Return the time-weighted tariff across one simulated interval."""
+
+        duration_seconds = (ends_at - starts_at).total_seconds()
+        if duration_seconds <= 0.0:
+            return None
+        covered_seconds = 0.0
+        weighted_rate_seconds = 0.0
+        for tariff in tariffs.intervals:
+            if tariff.ends_at <= starts_at:
+                continue
+            if tariff.starts_at >= ends_at:
+                break
+            overlap_start = max(starts_at, tariff.starts_at)
+            overlap_end = min(ends_at, tariff.ends_at)
+            overlap_seconds = (overlap_end - overlap_start).total_seconds()
+            if overlap_seconds <= 0.0:
+                continue
+            covered_seconds += overlap_seconds
+            weighted_rate_seconds += tariff.import_eur_per_kwh * overlap_seconds
+        if abs(covered_seconds - duration_seconds) > 1e-6:
+            return None
+        return weighted_rate_seconds / duration_seconds
 
     @staticmethod
     def _storage_energy_at(
@@ -864,11 +900,15 @@ class MarketDailyPlanner:
         # value its future recovery mix. It never creates a charge route of its
         # own: normal PV-first planning remains responsible for PV, mixed or
         # grid-only recovery after the bounded export hourglass is consumed.
+        if not high_windows:
+            return tuple(result), False
         recovery_result = MarketDailyPlanner._representative_recovery_result(native_observation)
         recovery_rate = MarketDailyPlanner._weighted_recovery_rate(
             recovery_result,
             tariffs=tariffs,
         )
+        if recovery_rate is None:
+            return tuple(result), False
         rte = conversion_model.charge_efficiency * conversion_model.discharge_efficiency
         minimum_export_rate = trading_policy.minimum_export_rate(recovery_rate, rte)
         trade_candidates: list[tuple[float, float, MarketCapacityRoute]] = []

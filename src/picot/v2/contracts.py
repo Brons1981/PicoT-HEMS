@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import PathSegment, ProjectedEnergyState
+from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.v2.daily_charge_assignment import DailyChargeAssignment
 from picot.v2.household_planning_regime import (
     HouseholdPlanningRegime,
     UserObjectiveProfile,
@@ -628,6 +630,45 @@ class StorageRoundTripEfficiencyEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class DailyChargePlanningContext:
+    """Restored daily ownership; saved plans are evidence, not execution admission."""
+
+    snapshot_id: str
+    restored_at: datetime
+    timezone: str
+    status: str
+    reason: str | None
+    assignments: tuple[DailyChargeAssignment, ...] = ()
+    main_plans: tuple[CanonicalExecutionPlan, ...] = ()
+    duration_ms: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.status not in {"ready", "blocked"}:
+            raise ValueError("daily charge recovery status must be ready or blocked")
+        if self.status == "blocked" and not self.reason:
+            raise ValueError("blocked daily charge recovery requires a reason")
+        if self.restored_at.tzinfo is None or self.restored_at.utcoffset() is None:
+            raise ValueError("daily charge recovery time must be timezone-aware")
+        if not isfinite(self.duration_ms) or self.duration_ms < 0:
+            raise ValueError("daily charge recovery duration must be finite and non-negative")
+        ids = tuple(a.assignment_id for a in self.assignments)
+        if len(ids) != len(set(ids)):
+            raise ValueError("daily charge recovery must not duplicate assignments")
+        plans = {p.plan_id: p for p in self.main_plans}
+        if len(plans) != len(self.main_plans):
+            raise ValueError("daily charge recovery must not duplicate plans")
+        owners = {a.route_plan_id: a for a in self.assignments if a.route_plan_id is not None}
+        if set(plans) - set(owners):
+            raise ValueError("recovered plan requires its daily owner")
+        if self.status == "ready" and set(plans) != set(owners):
+            raise ValueError("ready daily charge recovery requires every bound plan")
+        for owner in self.assignments:
+            plan = plans.get(owner.route_plan_id) if owner.route_plan_id is not None else None
+            if plan is not None and plan.execution_scope_id != owner.execution_scope_id:
+                raise ValueError("recovered plan scope must match its daily owner")
+
+
+@dataclass(frozen=True, slots=True)
 class PlanningInputSnapshot:
     run_id: str
     snapshot_id: str
@@ -651,8 +692,14 @@ class PlanningInputSnapshot:
     storage_round_trip_efficiency: StorageRoundTripEfficiencyEvidence | None = None
     active_plan_commitments: tuple[ActivePlanCommitment, ...] = ()
     household_unexpected_reserve_fraction: float = 0.10
+    daily_charge_context: DailyChargePlanningContext | None = None
 
     def __post_init__(self) -> None:
+        if self.daily_charge_context is not None and (
+            self.daily_charge_context.snapshot_id != self.snapshot_id
+            or self.daily_charge_context.restored_at != self.captured_at
+        ):
+            raise ValueError("daily charge recovery must belong to this Planning Input")
         if not 0.0 <= self.household_unexpected_reserve_fraction <= 1.0:
             raise ValueError("household unexpected reserve must be between 0 and 1")
         scope_ids = tuple(

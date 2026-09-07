@@ -535,6 +535,14 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         live_runtime.PlanningIncidentHistory,
     )
     executed_bundle, diagnostics = executed[0]
+    daily_context = executed_bundle.snapshot.daily_charge_context
+    assert daily_context is not None
+    assert daily_context.snapshot_id == executed_bundle.snapshot.snapshot_id
+    assert daily_context.restored_at == executed_bundle.snapshot.captured_at
+    # This fixture has no storage scope. The live preparation must still carry
+    # an explicit recovery status, not silently omit the daily input boundary.
+    assert daily_context.status == "blocked"
+    assert daily_context.reason == "daily_charge_execution_scope_unavailable"
     assert executed_bundle.snapshot.pv_energy_timeline is not None
     actual, future = (
         executed_bundle.snapshot.pv_energy_timeline.intervals

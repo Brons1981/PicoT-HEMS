@@ -23,6 +23,7 @@ from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from picot.architecture_ownership import architecture_ownership
+from picot.domain.execution_plan import ExecutionPlan
 from picot.domain.runtime import RuntimeObservation
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.market_daily_planner import MarketTradingPolicy
@@ -31,7 +32,12 @@ from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
     HomeAssistantCanonicalModeAdapter,
 )
-from picot.v2.contracts import CanonicalPipelineRun, PlanningInputSnapshot
+from picot.v2.contracts import (
+    CanonicalPipelineRun,
+    DailyChargePlanningContext,
+    PlanningInputSnapshot,
+)
+from picot.v2.daily_charge_assignment import DailyChargeAssignment
 from picot.v2.daily_pv_basis import (
     DailyPVBasisDecision,
     apply_daily_measured_pv_basis,
@@ -826,6 +832,23 @@ def _planning_input_signature(
             }
             for commitment in active_commitments
         ],
+        "daily_charge_recovery": (
+            {
+                "status": daily_context.status,
+                "reason": daily_context.reason,
+                "timezone": daily_context.timezone,
+                "assignments": [
+                    {
+                        "assignment_id": a.assignment_id,
+                        "revision": a.revision,
+                        "route_plan_id": a.route_plan_id,
+                        "completed_at": a.completed_at.isoformat() if a.completed_at else None,
+                    }
+                    for a in daily_context.assignments
+                ],
+            }
+            if (daily_context := bundle.snapshot.daily_charge_context) is not None else None
+        ),
         "bms_calibration": (
             {
                 "status": calibration.status,
@@ -864,6 +887,78 @@ def _observer_input_signature(bundle: PlanningInputBundle) -> str:
         replace(bundle, facts=observer_facts),
         retain_active_commitment=False,
     )
+
+
+def _restore_daily_charge_context(
+    snapshot: PlanningInputSnapshot,
+    store: ActivePlanCommitmentStore,
+    *,
+    local_timezone: ZoneInfo,
+) -> PlanningInputSnapshot:
+    """Read daily ownership into fresh input, recovering missed publications.
+
+    No candidate generation, execution admission or SOC completion occurs here.
+    Original plan snapshot lineage is preserved inside the recovery context.
+    """
+    started = perf_counter()
+    assignments: tuple[DailyChargeAssignment, ...] = ()
+    plans: list[ExecutionPlan] = []
+    status, reason = "ready", None
+    scopes = {
+        state.execution_scope_id for state in snapshot.current_storage_states
+    } | {limits.execution_scope_id for limits in snapshot.storage_physical_limits}
+    # A sample just before midnight can still belong to yesterday's main
+    # segment. Keep that owner available; never infer completion here.
+    earliest_observation = min(
+        (s.measured_at for s in snapshot.current_storage_states),
+        default=snapshot.captured_at,
+    )
+    try:
+        existing = store.load_daily_assignments()
+        assignments = tuple(
+            a for a in existing
+            if a.execution_scope_id in scopes and a.ends_at >= earliest_observation
+        )
+        for assignment in assignments:
+            if assignment.route_plan_id is not None:
+                plan = store.load_daily_main_plan(assignment.assignment_id)
+                if plan is not None:
+                    previous = next((p for p in plans if p.plan_id == plan.plan_id), None)
+                    if previous is not None and previous != plan:
+                        raise ValueError("daily_charge_shared_plan_content_conflict")
+                    if previous is None:
+                        plans.append(plan)
+        if not scopes:
+            raise ValueError("daily_charge_execution_scope_unavailable")
+        if any(
+            not isfinite(p.value_eur_per_kwh) or not p.evidence_id.strip()
+            for p in snapshot.price_points
+        ):
+            raise ValueError("daily_charge_published_prices_invalid")
+        for scope in sorted(scopes):
+            store.reconcile_daily_publication(
+                now=snapshot.captured_at,
+                timezone=local_timezone.key,
+                execution_scope_id=scope,
+                price_intervals=tuple((p.starts_at, p.ends_at) for p in snapshot.price_points),
+            )
+        assignments = tuple(
+            a for a in store.load_daily_assignments()
+            if a.execution_scope_id in scopes and a.ends_at >= earliest_observation
+        )
+    except (ValueError, OSError) as exc:
+        status, reason = "blocked", str(exc) or exc.__class__.__name__
+    context = DailyChargePlanningContext(
+        snapshot_id=snapshot.snapshot_id,
+        restored_at=snapshot.captured_at,
+        timezone=local_timezone.key,
+        status=status,
+        reason=reason,
+        assignments=assignments,
+        main_plans=tuple(plans),
+        duration_ms=round((perf_counter() - started) * 1000, 3),
+    )
+    return replace(snapshot, daily_charge_context=context)
 
 
 def _restore_active_plan_commitments(
@@ -1697,6 +1792,29 @@ def _with_planning_input_diagnostics(
                 daily_pv_basis_decision.method_version
             ),
         }
+    daily_context = bundle.snapshot.daily_charge_context
+    daily_attributes = (
+        {
+            "daily_charge_recovery_status": daily_context.status,
+            "daily_charge_recovery_reason": daily_context.reason,
+            "daily_charge_recovery_ms": daily_context.duration_ms,
+            "daily_charge_timezone": daily_context.timezone,
+            "daily_charge_assignments": [
+                {
+                    "assignment_id": a.assignment_id,
+                    "delivery_date": a.delivery_date.isoformat(),
+                    "revision": a.revision,
+                    "route_plan_id": a.route_plan_id,
+                    "completed_at": a.completed_at.isoformat() if a.completed_at else None,
+                    "completion_evidence_id": a.completion_evidence_id,
+                    "main_segment_ids": [s.segment_id for s in a.main_segments],
+                }
+                for a in daily_context.assignments
+            ],
+            "daily_charge_recovered_plan_ids": [p.plan_id for p in daily_context.main_plans],
+        }
+        if daily_context is not None else {}
+    )
     first = projection.cards[0]
     enriched = Card(
         first.entity_id,
@@ -1713,7 +1831,8 @@ def _with_planning_input_diagnostics(
             "price_point_count": len(bundle.snapshot.price_points),
             "sources": sources,
         }
-        | pv_actual_attributes,
+        | pv_actual_attributes
+        | daily_attributes,
     )
     return Projection(
         cards=(enriched, *projection.cards[1:]),
@@ -2637,7 +2756,11 @@ def main() -> None:
         bundle = replace(
             bundle,
             snapshot=_restore_active_plan_commitments(
-                bundle.snapshot,
+                _restore_daily_charge_context(
+                    bundle.snapshot,
+                    active_plan_commitment_store,
+                    local_timezone=pv_sunset_timezone,
+                ),
                 active_plan_commitment_store,
             ),
         )

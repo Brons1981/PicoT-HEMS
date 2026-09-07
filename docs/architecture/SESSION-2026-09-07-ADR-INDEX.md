@@ -1,7 +1,7 @@
 # Aanvullende ADR-reeks — MEP-2026-09-07
 
 Datum: 2026-09-07
-Status: documenten voorgesteld voor beoordeling; geen implementatieopdracht.
+Status: ACCEPTED — gebruiker heeft vastlegging en start van de afgebakende herbouw bevestigd.
 
 ## Bevroren basis
 
@@ -18,8 +18,12 @@ Na acceptatie blijven ook deze teksten bevroren; volgende wijzigingen krijgen ee
 
 | Nummer | Onderwerp | Status |
 | --- | --- | --- |
-| [ADR-037.1](ADR-037.1-daily-charge-commitment.md) | Dagelijkse laadverplichting, behoud basisplan en gerichte aanvulling | PROPOSED |
-| [ADR-019.1](ADR-019.1-user-rule-market-dispatch.md) | Handel als gebruikersopdracht, optioneel herstel en nettomarge | PROPOSED |
+| [ADR-037.1](ADR-037.1-daily-charge-commitment.md) | Dagelijkse laadverplichting, behoud basisplan en gerichte aanvulling | ACCEPTED |
+| [ADR-019.1](ADR-019.1-user-rule-market-dispatch.md) | Handel als gebruikersopdracht, optioneel herstel en nettomarge | ACCEPTED |
 
 De inhoud legt de besproken richting vast. Open specificatiepunten zijn expliciet gemarkeerd en niet stilzwijgend besloten.
 Geen van deze documenten verklaart de huidige MEP-code correct of reeds overeenkomstig geïmplementeerd.
+
+## Acceptatie en verificatie — 2026-09-07
+
+De gebruiker heeft vastlegging en een start van de herbouw bevestigd. Acceptatie geldt voor de beschreven besluiten; open punten zijn geen impliciete implementatiekeuzes. De bestaande pipeline blijft behouden. Nieuwe planning geldt pas als LIVE_VERIFIED na controle via de werkelijke Home Assistant-keten. Offline succes alleen is onvoldoende. Opeenvolgende beslismomenten, opgeslagen commitments en herstarts horen bij de verificatie. Geen dagelijkse symptoomfixes op dev.243 als vervanging van de samenhangende herbouw.

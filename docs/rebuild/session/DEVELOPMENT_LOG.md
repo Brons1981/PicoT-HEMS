@@ -2423,3 +2423,16 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Keeps one scenario assessment per retained route. Storage inventory origin is
   no longer a route dependency, while full physical simulation and reserve
   protection remain mandatory.
+
+## 2026-09-07 — 2.0.0-dev.243 overlapping-tariff recovery
+
+- Corrects the DEV.242 recovery valuation for live forecast intervals whose
+  boundaries differ by seconds from the wall-clock tariff quarters.
+- Values grid recovery with the duration-weighted import tariff across every
+  overlapping price slice instead of requiring an exact interval-key match.
+- Treats incomplete tariff coverage as unavailable evidence for the optional
+  `grid_trade` comparison. The canonical native plan remains executable and is
+  no longer blocked by this market-route valuation detail.
+- Adds no route, planning loop, User Rule or commitment exception. The single
+  source-independent trade hourglass and PV-first native planning ownership
+  introduced by DEV.242 remain unchanged.

@@ -5,6 +5,10 @@ import pytest
 from test_independent_daily_reference_adapter import QUARTER, _conversion, _snapshot
 
 from picot.domain.daily_reference_intent import DailyStorageIntent
+from picot.domain.daily_reference_tariff import (
+    DailyReferenceTariffInterval,
+    DailyReferenceTariffSchedule,
+)
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.domain.storage_energy_inventory import (
     StorageEnergyInventory,
@@ -1216,6 +1220,146 @@ def test_mep_uses_one_weighted_recovery_price_for_export() -> None:
     assessment = next(item for item in result.route_assessments if item.route_id == route.route_id)
     assert assessment.physically_admissible
     assert all(item.reserve_respected for item in assessment.scenario_evidence)
+
+
+def test_mep_weights_recovery_across_misaligned_tariff_boundaries() -> None:
+    """Live forecast boundaries need not equal wall-clock tariff quarters."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    assert snapshot.household_load_forecast is not None
+    assert snapshot.capability_snapshot_set is not None
+    offset = timedelta(seconds=23)
+    captured_at = snapshot.captured_at + offset
+    split = snapshot.captured_at + timedelta(hours=12)
+    source = snapshot.price_points[0]
+    shifted = replace(
+        snapshot,
+        captured_at=captured_at,
+        horizon_end=captured_at + timedelta(hours=36),
+        price_points=(
+            replace(source, point_id="cheap", ends_at=split, value_eur_per_kwh=0.05),
+            replace(
+                source,
+                point_id="expensive",
+                starts_at=split,
+                ends_at=snapshot.captured_at + timedelta(hours=24),
+                value_eur_per_kwh=0.55,
+            ),
+        ),
+        current_storage_states=tuple(
+            replace(item, measured_at=captured_at) for item in snapshot.current_storage_states
+        ),
+        household_load_forecast=replace(
+            snapshot.household_load_forecast,
+            intervals=tuple(
+                replace(
+                    item,
+                    starts_at=item.starts_at + offset,
+                    ends_at=item.ends_at + offset,
+                )
+                for item in snapshot.household_load_forecast.intervals
+            ),
+        ),
+        capability_snapshot_set=replace(
+            snapshot.capability_snapshot_set,
+            captured_at=captured_at,
+            capabilities=tuple(
+                replace(item, fresh_at=captured_at)
+                for item in snapshot.capability_snapshot_set.capabilities
+            ),
+        ),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=shifted,
+        conversion_model=_conversion(),
+    )
+
+    routes = tuple(item for item in result.market_routes if item.route_kind == "grid_trade")
+    assert len(routes) == 1
+    assert routes[0].average_recharge_eur_per_kwh > 0.0
+    assert result.route_assessments
+
+
+def test_mep_requires_complete_overlap_for_recovery_tariff_weighting() -> None:
+    starts_at = _snapshot().captured_at
+    split = starts_at + timedelta(minutes=10)
+    ends_at = starts_at + timedelta(minutes=30)
+    tariffs = DailyReferenceTariffSchedule(
+        schedule_id="tariffs",
+        snapshot_id="snapshot",
+        horizon_start=starts_at,
+        horizon_end=ends_at,
+        intervals=(
+            DailyReferenceTariffInterval(
+                starts_at=starts_at,
+                ends_at=split,
+                import_eur_per_kwh=0.10,
+                export_eur_per_kwh=0.0,
+                confidence=1.0,
+                evidence_ids=("first",),
+            ),
+            DailyReferenceTariffInterval(
+                starts_at=split,
+                ends_at=ends_at,
+                import_eur_per_kwh=0.40,
+                export_eur_per_kwh=0.0,
+                confidence=1.0,
+                evidence_ids=("second",),
+            ),
+        ),
+        method_version="test",
+    )
+
+    assert MarketDailyPlanner._overlap_weighted_import_rate(
+        starts_at=starts_at,
+        ends_at=ends_at,
+        tariffs=tariffs,
+    ) == pytest.approx(0.30)
+    assert (
+        MarketDailyPlanner._overlap_weighted_import_rate(
+            starts_at=starts_at - timedelta(seconds=1),
+            ends_at=ends_at,
+            tariffs=tariffs,
+        )
+        is None
+    )
+
+
+def test_mep_keeps_native_plan_when_market_recovery_rate_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    split = snapshot.captured_at + timedelta(hours=12)
+    source = snapshot.price_points[0]
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(source, point_id="cheap", ends_at=split, value_eur_per_kwh=0.05),
+            replace(
+                source,
+                point_id="expensive",
+                starts_at=split,
+                ends_at=snapshot.captured_at + timedelta(hours=24),
+                value_eur_per_kwh=0.55,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        MarketDailyPlanner,
+        "_weighted_recovery_rate",
+        staticmethod(lambda *args, **kwargs: None),
+    )
+
+    result = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=_conversion(),
+    )
+
+    assert result.market_routes == ()
+    assert result.route_assessments == ()
+    assert result.winning_source == "mep_native_plan"
+    assert result.native_observation.observer_result.candidate_set.candidates
 
 
 def test_mep_values_available_soc_independently_of_inventory_origin() -> None:

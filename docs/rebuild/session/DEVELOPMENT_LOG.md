@@ -2517,3 +2517,11 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Handelspercentage betreft bruikbare capaciteit (voorbeeld 25% van 8,16 kWh = 2,04 kWh); percentage en minimumspread zijn gebruikersvelden.
 - Fictief referentieladen bepaalt geen werkelijke energiebron en creëert geen laadsegment. Werkelijk herstel en EUR 0,05/kWh nettomarge blijven afzonderlijke optionele toets.
 - Vastgelegd ADR-019.2; geen codewijziging of live-verificatie.
+
+
+### ADR-037.7 — gemiste prijspublicatie en opstart
+
+- Gebruiker bevestigt dat bestaande prijzen bij opstart voldoende aanleiding zijn om een ontbrekende dagelijkse hoofdopdracht alsnog te maken.
+- Leveringsdag per scope is de identiteit, niet ontvangsttijd. Bestaande opdracht en voltooiing herstellen; geen duplicaten of verzonnen eerdere voltooiing.
+- Late start gebruikt resterende haalbare vensters; onhaalbaarheid expliciet melden. Ontbrekende planningsgegevens geven NOM-terugval.
+- Documentatie bijgewerkt; implementatie en live-verificatie staan nog open. Volgende stap blijft eerste complete hoofdlaadcyclus binnen bestaande pipeline, met dev.243-casus en opeenvolgende HA-beslismomenten.

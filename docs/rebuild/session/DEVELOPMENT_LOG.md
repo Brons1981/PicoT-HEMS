@@ -2475,3 +2475,11 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Resterend vandaag plus morgen is ongeveer 36 uur. Lopend commitment behouden; voltooiing wordt niet gereset door opnieuw ontvangen prijzen.
 - Uitsluitend documentatie, geen runtimewijziging of nieuwe verificatieclaim.
 - Volgende specificatiepunten: doelwaarneming bij start met volle batterij, ontbrekende publicatie/eerste start en grenzen van segmentaanpassing.
+
+
+### ADR-037.3 — hoofdopdracht is enige eigenaar van doelvoltooiing
+
+- Gebruiker verwerpt automatisch afvinken bij volle batterij aan begin leveringsdag. Alleen de na prijspublicatie oorspronkelijk vastgelegde hoofdopdracht kan het dagdoel voltooien.
+- Aanvullende/overbruggingssegmenten tellen niet, ook niet bij 100%. Hoofdopdrachtidentiteit blijft behouden tijdens optimalisatie en herstarts.
+- Toegevoegd ADR-037.3 zonder bevroren teksten te herschrijven. Geen runtimewijziging of verificatieclaim.
+- Open spanning expliciet benoemd: hoofdsegment mist 100% en aanvullend segment bereikt het wel. Aanvulling mag volgens de nieuwe afspraak niet afvinken; afhandeling nog uitwerken vóór implementatie.

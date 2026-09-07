@@ -2502,3 +2502,10 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Werkelijke 100% bij start hoofdsegment mag hoofdopdracht afvinken. Alleen 100% bij middernacht/overbrugging blijft onvoldoende.
 - Ontbrekende planningsgegevens: NOM, behoud commitment, bestaande uitvoeringsgrenzen respecteren.
 - Status DECIDED; documentatie toegevoegd, geen runtime gewijzigd of live geverifieerd. Exacte vergelijkingsperiode, betekenis rond LOWER en meetgaten blijven expliciete specificatiepunten.
+
+
+### ADR-037.6 — grens verduidelijkt
+
+- Gebruiker bevestigt werkelijke PV op of onder LOWER (<=), niet 'rond LOWER'. Bovengrens blijft boven CENTRAL (>).
+- Alleen relevante uitvoeringsgevolgen leiden tot routeaanpassing. Open punt rond LOWER gesloten; vergelijkingsperiode en meetgaten nog uitwerken.
+- ADR-reeks en index bijgewerkt; geen runtimewijziging of nieuwe verificatieclaim.

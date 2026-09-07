@@ -37,3 +37,5 @@ De gebruiker heeft vastlegging en een start van de herbouw bevestigd. Acceptatie
 [ADR-037.4 — Blijvende hoofdopdracht en flexibele route](ADR-037.4-stable-main-assignment-flexible-route.md) is ACCEPTED. Behoud betreft opdrachtidentiteit, niet segmentindeling. Hoofdroute-netaanvulling kan bijdragen aan voltooiing; aparte overbrugging niet. Relevante SOC-, huisbelasting- en PV-veranderingen rechtvaardigen routeoptimalisatie.
 
 [ADR-037.5 — PV-basis, triggers en terugval](ADR-037.5-pv-basis-triggers-and-fallback.md) is ACCEPTED: gemiddelde LOWER/CENTRAL, werkelijk energieverloop over dezelfde verstreken periode, 100% bij start hoofdsegment voltooit de opdracht, ontbrekende planningsgegevens geven NOM-terugval.
+
+[ADR-037.6 — Expliciete PV-grenzen](ADR-037.6-explicit-pv-comparison-boundaries.md) is ACCEPTED: op of onder LOWER (<=), boven CENTRAL (>), over dezelfde verstreken periode. Vervangt 'rond LOWER' in ADR-037.5.

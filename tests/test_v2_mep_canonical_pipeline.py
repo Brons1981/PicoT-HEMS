@@ -449,7 +449,7 @@ def test_dashboard_presents_mep_execution_plan_with_comparable_outcomes(
     assert view["planning_status"]["soc_timeline"] == expected_soc_timeline
 
 
-def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
+def test_canonical_market_plan_preserves_nom_during_pv_before_grid_subwindow(
     tmp_path,
 ) -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
@@ -568,7 +568,7 @@ def test_canonical_market_plan_preserves_nom_around_exact_grid_subwindow(
     assert charge.charge_source_policy is not None
     assert charge.charge_source_policy.value == "pv_preferred_grid_allowed"
     assert segments[charge_index - 1].primitive.value == "balance_bidirectional"
-    assert segments[charge_index + 1].primitive.value == "balance_bidirectional"
+    assert segments[charge_index + 1].primitive.value == "balance_discharge_only"
     assert segments[charge_index + 1].ends_at == cheap_window_end
 
     market_outcomes = tuple(

@@ -5,16 +5,12 @@ import pytest
 from test_independent_daily_reference_adapter import QUARTER, _conversion, _snapshot
 
 from picot.domain.daily_reference_intent import DailyStorageIntent
-from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.domain.storage_energy_inventory import (
     StorageEnergyInventory,
     StorageEnergyLot,
 )
-from picot.planner.market_daily_evaluation_engine import MarketDailyEvaluationEngine
 from picot.planner.market_daily_planner import MarketDailyPlanner, MarketTradingPolicy
-from picot.planner.mep_candidate_outcomes import produce_mep_comparable_portfolio
-from picot.v2.mep_canonical_pipeline import _committed_execution_segments
 
 
 def test_mep_trading_threshold_applies_margin_before_fixed_wear() -> None:
@@ -31,7 +27,7 @@ def test_mep_trading_policy_rejects_soc_budget_outside_user_rule_range() -> None
         MarketTradingPolicy(maximum_trading_soc_fraction=1.01)
 
 
-def test_mep_bounds_grid_charge_and_export_to_user_soc_budget() -> None:
+def test_mep_bounds_standalone_export_to_user_soc_budget() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     split = snapshot.captured_at + timedelta(hours=12)
     end = snapshot.captured_at + timedelta(hours=24)
@@ -62,15 +58,13 @@ def test_mep_bounds_grid_charge_and_export_to_user_soc_budget() -> None:
     assert len(routes) == 1
     route = routes[0]
     budget_stored_wh = 0.25 * snapshot.current_storage_states[0].usable_capacity_wh
-    assert route.maximum_charge_input_wh == pytest.approx(
-        budget_stored_wh / conversion.charge_efficiency
-    )
-    assert route.required_pre_window_discharge_output_wh == pytest.approx(
-        budget_stored_wh * conversion.discharge_efficiency
+    assert route.maximum_charge_input_wh == 0.0
+    assert route.required_pre_window_discharge_output_wh <= (
+        budget_stored_wh * conversion.discharge_efficiency + 1e-6
     )
 
 
-def test_mep_bounds_stored_export_after_household_path_and_reserves() -> None:
+def test_mep_bounds_trade_export_after_household_path_and_reserves() -> None:
     """ADR-017/037: trading cannot consume energy needed by the household path."""
 
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.64)
@@ -121,44 +115,24 @@ def test_mep_bounds_stored_export_after_household_path_and_reserves() -> None:
         conversion_model=conversion,
         trading_policy=policy,
     )
-    baseline_id = portfolio.native_observation.strategy_space.schedules[0].schedule_id
-    baseline = next(
-        item
-        for item in portfolio.native_observation.observer_result.portfolio.strategy_results
-        if item.intent_schedule.schedule_id == baseline_id
-    )
-    lower = next(
-        item
-        for item in baseline.run.simulation.trajectories
-        if item.scenario.value == "lower"
-    )
-    storage = snapshot.current_storage_states[0]
-    limits = snapshot.storage_physical_limits[0]
-    protected_end_wh = storage.usable_capacity_wh * (
-        limits.minimum_soc
-        + snapshot.household_unexpected_reserve_fraction
-        + policy.additional_reserve_fraction
-    )
-    household_safe_output_wh = max(
-        0.0,
-        (lower.intervals[-1].storage_energy_at_end_wh - protected_end_wh)
-        * conversion.discharge_efficiency,
-    )
-    routes = tuple(
-        item
-        for item in portfolio.market_routes
-        if item.route_kind == "stored_energy_export"
-    )
+    routes = tuple(item for item in portfolio.market_routes if item.route_kind == "grid_trade")
 
     assert routes
+    assert len(routes) == 1
+    assert routes[0].required_pre_window_discharge_output_wh <= (
+        snapshot.current_storage_states[0].usable_capacity_wh
+        * policy.maximum_trading_soc_fraction
+        * conversion.discharge_efficiency
+        + 1e-6
+    )
     assert all(
-        item.required_pre_window_discharge_output_wh
-        <= household_safe_output_wh + 1e-6
-        for item in routes
+        scenario.reserve_respected
+        for assessment in portfolio.route_assessments
+        for scenario in assessment.scenario_evidence
     )
 
 
-def test_stored_export_does_not_create_nom_without_pv() -> None:
+def test_trade_overlay_does_not_create_nom_without_pv() -> None:
     """ADR-024/031: an export opportunity is not evidence of available PV."""
 
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
@@ -213,21 +187,21 @@ def test_stored_export_does_not_create_nom_without_pv() -> None:
         conversion_model=_conversion(),
     )
     routes = {item.route_id: item for item in portfolio.market_routes}
-    stored = tuple(
+    trades = tuple(
         item
         for item in portfolio.route_assessments
-        if routes[item.route_id].route_kind == "stored_energy_export"
+        if routes[item.route_id].route_kind == "grid_trade"
     )
 
-    assert stored
+    assert trades
     assert all(
         interval.intent.value != "nom"
-        for assessment in stored
+        for assessment in trades
         for interval in assessment.intent_schedule.intervals
     )
 
 
-def test_mep_builds_native_plan_when_no_market_extension_applies() -> None:
+def test_mep_retains_native_plan_when_no_market_extension_is_admitted() -> None:
     snapshot = _snapshot(maximum_soc=0.7)
 
     result = MarketDailyPlanner().plan(
@@ -240,7 +214,7 @@ def test_mep_builds_native_plan_when_no_market_extension_applies() -> None:
     assert result.snapshot_id == snapshot.snapshot_id
     assert result.native_observation.observer_only is True
     assert result.native_observation.selection_permitted is False
-    assert result.market_routes == ()
+    assert all(not assessment.admitted for assessment in result.route_assessments)
     assert result.winning_source == "mep_native_plan"
     assert result.dispatch_authority is False
     assert result.reason == "no_admitted_market_route"
@@ -419,9 +393,7 @@ def test_mep_uses_published_market_prices_beyond_native_24_hours() -> None:
         conversion_model=_conversion(),
     )
 
-    assert result.native_observation.strategy_space.schedules[0].horizon_end == (
-        horizon_end
-    )
+    assert result.native_observation.strategy_space.schedules[0].horizon_end == (horizon_end)
 
 
 def test_mep_keeps_negative_tariffs_signed_in_its_native_plan() -> None:
@@ -503,8 +475,8 @@ def test_mep_reserves_the_full_physically_chargeable_negative_window_volume() ->
     assert result.current_interval_ends_at is not None
 
 
-def test_mep_grid_trade_uses_pv_first_hybrid_parent_when_available() -> None:
-    """ADR-024/037/041: compare trade on the complete acquisition path."""
+def test_mep_grid_trade_overlays_one_export_on_canonical_recovery_path() -> None:
+    """ADR-024/037/041: recovery stays owned by one canonical native path."""
 
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     split = snapshot.captured_at + timedelta(hours=12)
@@ -530,37 +502,74 @@ def test_mep_grid_trade_uses_pv_first_hybrid_parent_when_available() -> None:
     )
 
     grid_routes = tuple(item for item in result.market_routes if item.route_kind == "grid_trade")
-    assert grid_routes
-    assert all(route.window_ends_at <= route.export_window_starts_at for route in grid_routes)
+    assert len(grid_routes) == 1
+    assert all(
+        route.window_starts_at == route.export_window_starts_at
+        and route.window_ends_at == route.export_window_ends_at
+        and route.maximum_charge_input_wh == 0.0
+        for route in grid_routes
+    )
     grid_assessments = tuple(
         item
         for item in result.route_assessments
         if item.route_id in {route.route_id for route in grid_routes}
     )
-    assert grid_assessments
-    assert not any(
-        "baseline-household-support" in item.source_native_schedule_id
-        for item in grid_assessments
-    )
+    assert len(grid_assessments) == 1
+    assert grid_assessments[0].source_native_schedule_id in {
+        item.intent_schedule.schedule_id
+        for item in result.native_observation.observer_result.portfolio.strategy_results
+    }
+    assert all(item.physically_admissible for item in grid_assessments)
     assert all(
-        "hybrid-pv-grid" in item.source_native_schedule_id
-        for item in grid_assessments
-    )
-    assert all(item.admitted for item in grid_assessments)
-    assert all(
-        evidence.target_reached_during_horizon
+        evidence.reserve_respected
         for item in grid_assessments
         for evidence in item.scenario_evidence
     )
-    assert all(
-        item.worst_case_incremental_result_eur
-        >= item.minimum_total_route_profit_eur
-        for item in grid_assessments
+
+
+def test_mep_uses_one_source_independent_trade_route_without_legacy_variants() -> None:
+    """A market export is one bounded decision, not a recovery-route matrix."""
+
+    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
+    split = snapshot.captured_at + timedelta(hours=12)
+    source = snapshot.price_points[0]
+    priced = replace(
+        snapshot,
+        price_points=(
+            replace(source, point_id="cheap", ends_at=split, value_eur_per_kwh=0.05),
+            replace(
+                source,
+                point_id="expensive",
+                starts_at=split,
+                ends_at=snapshot.captured_at + timedelta(hours=24),
+                value_eur_per_kwh=0.55,
+            ),
+        ),
     )
 
+    portfolio, diagnostics = MarketDailyPlanner().generate_with_diagnostics(
+        snapshot=priced,
+        conversion_model=_conversion(),
+    )
 
-def test_mep_grid_trade_falls_back_to_baseline_when_pv_path_is_unavailable() -> None:
-    """A PV-first preference must not remove a valid no-PV grid trade."""
+    assert {route.route_kind for route in portfolio.market_routes}.issubset(
+        {"negative_capacity", "grid_trade"}
+    )
+    grid_routes = tuple(
+        route for route in portfolio.market_routes if route.route_kind == "grid_trade"
+    )
+    assert len(grid_routes) == 1
+    assessments = tuple(
+        item for item in portfolio.route_assessments if item.route_id == grid_routes[0].route_id
+    )
+    assert len(assessments) == 1
+    assert grid_routes[0].maximum_charge_input_wh == 0.0
+    assert all(evidence.reserve_respected for evidence in assessments[0].scenario_evidence)
+    assert diagnostics.route_assessment_count <= diagnostics.market_route_count
+
+
+def test_mep_grid_trade_uses_grid_recovery_when_pv_is_unavailable() -> None:
+    """A no-PV day prices recovery from the canonical grid-backed path."""
 
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     assert snapshot.pv_energy_timeline is not None
@@ -609,8 +618,16 @@ def test_mep_grid_trade_falls_back_to_baseline_when_pv_path_is_unavailable() -> 
     )
     assert grid_assessments
     assert all(
-        "baseline-household-support" in assessment.source_native_schedule_id
+        any(
+            interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+            for interval in assessment.intent_schedule.intervals
+        )
         for assessment in grid_assessments
+    )
+    assert all(
+        route.average_recharge_eur_per_kwh > 0.0
+        for route in result.market_routes
+        if route.route_kind == "grid_trade"
     )
 
 
@@ -661,8 +678,7 @@ def test_mep_combines_grid_trade_with_hybrid_pv_residual_grid_parent() -> None:
     )
     assert all(
         evidence.reserve_respected
-        and evidence.minimum_storage_energy_observed_wh
-        >= evidence.minimum_storage_energy_wh
+        and evidence.minimum_storage_energy_observed_wh >= evidence.minimum_storage_energy_wh
         for assessment in hybrid_trades
         for evidence in assessment.scenario_evidence
     )
@@ -678,8 +694,8 @@ def test_mep_combines_grid_trade_with_hybrid_pv_residual_grid_parent() -> None:
         )
 
 
-def test_mep_builds_pv_first_market_route_before_considering_grid_supplement() -> None:
-    """ADR-017/024/031/037: place NOM first, then trade stored PV without grid."""
+def test_mep_values_trade_from_pv_first_recovery_without_grid_supplement() -> None:
+    """ADR-017/024/031/037: place NOM first and value one export from it."""
 
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     assert snapshot.pv_energy_timeline is not None
@@ -809,32 +825,30 @@ def test_mep_builds_pv_first_market_route_before_considering_grid_supplement() -
     assert selected_nom[-1].ends_at <= pv_end
     assert len(selected_nom) == 14
 
-    pv_route_ids = {
-        route.route_id
-        for route in portfolio.market_routes
-        if route.route_kind == "pv_surplus_export"
-        and route.maximum_charge_input_wh == 0.0
-    }
-    assert pv_route_ids
-    pv_trade_assessments = tuple(
+    trade_routes = tuple(
+        route.route_id for route in portfolio.market_routes if route.route_kind == "grid_trade"
+    )
+    assert len(trade_routes) == 1
+    trade_assessments = tuple(
         assessment
         for assessment in portfolio.route_assessments
-        if assessment.route_id in pv_route_ids
-        and assessment.source_native_schedule_id
-        == selected_pv_first.intent_schedule.schedule_id
+        if assessment.route_id in trade_routes
+        and assessment.source_native_schedule_id == selected_pv_first.intent_schedule.schedule_id
     )
-    assert pv_trade_assessments
-    assert any(assessment.admitted for assessment in pv_trade_assessments)
+    assert len(trade_assessments) == 1
+    assert trade_assessments[0].admitted
     assert all(
         DailyStorageIntent.GRID_REQUIREMENT
         not in {interval.intent for interval in assessment.intent_schedule.intervals}
-        for assessment in pv_trade_assessments
+        for assessment in trade_assessments
     )
-    assert diagnostics.route_assessment_count <= diagnostics.market_route_count * 8
+    route = next(item for item in portfolio.market_routes if item.route_id == trade_routes[0])
+    assert route.average_recharge_eur_per_kwh == pytest.approx(0.0)
+    assert diagnostics.route_assessment_count <= diagnostics.market_route_count
 
 
-def test_mep_can_retain_one_pv_surplus_export_on_each_local_calendar_day() -> None:
-    """Two profitable trade days must not compete for one horizon-wide slot."""
+def test_mep_retains_only_the_best_export_hourglass_across_the_horizon() -> None:
+    """Multiple peaks produce one bounded trade rather than a daily route chain."""
 
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.9)
     assert snapshot.pv_energy_timeline is not None
@@ -872,15 +886,9 @@ def test_mep_can_retain_one_pv_surplus_export_on_each_local_calendar_day() -> No
                     starts_at=snapshot.captured_at + index * QUARTER,
                     ends_at=snapshot.captured_at + (index + 1) * QUARTER,
                     pv_energy_wh=(500.0 if index < 16 or 96 <= index < 112 else 0.0),
-                    forecast_lower_energy_wh=(
-                        450.0 if index < 16 or 96 <= index < 112 else 0.0
-                    ),
-                    forecast_central_energy_wh=(
-                        500.0 if index < 16 or 96 <= index < 112 else 0.0
-                    ),
-                    forecast_upper_energy_wh=(
-                        550.0 if index < 16 or 96 <= index < 112 else 0.0
-                    ),
+                    forecast_lower_energy_wh=(450.0 if index < 16 or 96 <= index < 112 else 0.0),
+                    forecast_central_energy_wh=(500.0 if index < 16 or 96 <= index < 112 else 0.0),
+                    forecast_upper_energy_wh=(550.0 if index < 16 or 96 <= index < 112 else 0.0),
                     forecast_evidence_ids=(f"solcast-quarter-{index}",),
                 )
                 for index in range(144)
@@ -932,101 +940,14 @@ def test_mep_can_retain_one_pv_surplus_export_on_each_local_calendar_day() -> No
         ),
     )
 
-    admitted_export_days = tuple(
-        (
-            assessment.route_id,
-            assessment.admitted,
-            assessment.admission_reason,
-            tuple(
-                sorted(
-                    {
-                        interval.starts_at.date()
-                        for interval in assessment.intent_schedule.intervals
-                        if interval.intent is DailyStorageIntent.STORAGE_EXPORT
-                    }
-                )
-            ),
-        )
-        for assessment in portfolio.route_assessments
-        if "daily-chain" in assessment.route_id
-    )
-    admitted_daily_chains = tuple(
-        assessment
-        for assessment in portfolio.route_assessments
-        if assessment.admitted
-        and len(
-            {
-                interval.starts_at.date()
-                for interval in assessment.intent_schedule.intervals
-                if interval.intent is DailyStorageIntent.STORAGE_EXPORT
-            }
-        )
-        == 2
-    )
-    assert admitted_daily_chains, admitted_export_days
-    daily_chain = admitted_daily_chains[0]
-    comparable = produce_mep_comparable_portfolio(
-        snapshot=priced,
-        portfolio=portfolio,
-        conversion_model=_conversion(),
-        incumbent=None,
-        financial_equivalence_margin_eur=0.01,
-    )
-    source = next(
-        item
-        for item in comparable.sources
-        if item.market_assessment is daily_chain
-    )
-    candidate = next(
-        item
-        for item in comparable.candidate_set.candidates
-        if item.candidate_id == source.candidate_id
-    )
-    path = next(
-        item
-        for item in comparable.candidate_set.energy_paths
-        if item.path_id == candidate.energy_path_id
-    )
-    planned_export_wh = sum(
-        (segment.requested_power_w or 0.0)
-        * (segment.ends_at - segment.starts_at).total_seconds()
-        / 3600.0
-        for segment in path.segments
-        if segment.primitive.value == "discharge_at_power"
-    )
-    scheduled_export_wh = sum(
-        interval.storage_export_target_wh
-        for interval in daily_chain.intent_schedule.intervals
-        if interval.intent is DailyStorageIntent.STORAGE_EXPORT
-    )
-    assert planned_export_wh == pytest.approx(scheduled_export_wh)
-    assert any(
-        segment.ends_at - segment.starts_at < QUARTER
-        for segment in path.segments
-        if segment.primitive.value == "discharge_at_power"
-    )
-    committed = _committed_execution_segments(path.segments)
-    partial_export = next(
-        segment
-        for segment in committed
-        if segment.primitive == ExecutionPrimitive.DISCHARGE_AT_POWER.value
-        and segment.ends_at - segment.starts_at < QUARTER
-    )
-    assert partial_export.storage_export_target_wh == pytest.approx(
-        2400.0
-        * (partial_export.ends_at - partial_export.starts_at).total_seconds()
-        / 3600.0
-    )
-    safe_remainder = next(
-        segment
-        for segment in committed
-        if segment.starts_at == partial_export.ends_at
-    )
-    assert safe_remainder.primitive == ExecutionPrimitive.BALANCE_DISCHARGE_ONLY.value
+    trades = tuple(route for route in portfolio.market_routes if route.route_kind == "grid_trade")
+    assert len(trades) == 1
+    assert trades[0].export_window_starts_at == second_export_start
+    assert trades[0].export_window_ends_at == second_export_end
+    assert len(portfolio.route_assessments) <= len(portfolio.market_routes)
 
 
-def test_pv_preservation_rule_projects_nom_onto_existing_market_route(
-) -> None:
+def test_trade_overlay_preserves_canonical_recovery_outside_export() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     split = snapshot.captured_at + timedelta(hours=12)
     end = snapshot.captured_at + timedelta(hours=24)
@@ -1051,77 +972,37 @@ def test_pv_preservation_rule_projects_nom_onto_existing_market_route(
         trading_policy=MarketTradingPolicy(preserve_pv_during_grid_charge=True),
     )
 
-    grid_route_ids = {
-        route.route_id
-        for route in portfolio.market_routes
-        if route.maximum_charge_input_wh > 0.0
-        and route.route_kind
-        in {"grid_trade", "negative_capacity", "pv_trade_grid_recovery"}
-    }
-    grid_assessments = tuple(
+    trade_assessments = tuple(
         assessment
         for assessment in portfolio.route_assessments
-        if assessment.route_id in grid_route_ids
+        if next(
+            route for route in portfolio.market_routes if route.route_id == assessment.route_id
+        ).route_kind
+        == "grid_trade"
     )
-    assert grid_assessments
-    native_schedules = (
-        portfolio.native_observation.observer_result.portfolio.strategy_results
-    )
-    assert native_schedules
-    assert all(
-        "hybrid-pv-grid" in assessment.source_native_schedule_id
-        for assessment in grid_assessments
-    )
-    assert any(
-        assessment.admitted
-        and assessment.physically_admissible
-        and any(
-            interval.intent is DailyStorageIntent.STORAGE_EXPORT
-            for interval in assessment.intent_schedule.intervals
-        )
-        for assessment in grid_assessments
-    )
-    assert snapshot.pv_energy_timeline is not None
-    pv_intervals = tuple(
-        interval
-        for interval in snapshot.pv_energy_timeline.intervals
-        if interval.pv_energy_wh > 0.0
-    )
-    assert pv_intervals
-    grid_days = {
-        interval.starts_at.date()
-        for result in native_schedules
-        for interval in result.intent_schedule.intervals
-        if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+    assert len(trade_assessments) == 1
+    native_by_id = {
+        result.intent_schedule.schedule_id: result.intent_schedule
+        for result in portfolio.native_observation.observer_result.portfolio.strategy_results
     }
-    assert grid_days
-    for result in native_schedules:
-        for interval in result.intent_schedule.intervals:
-            if interval.starts_at.date() in grid_days and any(
-                interval.starts_at < pv.ends_at
-                and interval.ends_at > pv.starts_at
-                and (pv.forecast_upper_energy_wh or 0.0) > 0.0
-                for pv in pv_intervals
-            ):
-                assert interval.intent in {
-                    DailyStorageIntent.NOM,
-                    DailyStorageIntent.GRID_REQUIREMENT,
-                    DailyStorageIntent.STORAGE_EXPORT,
-                }
-    for assessment in grid_assessments:
-        for interval in assessment.intent_schedule.intervals:
-            if any(
-                interval.starts_at < pv.ends_at and interval.ends_at > pv.starts_at
-                for pv in pv_intervals
-            ):
-                assert interval.intent in {
-                    DailyStorageIntent.NOM,
-                    DailyStorageIntent.GRID_REQUIREMENT,
-                    DailyStorageIntent.STORAGE_EXPORT,
-                }
+    assessment = trade_assessments[0]
+    source_schedule = native_by_id[assessment.source_native_schedule_id]
+    source_intents = {
+        (interval.starts_at, interval.ends_at): interval.intent
+        for interval in source_schedule.intervals
+    }
+    assert any(
+        interval.intent is DailyStorageIntent.STORAGE_EXPORT
+        for interval in assessment.intent_schedule.intervals
+    )
+    assert all(
+        interval.intent is source_intents[(interval.starts_at, interval.ends_at)]
+        for interval in assessment.intent_schedule.intervals
+        if interval.intent is not DailyStorageIntent.STORAGE_EXPORT
+    )
 
 
-def test_mep_subdivides_broad_grid_trade_window_and_preserves_pv_room() -> None:
+def test_mep_grid_trade_has_one_export_window_and_no_charge_window() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
     cheap_window_end = snapshot.captured_at + timedelta(hours=12)
     horizon_end = snapshot.captured_at + timedelta(hours=24)
@@ -1150,108 +1031,34 @@ def test_mep_subdivides_broad_grid_trade_window_and_preserves_pv_room() -> None:
         conversion_model=_conversion(),
     )
 
-    grid_routes = tuple(
-        route for route in result.market_routes if route.route_kind == "grid_trade"
-    )
+    grid_routes = tuple(route for route in result.market_routes if route.route_kind == "grid_trade")
     assert len(grid_routes) == 1
     assert all(
-        route.opportunity_window_starts_at == snapshot.captured_at
-        and route.opportunity_window_ends_at == cheap_window_end
+        route.opportunity_window_starts_at == cheap_window_end
+        and route.opportunity_window_ends_at == horizon_end
         for route in grid_routes
     )
     assert all(
-        route.window_ends_at - route.window_starts_at
-        <= timedelta(
-            hours=route.maximum_charge_input_wh / 2400.0,
-            minutes=15,
-        )
-        for route in grid_routes
-    )
-    assert all(
-        route.window_ends_at <= cheap_window_end - timedelta(minutes=15)
+        route.maximum_charge_input_wh == 0.0
+        and route.window_starts_at == route.export_window_starts_at
+        and route.window_ends_at == route.export_window_ends_at
         for route in grid_routes
     )
 
     route_ids = {route.route_id for route in grid_routes}
     grid_assessments = tuple(
-        assessment
-        for assessment in result.route_assessments
-        if assessment.route_id in route_ids
+        assessment for assessment in result.route_assessments if assessment.route_id in route_ids
     )
-    assert grid_assessments
+    assert len(grid_assessments) == 1
     assert all(
-        any(
-            interval.intent.value == "nom"
-            for interval in assessment.intent_schedule.intervals
-        )
+        any(interval.intent.value == "nom" for interval in assessment.intent_schedule.intervals)
         for assessment in grid_assessments
     )
     assert result.current_intent is not None
     assert result.current_intent.value == "nom"
 
 
-def test_mep_uses_latest_safe_charge_window_inside_equal_route_cost() -> None:
-    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
-    cheap_window_end = snapshot.captured_at + timedelta(hours=12)
-    horizon_end = snapshot.captured_at + timedelta(hours=24)
-    source = snapshot.price_points[0]
-    result = MarketDailyPlanner().plan(
-        snapshot=replace(
-            snapshot,
-            price_points=(
-                replace(
-                    source,
-                    point_id="broad-cheap-window",
-                    ends_at=cheap_window_end,
-                    value_eur_per_kwh=0.05,
-                ),
-                replace(
-                    source,
-                    point_id="later-export-window",
-                    starts_at=cheap_window_end,
-                    ends_at=horizon_end,
-                    value_eur_per_kwh=0.55,
-                ),
-            ),
-        ),
-        conversion_model=_conversion(),
-    )
-    admitted = tuple(item for item in result.route_assessments if item.admitted)
-    assert len(admitted) == 1
-    assert MarketDailyEvaluationEngine.select_market_assessment(admitted) is admitted[0]
-
-
-def test_export_marginal_return_breaks_complete_route_subcent_tie() -> None:
-    snapshot = _snapshot(maximum_soc=1.0, current_soc=0.2)
-    cheap_window_end = snapshot.captured_at + timedelta(hours=12)
-    source = snapshot.price_points[0]
-    result = MarketDailyPlanner().plan(
-        snapshot=replace(
-            snapshot,
-            price_points=(
-                replace(
-                    source,
-                    point_id="broad-cheap-window",
-                    ends_at=cheap_window_end,
-                    value_eur_per_kwh=0.05,
-                ),
-                replace(
-                    source,
-                    point_id="later-export-window",
-                    starts_at=cheap_window_end,
-                    ends_at=snapshot.captured_at + timedelta(hours=24),
-                    value_eur_per_kwh=0.55,
-                ),
-            ),
-        ),
-        conversion_model=_conversion(),
-    )
-    admitted = tuple(item for item in result.route_assessments if item.admitted)
-    assert len(admitted) == 1
-    assert MarketDailyEvaluationEngine.select_market_assessment(admitted) is admitted[0]
-
-
-def test_stored_energy_export_windows_all_retain_absolute_price_peak() -> None:
+def test_trade_export_window_retains_absolute_price_peak() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=1.0)
     assert snapshot.household_load_forecast is not None
     source = snapshot.price_points[0]
@@ -1324,29 +1131,24 @@ def test_stored_energy_export_windows_all_retain_absolute_price_peak() -> None:
         storage_inventory=inventory,
     )
 
-    routes = tuple(
-        route
-        for route in result.market_routes
-        if route.route_kind == "stored_energy_export"
-    )
-    assert routes
+    routes = tuple(route for route in result.market_routes if route.route_kind == "grid_trade")
+    assert len(routes) == 1
     assert all(
-        route.export_window_starts_at <= peak_start
-        < route.export_window_ends_at
+        route.export_window_starts_at <= peak_start < route.export_window_ends_at
         for route in routes
-        if route.export_window_starts_at is not None
-        and route.export_window_ends_at is not None
+        if route.export_window_starts_at is not None and route.export_window_ends_at is not None
     )
+    assert routes[0].average_recharge_eur_per_kwh == 0.0
     assessments = tuple(
         assessment
         for assessment in result.route_assessments
         if assessment.route_id in {route.route_id for route in routes}
     )
     assert any(item.admitted for item in assessments)
-    assert diagnostics.route_assessment_count <= diagnostics.market_route_count * 7
+    assert diagnostics.route_assessment_count <= diagnostics.market_route_count
 
 
-def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> None:
+def test_mep_uses_one_weighted_recovery_price_for_export() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
     source = snapshot.price_points[0]
     export_start = snapshot.captured_at + timedelta(hours=8)
@@ -1395,81 +1197,28 @@ def test_mep_combines_export_window_and_uses_cheapest_next_day_recharge() -> Non
         ),
     )
 
-    pv_routes = tuple(
-        item for item in result.market_routes if item.route_kind == "pv_trade"
-    )
-    grid_recovery_routes = tuple(
-        item
-        for item in result.market_routes
-        if item.route_kind == "pv_trade_grid_recovery"
-    )
-    assert pv_routes
-    assert grid_recovery_routes
-    assert len(grid_recovery_routes) == 1
-    route = pv_routes[0]
-    grid_recovery = grid_recovery_routes[0]
+    routes = tuple(item for item in result.market_routes if item.route_kind == "grid_trade")
+    assert len(routes) == 1
+    route = routes[0]
     assert route.export_window_starts_at == export_start
     assert route.export_window_ends_at <= export_end
     assert route.average_export_eur_per_kwh == pytest.approx(0.40, abs=2e-6)
-    assert route.average_recharge_eur_per_kwh == pytest.approx(0.131)
-    assert route.minimum_export_eur_per_kwh == pytest.approx(0.223614, abs=1e-6)
-    assert route.window_starts_at.date() > export_end.date()
     assert route.maximum_charge_input_wh == 0.0
-    assert grid_recovery.maximum_charge_input_wh == pytest.approx(
-        grid_recovery.required_pre_window_discharge_output_wh / 0.83
+    assert route.window_starts_at == route.export_window_starts_at
+    assert route.window_ends_at == route.export_window_ends_at
+    assert route.average_recharge_eur_per_kwh is not None
+    assert route.minimum_export_eur_per_kwh == pytest.approx(
+        MarketTradingPolicy(
+            margin_fraction=0.10,
+            wear_eur_per_export_kwh=0.05,
+        ).minimum_export_rate(route.average_recharge_eur_per_kwh, 0.83)
     )
-    assert grid_recovery.opportunity_window_starts_at == route.window_starts_at
-    assert grid_recovery.opportunity_window_ends_at == route.window_ends_at
-    assert (
-        grid_recovery.opportunity_window_starts_at
-        <= grid_recovery.window_starts_at
-        < grid_recovery.window_ends_at
-        <= grid_recovery.opportunity_window_ends_at
-    )
-    pv_assessment = next(
-        item
-        for item in result.route_assessments
-        if item.route_id == route.route_id
-    )
-    grid_assessment = next(
-        item
-        for item in result.route_assessments
-        if item.route_id == grid_recovery.route_id
-    )
-    assert all(
-        scenario.grid_to_storage_input_wh > 0.0
-        for scenario in grid_assessment.scenario_evidence
-    )
-    assert all(
-        scenario.storage_energy_at_horizon_end_wh
-        >= scenario.baseline_storage_energy_at_horizon_end_wh
-        for scenario in pv_assessment.scenario_evidence
-    )
-    assert all(
-        not scenario.target_held_at_horizon_end
-        for scenario in pv_assessment.scenario_evidence
-    )
-    assert pv_assessment.physically_admissible is True
-    assert all(
-        scenario.storage_energy_at_horizon_end_wh
-        >= scenario.baseline_storage_energy_at_horizon_end_wh
-        for scenario in grid_assessment.scenario_evidence
-    )
-    assert any(
-        interval.intent.value == "household_support_only"
-        and interval.starts_at >= route.export_window_ends_at
-        for interval in grid_assessment.intent_schedule.intervals
-    )
-    assert grid_assessment.physically_admissible is True
-    post_export = next(
-        interval
-        for interval in grid_assessment.intent_schedule.intervals
-        if interval.starts_at == route.export_window_ends_at
-    )
-    assert post_export.intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+    assessment = next(item for item in result.route_assessments if item.route_id == route.route_id)
+    assert assessment.physically_admissible
+    assert all(item.reserve_respected for item in assessment.scenario_evidence)
 
 
-def test_mep_values_only_known_inventory_and_keeps_one_contiguous_export_window() -> None:
+def test_mep_values_available_soc_independently_of_inventory_origin() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
     source = snapshot.price_points[0]
     export_start = snapshot.captured_at + timedelta(hours=4)
@@ -1536,27 +1285,28 @@ def test_mep_values_only_known_inventory_and_keeps_one_contiguous_export_window(
         ),
         storage_inventory=inventory,
     )
+    without_inventory = MarketDailyPlanner().plan(
+        snapshot=priced,
+        conversion_model=StorageConversionModel(
+            model_id="zendure-rte",
+            charge_efficiency=0.83**0.5,
+            discharge_efficiency=0.83**0.5,
+            evidence_ids=("zendure-rte",),
+            method_version="test:v1",
+        ),
+    )
 
-    routes = tuple(
-        route for route in result.market_routes if route.route_kind == "pv_trade"
-    )
-    assert routes
-    assert all(route.inventory_sources == ("pv",) for route in routes)
-    assert all(
-        route.inventory_deliverable_energy_wh is not None
-        and route.required_pre_window_discharge_output_wh
-        <= route.inventory_deliverable_energy_wh
-        for route in routes
-    )
+    routes = tuple(route for route in result.market_routes if route.route_kind == "grid_trade")
+    assert len(routes) == 1
+    assert result.market_routes == without_inventory.market_routes
     assert all(
         route.export_window_starts_at < route.export_window_ends_at
         for route in routes
-        if route.export_window_starts_at is not None
-        and route.export_window_ends_at is not None
+        if route.export_window_starts_at is not None and route.export_window_ends_at is not None
     )
 
 
-def test_mep_accepts_cheaper_recovery_later_on_same_day() -> None:
+def test_mep_keeps_same_day_recovery_out_of_the_trade_route_shape() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
     source = snapshot.price_points[0]
     export_start = snapshot.captured_at + timedelta(hours=4)
@@ -1601,22 +1351,17 @@ def test_mep_accepts_cheaper_recovery_later_on_same_day() -> None:
         ),
     )
 
-    same_day_routes = tuple(
-        route
-        for route in result.market_routes
-        if route.route_kind == "pv_trade_grid_recovery"
-        and route.export_window_ends_at is not None
-        and route.window_starts_at.date() == route.export_window_ends_at.date()
-    )
-    assert same_day_routes
+    routes = tuple(route for route in result.market_routes if route.route_kind == "grid_trade")
+    assert len(routes) == 1
     assert all(
-        route.window_starts_at >= route.export_window_ends_at
-        for route in same_day_routes
-        if route.export_window_ends_at is not None
+        route.window_starts_at == route.export_window_starts_at
+        and route.window_ends_at == route.export_window_ends_at
+        and route.maximum_charge_input_wh == 0.0
+        for route in routes
     )
 
 
-def test_mep_uses_actual_duration_for_split_same_day_recovery_intervals() -> None:
+def test_mep_values_split_intervals_without_creating_recovery_routes() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
     source = snapshot.price_points[0]
     horizon_end = snapshot.captured_at + timedelta(hours=24)
@@ -1659,22 +1404,21 @@ def test_mep_uses_actual_duration_for_split_same_day_recovery_intervals() -> Non
     morning_routes = tuple(
         route
         for route in result.market_routes
-        if route.route_kind == "pv_trade_grid_recovery"
+        if route.route_kind == "grid_trade"
         and route.export_window_starts_at is not None
         and snapshot.captured_at + timedelta(hours=4)
         <= route.export_window_starts_at
         < snapshot.captured_at + timedelta(hours=6)
-        and snapshot.captured_at + timedelta(hours=8)
-        <= route.window_starts_at
-        < snapshot.captured_at + timedelta(hours=12)
     )
-    assert morning_routes
+    assert len(morning_routes) == 1
+    assert morning_routes[0].maximum_charge_input_wh == 0.0
+    assert morning_routes[0].average_recharge_eur_per_kwh is not None
+    assert morning_routes[0].average_recharge_eur_per_kwh >= 0.0
     assessed_route_ids = {assessment.route_id for assessment in result.route_assessments}
     assert all(route.route_id in assessed_route_ids for route in morning_routes)
-    assert result.reason != "market_recovery_outside_available_horizon"
 
 
-def test_mep_can_use_late_2026_export_after_earlier_linked_grid_charge() -> None:
+def test_mep_rejects_late_export_when_projected_surplus_is_gone() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
     source = snapshot.price_points[0]
     export_start = snapshot.captured_at + timedelta(hours=23)
@@ -1697,15 +1441,8 @@ def test_mep_can_use_late_2026_export_after_earlier_linked_grid_charge() -> None
         conversion_model=_conversion(),
     )
 
-    grid_routes = tuple(
-        route for route in result.market_routes if route.route_kind == "grid_trade"
-    )
-    assert grid_routes
-    assert all(
-        route.window_ends_at <= route.export_window_starts_at
-        for route in grid_routes
-        if route.export_window_starts_at is not None
-    )
+    grid_routes = tuple(route for route in result.market_routes if route.route_kind == "grid_trade")
+    assert grid_routes == ()
 
 
 def test_mep_source_has_no_dependency_on_cp_or_ep_runtime_outputs() -> None:
@@ -1740,10 +1477,7 @@ def test_market_routes_consume_opportunity_evidence_without_top_n_selection() ->
 
 def test_every_market_route_retains_opportunity_lineage() -> None:
     snapshot = _snapshot(maximum_soc=1.0, current_soc=0.95)
-    negative = tuple(
-        replace(point, value_eur_per_kwh=-0.10)
-        for point in snapshot.price_points
-    )
+    negative = tuple(replace(point, value_eur_per_kwh=-0.10) for point in snapshot.price_points)
 
     result = MarketDailyPlanner().plan(
         snapshot=replace(snapshot, price_points=negative),

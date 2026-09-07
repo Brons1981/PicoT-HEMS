@@ -9,7 +9,7 @@ from picot.domain.daily_reference_intent import (
     DailyReferenceIntentSchedule,
     DailyStorageIntent,
 )
-from picot.domain.daily_reference_simulation import PVScenario
+from picot.domain.daily_reference_simulation import DailyPlanningProjection, PVScenario
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,3 +117,105 @@ class DailyReferenceChargeWindowSet:
             raise ValueError(
                 "Daily charge windows must remain observer-only and unranked."
             )
+
+
+@dataclass(frozen=True, slots=True)
+class DailyMainChargeSegment:
+    """Explicit candidate-level ownership; execution IDs are projected later."""
+
+    segment_id: str
+    starts_at: datetime
+    ends_at: datetime
+    intent: DailyStorageIntent
+
+    def __post_init__(self) -> None:
+        if not self.segment_id.strip():
+            raise ValueError("main candidate segment identity is required")
+        if any(t.utcoffset() is None for t in (self.starts_at, self.ends_at)):
+            raise ValueError("main candidate segment timestamps must be timezone-aware")
+        if self.starts_at >= self.ends_at:
+            raise ValueError("main candidate segment duration must be positive")
+        if self.intent not in {DailyStorageIntent.NOM, DailyStorageIntent.GRID_REQUIREMENT}:
+            raise ValueError("main candidate segment requires a charging intent")
+
+
+@dataclass(frozen=True, slots=True)
+class DailyMainChargeWindow:
+    """One physically feasible main route, still unranked by economics."""
+
+    assignment_id: str
+    family: str
+    schedule: DailyReferenceIntentSchedule
+    main_segments: tuple[DailyMainChargeSegment, ...]
+    projection: DailyPlanningProjection
+    reached_at: datetime
+    target_storage_energy_wh: float
+
+    def __post_init__(self) -> None:
+        if self.family not in {"pv", "grid", "hybrid", "already_full"}:
+            raise ValueError("invalid main charge family")
+        if not self.main_segments or not self.assignment_id.strip():
+            raise ValueError("main window requires explicit assignment and segments")
+        if self.schedule.snapshot_id != self.projection.snapshot_id or (
+            self.schedule.schedule_id != self.projection.intent_schedule_id
+        ):
+            raise ValueError("main route and projection lineage must match")
+        ids = tuple(s.segment_id for s in self.main_segments)
+        if len(ids) != len(set(ids)):
+            raise ValueError("main candidate segment identities must be unique")
+        for segment in self.main_segments:
+            owned = tuple(
+                i
+                for i in self.schedule.intervals
+                if segment.starts_at <= i.starts_at and i.ends_at <= segment.ends_at
+            )
+            if (
+                not owned
+                or owned[0].starts_at != segment.starts_at
+                or owned[-1].ends_at != segment.ends_at
+                or any(i.intent is not segment.intent for i in owned)
+            ):
+                raise ValueError("main candidate ownership must match the proposed schedule")
+        if any(
+            a.ends_at > b.starts_at
+            for a, b in zip(self.main_segments, self.main_segments[1:], strict=False)
+        ):
+            raise ValueError("main candidate segments must be ordered and non-overlapping")
+        if not any(s.starts_at <= self.reached_at <= s.ends_at for s in self.main_segments):
+            raise ValueError("main target must be reached inside its owned segments")
+        if not any(
+            (
+                i.starts_at == self.reached_at
+                and i.storage_energy_at_start_wh + 1e-6 >= self.target_storage_energy_wh
+            )
+            or (
+                i.ends_at == self.reached_at
+                and i.storage_energy_at_end_wh + 1e-6 >= self.target_storage_energy_wh
+            )
+            for i in self.projection.intervals
+        ):
+            raise ValueError("main target requires physical full-storage evidence")
+
+
+@dataclass(frozen=True, slots=True)
+class DailyMainChargeWindowSet:
+    assignment_id: str
+    snapshot_id: str
+    windows: tuple[DailyMainChargeWindow, ...]
+    status: str
+    reason: str
+    simulation_count: int
+
+    def __post_init__(self) -> None:
+        if self.status not in {"discovered", "completed", "unreachable"}:
+            raise ValueError("invalid main charge discovery status")
+        if bool(self.windows) != (self.status == "discovered"):
+            raise ValueError("main charge status must match feasible windows")
+        if any(
+            w.assignment_id != self.assignment_id or w.schedule.snapshot_id != self.snapshot_id
+            for w in self.windows
+        ):
+            raise ValueError("main windows must share the assignment and snapshot")
+        ids = tuple(w.schedule.schedule_id for w in self.windows)
+        if len(ids) != len(set(ids)):
+            raise ValueError("main window schedules must be unique")

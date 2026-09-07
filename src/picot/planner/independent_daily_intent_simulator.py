@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from dataclasses import replace
+from datetime import datetime, timedelta
+from math import isfinite
 
 from picot.domain.current_storage_state import CurrentStorageState
 from picot.domain.daily_reference_intent import (
@@ -10,11 +12,14 @@ from picot.domain.daily_reference_intent import (
     DailyStorageIntent,
 )
 from picot.domain.daily_reference_simulation import (
+    DailyPlanningProjection,
     DailyReferenceInterval,
     DailyReferenceSimulationSet,
     DailyReferenceTrajectory,
+    PVScenario,
 )
 from picot.domain.household_load_forecast import HouseholdLoadForecast
+from picot.domain.pv_energy_timeline import PVEnergyTimeline
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.independent_daily_simulator import (
     IndependentDailySimulator,
@@ -75,6 +80,89 @@ class IndependentDailyIntentSimulator:
             method_version=METHOD_VERSION,
         )
 
+    def simulate_planning_basis(
+        self,
+        *,
+        snapshot_id: str,
+        household: HouseholdLoadForecast,
+        pv_scenarios: tuple[ScenarioTimeline, ...],
+        storage_state: CurrentStorageState,
+        conversion_model: StorageConversionModel,
+        intent_schedule: DailyReferenceIntentSchedule,
+        minimum_storage_energy_wh: float,
+        target_storage_energy_wh: float,
+        maximum_charge_input_power_w: float,
+        maximum_discharge_output_power_w: float,
+    ) -> DailyPlanningProjection:
+        """Apply the declared PV midpoint BEFORE the shared physical simulation.
+
+        Source uncertainty scenarios remain immutable and correctly labelled.
+        Confidence is retained as evidence; it never scales the midpoint energy.
+        """
+        IndependentDailySimulator._validate_inputs(
+            snapshot_id=snapshot_id,
+            household=household,
+            pv_scenarios=pv_scenarios,
+            storage_state=storage_state,
+            minimum_storage_energy_wh=minimum_storage_energy_wh,
+            target_storage_energy_wh=target_storage_energy_wh,
+            maximum_charge_input_power_w=maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=maximum_discharge_output_power_w,
+        )
+        self._validate_schedule(snapshot_id, household, intent_schedule)
+        lower = next(s.timeline for s in pv_scenarios if s.scenario is PVScenario.LOWER)
+        central = next(s.timeline for s in pv_scenarios if s.scenario is PVScenario.CENTRAL)
+        if any(not isfinite(i.energy_wh) for s in pv_scenarios for i in s.timeline.intervals):
+            raise ValueError("planning PV energy must be finite")
+        if any(
+            a.energy_wh > b.energy_wh
+            for a, b in zip(lower.intervals, central.intervals, strict=True)
+        ):
+            raise ValueError("planning LOWER must not exceed CENTRAL")
+        method = "pv-lower-central-arithmetic-midpoint:v1"
+        basis = replace(
+            lower,
+            timeline_id=f"{method}:{lower.timeline_id}:{central.timeline_id}",
+            intervals=tuple(
+                replace(
+                    a,
+                    energy_wh=(a.energy_wh + b.energy_wh) / 2,
+                    confidence=min(a.confidence, b.confidence),
+                    method_version=method,
+                    evidence_ids=tuple(
+                        dict.fromkeys(
+                            (
+                                method,
+                                lower.timeline_id,
+                                central.timeline_id,
+                                *a.evidence_ids,
+                                *b.evidence_ids,
+                            )
+                        )
+                    ),
+                )
+                for a, b in zip(lower.intervals, central.intervals, strict=True)
+            ),
+        )
+        intervals, _ = self._simulate_timeline(
+            household=household,
+            pv_timeline=basis,
+            storage_state=storage_state,
+            conversion_model=conversion_model,
+            intent_schedule=intent_schedule,
+            minimum_storage_energy_wh=minimum_storage_energy_wh,
+            target_storage_energy_wh=target_storage_energy_wh,
+            maximum_charge_input_power_w=maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=maximum_discharge_output_power_w,
+        )
+        return DailyPlanningProjection(
+            snapshot_id=snapshot_id,
+            intent_schedule_id=intent_schedule.schedule_id,
+            basis_timeline=basis,
+            intervals=intervals,
+            basis_method=method,
+        )
+
     def _simulate_scenario(
         self,
         *,
@@ -89,6 +177,47 @@ class IndependentDailyIntentSimulator:
         maximum_charge_input_power_w: float,
         maximum_discharge_output_power_w: float,
     ) -> DailyReferenceTrajectory:
+        intervals, target_reached_at = self._simulate_timeline(
+            household=household,
+            pv_timeline=scenario.timeline,
+            storage_state=storage_state,
+            conversion_model=conversion_model,
+            intent_schedule=intent_schedule,
+            minimum_storage_energy_wh=minimum_storage_energy_wh,
+            target_storage_energy_wh=target_storage_energy_wh,
+            maximum_charge_input_power_w=maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=maximum_discharge_output_power_w,
+        )
+        return DailyReferenceTrajectory(
+            trajectory_id=(
+                f"daily-trajectory:{snapshot_id}:{intent_schedule.schedule_id}:"
+                f"{scenario.scenario.value}"
+            ),
+            snapshot_id=snapshot_id,
+            scenario=scenario.scenario,
+            horizon_start=household.horizon_start,
+            horizon_end=household.horizon_end,
+            target_storage_energy_wh=target_storage_energy_wh,
+            minimum_storage_energy_wh=minimum_storage_energy_wh,
+            target_reached_at=target_reached_at,
+            intervals=tuple(intervals),
+            method_version=METHOD_VERSION,
+            intent_schedule_id=intent_schedule.schedule_id,
+        )
+
+    def _simulate_timeline(
+        self,
+        *,
+        household: HouseholdLoadForecast,
+        pv_timeline: PVEnergyTimeline,
+        storage_state: CurrentStorageState,
+        conversion_model: StorageConversionModel,
+        intent_schedule: DailyReferenceIntentSchedule,
+        minimum_storage_energy_wh: float,
+        target_storage_energy_wh: float,
+        maximum_charge_input_power_w: float,
+        maximum_discharge_output_power_w: float,
+    ) -> tuple[tuple[DailyReferenceInterval, ...], datetime | None]:
         loads = {(item.starts_at, item.ends_at): item for item in household.intervals}
         intents = {
             (item.starts_at, item.ends_at): item for item in intent_schedule.intervals
@@ -100,7 +229,7 @@ class IndependentDailyIntentSimulator:
             else None
         )
         intervals: list[DailyReferenceInterval] = []
-        for pv in scenario.timeline.intervals:
+        for pv in pv_timeline.intervals:
             load = loads[(pv.starts_at, pv.ends_at)]
             intent = intents[(pv.starts_at, pv.ends_at)]
             start_energy_wh = stored_energy_wh
@@ -187,7 +316,7 @@ class IndependentDailyIntentSimulator:
                 dict.fromkeys(
                     (
                         intent_schedule.schedule_id,
-                        scenario.timeline.timeline_id,
+                        pv_timeline.timeline_id,
                         *pv.evidence_ids,
                         household.forecast_id,
                         storage_state.storage_state_id,
@@ -218,22 +347,7 @@ class IndependentDailyIntentSimulator:
                     storage_to_grid_output_wh=storage_to_grid_wh,
                 )
             )
-        return DailyReferenceTrajectory(
-            trajectory_id=(
-                f"daily-trajectory:{snapshot_id}:{intent_schedule.schedule_id}:"
-                f"{scenario.scenario.value}"
-            ),
-            snapshot_id=snapshot_id,
-            scenario=scenario.scenario,
-            horizon_start=household.horizon_start,
-            horizon_end=household.horizon_end,
-            target_storage_energy_wh=target_storage_energy_wh,
-            minimum_storage_energy_wh=minimum_storage_energy_wh,
-            target_reached_at=target_reached_at,
-            intervals=tuple(intervals),
-            method_version=METHOD_VERSION,
-            intent_schedule_id=intent_schedule.schedule_id,
-        )
+        return tuple(intervals), target_reached_at
 
     @staticmethod
     def _validate_schedule(

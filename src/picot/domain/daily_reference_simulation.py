@@ -7,6 +7,8 @@ from datetime import datetime
 from enum import StrEnum
 from math import isclose
 
+from picot.domain.pv_energy_timeline import PVEnergyTimeline
+
 ENERGY_TOLERANCE_WH = 1e-6
 
 
@@ -184,3 +186,36 @@ class DailyReferenceSimulationSet:
             raise ValueError("Daily reference simulation must remain observer-only.")
         if not self.method_version.strip():
             raise ValueError("Daily simulation method version must be explicit.")
+
+
+@dataclass(frozen=True, slots=True)
+class DailyPlanningProjection:
+    """Expected physical path, distinct from the three uncertainty scenarios."""
+
+    snapshot_id: str
+    intent_schedule_id: str
+    basis_timeline: PVEnergyTimeline
+    intervals: tuple[DailyReferenceInterval, ...]
+    basis_method: str
+
+    def __post_init__(self) -> None:
+        if not all(
+            (self.snapshot_id.strip(), self.intent_schedule_id.strip(), self.basis_method.strip())
+        ):
+            raise ValueError("planning projection lineage must be explicit")
+        if tuple((i.starts_at, i.ends_at) for i in self.intervals) != tuple(
+            (i.starts_at, i.ends_at) for i in self.basis_timeline.intervals
+        ):
+            raise ValueError("planning projection must cover its exact PV basis")
+        if any(
+            not isclose(i.usable_pv_wh, p.energy_wh, abs_tol=ENERGY_TOLERANCE_WH)
+            for i, p in zip(self.intervals, self.basis_timeline.intervals, strict=True)
+        ):
+            raise ValueError("planning projection PV must match its declared basis")
+        for a, b in zip(self.intervals, self.intervals[1:], strict=False):
+            if not isclose(
+                a.storage_energy_at_end_wh,
+                b.storage_energy_at_start_wh,
+                abs_tol=ENERGY_TOLERANCE_WH,
+            ):
+                raise ValueError("planning projection storage must remain continuous")

@@ -12,6 +12,7 @@ from picot.domain.capability_snapshot import (
 )
 from picot.domain.current_storage_state import CurrentStorageState as DomainStorageState
 from picot.domain.daily_reference_charge_window import (
+    DailyMainChargeWindowSet,
     DailyReferenceChargeWindow,
     DailyReferenceChargeWindowSet,
 )
@@ -63,6 +64,7 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
+from picot.v2.daily_charge_assignment import DailyChargeAssignment
 from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
@@ -89,6 +91,55 @@ class _DailyReferenceInputs:
 
 class IndependentDailyReferenceAdapter:
     """Build and run the daily simulation without reading planner Candidates."""
+
+    def main_charge_windows(
+        self,
+        *,
+        snapshot: PlanningInputSnapshot,
+        assignment: DailyChargeAssignment,
+        conversion_model: StorageConversionModel,
+        retained_schedule: DailyReferenceIntentSchedule | None = None,
+    ) -> DailyMainChargeWindowSet:
+        """Canonical input seam for first main-route Candidate construction.
+
+        The daily obligation does not truncate the household simulation. The
+        complete published horizon (up to 36 hours) remains in every candidate.
+        Selection and binding to an execution plan belong downstream.
+        """
+        if assignment.completed_at is not None:
+            return DailyMainChargeWindowSet(
+                assignment.assignment_id, snapshot.snapshot_id, (), "completed",
+                "observed_main_goal_already_completed", 0)
+        if assignment.revision:
+            raise DailyReferenceInputError("main_charge_existing_route_requires_optimisation")
+        if snapshot.horizon_end is None:
+            raise DailyReferenceInputError("daily_reference_horizon_missing")
+        maximum_end = min(snapshot.horizon_end, snapshot.captured_at + timedelta(hours=36))
+        tariff_adapter = IndependentDailyTariffAdapter()
+        published_end = tariff_adapter.published_horizon_end(
+            snapshot, maximum_horizon_end=maximum_end
+        )
+        if assignment.ends_at > published_end:
+            raise DailyReferenceInputError("main_charge_delivery_day_prices_incomplete")
+        # Validate prices through their existing owner, including gaps/overlaps;
+        # Candidate discovery does not infer or manufacture tariff values.
+        tariff_adapter.build(snapshot, horizon_end=published_end)
+        inputs = self._inputs(
+            snapshot, horizon_end=published_end, maximum_duration=timedelta(hours=36)
+        )
+        return IndependentDailyChargeWindowDiscoverer().discover_main_charge(
+            snapshot_id=snapshot.snapshot_id,
+            assignment=assignment,
+            household=inputs.household,
+            pv_scenarios=inputs.pv_scenarios,
+            storage_state=inputs.storage,
+            conversion_model=conversion_model,
+            minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+            target_storage_energy_wh=inputs.target_storage_energy_wh,
+            maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+            retained_schedule=retained_schedule,
+        )
 
     def simulate(
         self,

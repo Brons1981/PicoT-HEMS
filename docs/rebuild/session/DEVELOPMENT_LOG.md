@@ -2457,3 +2457,12 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Diagnose run-51f77f69d6acd6b6 toont hybride NOM-voorrang die middagnetladen verhindert en vroege verwijdering van grid-alternatieven; commitment behoudt een gelijkwaardig opnieuw berekend avondpad.
 - Status: documentatie vastgelegd tot commit 6f2c08322f2ecbe304116b35f1b461a7f562d38d. Geen productiecode gewijzigd, geen tests uitgevoerd voor nieuwe functionaliteit, geen CI/LIVE-verificatie daarvan.
 - Eerste volgende actie: open contractspecificaties afronden en simulator/planner/commitmentgrenzen gericht inventariseren voor de eerste complete laadcyclus.
+
+
+### Vervolg — eerste hergebruikinventarisatie
+
+- Gelezen op main: independent_daily_intent_simulator.py en plan_commitment_store.py.
+- De intent-simulator accepteert een volledig opgegeven schema, actuele opslag, huisvraag, PV-scenario's, conversiemodel en vermogensgrenzen. Vensterselectie staat daarbuiten: kandidaat voor gericht hergebruik, nog niet numeriek/live geverifieerd.
+- ActivePlanCommitment bewaart plansegmenten, oude prognose en SOC-checkpoints, maar heeft geen expliciete dagelijkse publicatie-identiteit of blijvende waargenomen doelbehaald-status. Dit is de concrete uitbreidingsbehoefte binnen bestaande opslag.
+- De simulator begrenst ontlading op de minimumreserve en wijst resterende huisvraag aan het net toe. Alleen minimum-SOC controleren kan daardoor ongepland netverbruik missen; bewaking moet de resulterende netvraag en energietekort meenemen zonder een nieuw hard verbod op huisimport in te voeren.
+- Open ontwerpkeuze: periode koppelen aan de gepubliceerde leveringsdag of exact 24 uur vanaf publicatie. Voorstel ter bespreking: leveringsdag met vaste lokale grenzen; publicatie is alleen startsein. Nog niet besloten of geïmplementeerd.

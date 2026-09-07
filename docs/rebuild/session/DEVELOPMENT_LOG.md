@@ -2466,3 +2466,12 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - ActivePlanCommitment bewaart plansegmenten, oude prognose en SOC-checkpoints, maar heeft geen expliciete dagelijkse publicatie-identiteit of blijvende waargenomen doelbehaald-status. Dit is de concrete uitbreidingsbehoefte binnen bestaande opslag.
 - De simulator begrenst ontlading op de minimumreserve en wijst resterende huisvraag aan het net toe. Alleen minimum-SOC controleren kan daardoor ongepland netverbruik missen; bewaking moet de resulterende netvraag en energietekort meenemen zonder een nieuw hard verbod op huisimport in te voeren.
 - Open ontwerpkeuze: periode koppelen aan de gepubliceerde leveringsdag of exact 24 uur vanaf publicatie. Voorstel ter bespreking: leveringsdag met vaste lokale grenzen; publicatie is alleen startsein. Nog niet besloten of geïmplementeerd.
+
+
+### Bevestigd: leveringsdag als doelperiode
+
+- Toegevoegd geaccepteerd ADR-037.2, sessiereeks MEP-2026-09-07, zonder bevroren ADR-037.1 te herschrijven.
+- Gepubliceerde lokale leveringsdag 00:00–00:00; publicatiemoment start de planning maar niet de doelperiode. Klokwisseldagen volgen 23/25 uur.
+- Resterend vandaag plus morgen is ongeveer 36 uur. Lopend commitment behouden; voltooiing wordt niet gereset door opnieuw ontvangen prijzen.
+- Uitsluitend documentatie, geen runtimewijziging of nieuwe verificatieclaim.
+- Volgende specificatiepunten: doelwaarneming bij start met volle batterij, ontbrekende publicatie/eerste start en grenzen van segmentaanpassing.

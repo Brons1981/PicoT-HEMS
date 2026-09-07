@@ -307,16 +307,14 @@ def test_adapter_supports_full_36_hour_horizon_without_deadline_truncation():
     )
 
 
-def test_dev243_numeric_inputs_keep_midday_grid_charge_available():
-    """Actual numeric inputs at the adapter seam, not an execution/HA replay."""
+def dev243_snapshot_and_conversion():
+    """Numerical diagnostic subset with explicit test capability metadata."""
     import json
     from datetime import datetime, timedelta
     from math import sqrt
     from pathlib import Path
 
     from test_independent_daily_reference_adapter import _snapshot
-
-    from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
 
     data = json.loads(
         (Path(__file__).parent / "fixtures/dev243_main_charge_inputs.json").read_text()
@@ -378,11 +376,19 @@ def test_dev243_numeric_inputs_keep_midday_grid_charge_available():
             ),
         ),
     )
-    a = DailyChargeAssignment("battery", date(2026, 9, 8), "Europe/Amsterdam", at)
     efficiency = sqrt(data["round_trip_efficiency"])
     conversion = replace(
         inputs()["conversion_model"], charge_efficiency=efficiency, discharge_efficiency=efficiency
     )
+    return snapshot, conversion
+
+
+def test_dev243_numeric_inputs_keep_midday_grid_charge_available():
+    """Actual numeric inputs at the adapter seam, not an execution/HA replay."""
+    from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
+
+    snapshot, conversion = dev243_snapshot_and_conversion()
+    a = DailyChargeAssignment("battery", date(2026, 9, 8), "Europe/Amsterdam", snapshot.captured_at)
     result = IndependentDailyReferenceAdapter().main_charge_windows(
         snapshot=snapshot, assignment=a, conversion_model=conversion
     )

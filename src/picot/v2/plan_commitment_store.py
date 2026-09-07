@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from picot.architecture_ownership import architecture_ownership
+from picot.domain.daily_reference_charge_window import DailyMainChargeWindow
+from picot.domain.execution_plan import ExecutionPlan
 from picot.v2.daily_charge_assignment import (
     DailyChargeAssignment,
     DailyChargeRevisionReason,
@@ -376,6 +378,53 @@ class ActivePlanCommitmentStore:
             assignment
         )
         self._write(payload)
+
+    def bind_daily_main_plan(
+        self,
+        *,
+        plan: ExecutionPlan,
+        window: DailyMainChargeWindow,
+    ) -> DailyChargeAssignment:
+        """Bind explicit winning source segments, never infer ownership from mode.
+
+        The canonical Plan Builder supplies the plan and its source-path IDs.
+        This records an initial main route; it does not complete the daily goal
+        from a forecast or replace an already bound route without a trigger.
+        """
+        assignment = next(
+            (a for a in self.load_daily_assignments() if a.assignment_id == window.assignment_id),
+            None,
+        )
+        if assignment is None:
+            raise ValueError("daily assignment must exist before binding its winning plan")
+        if plan.snapshot_id != window.projection.snapshot_id:
+            raise ValueError("winning plan and main window snapshot must match")
+        if plan.execution_scope_id != assignment.execution_scope_id:
+            raise ValueError("winning main plan belongs to another execution scope")
+        owned = {s.segment_id: s for s in window.main_segments}
+        matched = tuple(s for s in plan.segments if s.source_path_segment_id in owned)
+        if len(matched) != len(owned) or {s.source_path_segment_id for s in matched} != set(owned):
+            raise ValueError("winning plan must preserve every explicit main source segment")
+        for segment in matched:
+            source = owned[segment.source_path_segment_id]
+            if (segment.starts_at, segment.ends_at) != (source.starts_at, source.ends_at):
+                raise ValueError("winning plan must preserve main segment boundaries")
+        main_segments = tuple(
+            DailyChargeSegment(s.segment_id, s.starts_at, s.ends_at) for s in matched
+        )
+        if assignment.route_plan_id == plan.plan_id and assignment.main_segments == main_segments:
+            return assignment
+        if assignment.revision:
+            raise ValueError("bound daily main route requires an explicit optimisation trigger")
+        bound = assignment.bind_main_route(
+            plan_id=plan.plan_id,
+            segments=main_segments,
+            at=plan.created_at,
+            reason=DailyChargeRevisionReason.INITIAL,
+            evidence_id=plan.evaluation_id,
+        )
+        self.save_daily_assignment(bound)
+        return bound
 
     def clear(self, execution_scope_id: str) -> None:
         payload = self._load_payload()

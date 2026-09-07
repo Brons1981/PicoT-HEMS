@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
 from picot.architecture_ownership import architecture_ownership
+from picot.v2.daily_charge_assignment import (
+    DailyChargeAssignment,
+    DailyChargeRevisionReason,
+    DailyChargeSegment,
+    published_assignments,
+)
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("plan_store", __name__)
 COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v9"
@@ -297,6 +303,80 @@ class ActivePlanCommitmentStore:
         payload["commitments"][commitment.execution_scope_id] = serialized
         self._write(payload)
 
+    def load_daily_assignments(self) -> tuple[DailyChargeAssignment, ...]:
+        """Load durable daily tasks without treating corrupt state as a new day."""
+        payload = self._load_payload()
+        try:
+            records = payload.get("daily_assignments", {})
+            if not isinstance(records, dict):
+                raise ValueError("daily assignments must be an object")
+            assignments = tuple(_deserialize_daily(item) for item in records.values())
+            if any(key != item.assignment_id for key, item in zip(
+                records, assignments, strict=True
+            )):
+                raise ValueError("daily assignment identity does not match its storage key")
+            return assignments
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            self._record_incident("daily_charge_state_unreadable", exc)
+            raise ValueError("daily charge state unreadable; refusing to recreate tasks") from exc
+
+    def reconcile_daily_publication(
+        self, *, now: datetime, timezone: str, execution_scope_id: str,
+        price_intervals: tuple[tuple[datetime, datetime], ...],
+    ) -> tuple[DailyChargeAssignment, ...]:
+        """Create missing daily identities once, including after an offline start.
+
+        This entry point consumes canonical price coverage; it neither selects
+        windows nor binds legacy execution segments to the new main task.
+        """
+        existing = self.load_daily_assignments()
+        reconciled = published_assignments(
+            now=now, timezone=timezone, execution_scope_id=execution_scope_id,
+            price_intervals=price_intervals, existing=existing,
+        )
+        previous = {a.assignment_id: a for a in existing}
+        additions = tuple(a for a in reconciled if a.assignment_id not in previous)
+        if additions:
+            payload = self._load_payload()
+            records = payload.setdefault("daily_assignments", {})
+            for assignment in additions:
+                records[assignment.assignment_id] = _serialize_daily(assignment)
+            self._write(payload)
+        return reconciled
+
+    def save_daily_assignment(self, assignment: DailyChargeAssignment) -> None:
+        """Persist one lifecycle transition using the existing single-writer store.
+
+        A stale route or duplicate publication cannot reset completion. Active
+        execution-plan resets intentionally do not remove daily goal history.
+        """
+        existing = {a.assignment_id: a for a in self.load_daily_assignments()}
+        previous = existing.get(assignment.assignment_id)
+        if previous == assignment:
+            return
+        if previous is not None:
+            if previous.completed_at is not None:
+                raise ValueError("completed daily assignment cannot be overwritten")
+            if assignment.created_at != previous.created_at:
+                raise ValueError("daily assignment creation identity cannot be replaced")
+            if assignment.revision == previous.revision:
+                expected = replace(previous, completed_at=assignment.completed_at,
+                                   completion_evidence_id=assignment.completion_evidence_id,
+                                   completion_segment_id=assignment.completion_segment_id)
+                if assignment != expected:
+                    raise ValueError("route changes require a new daily revision")
+            elif assignment.revision != previous.revision + 1:
+                raise ValueError("stale or skipped daily assignment revision")
+            elif previous.revised_at is not None and (
+                assignment.revised_at is None or assignment.revised_at < previous.revised_at
+            ):
+                raise ValueError("daily assignment revision time cannot move backwards")
+        payload = self._load_payload()
+        payload.setdefault("daily_assignments", {})[assignment.assignment_id] = _serialize_daily(
+            assignment
+        )
+        self._write(payload)
+
     def clear(self, execution_scope_id: str) -> None:
         payload = self._load_payload()
         if payload["commitments"].pop(execution_scope_id, None) is not None:
@@ -353,14 +433,16 @@ class ActivePlanCommitmentStore:
             return {"schema_version": 1, "commitments": {}}
         try:
             payload = json.loads(self._path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("commitment state must be an object")
             if payload.get("schema_version") != 1:
                 raise ValueError("unsupported commitment schema")
             if not isinstance(payload.get("commitments"), dict):
                 raise ValueError("commitments must be an object")
             return cast(dict[str, Any], payload)
         except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
-            self._record_incident("commitment_store_reset_before_write", exc)
-            return {"schema_version": 1, "commitments": {}}
+            self._record_incident("commitment_store_write_refused", exc)
+            raise ValueError("commitment state unreadable; refusing destructive reset") from exc
 
     def _write(self, payload: dict[str, Any]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -515,4 +597,38 @@ def _deserialize(payload: dict[str, Any]) -> ActivePlanCommitment:
             date.fromisoformat(str(item))
             for item in payload.get("pv_preservation_dates", ())
         ),
+    )
+
+
+def _serialize_daily(assignment: DailyChargeAssignment) -> dict[str, Any]:
+    record = asdict(assignment)
+    for key, value in record.items():
+        if isinstance(value, (date, datetime)):
+            record[key] = value.isoformat()
+    record["main_segments"] = [
+        {"segment_id": s.segment_id, "starts_at": s.starts_at.isoformat(),
+         "ends_at": s.ends_at.isoformat()} for s in assignment.main_segments
+    ]
+    return record
+
+
+def _deserialize_daily(item: dict[str, Any]) -> DailyChargeAssignment:
+    return DailyChargeAssignment(
+        execution_scope_id=item["execution_scope_id"],
+        delivery_date=date.fromisoformat(item["delivery_date"]),
+        timezone=item["timezone"], created_at=datetime.fromisoformat(item["created_at"]),
+        route_plan_id=item.get("route_plan_id"),
+        main_segments=tuple(DailyChargeSegment(
+            segment_id=s["segment_id"], starts_at=datetime.fromisoformat(s["starts_at"]),
+            ends_at=datetime.fromisoformat(s["ends_at"])
+        ) for s in item.get("main_segments", ())),
+        revision=item.get("revision", 0),
+        revised_at=datetime.fromisoformat(item["revised_at"]) if item.get("revised_at") else None,
+        revision_reason=(DailyChargeRevisionReason(item["revision_reason"])
+                         if item.get("revision_reason") else None),
+        revision_evidence_id=item.get("revision_evidence_id"),
+        completed_at=datetime.fromisoformat(item["completed_at"])
+                     if item.get("completed_at") else None,
+        completion_evidence_id=item.get("completion_evidence_id"),
+        completion_segment_id=item.get("completion_segment_id"),
     )

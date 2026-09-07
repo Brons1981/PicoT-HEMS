@@ -2525,3 +2525,31 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Leveringsdag per scope is de identiteit, niet ontvangsttijd. Bestaande opdracht en voltooiing herstellen; geen duplicaten of verzonnen eerdere voltooiing.
 - Late start gebruikt resterende haalbare vensters; onhaalbaarheid expliciet melden. Ontbrekende planningsgegevens geven NOM-terugval.
 - Documentatie bijgewerkt; implementatie en live-verificatie staan nog open. Volgende stap blijft eerste complete hoofdlaadcyclus binnen bestaande pipeline, met dev.243-casus en opeenvolgende HA-beslismomenten.
+
+### 2026-09-07 — eerste implementatiestap hoofdlaadcyclus
+
+- PicoT-basis: dev.243; geen versieverhoging of live-installatie. Werkbranch: `implement/first-daily-charge-cycle`, gebaseerd op documentatiecommit `080cbdab55c9b003d2df26386ba5db32ce90dac9` van `docs/session-2026-09-07-linked-adrs` (PR #616).
+- Status: **IMPLEMENTED**, uitsluitend de levenscyclus en duurzame opslag van de hoofdopdracht. **De volledige eerste laadcyclus is nog niet geïmplementeerd en niet vrijgegeven.** Dit is geen oplossing voor de live dev.243-planning.
+- Eigenaarschap: nieuw onveranderlijk `DailyChargeAssignment`-contract; opslag blijft bij bestaande `ActivePlanCommitmentStore`. Geen nieuwe pipeline, planner, batterijadapter of uitvoeringsroute.
+- Geïmplementeerd: identiteit per scope/lokale leveringsdag; 23/25-uursdagen; ontbrekende opdracht reconstrueren uit bestaande aaneengesloten prijzen; huidige opdracht behouden bij volgende publicatie of ontbrekende prijzen; expliciete hoofdsegmenten; blijvende voltooiing op gemeten 100%; route-revisies met expliciete reden en bewijsidentiteit.
+- Een hoofdsegment wordt expliciet door plan-ID en segment-ID gekoppeld. Afleiden uit alleen NOM/netladen is onvoldoende: daarmee zou een overbrugging ten onrechte kunnen afvinken. Tussen hoofdsegmenten is geen impliciete afvinkbare periode. Een netaanvulling kan expliciet onderdeel zijn van dezelfde hoofdroute.
+- Vol bij start hoofdsegment telt. Vol tijdens een overbrugging, onder een oude plan-ID of bij geblokkeerde uitvoering telt niet. Een waarneming op het exacte einde van het hoofdsegment kan diens voltooiing aantonen, ook bij de daggrens. Telemetrieversheid en bewijs van werkelijk uitgevoerde segmentidentiteit moeten bij runtime-integratie door de bestaande uitvoeringsgrens worden geleverd; de domeinmodule haalt zelf geen metingen op.
+- Bestaande JSON-opslag uitgebreid zonder oude commitments te vervangen. Nieuwe publicaties resetten geen voltooiing; verouderde revisies worden geweigerd. Een beschadigd opslagbestand wordt bij mutatie niet langer stilzwijgend door lege staat vervangen. Dit verandert het foutpad van de gedeelde opslag naar een expliciete fout; de runtime-afhandeling richting bewaakte NOM moet nog worden aangesloten voordat dit releasable is.
+- Lokaal geverifieerd: 42 tests voor dagelijkse levenscyclus en commitment recovery; eerder in deze werkstap 72 tests geslaagd in gecombineerde run met `test_v2_mep_canonical_pipeline.py` (31 bestaande pipeline-tests plus toen 41 lifecycle/recovery-tests). Daarna is één lifecycle-sequentietest toegevoegd en de set van 42 opnieuw geslaagd. Ruff op gewijzigde Python-bestanden en mypy op beide productiebestanden geslaagd.
+- Sequentietest: gemiste publicatie → hoofdroute vastleggen → PV-tekort/netaanvulling onder dezelfde opdracht → herstart zonder prijzen → gemeten voltooiing hoofdsegment → volgende publicatie met behoud voltooiing. Dit is een domein-/opslagtest, **geen HA-replay**.
+- CI_VERIFIED: niet vastgesteld. LIVE_VERIFIED: niets. Geen replaybewijs van de aangeleverde dev.243-diagnostiek. Een eerdere brede lokale poging om vensterselectie direct te vervangen is niet behouden: die koppelde generieke segmenten impliciet aan de hoofdopdracht en liet bestaande pipeline-tests falen. Die wijzigingen staan niet in deze branch.
+- DO NOT CHANGE: ADR-001 t/m ADR-037 bevroren; sessie-ADR's eveneens niet herschrijven. Latere oorspronkelijke ADR's niet als automatisch geaccepteerde beleidsbron gebruiken. Nieuwe afspraken blijven `MEP-2026-09-07`.
+- Exacte positie: contract en Plan Store gereed als eerste bouwsteen; nog geen aanroep vanuit de actieve pipeline. Geen impliciete migratie van dev.243-plannen naar een hoofdopdracht.
+- Eerstvolgende actie: binnen bestaande Candidate/Evaluation-grenzen vensters maken met `(LOWER + CENTRAL) / 2` als input voor fysieke simulatie, uitsluitend haalbare 100%-routes toelaten en expliciete hoofdsegmentidentiteiten aan de gekozen route koppelen. Daarna publication/recovery en gemeten uitvoering aansluiten, geldige optimalisatietriggers en NOM-terugval implementeren, en pas vervolgens opeenvolgende echte HA-inputs uit dev.243 door dezelfde pipeline verifiëren. Marktroute blijft aparte vervolgstap.
+
+#### Opslagstatus van deze implementatiestap
+
+- Lokale implementatiecommit: `fe11dd1bc09c7c816ffbc9adb3a0664d60056f51`.
+- Push van `implement/first-daily-charge-cycle` naar `Brons1981/PicoT-HEMS` is door de automatische goedkeuringscontrole geweigerd: expliciete toestemming voor deze externe write ontbreekt volgens de controle en de bestemming is niet als vertrouwd vastgesteld voor mogelijk private broncode.
+- Geen omweg gebruikt. Code en sessielog staan lokaal gecommit; geen nieuwe PR aangemaakt en geen geslaagde push geclaimd. Publiceren van deze concrete branch vereist bevestiging van de gebruiker. Dit staat los van de nog ontbrekende runtime-implementatie hierboven.
+
+#### Vervolg — publicatie expliciet geautoriseerd
+
+- Alex heeft het publiceren van `implement/first-daily-charge-cycle` naar `Brons1981/PicoT-HEMS` expliciet goedgekeurd.
+- De gewone Git-push mist HTTPS-aanmeldgegevens in deze omgeving. Publicatie wordt daarom via de gekoppelde GitHub-verbinding uitgevoerd, met dezelfde bestanden en basiscommit. Daardoor kunnen de remote commit-ID's verschillen van de lokale commits hierboven.
+- Dit akkoord betreft publicatie van de ontwikkelbranch; geen merge, live-installatie of claim dat de volledige laadcyclus gereed is.

@@ -2492,3 +2492,13 @@ Status: `LOCAL_VERIFIED`; not yet `CI_VERIFIED` or `LIVE_VERIFIED`.
 - Relevante SOC-afwijking, huisbelasting en mee-/tegenvallende PV zijn energietriggers; geen volledige herselectie zonder relevante gevolgen.
 - Toegevoegd ADR-037.4 zonder geaccepteerde teksten te herschrijven. Status DECIDED, geen runtimewijziging of CI/LIVE-verificatie.
 - Volgende stap: expliciete materialiteitscriteria/forecastbasis en afhandeling reeds vol bij start hoofdroute, eerste start en ontbrekende publicatie uitwerken.
+
+
+### ADR-037.5 — expliciete PV-basis en terugval
+
+- Gebruiker bevestigt (LOWER + CENTRAL) / 2 zonder extra confidence-weging.
+- Snellere SOC-stijging alleen geeft geen herplanning. Onvoldoende PV voor het bestaande laadsegment geeft optimalisatie; rond LOWER of boven CENTRAL geeft beoordeling op uitvoeringsgevolgen.
+- Werkelijke PV-energie vergelijken over exact dezelfde verstreken periode; geen losse vermogensmeting.
+- Werkelijke 100% bij start hoofdsegment mag hoofdopdracht afvinken. Alleen 100% bij middernacht/overbrugging blijft onvoldoende.
+- Ontbrekende planningsgegevens: NOM, behoud commitment, bestaande uitvoeringsgrenzen respecteren.
+- Status DECIDED; documentatie toegevoegd, geen runtime gewijzigd of live geverifieerd. Exacte vergelijkingsperiode, betekenis rond LOWER en meetgaten blijven expliciete specificatiepunten.

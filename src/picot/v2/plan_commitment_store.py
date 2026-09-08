@@ -17,6 +17,8 @@ from picot.domain.daily_reference_charge_window import DailyMainChargeWindow
 from picot.domain.energy_path import RetainedExecutionOrigin, SocConstraint
 from picot.domain.execution_plan import ExecutionPlan, ExecutionPlanLifecycle, ExecutionPlanSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.market_daily_assignment import MarketAssignmentStatus, MarketDailyAssignment
+from picot.domain.market_user_rule import MarketUserRule
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.v2.daily_bridge import BridgeEnergyInterval, DailyBridgeState, DailyBridgeTrigger
 from picot.v2.daily_charge_assignment import (
@@ -1118,6 +1120,78 @@ class ActivePlanCommitmentStore:
             "commitment_recovery_rejected",
             ValueError(reason),
         )
+
+    def load_market_daily_assignments(self) -> tuple[MarketDailyAssignment, ...]:
+        """Read explicit daily trade identities, never infer them from charge plans."""
+        records = self._load_payload().get("market_daily_assignments", {})
+        if not isinstance(records, dict):
+            raise ValueError("market daily assignments must be an object")
+        result = []
+        for key, raw in sorted(records.items()):
+            try:
+                values = dict(raw)
+                values["rule"] = MarketUserRule(**values["rule"])
+                values["delivery_date"] = date.fromisoformat(values["delivery_date"])
+                values["created_at"] = datetime.fromisoformat(values["created_at"])
+                if values.get("ended_at") is not None:
+                    values["ended_at"] = datetime.fromisoformat(values["ended_at"])
+                assignment = MarketDailyAssignment(**values)
+                if assignment.assignment_id != key:
+                    raise ValueError("market assignment key differs from its identity")
+            except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                raise ValueError("invalid stored market daily assignment") from exc
+            result.append(assignment)
+        return tuple(result)
+
+    def ensure_market_daily_assignment(
+        self, assignment: MarketDailyAssignment,
+    ) -> MarketDailyAssignment:
+        """Reserve one day budget atomically; this does not publish an execution plan."""
+        existing = next((a for a in self.load_market_daily_assignments()
+                         if a.assignment_id == assignment.assignment_id), None)
+        if existing is not None:
+            if existing.timezone != assignment.timezone:
+                raise ValueError("existing market delivery timezone cannot change")
+            return existing  # Includes closed, skipped and stopped assignments.
+        if assignment.status != "pending":
+            raise ValueError("new market day cannot invent a past execution outcome")
+        payload = self._load_payload()
+        payload.setdefault("market_daily_assignments", {})[assignment.assignment_id] = (
+            self._market_assignment_payload(assignment)
+        )
+        self._write(payload)
+        return assignment
+
+    def close_market_daily_assignment(
+        self, *, assignment_id: str, status: MarketAssignmentStatus,
+        at: datetime, evidence_id: str, measured_export_wh: float | None = None,
+    ) -> MarketDailyAssignment:
+        """Persist caller-supplied outcome evidence; no dispatch or SOC inference."""
+        current = next((a for a in self.load_market_daily_assignments()
+                        if a.assignment_id == assignment_id), None)
+        if current is None:
+            raise ValueError("market outcome requires an existing daily assignment")
+        if current.status != "pending":
+            if (current.status, current.ended_at, current.outcome_evidence_id,
+                current.measured_export_wh) == (status, at, evidence_id, measured_export_wh):
+                return current
+            raise ValueError("recorded market outcome cannot be overwritten or reopened")
+        updated = current.close(status=status, at=at, evidence_id=evidence_id,
+                                measured_export_wh=measured_export_wh)
+        payload = self._load_payload()
+        payload["market_daily_assignments"][assignment_id] = (
+            self._market_assignment_payload(updated)
+        )
+        self._write(payload)
+        return updated
+
+    @staticmethod
+    def _market_assignment_payload(assignment: MarketDailyAssignment) -> dict[str, Any]:
+        result = asdict(assignment)
+        result["delivery_date"] = assignment.delivery_date.isoformat()
+        result["created_at"] = assignment.created_at.isoformat()
+        result["ended_at"] = assignment.ended_at.isoformat() if assignment.ended_at else None
+        return result
 
     def _load_payload(self) -> dict[str, Any]:
         if not self._path.exists():

@@ -23,6 +23,11 @@ from picot.v2.daily_charge_assignment import (
     DailyMainShortfallTrigger,
     published_assignments,
 )
+from picot.v2.daily_pv_comparison import (
+    DailyMainPVSurplusTrigger,
+    DailyPVComparisonBasis,
+    DailyPVComparisonState,
+)
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("plan_store", __name__)
 COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v9"
@@ -389,7 +394,8 @@ class ActivePlanCommitmentStore:
         plan: ExecutionPlan,
         window: DailyMainChargeWindow,
         activate: bool = False,
-        optimisation_trigger: DailyMainShortfallTrigger | None = None,
+        optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None,
+        pv_comparison_basis: DailyPVComparisonBasis | None = None,
     ) -> DailyChargeAssignment:
         """Bind explicit winning source segments, never infer ownership from mode.
 
@@ -446,7 +452,7 @@ class ActivePlanCommitmentStore:
             plan_id=plan.plan_id,
             segments=main_segments,
             at=plan.created_at,
-            reason=(DailyChargeRevisionReason.TARGET_UNREACHABLE if optimisation_trigger is not None
+            reason=(optimisation_trigger.revision_reason if optimisation_trigger is not None
                     else DailyChargeRevisionReason.INITIAL),
             evidence_id=plan.evaluation_id,
         )
@@ -473,6 +479,59 @@ class ActivePlanCommitmentStore:
             }
         if same_binding and previous is not None:
             return bound
+        pv_records = payload.setdefault("daily_pv_comparison", {})
+        if pv_comparison_basis is not None:
+            if assignment.revision or (
+                pv_comparison_basis.assignment_id != assignment.assignment_id
+                or pv_comparison_basis.snapshot_id != plan.snapshot_id
+                or pv_comparison_basis.captured_at != plan.created_at
+                or (pv_comparison_basis.day_starts_at, pv_comparison_basis.day_ends_at)
+                != (assignment.starts_at, assignment.ends_at)
+            ):
+                raise ValueError("PV reference must belong to the first main binding")
+            if assignment.assignment_id in pv_records:
+                raise ValueError("initial PV comparison reference is immutable")
+            pv_records[assignment.assignment_id] = {
+                "basis": pv_comparison_basis.to_payload(), "assessed": {},
+            }
+        if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
+            pv_state = self.load_daily_pv_comparison(assignment.assignment_id)
+            if pv_state.basis is None or pv_state.basis.basis_id != optimisation_trigger.basis_id:
+                raise ValueError("PV trigger requires the saved initial reference")
+            if optimisation_trigger.comparison_evidence_id in pv_state.assessed_evidence_ids:
+                raise ValueError("PV comparison evidence was already assessed")
+            prior_plan = self.load_active_daily_main_plan(plan.execution_scope_id)
+            assert prior_plan is not None
+            prior_grid = tuple(
+                s for s in prior_plan.segments
+                if s.main_assignment_id == assignment.assignment_id
+                and s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                and s.ends_at > plan.created_at
+            )
+            if any(s.requested_power_w is None for s in prior_grid) or any(
+                s.requested_power_w is None for s in matched
+                if s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+            ):
+                raise ValueError("PV revision requires explicit grid power")
+            prior_grid_wh = sum(
+                float(s.requested_power_w)
+                * (s.ends_at - max(s.starts_at, plan.created_at)).total_seconds() / 3600
+                for s in prior_grid if s.requested_power_w is not None
+            )
+            if abs(prior_grid_wh - optimisation_trigger.prior_grid_input_wh) > 1e-6:
+                raise ValueError("PV trigger must match the active remaining grid charge")
+            new_grid_wh = sum(
+                float(part.requested_power_w)
+                * (part.ends_at - part.starts_at).total_seconds() / 3600
+                for part in matched if part.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                and part.requested_power_w is not None
+            )
+            if new_grid_wh >= optimisation_trigger.prior_grid_input_wh - 1e-6:
+                raise ValueError("PV revision must reduce the owned future grid charge")
+            assessed = pv_records[assignment.assignment_id]["assessed"]
+            assessed[optimisation_trigger.comparison_evidence_id] = {
+                "outcome": "route_revised", "plan_id": plan.plan_id,
+            }
         plans[bound.assignment_id] = serialized
         payload.setdefault("daily_assignments", {})[bound.assignment_id] = _serialize_daily(bound)
         if activate:
@@ -482,6 +541,40 @@ class ActivePlanCommitmentStore:
             active[plan.execution_scope_id] = bound.assignment_id
         self._write(payload)
         return bound
+
+    def load_daily_pv_comparison(self, assignment_id: str) -> DailyPVComparisonState:
+        """Unavailable optional comparison evidence cannot erase the main route."""
+        try:
+            raw = self._load_payload().get("daily_pv_comparison", {}).get(assignment_id)
+            if raw is None:
+                return DailyPVComparisonState(assignment_id, None,
+                                              unavailable_reason="initial_reference_unavailable")
+            basis = DailyPVComparisonBasis.from_payload(raw["basis"])
+            if basis.assignment_id != assignment_id:
+                raise ValueError("PV reference belongs to another daily assignment")
+            assessed = raw["assessed"]
+            if not isinstance(assessed, dict) or any(not isinstance(k, str) for k in assessed):
+                raise ValueError("PV assessment history is invalid")
+            return DailyPVComparisonState(assignment_id, basis, tuple(sorted(assessed)))
+        except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
+            self._record_incident("daily_pv_comparison_unreadable", exc)
+            return DailyPVComparisonState(assignment_id, None,
+                                          unavailable_reason="initial_reference_unreadable")
+
+    def record_daily_pv_assessment(
+        self, *, assignment_id: str, basis_id: str, evidence_id: str, outcome: str,
+    ) -> None:
+        state = self.load_daily_pv_comparison(assignment_id)
+        if state.basis is None or state.basis.basis_id != basis_id:
+            raise ValueError("PV assessment requires its saved initial reference")
+        if evidence_id in state.assessed_evidence_ids:
+            return
+        if not evidence_id or not outcome:
+            raise ValueError("PV assessment requires explicit evidence and outcome")
+        payload = self._load_payload()
+        assessed = payload["daily_pv_comparison"][assignment_id]["assessed"]
+        assessed[evidence_id] = {"outcome": outcome}
+        self._write(payload)
 
     def load_active_daily_main_plan(self, execution_scope_id: str) -> ExecutionPlan | None:
         """Read the explicit active pointer; never guess from plan timestamps."""

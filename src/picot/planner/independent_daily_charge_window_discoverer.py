@@ -33,6 +33,7 @@ from picot.planner.independent_daily_intent_simulator import (
 )
 from picot.planner.independent_daily_simulator import ScenarioTimeline
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
+from picot.v2.daily_pv_comparison import DailyMainPVSurplusTrigger
 
 METHOD_VERSION = "independent-daily-charge-window-discoverer:v5"
 BASELINE_INTENT = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
@@ -59,7 +60,7 @@ class IndependentDailyChargeWindowDiscoverer:
         maximum_charge_input_power_w: float,
         maximum_discharge_output_power_w: float,
         retained_schedule: DailyReferenceIntentSchedule | None = None,
-        optimisation_trigger: DailyMainShortfallTrigger | None = None,
+        optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None,
     ) -> DailyMainChargeWindowSet:
         """Discover the first main route under an existing daily identity.
 

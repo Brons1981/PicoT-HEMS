@@ -45,6 +45,12 @@ from picot.v2.contracts import (
     PVChargeProgressEvidence,
     VendorBoundaryResult,
 )
+from picot.v2.daily_charge_assignment import DailyMainShortfallTrigger
+from picot.v2.daily_pv_comparison import (
+    DailyMainPVSurplusTrigger,
+    DailyPVComparisonBasis,
+    compare_daily_pv,
+)
 from picot.v2.execution_plan_projection import _project_plan, project_execution_plan_set
 from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
 from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
@@ -1274,9 +1280,11 @@ def _build_daily_main_run(
     result = None
     reason = "daily_main_route_retained_without_optimisation_trigger"
     selected_window = None
-    optimisation_trigger = None
+    optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None
+    pv_comparison = None
     canonical_set = None
     planning_blocked = False
+    optional_pv_review = False
     retained = tuple(
         p
         for p in context.main_plans
@@ -1313,7 +1321,37 @@ def _build_daily_main_run(
             optimisation_trigger = triggers[0]
             pending = [next(a for a in context.assignments
                             if a.assignment_id == optimisation_trigger.assignment_id)]
+        if not triggers:
+            optional_pv_review = bool(retained) and not pending
+            for state in context.pv_comparison_states:
+                owner = next(
+                    a for a in context.assignments if a.assignment_id == state.assignment_id
+                )
+                if state.basis is None or owner.completed_at is not None or (
+                    owner.ends_at <= snapshot.captured_at
+                ):
+                    continue
+                pv_comparison = compare_daily_pv(
+                    state.basis, snapshot.pv_energy_timeline, at=snapshot.captured_at,
+                )
+                if pv_comparison.status != "complete" or (
+                    pv_comparison.evidence_id in state.assessed_evidence_ids
+                ):
+                    continue
+                surplus = adapter.pv_surplus_trigger(
+                    snapshot=snapshot, assignment=owner, comparison=pv_comparison,
+                    conversion_model=conversion,
+                )
+                if surplus is not None:
+                    optimisation_trigger = surplus
+                    pending = [owner]
+                    break
+                commitment_store.record_daily_pv_assessment(
+                    assignment_id=owner.assignment_id, basis_id=state.basis.basis_id,
+                    evidence_id=pv_comparison.evidence_id, outcome="no_route_change",
+                )
         if pending:
+            optional_pv_review = isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
             windows = adapter.main_charge_windows(
                 snapshot=snapshot,
                 assignment=pending[0],
@@ -1321,21 +1359,28 @@ def _build_daily_main_run(
                 optimisation_trigger=optimisation_trigger,
             )
             if not windows.windows:
-                raise ValueError(windows.reason or "daily_main_no_feasible_window")
-            tariffs = IndependentDailyTariffAdapter().build(
-                snapshot,
-                horizon_end=windows.windows[0].schedule.horizon_end,
-            )
-            comparable = produce_main_charge_portfolio(
-                snapshot=snapshot,
-                windows=windows,
-                tariffs=tariffs,
-                opportunity_ids=opportunities.opportunity_ids,
-            )
+                if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
+                    commitment_store.record_daily_pv_assessment(
+                        assignment_id=optimisation_trigger.assignment_id,
+                        basis_id=optimisation_trigger.basis_id,
+                        evidence_id=optimisation_trigger.comparison_evidence_id,
+                        outcome="no_admissible_grid_reduction",
+                    )
+                    reason = windows.reason or "pv_comparison_retains_main_route"
+                else:
+                    raise ValueError(windows.reason or "daily_main_no_feasible_window")
+            else:
+                tariffs = IndependentDailyTariffAdapter().build(
+                    snapshot, horizon_end=windows.windows[0].schedule.horizon_end,
+                )
+                comparable = produce_main_charge_portfolio(
+                    snapshot=snapshot, windows=windows, tariffs=tariffs,
+                    opportunity_ids=opportunities.opportunity_ids,
+                )
         elif not retained:
             raise ValueError("daily_main_active_plan_unavailable")
     except (ValueError, OSError) as exc:
-        planning_blocked = True
+        planning_blocked = not optional_pv_review
         reason = str(exc) or exc.__class__.__name__
     candidate_ms = round((perf_counter() - started) * 1000, 3)
     started = perf_counter()
@@ -1355,8 +1400,19 @@ def _build_daily_main_run(
             )
             reason = result.record.decisive_step or "daily_main_winner_selected"
         else:
-            planning_blocked = True
+            planning_blocked = not isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
             reason = "daily_main_evaluation_has_no_winner"
+            if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
+                assert commitment_store is not None
+                try:
+                    commitment_store.record_daily_pv_assessment(
+                        assignment_id=optimisation_trigger.assignment_id,
+                        basis_id=optimisation_trigger.basis_id,
+                        evidence_id=optimisation_trigger.comparison_evidence_id,
+                        outcome="no_valid_grid_reduction_candidate",
+                    )
+                except (ValueError, OSError) as exc:
+                    reason = str(exc) or exc.__class__.__name__
     evaluation_ms = round((perf_counter() - started) * 1000, 3)
     started = perf_counter()
     if selected_window is not None and result is not None:
@@ -1369,15 +1425,21 @@ def _build_daily_main_run(
             )
             if len(proposed.plans) != 1:
                 raise ValueError("daily_main_requires_single_storage_scope")
+            selected_owner = next(a for a in context.assignments
+                                  if a.assignment_id == selected_window.assignment_id)
+            pv_basis = DailyPVComparisonBasis.capture(snapshot, selected_owner) if (
+                selected_owner.revision == 0
+            ) else None
             commitment_store.bind_daily_main_plan(
                 plan=proposed.plans[0],
                 window=selected_window,
                 activate=True,
                 optimisation_trigger=optimisation_trigger,
+                pv_comparison_basis=pv_basis,
             )
             canonical_set = proposed
         except (ValueError, OSError) as exc:
-            planning_blocked = True
+            planning_blocked = not isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
             reason = str(exc) or exc.__class__.__name__
     candidate_set_id = _id("daily-main-candidates", snapshot.snapshot_id)
     candidates = tuple(
@@ -1477,7 +1539,13 @@ def _build_daily_main_run(
         winning_candidate_id=winner_id,
         winning_energy_path_id=winning_path.path_id if winning_path is not None else None,
         reason=reason,
-        daily_main_shortfall=optimisation_trigger,
+        daily_main_shortfall=(optimisation_trigger if isinstance(
+            optimisation_trigger, DailyMainShortfallTrigger,
+        ) else None),
+        daily_pv_comparison=pv_comparison,
+        daily_pv_surplus_trigger=(optimisation_trigger if isinstance(
+            optimisation_trigger, DailyMainPVSurplusTrigger,
+        ) else None),
         status="fallback_active"
         if planning_blocked
         else "winner_selected"

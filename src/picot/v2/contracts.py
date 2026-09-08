@@ -14,6 +14,11 @@ from picot.domain.evaluation import CandidateOutcome as CanonicalCandidateOutcom
 from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
+from picot.v2.daily_pv_comparison import (
+    DailyMainPVSurplusTrigger,
+    DailyPVComparison,
+    DailyPVComparisonState,
+)
 from picot.v2.household_planning_regime import (
     HouseholdPlanningRegime,
     UserObjectiveProfile,
@@ -642,6 +647,7 @@ class DailyChargePlanningContext:
     assignments: tuple[DailyChargeAssignment, ...] = ()
     main_plans: tuple[CanonicalExecutionPlan, ...] = ()
     active_main_plan_ids: tuple[str, ...] = ()
+    pv_comparison_states: tuple[DailyPVComparisonState, ...] = ()
     duration_ms: float = 0.0
 
     def __post_init__(self) -> None:
@@ -656,6 +662,9 @@ class DailyChargePlanningContext:
         ids = tuple(a.assignment_id for a in self.assignments)
         if len(ids) != len(set(ids)):
             raise ValueError("daily charge recovery must not duplicate assignments")
+        pv_ids = tuple(s.assignment_id for s in self.pv_comparison_states)
+        if len(pv_ids) != len(set(pv_ids)) or set(pv_ids) - set(ids):
+            raise ValueError("PV comparison requires unique restored daily owners")
         plans = {p.plan_id: p for p in self.main_plans}
         if len(plans) != len(self.main_plans):
             raise ValueError("daily charge recovery must not duplicate plans")
@@ -1320,6 +1329,8 @@ class EvaluationRecord:
     financial_equivalence_margin_eur: float = 0.0
     commitment_decision: str | None = None
     daily_main_shortfall: DailyMainShortfallTrigger | None = None
+    daily_pv_comparison: DailyPVComparison | None = None
+    daily_pv_surplus_trigger: DailyMainPVSurplusTrigger | None = None
 
 
 @dataclass(frozen=True, slots=True)

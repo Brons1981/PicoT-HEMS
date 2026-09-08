@@ -281,6 +281,10 @@ class DailyMainShortfallTrigger:
         ):
             raise ValueError("shortfall trigger requires a physically insufficient main route")
 
+    @property
+    def revision_reason(self) -> DailyChargeRevisionReason:
+        return DailyChargeRevisionReason.TARGET_UNREACHABLE
+
     def validate(self, assignment: DailyChargeAssignment, snapshot_id: str, at: datetime) -> None:
         if (
             assignment.assignment_id != self.assignment_id

@@ -675,6 +675,11 @@ def _planning_input_signature(
             "conversion_method_version": (
                 interval.conversion_method_version
             ),
+            **({
+                "actual_evidence_ids": interval.actual_evidence_ids,
+                "forecast_lower_energy_wh": interval.forecast_lower_energy_wh,
+                "forecast_central_energy_wh": interval.forecast_central_energy_wh,
+            } if bundle.snapshot.daily_charge_context is not None else {}),
         }
         for interval in (
             pv_timeline.intervals
@@ -838,6 +843,11 @@ def _planning_input_signature(
                 "reason": daily_context.reason,
                 "timezone": daily_context.timezone,
                 "active_main_plan_ids": daily_context.active_main_plan_ids,
+                "pv_comparison_states": [
+                    (state.assignment_id, state.basis.basis_id if state.basis else None,
+                     state.assessed_evidence_ids, state.unavailable_reason)
+                    for state in daily_context.pv_comparison_states
+                ],
                 "assignments": [
                     {
                         "assignment_id": a.assignment_id,
@@ -965,6 +975,10 @@ def _restore_daily_charge_context(
         assignments=assignments,
         main_plans=tuple(plans),
         active_main_plan_ids=tuple(active_main_plan_ids),
+        pv_comparison_states=tuple(
+            store.load_daily_pv_comparison(a.assignment_id) for a in assignments
+            if a.route_plan_id is not None
+        ),
         duration_ms=round((perf_counter() - started) * 1000, 3),
     )
     return replace(snapshot, daily_charge_context=context)

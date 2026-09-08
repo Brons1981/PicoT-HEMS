@@ -69,6 +69,7 @@ from picot.v2.contracts import (
     PVEnergyTimelineInterval,
 )
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
+from picot.v2.daily_pv_comparison import DailyMainPVSurplusTrigger, DailyPVComparison
 from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
@@ -144,6 +145,78 @@ class IndependentDailyReferenceAdapter:
                 ))
         return tuple(sorted(triggers, key=lambda t: t.assignment_id))
 
+    def pv_surplus_trigger(
+        self, *, snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
+        comparison: DailyPVComparison, conversion_model: StorageConversionModel,
+    ) -> DailyMainPVSurplusTrigger | None:
+        """Prove a removable future grid interval before any price window search."""
+        if comparison.assignment_id != assignment.assignment_id or (
+            comparison.status != "complete" or comparison.boundary != "above_central"
+            or assignment.completed_at is not None or assignment.route_plan_id is None
+        ):
+            return None
+        context = snapshot.daily_charge_context
+        if context is None or context.status != "ready":
+            raise DailyReferenceInputError("main_charge_recovery_context_blocked")
+        active = tuple(p for p in context.main_plans if p.plan_id in context.active_main_plan_ids)
+        if len(active) != 1:
+            raise DailyReferenceInputError("main_charge_active_plan_required_for_monitoring")
+        plan = active[0]
+        grid = tuple(s for s in plan.segments if s.main_assignment_id == assignment.assignment_id
+                     and s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                     and s.ends_at > snapshot.captured_at)
+        if not grid:
+            return None
+        if any(s.requested_power_w is None for s in grid):
+            raise DailyReferenceInputError("retained_grid_power_unavailable")
+        prior_grid_wh = sum(
+            float(s.requested_power_w) * (s.ends_at - max(s.starts_at, snapshot.captured_at))
+            .total_seconds() / 3600 for s in grid if s.requested_power_w is not None
+        )
+        inputs = self._inputs(snapshot, horizon_end=plan.valid_until,
+                              maximum_duration=timedelta(hours=36))
+        schedule, _ = self._retained_main_schedule(
+            snapshot=snapshot, assignment=assignment, inputs=inputs, supplied=None,
+        )
+        assert schedule is not None
+        pending = tuple(a for a in context.assignments if a.route_plan_id is not None
+                        and a.completed_at is None and a.ends_at > snapshot.captured_at)
+        for index in reversed(range(len(schedule.intervals))):
+            interval = schedule.intervals[index]
+            if not any(s.starts_at <= interval.starts_at and interval.ends_at <= s.ends_at
+                       for s in grid):
+                continue
+            trial = replace(schedule, schedule_id=f"pv-grid-removal:{snapshot.snapshot_id}:{index}",
+                            intervals=tuple(replace(i, intent=DailyStorageIntent.NOM)
+                                            if n == index else i
+                                            for n, i in enumerate(schedule.intervals)))
+            projection = IndependentDailyIntentSimulator().simulate_planning_basis(
+                snapshot_id=snapshot.snapshot_id, household=inputs.household,
+                pv_scenarios=inputs.pv_scenarios, storage_state=inputs.storage,
+                conversion_model=conversion_model, intent_schedule=trial,
+                minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+                target_storage_energy_wh=inputs.target_storage_energy_wh,
+                maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+                maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+            )
+            if all(any(
+                main.starts_at <= at <= main.ends_at
+                and energy + 1e-6 >= inputs.storage.usable_capacity_wh
+                for main in owner.main_segments for i in projection.intervals
+                for at, energy in ((i.starts_at, i.storage_energy_at_start_wh),
+                                   (i.ends_at, i.storage_energy_at_end_wh))
+            ) for owner in pending):
+                assert comparison.actual_wh is not None and comparison.central_wh is not None
+                return DailyMainPVSurplusTrigger(
+                    assignment.assignment_id, assignment.route_plan_id, assignment.revision,
+                    plan.plan_id, snapshot.snapshot_id, snapshot.captured_at,
+                    inputs.storage.usable_capacity_wh, comparison.basis_id, comparison.evidence_id,
+                    comparison.actual_wh, comparison.central_wh, prior_grid_wh,
+                    inputs.maximum_charge_input_power_w
+                    * (interval.ends_at - interval.starts_at).total_seconds() / 3600,
+                )
+        return None
+
     def main_charge_windows(
         self,
         *,
@@ -151,7 +224,7 @@ class IndependentDailyReferenceAdapter:
         assignment: DailyChargeAssignment,
         conversion_model: StorageConversionModel,
         retained_schedule: DailyReferenceIntentSchedule | None = None,
-        optimisation_trigger: DailyMainShortfallTrigger | None = None,
+        optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None,
     ) -> DailyMainChargeWindowSet:
         """Canonical input seam for first main-route Candidate construction.
 
@@ -228,6 +301,15 @@ class IndependentDailyReferenceAdapter:
         if windows and not feasible:
             return replace(result, windows=(), status="unreachable",
                            reason="retained_main_goal_requires_explicit_optimisation")
+        if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
+            feasible = tuple(w for w in feasible if sum(
+                (i.ends_at - i.starts_at).total_seconds() / 3600
+                * inputs.maximum_charge_input_power_w
+                for i in w.main_segments if i.intent is DailyStorageIntent.GRID_REQUIREMENT
+            ) < optimisation_trigger.prior_grid_input_wh - 1e-6)
+            if not feasible:
+                return replace(result, windows=(), status="unreachable",
+                               reason="pv_comparison_has_no_admissible_grid_reduction")
         return replace(result, windows=feasible)
 
     @staticmethod

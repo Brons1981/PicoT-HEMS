@@ -65,6 +65,7 @@ def test_lost_pv_adds_grid_to_same_goal_and_persists_revision(tmp_path, monkeypa
     first = pipeline.run(planning_input=recover(fresh(recover(), soc=0.9, tag="initial")))
     original = store.load_daily_assignments()[0]
     old_plan = store.load_active_daily_main_plan("battery")
+    original_basis = store.load_daily_pv_comparison(original.assignment_id).basis
     assert all(s.primitive is not ExecutionPrimitive.CHARGE_AT_POWER for s in old_plan.segments)
     source = recover(fresh(first.planning_input, pv_factor=0.0))
     result = pipeline.run(planning_input=source)
@@ -75,6 +76,7 @@ def test_lost_pv_adds_grid_to_same_goal_and_persists_revision(tmp_path, monkeypa
     assert revised.delivery_date == original.delivery_date
     assert revised.revision == original.revision + 1
     assert revised.revision_reason is DailyChargeRevisionReason.TARGET_UNREACHABLE
+    assert store.load_daily_pv_comparison(original.assignment_id).basis == original_basis
     assert revised.completed_at is None
     active = store.load_active_daily_main_plan("battery")
     assert any(s.primitive is ExecutionPrimitive.CHARGE_AT_POWER for s in active.segments)

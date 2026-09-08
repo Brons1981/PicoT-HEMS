@@ -45,6 +45,7 @@ from picot.v2.contracts import (
     PVChargeProgressEvidence,
     VendorBoundaryResult,
 )
+from picot.v2.daily_bridge import DailyBridgeTrigger, energy_deficits
 from picot.v2.daily_charge_assignment import DailyMainShortfallTrigger
 from picot.v2.daily_pv_comparison import (
     DailyMainPVSurplusTrigger,
@@ -1280,8 +1281,11 @@ def _build_daily_main_run(
     result = None
     reason = "daily_main_route_retained_without_optimisation_trigger"
     selected_window = None
-    optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None
+    optimisation_trigger: (
+        DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | DailyBridgeTrigger | None
+    ) = None
     pv_comparison = None
+    bridge_assessment = None
     canonical_set = None
     planning_blocked = False
     optional_pv_review = False
@@ -1350,14 +1354,25 @@ def _build_daily_main_run(
                     assignment_id=owner.assignment_id, basis_id=state.basis.basis_id,
                     evidence_id=pv_comparison.evidence_id, outcome="no_route_change",
                 )
+        if not pending and optimisation_trigger is None and retained:
+            bridge_assessment = adapter.bridge_assessment(
+                snapshot=snapshot, conversion_model=conversion,
+            )
+            if bridge_assessment.trigger is not None:
+                optimisation_trigger = bridge_assessment.trigger
+                pending = [next(a for a in context.assignments
+                                if a.assignment_id == optimisation_trigger.assignment_id)]
         if pending:
             optional_pv_review = isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
-            windows = adapter.main_charge_windows(
-                snapshot=snapshot,
-                assignment=pending[0],
-                conversion_model=conversion,
-                optimisation_trigger=optimisation_trigger,
-            )
+            if isinstance(optimisation_trigger, DailyBridgeTrigger):
+                windows = adapter.bridge_windows(
+                    snapshot=snapshot, trigger=optimisation_trigger, conversion_model=conversion,
+                )
+            else:
+                windows = adapter.main_charge_windows(
+                    snapshot=snapshot, assignment=pending[0], conversion_model=conversion,
+                    optimisation_trigger=optimisation_trigger,
+                )
             if not windows.windows:
                 if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
                     commitment_store.record_daily_pv_assessment(
@@ -1436,6 +1451,15 @@ def _build_daily_main_run(
                 activate=True,
                 optimisation_trigger=optimisation_trigger,
                 pv_comparison_basis=pv_basis,
+                bridge_deficits=energy_deficits(
+                    selected_window.projection, selected_window.schedule,
+                    until=optimisation_trigger.next_starts_at,
+                    maximum_discharge_output_power_w=next(
+                        limit.maximum_discharge_output_power_w
+                        for limit in snapshot.storage_physical_limits
+                        if limit.execution_scope_id == selected_owner.execution_scope_id
+                    ),
+                ) if isinstance(optimisation_trigger, DailyBridgeTrigger) else (),
             )
             canonical_set = proposed
         except (ValueError, OSError) as exc:
@@ -1542,6 +1566,7 @@ def _build_daily_main_run(
         daily_main_shortfall=(optimisation_trigger if isinstance(
             optimisation_trigger, DailyMainShortfallTrigger,
         ) else None),
+        daily_bridge=bridge_assessment,
         daily_pv_comparison=pv_comparison,
         daily_pv_surplus_trigger=(optimisation_trigger if isinstance(
             optimisation_trigger, DailyMainPVSurplusTrigger,

@@ -13,6 +13,8 @@ from picot.domain.capability_snapshot import (
 )
 from picot.domain.current_storage_state import CurrentStorageState as DomainStorageState
 from picot.domain.daily_reference_charge_window import (
+    DailyMainChargeSegment,
+    DailyMainChargeWindow,
     DailyMainChargeWindowSet,
     DailyReferenceChargeWindow,
     DailyReferenceChargeWindowSet,
@@ -23,7 +25,11 @@ from picot.domain.daily_reference_intent import (
     DailyReferenceIntentSchedule,
     DailyStorageIntent,
 )
-from picot.domain.daily_reference_simulation import DailyReferenceSimulationSet, PVScenario
+from picot.domain.daily_reference_simulation import (
+    DailyPlanningProjection,
+    DailyReferenceSimulationSet,
+    PVScenario,
+)
 from picot.domain.daily_reference_strategy_observation import (
     DailyReferenceStrategyObservation,
 )
@@ -68,6 +74,12 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
+from picot.v2.daily_bridge import (
+    DailyBridgeAssessment,
+    DailyBridgeTrigger,
+    energy_deficits,
+    needs_bridge_review,
+)
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
 from picot.v2.daily_pv_comparison import DailyMainPVSurplusTrigger, DailyPVComparison
 from picot.v2.independent_daily_tariff_adapter import (
@@ -96,6 +108,213 @@ class _DailyReferenceInputs:
 
 class IndependentDailyReferenceAdapter:
     """Build and run the daily simulation without reading planner Candidates."""
+
+    def bridge_assessment(
+        self, *, snapshot: PlanningInputSnapshot, conversion_model: StorageConversionModel,
+    ) -> DailyBridgeAssessment:
+        context = snapshot.daily_charge_context
+        if context is None or context.status != "ready":
+            raise DailyReferenceInputError("bridge_recovery_context_blocked")
+        completed = tuple(a for a in context.assignments if a.completed_at is not None)
+        if not completed:
+            return DailyBridgeAssessment("day_goal_not_completed")
+        active = tuple(p for p in context.main_plans if p.plan_id in context.active_main_plan_ids)
+        if len(active) != 1:
+            return DailyBridgeAssessment("next_session_unknown")
+        plan = active[0]
+        future = sorted(
+            ((s.starts_at, a) for a in context.assignments
+             if a.completed_at is None and a.execution_scope_id == plan.execution_scope_id
+             for s in a.main_segments if s.starts_at > snapshot.captured_at
+             and any(p.main_assignment_id == a.assignment_id
+                     and p.starts_at <= s.starts_at < p.ends_at for p in plan.segments)),
+            key=lambda item: (item[0], item[1].assignment_id),
+        )
+        if any(s.starts_at <= snapshot.captured_at < s.ends_at for a in context.assignments
+               if a.completed_at is None for s in a.main_segments):
+            return DailyBridgeAssessment("main_session_active")
+        if not future:
+            # No invented deadline: expose only the known remaining trajectory.
+            owner = next(a for a in context.assignments if a.route_plan_id == plan.plan_id)
+            inputs = self._inputs(snapshot, horizon_end=plan.valid_until,
+                                  maximum_duration=timedelta(hours=36))
+            schedule, _ = self._retained_main_schedule(
+                snapshot=snapshot, assignment=owner, inputs=inputs, supplied=None,
+            )
+            assert schedule is not None
+            projection = self._bridge_projection(snapshot, inputs, schedule, conversion_model)
+            return DailyBridgeAssessment("next_session_unknown", deficits=energy_deficits(
+                projection, schedule, until=plan.valid_until,
+                maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+            ))
+        until, owner = future[0]
+        previous = tuple(a for a in completed if a.execution_scope_id == owner.execution_scope_id
+                         and a.delivery_date < owner.delivery_date)
+        if not previous:
+            return DailyBridgeAssessment("day_goal_not_completed")
+        inputs = self._inputs(snapshot, horizon_end=plan.valid_until,
+                              maximum_duration=timedelta(hours=36))
+        schedule, _ = self._retained_main_schedule(
+            snapshot=snapshot, assignment=owner, inputs=inputs, supplied=None,
+        )
+        assert schedule is not None
+        projection = self._bridge_projection(snapshot, inputs, schedule, conversion_model)
+        deficits = energy_deficits(projection, schedule, until=until,
+                                   maximum_discharge_output_power_w=
+                                   inputs.maximum_discharge_output_power_w)
+        state = next((s for s in context.bridge_states if s.assignment_id == owner.assignment_id),
+                     None)
+        needed = needs_bridge_review(deficits, state, plan_id=plan.plan_id, next_starts_at=until)
+        trigger = None
+        if needed:
+            assert owner.route_plan_id is not None
+            trigger = DailyBridgeTrigger(
+                owner.assignment_id, owner.route_plan_id, owner.revision, plan.plan_id,
+                snapshot.snapshot_id, snapshot.captured_at, inputs.storage.usable_capacity_wh,
+                max(previous, key=lambda a: a.delivery_date).assignment_id, until, deficits,
+            )
+            trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
+        return DailyBridgeAssessment(
+            "energy_shortfall" if needed else "accepted_grid_support" if state else "sufficient",
+            owner.assignment_id, until, deficits, trigger,
+        )
+
+    @staticmethod
+    def _bridge_projection(
+        snapshot: PlanningInputSnapshot, inputs: _DailyReferenceInputs,
+        schedule: DailyReferenceIntentSchedule, conversion_model: StorageConversionModel,
+    ) -> DailyPlanningProjection:
+        return IndependentDailyIntentSimulator().simulate_planning_basis(
+            snapshot_id=snapshot.snapshot_id, household=inputs.household,
+            pv_scenarios=inputs.pv_scenarios, storage_state=inputs.storage,
+            conversion_model=conversion_model, intent_schedule=schedule,
+            minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+            target_storage_energy_wh=inputs.target_storage_energy_wh,
+            maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+        )
+
+    def bridge_windows(
+        self, *, snapshot: PlanningInputSnapshot, trigger: DailyBridgeTrigger,
+        conversion_model: StorageConversionModel,
+    ) -> DailyMainChargeWindowSet:
+        """Supplement the retained route; never discover a replacement main window."""
+        context = snapshot.daily_charge_context
+        assert context is not None
+        owner = next(a for a in context.assignments if a.assignment_id == trigger.assignment_id)
+        trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
+        active = next(p for p in context.main_plans if p.plan_id == trigger.active_plan_id)
+        inputs = self._inputs(snapshot, horizon_end=active.valid_until,
+                              maximum_duration=timedelta(hours=36))
+        baseline, retained = self._retained_main_schedule(
+            snapshot=snapshot, assignment=owner, inputs=inputs, supplied=None,
+        )
+        assert baseline is not None
+        owned = tuple(r for r in retained if r.assignment_id == owner.assignment_id)
+        others = tuple(r for r in retained if r.assignment_id != owner.assignment_id)
+        free = tuple(n for n, i in enumerate(baseline.intervals)
+                     if i.ends_at <= trigger.next_starts_at and not any(
+                         r.segment.starts_at < i.ends_at and i.starts_at < r.segment.ends_at
+                         for r in retained))
+        schedules = {baseline.intervals: baseline}
+        simulations = 0
+        projections: dict[str, DailyPlanningProjection] = {}
+
+        def add(intents: tuple[DailyReferenceIntentInterval, ...]) -> DailyReferenceIntentSchedule:
+            schedule = replace(baseline, intervals=intents,
+                               schedule_id="bridge:" + sha256(
+                                   (snapshot.snapshot_id + repr(intents)).encode()
+                               ).hexdigest()[:16])
+            schedules.setdefault(intents, schedule)
+            return schedules[intents]
+
+        def project(schedule: DailyReferenceIntentSchedule) -> DailyPlanningProjection:
+            nonlocal simulations
+            if schedule.schedule_id not in projections:
+                projections[schedule.schedule_id] = self._bridge_projection(
+                    snapshot, inputs, schedule, conversion_model,
+                )
+                simulations += 1
+            return projections[schedule.schedule_id]
+
+        # PV capture over the bridge, individual controllable intervals, and
+        # minimum sufficient contiguous charging from each feasible start.
+        # The same interval simulator evaluates all options; no ranking takes place here.
+        pv = tuple(replace(i, intent=DailyStorageIntent.NOM) if n in free else i
+                   for n, i in enumerate(baseline.intervals))
+        add(pv)
+        # Direct grid support can preserve storage across a complete published
+        # constant-price run, not merely one isolated simulation interval.
+        runs: list[list[int]] = []
+        previous_price: float | None = None
+        for n in free:
+            interval = baseline.intervals[n]
+            price = next((p.value_eur_per_kwh for p in snapshot.price_points
+                          if p.starts_at <= interval.starts_at and interval.ends_at <= p.ends_at),
+                         None)
+            if not runs or n != runs[-1][-1] + 1 or price != previous_price:
+                runs.append([])
+            runs[-1].append(n)
+            previous_price = price
+        for run in (*runs, list(free)):
+            add(tuple(replace(i, intent=DailyStorageIntent.STANDBY)
+                      if n in run else i for n, i in enumerate(pv)))
+        for n in free:
+            for intent in (DailyStorageIntent.GRID_REQUIREMENT, DailyStorageIntent.STANDBY):
+                add(tuple(replace(i, intent=intent) if k == n else i for k, i in enumerate(pv)))
+            consecutive: list[int] = []
+            for end in free[free.index(n):]:
+                if consecutive and end != consecutive[-1] + 1:
+                    break
+                consecutive.append(end)
+            lo, hi = 1, len(consecutive)
+            while lo < hi:
+                mid = (lo + hi) // 2
+                trial = add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT)
+                                  if k in consecutive[:mid] else i for k, i in enumerate(pv)))
+                deficit = energy_deficits(project(trial), trial, until=trigger.next_starts_at,
+                                          maximum_discharge_output_power_w=
+                                          inputs.maximum_discharge_output_power_w)
+                if any(i.deficit_wh > 1e-6 for i in deficit):
+                    lo = mid + 1
+                else:
+                    hi = mid
+            add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT)
+                      if k in consecutive[:lo] else i for k, i in enumerate(pv)))
+        windows = []
+        for schedule in schedules.values():
+            projection = project(schedule)
+            reaches = {}
+            for a in context.assignments:
+                if (a.completed_at is not None or not a.main_segments
+                        or a.ends_at <= snapshot.captured_at):
+                    continue
+                reached = next((at for main in a.main_segments for i in projection.intervals
+                                for at, energy in ((i.starts_at, i.storage_energy_at_start_wh),
+                                                   (i.ends_at, i.storage_energy_at_end_wh))
+                                if main.starts_at <= at <= main.ends_at
+                                and energy + 1e-6 >= inputs.storage.usable_capacity_wh), None)
+                if reached is None:
+                    break
+                reaches[a.assignment_id] = reached
+            else:
+                main = tuple(DailyMainChargeSegment(
+                    "bridge-main:" + sha256((schedule.schedule_id + r.segment.segment_id)
+                                            .encode()).hexdigest()[:16],
+                    r.segment.starts_at, r.segment.ends_at,
+                    DailyStorageIntent.GRID_REQUIREMENT
+                    if r.segment.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                    else DailyStorageIntent.NOM,
+                ) for r in owned)
+                windows.append(DailyMainChargeWindow(
+                    owner.assignment_id, "hybrid", schedule, main, projection,
+                    reaches[owner.assignment_id], inputs.storage.usable_capacity_wh, others,
+                ))
+        return DailyMainChargeWindowSet(
+            owner.assignment_id, snapshot.snapshot_id, tuple(windows),
+            "discovered" if windows else "unreachable", "reserve_bridge_alternatives",
+            simulations, purpose="bridge",
+        )
 
     def main_route_shortfalls(
         self, *, snapshot: PlanningInputSnapshot, conversion_model: StorageConversionModel,

@@ -37,6 +37,7 @@ from picot.v2.contracts import (
     DailyChargePlanningContext,
     PlanningInputSnapshot,
 )
+from picot.v2.daily_bridge import DailyBridgeState
 from picot.v2.daily_charge_assignment import DailyChargeAssignment
 from picot.v2.daily_pv_basis import (
     DailyPVBasisDecision,
@@ -748,6 +749,12 @@ def _planning_input_signature(
         "facts": facts,
         "price_points": price_points,
         "pv_energy_intervals": pv_energy_intervals,
+        "daily_household_forecast": (
+            [(i.starts_at.isoformat(), i.ends_at.isoformat(), i.expected_energy_wh,
+              i.confidence, i.method_version) for i in household.intervals]
+            if bundle.snapshot.daily_charge_context is not None
+            and (household := bundle.snapshot.household_load_forecast) is not None else None
+        ),
         "storage_mode_capability_evidence": (
             {
                 "current_vendor_mode": (
@@ -843,6 +850,11 @@ def _planning_input_signature(
                 "reason": daily_context.reason,
                 "timezone": daily_context.timezone,
                 "active_main_plan_ids": daily_context.active_main_plan_ids,
+                "bridge_states": [
+                    (s.assignment_id, s.plan_id, s.next_starts_at.isoformat(),
+                     tuple((i.starts_at.isoformat(), i.ends_at.isoformat(), i.deficit_wh)
+                           for i in s.accepted_deficits)) for s in daily_context.bridge_states
+                ],
                 "pv_comparison_states": [
                     (state.assignment_id, state.basis.basis_id if state.basis else None,
                      state.assessed_evidence_ids, state.unavailable_reason)
@@ -913,6 +925,7 @@ def _restore_daily_charge_context(
     """
     started = perf_counter()
     assignments: tuple[DailyChargeAssignment, ...] = ()
+    bridge_states: tuple[DailyBridgeState, ...] = ()
     plans: list[ExecutionPlan] = []
     active_main_plan_ids: list[str] = []
     status, reason = "ready", None
@@ -927,9 +940,15 @@ def _restore_daily_charge_context(
     )
     try:
         existing = store.load_daily_assignments()
+        latest_completed_ids = {
+            max((a for a in existing if a.execution_scope_id == scope
+                 and a.completed_at is not None), key=lambda a: a.delivery_date).assignment_id
+            for scope in scopes if any(a.execution_scope_id == scope and a.completed_at is not None
+                                       for a in existing)
+        }
         assignments = tuple(
-            a for a in existing
-            if a.execution_scope_id in scopes and a.ends_at >= earliest_observation
+            a for a in existing if a.execution_scope_id in scopes
+            and (a.ends_at >= earliest_observation or a.assignment_id in latest_completed_ids)
         )
         for assignment in assignments:
             if assignment.route_plan_id is not None:
@@ -962,7 +981,12 @@ def _restore_daily_charge_context(
             )
         assignments = tuple(
             a for a in store.load_daily_assignments()
-            if a.execution_scope_id in scopes and a.ends_at >= earliest_observation
+            if a.execution_scope_id in scopes
+            and (a.ends_at >= earliest_observation or a.assignment_id in latest_completed_ids)
+        )
+        bridge_states = tuple(
+            state for a in assignments
+            if (state := store.load_daily_bridge_state(a.assignment_id)) is not None
         )
     except (ValueError, OSError) as exc:
         status, reason = "blocked", str(exc) or exc.__class__.__name__
@@ -975,6 +999,7 @@ def _restore_daily_charge_context(
         assignments=assignments,
         main_plans=tuple(plans),
         active_main_plan_ids=tuple(active_main_plan_ids),
+        bridge_states=bridge_states,
         pv_comparison_states=tuple(
             store.load_daily_pv_comparison(a.assignment_id) for a in assignments
             if a.route_plan_id is not None

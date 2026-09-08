@@ -1426,6 +1426,7 @@ def produce_main_charge_portfolio(
             confidence=confidence,
             opportunity_ids=opportunity_ids,
             strategy_version=strategy.strategy_version,
+            supplemental=windows.purpose == "bridge",
         )
         candidates.append(
             DomainCandidate(
@@ -1472,7 +1473,16 @@ def produce_main_charge_portfolio(
         # ADR-037.1/037.4: compare the most favourable feasible main charge
         # window. Total horizon cash is diagnostic because the remaining
         # inventory differs between routes; it cannot price that inventory.
-        if price is not None:
+        if windows.purpose == "bridge":
+            objectives = _objective_outcomes(
+                financial=financial.cash_result_eur,
+                self_consumption=sum(
+                    i.pv_to_household_wh + i.pv_to_storage_input_wh for i in intervals
+                ),
+                reserve=min(i.storage_energy_at_end_wh for i in intervals),
+                confidence=confidence, evidence_ids=evidence,
+            )
+        elif price is not None:
             objectives = (
                 ObjectiveOutcome(
                     ObjectiveKind.FINANCIAL_RESULT,
@@ -1520,6 +1530,7 @@ def _main_charge_energy_path(
     confidence: float,
     opportunity_ids: tuple[str, ...],
     strategy_version: int,
+    supplemental: bool = False,
 ) -> DomainEnergyPath:
     storage = snapshot.current_storage_states[0]
     limits = next(
@@ -1580,6 +1591,9 @@ def _main_charge_energy_path(
                     capability_id=storage.capability_id,
                     purpose=f"main-charge:{window.assignment_id}"
                     if owner is not None
+                    else f"bridge:{window.assignment_id}"
+                    if supplemental and retained_main is None
+                    and end <= window.main_segments[0].starts_at
                     else "retained-route",
                     evidence_ids=(
                         window.schedule.schedule_id,

@@ -661,6 +661,17 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "evaluated_candidate_ids": list(e.evaluated_candidate_ids),
                 "decisive_step": e.decisive_step,
                 "reason": e.reason,
+                "daily_bridge": {
+                    "status": e.daily_bridge.status,
+                    "next_assignment_id": e.daily_bridge.next_assignment_id,
+                    "next_starts_at": e.daily_bridge.next_starts_at.isoformat()
+                    if e.daily_bridge.next_starts_at is not None else None,
+                    "review_triggered": e.daily_bridge.trigger is not None,
+                    "energy_deficits": [
+                        {"starts_at": i.starts_at.isoformat(), "ends_at": i.ends_at.isoformat(),
+                         "deficit_wh": i.deficit_wh} for i in e.daily_bridge.deficits
+                    ],
+                } if e.daily_bridge is not None else None,
             },
         ),
         Card(

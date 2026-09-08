@@ -16,6 +16,7 @@ from picot.domain.daily_reference_charge_window import DailyMainChargeWindow
 from picot.domain.energy_path import RetainedExecutionOrigin, SocConstraint
 from picot.domain.execution_plan import ExecutionPlan, ExecutionPlanLifecycle, ExecutionPlanSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.v2.daily_bridge import BridgeEnergyInterval, DailyBridgeState, DailyBridgeTrigger
 from picot.v2.daily_charge_assignment import (
     DailyChargeAssignment,
     DailyChargeRevisionReason,
@@ -394,7 +395,10 @@ class ActivePlanCommitmentStore:
         plan: ExecutionPlan,
         window: DailyMainChargeWindow,
         activate: bool = False,
-        optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None,
+        optimisation_trigger: (
+            DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | DailyBridgeTrigger | None
+        ) = None,
+        bridge_deficits: tuple[BridgeEnergyInterval, ...] = (),
         pv_comparison_basis: DailyPVComparisonBasis | None = None,
     ) -> DailyChargeAssignment:
         """Bind explicit winning source segments, never infer ownership from mode.
@@ -446,6 +450,38 @@ class ActivePlanCommitmentStore:
                 raise ValueError("a main revision must atomically activate its execution plan")
         elif assignment.revision and not same_binding:
             raise ValueError("bound daily main route requires an explicit optimisation trigger")
+        if isinstance(optimisation_trigger, DailyBridgeTrigger):
+            completed = next(
+                (a for a in self.load_daily_assignments()
+                 if a.assignment_id == optimisation_trigger.completed_assignment_id), None,
+            )
+            if (completed is None or completed.completed_at is None
+                    or completed.completed_at > plan.created_at
+                    or completed.execution_scope_id != assignment.execution_scope_id
+                    or completed.delivery_date >= assignment.delivery_date):
+                raise ValueError("bridge requires a proven completed daily goal")
+            previous_plan = self.load_daily_main_plan(assignment.assignment_id)
+            assert previous_plan is not None
+            originals = tuple(s for s in previous_plan.segments
+                              if s.segment_id in {m.segment_id for m in assignment.main_segments})
+            if len(matched) != len(originals) or any(
+                any(getattr(a, field) != getattr(b, field) for field in (
+                    "starts_at", "ends_at", "primitive", "requested_power_w", "soc_constraint",
+                    "capability_id", "charge_source_policy", "energy_profile_id",
+                )) for a, b in zip(matched, originals, strict=True)
+            ):
+                raise ValueError("bridge cannot move or change the next main session")
+            if (not bridge_deficits
+                    or bridge_deficits[-1].ends_at != optimisation_trigger.next_starts_at):
+                raise ValueError("bridge requires remaining deficit evidence to its endpoint")
+            DailyBridgeState(assignment.assignment_id, plan.plan_id,
+                             optimisation_trigger.next_starts_at, bridge_deficits)
+            if bridge_deficits[0].starts_at != plan.created_at or (
+                optimisation_trigger.next_starts_at != min(s.starts_at for s in originals)
+            ):
+                raise ValueError("bridge must cover now to the unchanged next main start")
+        elif bridge_deficits:
+            raise ValueError("bridge evidence requires an explicit reserve trigger")
         if not same_binding:
             self._validate_retained_main_segments(plan, window)
         bound = assignment if same_binding else assignment.bind_main_route(
@@ -476,6 +512,13 @@ class ActivePlanCommitmentStore:
             triggers[plan.plan_id] = {
                 **asdict(optimisation_trigger),
                 "assessed_at": optimisation_trigger.assessed_at.isoformat(),
+                **({
+                    "next_starts_at": optimisation_trigger.next_starts_at.isoformat(),
+                    "deficits": [
+                        {"starts_at": i.starts_at.isoformat(), "ends_at": i.ends_at.isoformat(),
+                         "deficit_wh": i.deficit_wh} for i in optimisation_trigger.deficits
+                    ],
+                } if isinstance(optimisation_trigger, DailyBridgeTrigger) else {}),
             }
         if same_binding and previous is not None:
             return bound
@@ -532,6 +575,15 @@ class ActivePlanCommitmentStore:
             assessed[optimisation_trigger.comparison_evidence_id] = {
                 "outcome": "route_revised", "plan_id": plan.plan_id,
             }
+        if isinstance(optimisation_trigger, DailyBridgeTrigger):
+            payload.setdefault("daily_bridge_states", {})[bound.assignment_id] = {
+                "plan_id": plan.plan_id,
+                "next_starts_at": optimisation_trigger.next_starts_at.isoformat(),
+                "accepted_deficits": [
+                    {"starts_at": i.starts_at.isoformat(), "ends_at": i.ends_at.isoformat(),
+                     "deficit_wh": i.deficit_wh} for i in bridge_deficits
+                ],
+            }
         plans[bound.assignment_id] = serialized
         payload.setdefault("daily_assignments", {})[bound.assignment_id] = _serialize_daily(bound)
         if activate:
@@ -541,6 +593,21 @@ class ActivePlanCommitmentStore:
             active[plan.execution_scope_id] = bound.assignment_id
         self._write(payload)
         return bound
+
+    def load_daily_bridge_state(self, assignment_id: str) -> DailyBridgeState | None:
+        try:
+            raw = self._load_payload().get("daily_bridge_states", {}).get(assignment_id)
+            if raw is None:
+                return None
+            return DailyBridgeState(
+                assignment_id, raw["plan_id"], datetime.fromisoformat(raw["next_starts_at"]),
+                tuple(BridgeEnergyInterval(
+                    datetime.fromisoformat(i["starts_at"]), datetime.fromisoformat(i["ends_at"]),
+                    float(i["deficit_wh"]),
+                ) for i in raw["accepted_deficits"]),
+            )
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise ValueError("saved bridge assessment is invalid") from exc
 
     def load_daily_pv_comparison(self, assignment_id: str) -> DailyPVComparisonState:
         """Unavailable optional comparison evidence cannot erase the main route."""

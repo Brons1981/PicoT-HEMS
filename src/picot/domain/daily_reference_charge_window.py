@@ -222,8 +222,11 @@ class DailyMainChargeWindowSet:
     status: str
     reason: str
     simulation_count: int
+    purpose: str = "main_charge"
 
     def __post_init__(self) -> None:
+        if self.purpose not in {"main_charge", "bridge"}:
+            raise ValueError("invalid daily route comparison purpose")
         if self.status not in {"discovered", "completed", "unreachable"}:
             raise ValueError("invalid main charge discovery status")
         if bool(self.windows) != (self.status == "discovered"):

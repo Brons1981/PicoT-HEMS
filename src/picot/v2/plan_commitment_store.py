@@ -13,7 +13,7 @@ from typing import Any, cast
 from picot.architecture_ownership import architecture_ownership
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.daily_reference_charge_window import DailyMainChargeWindow
-from picot.domain.energy_path import SocConstraint
+from picot.domain.energy_path import RetainedExecutionOrigin, SocConstraint
 from picot.domain.execution_plan import ExecutionPlan, ExecutionPlanLifecycle, ExecutionPlanSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.daily_charge_assignment import (
@@ -412,6 +412,10 @@ class ActivePlanCommitmentStore:
             source = owned[segment.source_path_segment_id]
             if (segment.starts_at, segment.ends_at) != (source.starts_at, source.ends_at):
                 raise ValueError("winning plan must preserve main segment boundaries")
+            if segment.main_assignment_id not in (None, assignment.assignment_id):
+                raise ValueError("winning main segment belongs to another daily assignment")
+            if segment.retained_execution_origin is not None:
+                raise ValueError("new main goal cannot claim another route's execution origin")
         main_segments = tuple(
             DailyChargeSegment(s.segment_id, s.starts_at, s.ends_at) for s in matched
         )
@@ -424,6 +428,8 @@ class ActivePlanCommitmentStore:
             raise ValueError("winning plan does not match the stored daily revision evidence")
         if assignment.revision and not same_binding:
             raise ValueError("bound daily main route requires an explicit optimisation trigger")
+        if not same_binding:
+            self._validate_retained_main_segments(plan, window)
         bound = assignment if same_binding else assignment.bind_main_route(
             plan_id=plan.plan_id,
             segments=main_segments,
@@ -437,14 +443,71 @@ class ActivePlanCommitmentStore:
             raise ValueError("daily execution plans must be an object")
         serialized = _serialize_execution_plan(plan)
         previous = plans.get(bound.assignment_id)
-        if previous is not None and previous != serialized:
+        if previous is not None and _deserialize_execution_plan(previous) != plan:
             raise ValueError("stored daily execution plan is immutable; revision required")
-        if same_binding and previous == serialized:
+        if same_binding and previous is not None:
             return bound
         plans[bound.assignment_id] = serialized
         payload.setdefault("daily_assignments", {})[bound.assignment_id] = _serialize_daily(bound)
         self._write(payload)
         return bound
+
+    def _validate_retained_main_segments(
+        self, plan: ExecutionPlan, window: DailyMainChargeWindow,
+    ) -> None:
+        expected = {}
+        for owner in self.load_daily_assignments():
+            if (
+                owner.assignment_id == window.assignment_id
+                or owner.execution_scope_id != plan.execution_scope_id
+            ):
+                continue
+            for main in owner.main_segments:
+                if main.ends_at <= plan.valid_from or main.starts_at >= plan.valid_until:
+                    continue
+                original_plan = self.load_daily_main_plan(owner.assignment_id)
+                assert original_plan is not None
+                original = next(
+                    s for s in original_plan.segments if s.segment_id == main.segment_id
+                )
+                expected[(original_plan.plan_id, main.segment_id)] = (owner, original)
+        declared = {(r.plan_id, r.segment.segment_id): r for r in window.retained_main_segments}
+        if set(declared) != set(expected):
+            raise ValueError("new horizon must preserve every overlapping daily main segment")
+        for key, (owner, original) in expected.items():
+            reference = declared[key]
+            if reference.assignment_id != owner.assignment_id or reference.segment != original:
+                raise ValueError("retained main reference differs from its stored origin")
+            origin = RetainedExecutionOrigin(*key)
+            remaining = sorted(
+                (s for s in plan.segments if s.retained_execution_origin == origin),
+                key=lambda s: s.starts_at,
+            )
+            cursor = max(plan.valid_from, original.starts_at)
+            end = min(plan.valid_until, original.ends_at)
+            for segment in remaining:
+                if segment.main_assignment_id != owner.assignment_id or segment.starts_at != cursor:
+                    raise ValueError("retained main execution has changed ownership or a gap")
+                if segment.ends_at > end or any(
+                    getattr(segment, field) != getattr(original, field) for field in (
+                        "primitive", "capability_id", "requested_power_w", "soc_constraint",
+                        "charge_source_policy", "energy_profile_id",
+                    )
+                ):
+                    raise ValueError("retained main execution changed without an explicit revision")
+                cursor = segment.ends_at
+            if cursor != end:
+                raise ValueError("new horizon omits remaining main execution")
+        for segment in plan.segments:
+            actual_origin = segment.retained_execution_origin
+            if actual_origin is None and segment.main_assignment_id not in (
+                None, window.assignment_id,
+            ):
+                raise ValueError("other main ownership requires a verified execution origin")
+            if actual_origin is not None and (
+                actual_origin.plan_id, actual_origin.segment_id
+            ) not in expected:
+                raise ValueError("execution refers to an unverified retained main origin")
 
     def load_daily_main_plan(self, assignment_id: str) -> ExecutionPlan | None:
         """Recover the exact main route, without selecting or admitting execution.
@@ -452,9 +515,8 @@ class ActivePlanCommitmentStore:
         A bound assignment without its plan is an explicit recovery error, not
         permission to replace the route. Older identity-only records are kept.
         """
-        assignment = next(
-            (a for a in self.load_daily_assignments() if a.assignment_id == assignment_id), None
-        )
+        assignments = self.load_daily_assignments()
+        assignment = next((a for a in assignments if a.assignment_id == assignment_id), None)
         if assignment is None:
             raise ValueError("daily assignment does not exist")
         try:
@@ -481,6 +543,38 @@ class ActivePlanCommitmentStore:
                     main.starts_at, main.ends_at,
                 ):
                     raise ValueError("stored execution plan does not preserve main segments")
+                if segment.main_assignment_id not in (None, assignment_id):
+                    raise ValueError("stored main segment belongs to another assignment")
+                if segment.retained_execution_origin is not None:
+                    raise ValueError("stored own main segment cannot claim a retained origin")
+            for segment in plan.segments:
+                origin = segment.retained_execution_origin
+                if origin is None:
+                    continue
+                owner = next((a for a in assignments
+                              if a.assignment_id == segment.main_assignment_id), None)
+                if owner is None or owner.route_plan_id != origin.plan_id:
+                    raise ValueError("stored retained main origin no longer matches its owner")
+                original_plan = _deserialize_execution_plan(records[owner.assignment_id])
+                if original_plan.plan_id != origin.plan_id or (
+                    original_plan.execution_scope_id != plan.execution_scope_id
+                ):
+                    raise ValueError("stored retained plan identity or scope does not match")
+                original = next((s for s in original_plan.segments
+                                 if s.segment_id == origin.segment_id), None)
+                if original is None or not any(
+                    s.segment_id == origin.segment_id for s in owner.main_segments
+                ):
+                    raise ValueError("stored retained origin is not an owned main segment")
+                if not (
+                    original.starts_at <= segment.starts_at < segment.ends_at <= original.ends_at
+                ):
+                    raise ValueError("stored retained main interval exceeds its original bounds")
+                if any(getattr(segment, field) != getattr(original, field) for field in (
+                    "primitive", "capability_id", "requested_power_w", "soc_constraint",
+                    "charge_source_policy", "energy_profile_id",
+                )):
+                    raise ValueError("stored retained main action differs from its original")
             return plan
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             self._record_incident("daily_main_plan_unreadable", exc)
@@ -744,6 +838,10 @@ def _deserialize_execution_plan(record: dict[str, Any]) -> ExecutionPlan:
             if item["soc_constraint"] is not None else None
         )
         item["evidence_ids"] = tuple(item["evidence_ids"])
+        item["retained_execution_origin"] = (
+            RetainedExecutionOrigin(**item["retained_execution_origin"])
+            if item.get("retained_execution_origin") is not None else None
+        )
         segments.append(ExecutionPlanSegment(**item))
     data["segments"] = tuple(segments)
     return ExecutionPlan(**data)

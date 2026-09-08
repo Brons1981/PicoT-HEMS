@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from hashlib import sha256
 
 from picot.domain.capability_snapshot import (
     CapabilityAvailability,
@@ -15,6 +16,7 @@ from picot.domain.daily_reference_charge_window import (
     DailyMainChargeWindowSet,
     DailyReferenceChargeWindow,
     DailyReferenceChargeWindowSet,
+    DailyRetainedMainSegment,
 )
 from picot.domain.daily_reference_intent import (
     DailyReferenceIntentInterval,
@@ -29,6 +31,7 @@ from picot.domain.daily_reference_strategy_space import DailyReferenceStrategySp
 from picot.domain.daily_reference_tariff import (
     DailyReferenceTariffSchedule,
 )
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.household_load_forecast import (
     HouseholdLoadForecast as DomainHouseholdForecast,
 )
@@ -127,7 +130,11 @@ class IndependentDailyReferenceAdapter:
         inputs = self._inputs(
             snapshot, horizon_end=published_end, maximum_duration=timedelta(hours=36)
         )
-        return IndependentDailyChargeWindowDiscoverer().discover_main_charge(
+        retained_schedule, retained_main = self._retained_main_schedule(
+            snapshot=snapshot, assignment=assignment, inputs=inputs,
+            supplied=retained_schedule,
+        )
+        result = IndependentDailyChargeWindowDiscoverer().discover_main_charge(
             snapshot_id=snapshot.snapshot_id,
             assignment=assignment,
             household=inputs.household,
@@ -140,6 +147,133 @@ class IndependentDailyReferenceAdapter:
             maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
             retained_schedule=retained_schedule,
         )
+        windows = tuple(
+            replace(window, retained_main_segments=retained_main) for window in result.windows
+        )
+        context = snapshot.daily_charge_context
+        pending = tuple(
+            owner for owner in (context.assignments if context is not None else ())
+            if owner.route_plan_id is not None and owner.completed_at is None
+            and owner.execution_scope_id == assignment.execution_scope_id
+            and owner.ends_at > snapshot.captured_at
+        )
+        feasible = tuple(window for window in windows if all(
+            any(
+                (
+                    main.starts_at <= interval.starts_at < main.ends_at
+                    and interval.storage_energy_at_start_wh + 1e-6
+                    >= inputs.target_storage_energy_wh
+                ) or (
+                    main.starts_at < interval.ends_at <= main.ends_at
+                    and interval.storage_energy_at_end_wh + 1e-6 >= inputs.target_storage_energy_wh
+                )
+                for main in owner.main_segments for interval in window.projection.intervals
+            ) for owner in pending
+        ))
+        if windows and not feasible:
+            return replace(result, windows=(), status="unreachable",
+                           reason="retained_main_goal_requires_explicit_optimisation")
+        return replace(result, windows=feasible)
+
+    @staticmethod
+    def _retained_main_schedule(
+        *, snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
+        inputs: _DailyReferenceInputs, supplied: DailyReferenceIntentSchedule | None,
+    ) -> tuple[DailyReferenceIntentSchedule | None, tuple[DailyRetainedMainSegment, ...]]:
+        context = snapshot.daily_charge_context
+        if context is None:
+            return supplied, ()
+        if context.status != "ready":
+            raise DailyReferenceInputError("main_charge_recovery_context_blocked")
+        if assignment not in context.assignments:
+            raise DailyReferenceInputError("main_charge_assignment_not_in_planning_input")
+        owners = tuple(
+            a for a in context.assignments
+            if a.execution_scope_id == assignment.execution_scope_id and a.route_plan_id is not None
+        )
+        if not owners:
+            return supplied, ()
+        plans = {p.plan_id: p for p in context.main_plans}
+        retained = []
+        for owner in owners:
+            assert owner.route_plan_id is not None
+            plan = plans[owner.route_plan_id]
+            if plan.created_at > snapshot.captured_at:
+                raise DailyReferenceInputError("retained_main_plan_is_from_future_input")
+            for main in owner.main_segments:
+                source = next((s for s in plan.segments if s.segment_id == main.segment_id), None)
+                if source is None or (source.starts_at, source.ends_at) != (
+                    main.starts_at, main.ends_at,
+                ):
+                    raise DailyReferenceInputError("retained_main_segment_ownership_mismatch")
+                if (
+                    source.ends_at > snapshot.captured_at
+                    and source.starts_at < inputs.household.horizon_end
+                ):
+                    retained.append(DailyRetainedMainSegment(
+                        owner.assignment_id, plan.plan_id, source,
+                    ))
+        intents = {
+            ExecutionPrimitive.BALANCE_BIDIRECTIONAL: DailyStorageIntent.NOM,
+            ExecutionPrimitive.CHARGE_AT_POWER: DailyStorageIntent.GRID_REQUIREMENT,
+            ExecutionPrimitive.BALANCE_DISCHARGE_ONLY: DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
+            ExecutionPrimitive.STANDBY: DailyStorageIntent.STANDBY,
+        }
+        intervals = []
+        for grid in inputs.household.intervals:
+            retained_main = next((r for r in retained if r.segment.starts_at <= grid.starts_at
+                                  and grid.ends_at <= r.segment.ends_at), None)
+            intent = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+            sources = []
+            for owner in owners:
+                assert owner.route_plan_id is not None
+                plan = plans[owner.route_plan_id]
+                if plan.valid_from >= grid.ends_at or plan.valid_until <= grid.starts_at:
+                    continue
+                part = next((s for s in plan.segments if s.starts_at <= grid.starts_at
+                             and grid.ends_at <= s.ends_at), None)
+                if part is None:
+                    raise DailyReferenceInputError("retained_main_plan_has_a_schedule_gap")
+                sources.append(part)
+            # Explicit main ownership overrides an older horizon's unowned
+            # baseline. Otherwise retained plans must agree; never guess which
+            # conflicting command is more desirable from price or chronology.
+            if retained_main is None and sources and any(
+                any(getattr(s, field) != getattr(sources[0], field) for field in (
+                    "primitive", "capability_id", "requested_power_w", "charge_source_policy",
+                    "soc_constraint", "energy_profile_id",
+                )) for s in sources[1:]
+            ):
+                raise DailyReferenceInputError("retained_plans_disagree_outside_main_segments")
+            retained_source = (
+                retained_main.segment if retained_main is not None
+                else sources[0] if sources else None
+            )
+            if retained_source is not None:
+                source = retained_source
+                if source.primitive not in intents:
+                    raise DailyReferenceInputError("retained_main_primitive_not_simulatable")
+                if source.primitive is ExecutionPrimitive.CHARGE_AT_POWER and (
+                    source.requested_power_w != inputs.maximum_charge_input_power_w
+                ):
+                    raise DailyReferenceInputError(
+                        "retained_charge_power_requires_explicit_revision"
+                    )
+                intent = intents[source.primitive]
+            intervals.append(DailyReferenceIntentInterval(grid.starts_at, grid.ends_at, intent))
+        schedule = DailyReferenceIntentSchedule(
+            schedule_id="retained-main:" + sha256(
+                (snapshot.snapshot_id + "|" + "|".join(sorted(plans))).encode()
+            ).hexdigest()[:16],
+            snapshot_id=snapshot.snapshot_id,
+            horizon_start=inputs.household.horizon_start,
+            horizon_end=inputs.household.horizon_end,
+            intervals=tuple(intervals),
+            method_version="daily-main-retained-schedule:v1",
+        )
+        if supplied is not None and supplied.intervals != schedule.intervals:
+            raise DailyReferenceInputError("supplied_schedule_conflicts_with_stored_main_route")
+        return schedule, tuple(retained)
 
     def simulate(
         self,

@@ -94,6 +94,8 @@ def _project_plan(
                 requested_power_w=item.requested_power_w,
                 charge_source_policy=item.charge_source_policy,
                 planned_vendor_mode=None,
+                main_assignment_id=item.main_assignment_id,
+                retained_execution_origin=item.retained_execution_origin,
             )
             for item in segments
         ),

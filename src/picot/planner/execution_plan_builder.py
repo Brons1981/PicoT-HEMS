@@ -145,6 +145,8 @@ class ExecutionPlanBuilder:
                 soc_constraint=source.soc_constraint,
                 energy_profile_id=source.energy_profile_id,
                 charge_source_policy=source.charge_source_policy,
+                main_assignment_id=source.main_assignment_id,
+                retained_execution_origin=source.retained_execution_origin,
             )
             for index, source in enumerate(ordered, start=1)
         )

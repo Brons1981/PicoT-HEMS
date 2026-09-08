@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
 from picot.domain.charge_source_policy import ChargeSourcePolicy
-from picot.domain.energy_path import PathSegment, ProjectedEnergyState
+from picot.domain.energy_path import PathSegment, ProjectedEnergyState, RetainedExecutionOrigin
 from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.daily_charge_assignment import DailyChargeAssignment
@@ -1324,6 +1324,8 @@ class ObserverExecutionPlanSegment:
     requested_power_w: float | None
     charge_source_policy: ChargeSourcePolicy | None
     planned_vendor_mode: str | None = None
+    main_assignment_id: str | None = None
+    retained_execution_origin: RetainedExecutionOrigin | None = None
 
 
 @dataclass(frozen=True, slots=True)

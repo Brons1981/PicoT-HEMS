@@ -40,7 +40,12 @@ from picot.domain.daily_reference_portfolio import DailyReferenceStrategyResult
 from picot.domain.daily_reference_simulation import PVScenario
 from picot.domain.daily_reference_tariff import DailyReferenceTariffSchedule
 from picot.domain.energy_path import EnergyPath as DomainEnergyPath
-from picot.domain.energy_path import PathSegment, ProjectedEnergyState, SocConstraint
+from picot.domain.energy_path import (
+    PathSegment,
+    ProjectedEnergyState,
+    RetainedExecutionOrigin,
+    SocConstraint,
+)
 from picot.domain.evaluation import (
     CandidateOutcome as DomainCandidateOutcome,
 )
@@ -1541,12 +1546,24 @@ def _main_charge_energy_path(
                     for t in (s.starts_at, s.ends_at)
                     if interval.starts_at < t < interval.ends_at
                 ),
+                *(
+                    t
+                    for retained in window.retained_main_segments
+                    for t in (retained.segment.starts_at, retained.segment.ends_at)
+                    if interval.starts_at < t < interval.ends_at
+                ),
             }
         )
         for start, end in zip(boundaries, boundaries[1:], strict=False):
             owner = next(
                 (s for s in window.main_segments if s.starts_at <= start and end <= s.ends_at), None
             )
+            retained_main = next(
+                (r for r in window.retained_main_segments
+                 if r.segment.starts_at <= start and end <= r.segment.ends_at), None
+            )
+            if owner is not None and retained_main is not None:
+                raise ValueError("a new main window cannot replace another daily main segment")
             segment_id = (
                 owner.segment_id
                 if owner is not None
@@ -1579,8 +1596,25 @@ def _main_charge_energy_path(
                     if interval.intent is DailyStorageIntent.NOM
                     else None,
                     soc_constraint=SocConstraint(limits.minimum_soc, limits.maximum_soc),
+                    main_assignment_id=(
+                        window.assignment_id if owner is not None
+                        else retained_main.assignment_id if retained_main is not None else None
+                    ),
+                    retained_execution_origin=(
+                        RetainedExecutionOrigin(
+                            retained_main.plan_id, retained_main.segment.segment_id
+                        )
+                        if retained_main is not None else None
+                    ),
                 )
             )
+            if retained_main is not None:
+                actual, original = segments[-1], retained_main.segment
+                if any(getattr(actual, field) != getattr(original, field) for field in (
+                    "primitive", "capability_id", "requested_power_w", "soc_constraint",
+                    "charge_source_policy", "energy_profile_id",
+                )):
+                    raise ValueError("retained main action changed without an explicit revision")
     projected = window.projection.intervals
     states = (
         ProjectedEnergyState(

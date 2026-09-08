@@ -10,6 +10,7 @@ from picot.domain.daily_reference_intent import (
     DailyStorageIntent,
 )
 from picot.domain.daily_reference_simulation import DailyPlanningProjection, PVScenario
+from picot.domain.execution_plan import ExecutionPlanSegment
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +141,19 @@ class DailyMainChargeSegment:
 
 
 @dataclass(frozen=True, slots=True)
+class DailyRetainedMainSegment:
+    """Original ownership carried through a new horizon's physical simulation."""
+
+    assignment_id: str
+    plan_id: str
+    segment: ExecutionPlanSegment
+
+    def __post_init__(self) -> None:
+        if not self.assignment_id.strip() or not self.plan_id.strip():
+            raise ValueError("retained main ownership must be explicit")
+
+
+@dataclass(frozen=True, slots=True)
 class DailyMainChargeWindow:
     """One physically feasible main route, still unranked by economics."""
 
@@ -150,8 +164,11 @@ class DailyMainChargeWindow:
     projection: DailyPlanningProjection
     reached_at: datetime
     target_storage_energy_wh: float
+    retained_main_segments: tuple[DailyRetainedMainSegment, ...] = ()
 
     def __post_init__(self) -> None:
+        if any(s.assignment_id == self.assignment_id for s in self.retained_main_segments):
+            raise ValueError("first discovery cannot also retain its own bound main route")
         if self.family not in {"pv", "grid", "hybrid", "already_full"}:
             raise ValueError("invalid main charge family")
         if not self.main_segments or not self.assignment_id.strip():

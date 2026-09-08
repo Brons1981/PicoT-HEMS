@@ -549,10 +549,9 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     )
     assert actual.evidence_type == "ACTUAL"
     assert actual.pv_energy_wh == pytest.approx(300.0)
-    assert future == replace(
-        bundle.snapshot.pv_energy_timeline.intervals[1],
-            forecast_lower_energy_wh=663.0,
-    )
+    # Daily main planning uses the original LOWER/CENTRAL range. Closed
+    # intervals still carry real actuals; they do not rewrite future LOWER.
+    assert future == bundle.snapshot.pv_energy_timeline.intervals[1]
     assert diagnostics.history_status == "available"
     assert diagnostics.interval_status == "actual"
     assert diagnostics.entity_id == ENTITY_ID

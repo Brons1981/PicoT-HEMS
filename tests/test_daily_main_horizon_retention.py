@@ -279,3 +279,27 @@ def test_next_day_cannot_hide_an_unreachable_running_main_goal(two_days):
     assert result.windows == ()
     assert result.reason == "retained_main_goal_requires_explicit_optimisation"
     assert source.daily_charge_context.assignments[0] == case["first"]
+
+
+def test_confirmed_retained_execution_completes_original_owner_only(two_days, tmp_path):
+    store = stored(tmp_path, two_days)
+    plan = two_days["second_set"].plans[0]
+    store.bind_daily_main_plan(plan=plan, window=two_days["second_window"], activate=True)
+    segment = next(s for s in plan.segments if s.retained_execution_origin is not None)
+    at = segment.starts_at
+    completed = store.observe_daily_main_completion(
+        execution_scope_id=plan.execution_scope_id, plan_id=plan.plan_id,
+        segment_id=segment.segment_id, confirmed_since=at, observed_at=at,
+        measured_at=at, soc=1.0, evidence_id="actual-full-at-retained-main-start",
+    )
+    assert completed.assignment_id == two_days["first"].assignment_id
+    assert completed.route_plan_id == two_days["first_plan"].plan_id
+    assert completed.completion_segment_id == segment.retained_execution_origin.segment_id
+    assert plan.plan_id in completed.completion_evidence_id
+    tomorrow = next(a for a in store.load_daily_assignments()
+                    if a.assignment_id == two_days["tomorrow"].assignment_id)
+    assert tomorrow.completed_at is None
+    assert store.load_active_daily_main_plan(plan.execution_scope_id) == plan
+    # A repeat of yesterday's binding must not move the active pointer backwards.
+    store.bind_daily_main_plan(plan=two_days["first_plan"], window=two_days["first_window"])
+    assert store.load_active_daily_main_plan(plan.execution_scope_id) == plan

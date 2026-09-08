@@ -837,6 +837,7 @@ def _planning_input_signature(
                 "status": daily_context.status,
                 "reason": daily_context.reason,
                 "timezone": daily_context.timezone,
+                "active_main_plan_ids": daily_context.active_main_plan_ids,
                 "assignments": [
                     {
                         "assignment_id": a.assignment_id,
@@ -903,6 +904,7 @@ def _restore_daily_charge_context(
     started = perf_counter()
     assignments: tuple[DailyChargeAssignment, ...] = ()
     plans: list[ExecutionPlan] = []
+    active_main_plan_ids: list[str] = []
     status, reason = "ready", None
     scopes = {
         state.execution_scope_id for state in snapshot.current_storage_states
@@ -928,6 +930,12 @@ def _restore_daily_charge_context(
                         raise ValueError("daily_charge_shared_plan_content_conflict")
                     if previous is None:
                         plans.append(plan)
+        for scope in sorted(scopes):
+            active = store.load_active_daily_main_plan(scope)
+            if active is not None and active.valid_until > snapshot.captured_at:
+                if active.plan_id not in {p.plan_id for p in plans}:
+                    raise ValueError("active_daily_main_plan_owner_not_restored")
+                active_main_plan_ids.append(active.plan_id)
         if not scopes:
             raise ValueError("daily_charge_execution_scope_unavailable")
         if any(
@@ -956,6 +964,7 @@ def _restore_daily_charge_context(
         reason=reason,
         assignments=assignments,
         main_plans=tuple(plans),
+        active_main_plan_ids=tuple(active_main_plan_ids),
         duration_ms=round((perf_counter() - started) * 1000, 3),
     )
     return replace(snapshot, daily_charge_context=context)
@@ -965,6 +974,8 @@ def _restore_active_plan_commitments(
     snapshot: PlanningInputSnapshot,
     store: ActivePlanCommitmentStore,
 ) -> PlanningInputSnapshot:
+    if snapshot.daily_charge_context is not None:
+        return replace(snapshot, active_plan_commitments=())
     restored = []
     capabilities = (
         snapshot.capability_snapshot_set.capabilities
@@ -2799,6 +2810,11 @@ def main() -> None:
         ):
             household_regime_started_at = captured_at
         previous_household_regime = current_regime
+        if prepared_bundle.snapshot.daily_charge_context is not None:
+            # Actual observations remain attached; raw LOWER/CENTRAL are the
+            # immutable inputs to the midpoint physical simulation.
+            latest_daily_pv_basis_decision = None
+            return prepared_bundle, diagnostics
         mep_snapshot, latest_daily_pv_basis_decision = apply_daily_measured_pv_basis(
             prepared_bundle.snapshot,
             diagnostics=diagnostics,

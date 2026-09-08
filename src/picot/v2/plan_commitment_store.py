@@ -387,6 +387,7 @@ class ActivePlanCommitmentStore:
         *,
         plan: ExecutionPlan,
         window: DailyMainChargeWindow,
+        activate: bool = False,
     ) -> DailyChargeAssignment:
         """Bind explicit winning source segments, never infer ownership from mode.
 
@@ -449,8 +450,64 @@ class ActivePlanCommitmentStore:
             return bound
         plans[bound.assignment_id] = serialized
         payload.setdefault("daily_assignments", {})[bound.assignment_id] = _serialize_daily(bound)
+        if activate:
+            active = payload.setdefault("active_daily_main_assignments", {})
+            if not isinstance(active, dict):
+                raise ValueError("active daily main assignments must be an object")
+            active[plan.execution_scope_id] = bound.assignment_id
         self._write(payload)
         return bound
+
+    def load_active_daily_main_plan(self, execution_scope_id: str) -> ExecutionPlan | None:
+        """Read the explicit active pointer; never guess from plan timestamps."""
+        active = self._load_payload().get("active_daily_main_assignments", {})
+        if not isinstance(active, dict):
+            raise ValueError("active daily main assignments must be an object")
+        assignment_id = active.get(execution_scope_id)
+        if assignment_id is None:
+            return None
+        if not isinstance(assignment_id, str):
+            raise ValueError("active daily main assignment must be an identity")
+        plan = self.load_daily_main_plan(assignment_id)
+        if plan is None or plan.execution_scope_id != execution_scope_id:
+            raise ValueError("active daily main plan scope or binding invalid")
+        return plan
+
+    def observe_daily_main_completion(
+        self, *, execution_scope_id: str, plan_id: str, segment_id: str,
+        confirmed_since: datetime, observed_at: datetime, measured_at: datetime,
+        soc: float, evidence_id: str,
+    ) -> DailyChargeAssignment | None:
+        """Resolve validated execution origin after the runtime confirms the mode.
+
+        A dispatch acknowledgement or old SOC sample is not completion evidence.
+        The runtime supplies the start of its uninterrupted confirmation interval.
+        """
+        if not confirmed_since <= measured_at <= observed_at:
+            return None
+        plan = self.load_active_daily_main_plan(execution_scope_id)
+        if plan is None or plan.plan_id != plan_id:
+            return None
+        segment = next((s for s in plan.segments if s.segment_id == segment_id), None)
+        if segment is None or segment.main_assignment_id is None:
+            return None
+        if not segment.starts_at <= measured_at <= segment.ends_at:
+            return None
+        owner = next((a for a in self.load_daily_assignments()
+                      if a.assignment_id == segment.main_assignment_id), None)
+        if owner is None:
+            raise ValueError("confirmed main segment has no daily owner")
+        origin = segment.retained_execution_origin
+        completed = owner.observe_completion(
+            measured_at=measured_at, soc=soc, execution_allowed=True,
+            plan_id=origin.plan_id if origin is not None else plan_id,
+            segment_id=origin.segment_id if origin is not None else segment_id,
+            evidence_id=(f"confirmed-execution:{plan_id}:{segment_id}:"
+                         f"{confirmed_since.isoformat()}:{evidence_id}"),
+        )
+        if completed != owner:
+            self.save_daily_assignment(completed)
+        return completed
 
     def _validate_retained_main_segments(
         self, plan: ExecutionPlan, window: DailyMainChargeWindow,

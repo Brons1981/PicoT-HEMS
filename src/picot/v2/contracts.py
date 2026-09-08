@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.energy_path import PathSegment, ProjectedEnergyState, RetainedExecutionOrigin
+from picot.domain.evaluation import CandidateOutcome as CanonicalCandidateOutcome
 from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.daily_charge_assignment import DailyChargeAssignment
@@ -640,6 +641,7 @@ class DailyChargePlanningContext:
     reason: str | None
     assignments: tuple[DailyChargeAssignment, ...] = ()
     main_plans: tuple[CanonicalExecutionPlan, ...] = ()
+    active_main_plan_ids: tuple[str, ...] = ()
     duration_ms: float = 0.0
 
     def __post_init__(self) -> None:
@@ -657,6 +659,10 @@ class DailyChargePlanningContext:
         plans = {p.plan_id: p for p in self.main_plans}
         if len(plans) != len(self.main_plans):
             raise ValueError("daily charge recovery must not duplicate plans")
+        if len(self.active_main_plan_ids) != len(set(self.active_main_plan_ids)):
+            raise ValueError("active main plan identities must be unique")
+        if set(self.active_main_plan_ids) - set(plans):
+            raise ValueError("active main plan requires its restored plan")
         owners = {a.route_plan_id: a for a in self.assignments if a.route_plan_id is not None}
         if set(plans) - set(owners):
             raise ValueError("recovered plan requires its daily owner")
@@ -1285,8 +1291,13 @@ class CandidateOutcomeSet:
     outcome_set_id: str
     candidate_ids: tuple[str, ...]
     outcomes: tuple[DelegatedStorageCandidateOutcome | MepCandidateOutcome, ...] = ()
+    canonical_outcomes: tuple[CanonicalCandidateOutcome, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.canonical_outcomes and self.candidate_ids != tuple(
+            outcome.candidate_id for outcome in self.canonical_outcomes
+        ):
+            raise ValueError("Canonical outcome IDs must match candidate IDs")
         if self.outcomes and self.candidate_ids != tuple(
             outcome.candidate_id for outcome in self.outcomes
         ):

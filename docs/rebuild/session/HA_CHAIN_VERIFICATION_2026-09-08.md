@@ -132,3 +132,13 @@ De gewone livepoll leest na geregistreerde voltooiing de invoer opnieuw voordat 
 Controles: brede set **58 passed in 62,05 s**, daarna definitieve gerichte set inclusief opslaguitval **12 passed in 26,26 s**; aantallen overlappen. Gedekt zijn vertraagde ontvangst, een nog latere poll, een te late meettijd, hoofd- en aanvullende voltooiing, passend/ontbrekend/te vroeg moduswisselbewijs, handmatige blokkade, restart zonder bewijs en verse input vóór planning.
 
 Dit sluit de gedemonstreerde lokale fout met voldoende overgangsbewijs. Het is geen volledige HA-replay of live-vrijgave. Werkelijke beschikbaarheid en samenhang van HA-modusmetadata en plannerprovenance moeten nog in de integratie worden vastgesteld. Bevroren ADRs en plannerbeleid zijn niet gewijzigd.
+
+## Vervolg: vertraagde modusfeedback
+
+De vervolgcontrole reproduceerde dat één oude HA-modusterugmelding na een planner-aanvraag een blijvende handmatige blokkade activeerde. Dit bewijst de lokale fout bij deze volgorde, niet dat deze in de historische dev.243-diagnostiek daadwerkelijk optrad.
+
+Na akkoord is uitsluitend de bestaande provenance-overgang aangepast. De werkelijke HA-wisseltijd moet aantonen dat de voorafgaande modus ongewijzigd is gebleven. Dan blijft de aanvraag wachten op feedback, ook na herstart. Een nieuwe of afwijkende wijziging en ontbrekend bewijs behouden de conservatieve blokkade. De bestaande reset blijft vereist voor een werkelijke override. Aanvraag/terugmelding worden niet als bewijs van fysiek SOC-doelbereik behandeld.
+
+De nieuwe gerichte tests dekken opslag/herstart en raw HA-metadata via de bestaande input-attachment. De volledige gecombineerde dispatch-/SOC-volgorde en echte HA-uitvoering zijn hiermee nog niet als LIVE_VERIFIED aangemerkt. Plannerbeleid en bevroren ADRs blijven ongewijzigd.
+
+Definitieve geïntegreerde regressie: `python -m pytest tests/test_pending_mode_feedback.py tests/test_v2_storage_mode_provenance_integration.py tests/test_v2_live_storage_mode_provenance.py tests/test_charge_segment_closure.py tests/test_v2_zendure_mode_capabilities.py tests/test_v2_live_replan_poll_cycle.py -q`: **52 passed in 28,37 s**, exit 0. `git diff --check` geslaagd.

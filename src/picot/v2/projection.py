@@ -661,6 +661,20 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "evaluated_candidate_ids": list(e.evaluated_candidate_ids),
                 "decisive_step": e.decisive_step,
                 "reason": e.reason,
+                "supplemental_charge_assignments": [
+                    {"assignment_id": a.assignment_id, "next_assignment_id": a.next_assignment_id,
+                     "target_soc": a.target_soc,
+                     "goal_state": "completed" if a.completed_at is not None
+                     else "unproven_past_required_time" if p.captured_at >= a.required_by
+                     else "open",
+                     "starts_at": a.starts_at.isoformat(),
+                     "ends_at": a.ends_at.isoformat(), "required_by": a.required_by.isoformat(),
+                     "plan_id": a.plan_id, "completed_at": a.completed_at.isoformat()
+                     if a.completed_at is not None else None,
+                     "completion_evidence_id": a.completion_evidence_id}
+                    for a in (run.planning_input.daily_charge_context.supplemental_assignments
+                              if run.planning_input.daily_charge_context is not None else ())
+                ],
                 "daily_bridge": {
                     "status": e.daily_bridge.status,
                     "next_assignment_id": e.daily_bridge.next_assignment_id,

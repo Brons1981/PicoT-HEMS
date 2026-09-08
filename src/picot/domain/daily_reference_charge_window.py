@@ -11,6 +11,7 @@ from picot.domain.daily_reference_intent import (
 )
 from picot.domain.daily_reference_simulation import DailyPlanningProjection, PVScenario
 from picot.domain.execution_plan import ExecutionPlanSegment
+from picot.domain.supplemental_charge import SupplementalChargeAssignment
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +166,7 @@ class DailyMainChargeWindow:
     reached_at: datetime
     target_storage_energy_wh: float
     retained_main_segments: tuple[DailyRetainedMainSegment, ...] = ()
+    supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
 
     def __post_init__(self) -> None:
         if any(s.assignment_id == self.assignment_id for s in self.retained_main_segments):
@@ -212,6 +214,17 @@ class DailyMainChargeWindow:
             for i in self.projection.intervals
         ):
             raise ValueError("main target requires physical full-storage evidence")
+        for goal in self.supplemental_assignments:
+            if goal.completed_at is not None or not any(
+                i.ends_at == goal.ends_at and i.storage_energy_at_end_wh + 1e-6
+                >= goal.target_soc * self.target_storage_energy_wh
+                for i in self.projection.intervals
+            ):
+                raise ValueError("supplemental target requires physical candidate evidence")
+            if any(s.starts_at < goal.ends_at and goal.starts_at < s.ends_at
+                   for s in self.main_segments):
+                raise ValueError("supplemental goal cannot own a main charge interval")
+
 
 
 @dataclass(frozen=True, slots=True)

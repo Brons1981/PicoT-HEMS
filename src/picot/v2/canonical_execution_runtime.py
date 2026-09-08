@@ -104,6 +104,18 @@ class CanonicalExecutionRuntime:
             state_read_at=state.state_read_at,
             state_valid_since=state.state_valid_since,
         )
+        self.commitment_store.observe_supplemental_completion(
+            execution_scope_id=scope_id,
+            plan_id=plan_id,
+            segment_id=segment_id,
+            confirmed_since=since,
+            observed_at=snapshot.captured_at,
+            measured_at=state.measured_at,
+            soc=state.current_soc,
+            evidence_id="|".join(state.evidence_ids),
+            state_read_at=state.state_read_at,
+            state_valid_since=state.state_valid_since,
+        )
 
     @staticmethod
     def _daily_execution_blocker(

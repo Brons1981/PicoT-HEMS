@@ -1551,6 +1551,9 @@ def _main_charge_energy_path(
             {
                 interval.starts_at,
                 interval.ends_at,
+                *(t for goal in window.supplemental_assignments
+                  for t in (goal.starts_at, goal.ends_at)
+                  if interval.starts_at < t < interval.ends_at),
                 *(
                     t
                     for s in window.main_segments
@@ -1580,6 +1583,8 @@ def _main_charge_energy_path(
                 if owner is not None
                 else _id("main-charge-retained-segment", f"{candidate_id}|{start}|{end}")
             )
+            supplemental_goal = next((g for g in window.supplemental_assignments
+                                      if g.starts_at <= start and end <= g.ends_at), None)
             segments.append(
                 PathSegment(
                     segment_id=segment_id,
@@ -1589,7 +1594,8 @@ def _main_charge_energy_path(
                     ends_at=end,
                     primitive=_primitive(interval.intent),
                     capability_id=storage.capability_id,
-                    purpose=f"main-charge:{window.assignment_id}"
+                    purpose=supplemental_goal.assignment_id if supplemental_goal is not None
+                    else f"main-charge:{window.assignment_id}"
                     if owner is not None
                     else f"bridge:{window.assignment_id}"
                     if supplemental and retained_main is None

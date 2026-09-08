@@ -7,6 +7,7 @@ import os
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,6 +17,7 @@ from picot.domain.daily_reference_charge_window import DailyMainChargeWindow
 from picot.domain.energy_path import RetainedExecutionOrigin, SocConstraint
 from picot.domain.execution_plan import ExecutionPlan, ExecutionPlanLifecycle, ExecutionPlanSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.v2.daily_bridge import BridgeEnergyInterval, DailyBridgeState, DailyBridgeTrigger
 from picot.v2.daily_charge_assignment import (
     DailyChargeAssignment,
@@ -451,6 +453,16 @@ class ActivePlanCommitmentStore:
         elif assignment.revision and not same_binding:
             raise ValueError("bound daily main route requires an explicit optimisation trigger")
         if isinstance(optimisation_trigger, DailyBridgeTrigger):
+            if optimisation_trigger.supplemental_shortfall_id is not None:
+                goal = next((a for a in self.load_supplemental_assignments()
+                             if a.assignment_id == optimisation_trigger.supplemental_shortfall_id),
+                            None)
+                if goal is None or goal.completed_at is not None or (
+                    goal.next_assignment_id != assignment.assignment_id
+                    or goal.plan_id != optimisation_trigger.active_plan_id
+                    or goal.required_by <= plan.created_at
+                ):
+                    raise ValueError("supplemental shortfall requires current open ownership")
             completed = next(
                 (a for a in self.load_daily_assignments()
                  if a.assignment_id == optimisation_trigger.completed_assignment_id), None,
@@ -584,6 +596,7 @@ class ActivePlanCommitmentStore:
                      "deficit_wh": i.deficit_wh} for i in bridge_deficits
                 ],
             }
+        self._bind_supplemental(payload, plan, window)
         plans[bound.assignment_id] = serialized
         payload.setdefault("daily_assignments", {})[bound.assignment_id] = _serialize_daily(bound)
         if activate:
@@ -594,17 +607,197 @@ class ActivePlanCommitmentStore:
         self._write(payload)
         return bound
 
+    def load_supplemental_assignments(self) -> tuple[SupplementalChargeAssignment, ...]:
+        try:
+            payload = self._load_payload()
+            records = payload.get("supplemental_assignments", {})
+            result = []
+            for key, value in records.items():
+                data = dict(value)
+                for field in ("starts_at", "ends_at", "required_by", "completed_at"):
+                    data[field] = datetime.fromisoformat(data[field]) if data.get(field) else None
+                data["segment_ids"] = tuple(data["segment_ids"])
+                goal = SupplementalChargeAssignment(**data)
+                if goal.assignment_id != key or not goal.plan_id:
+                    raise ValueError("supplemental binding is invalid")
+                plan_record = next(
+                    (
+                        p
+                        for p in payload.get("daily_execution_plans", {}).values()
+                        if p.get("plan_id") == goal.plan_id
+                    ),
+                    None,
+                )
+                if plan_record is None:
+                    plan_record = (
+                        payload.get("daily_main_history", {}).get(goal.plan_id, {}).get("plan")
+                    )
+                if plan_record is None:
+                    raise ValueError("supplemental execution plan is missing")
+                plan = _deserialize_execution_plan(plan_record)
+                parts = tuple(s for s in plan.segments if s.segment_id in goal.segment_ids)
+                if (
+                    plan.execution_scope_id != goal.execution_scope_id
+                    or len(parts) != len(goal.segment_ids)
+                    or not parts
+                    or parts[0].starts_at != goal.starts_at
+                    or parts[-1].ends_at != goal.ends_at
+                    or any(
+                        s.purpose != goal.assignment_id or s.main_assignment_id is not None
+                        for s in parts
+                    )
+                ):
+                    raise ValueError("supplemental execution lineage is invalid")
+                result.append(goal)
+            return tuple(sorted(result, key=lambda a: (a.starts_at, a.assignment_id)))
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            raise ValueError("saved supplemental assignment is invalid") from exc
+
+    @staticmethod
+    def _supplemental_record(goal: SupplementalChargeAssignment) -> dict[str, Any]:
+        data = asdict(goal)
+        for field in ("starts_at", "ends_at", "required_by", "completed_at"):
+            value = data[field]
+            data[field] = value.isoformat() if value is not None else None
+        return data
+
+    def _bind_supplemental(
+        self, payload: dict[str, Any], plan: ExecutionPlan, window: DailyMainChargeWindow
+    ) -> None:
+        previous = {
+            a.assignment_id: a
+            for a in self.load_supplemental_assignments()
+            if a.execution_scope_id == plan.execution_scope_id
+        }
+        proposed = {a.assignment_id: a for a in window.supplemental_assignments}
+        if len(proposed) != len(window.supplemental_assignments):
+            raise ValueError("duplicate supplemental ownership")
+        if any(
+            a.completed_at is None and a.required_by > plan.created_at and key not in proposed
+            for key, a in previous.items()
+        ):
+            raise ValueError("open supplemental assignment cannot be discarded")
+        for key, goal in proposed.items():
+            old = previous.get(key)
+            if old is not None and (
+                old.completed_at is not None
+                or (old.target_soc, old.required_by, old.next_assignment_id)
+                != (goal.target_soc, goal.required_by, goal.next_assignment_id)
+            ):
+                raise ValueError("supplemental target and required time must be retained")
+            if goal.execution_scope_id != plan.execution_scope_id or goal.completed_at is not None:
+                raise ValueError("candidate cannot complete a supplemental goal")
+            parts = tuple(s for s in plan.segments if s.purpose == key)
+            if (
+                not parts
+                or parts[0].starts_at != goal.starts_at
+                or parts[-1].ends_at != goal.ends_at
+            ):
+                raise ValueError("supplemental window must match its execution segments")
+            if any(
+                s.main_assignment_id is not None
+                or s.primitive
+                not in {
+                    ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                    ExecutionPrimitive.CHARGE_AT_POWER,
+                }
+                for s in parts
+            ) or any(a.ends_at != b.starts_at for a, b in zip(parts, parts[1:], strict=False)):
+                raise ValueError("supplemental execution must be a separate contiguous charge")
+            if old is not None:
+                payload.setdefault("supplemental_history", {}).setdefault(key, []).append(
+                    self._supplemental_record(old)
+                )
+            bound_goal = replace(
+                goal, plan_id=plan.plan_id, segment_ids=tuple(s.segment_id for s in parts)
+            )
+            payload.setdefault("supplemental_assignments", {})[key] = self._supplemental_record(
+                bound_goal
+            )
+
+    def observe_supplemental_completion(
+        self,
+        *,
+        execution_scope_id: str,
+        plan_id: str,
+        segment_id: str,
+        confirmed_since: datetime,
+        observed_at: datetime,
+        measured_at: datetime,
+        soc: float,
+        evidence_id: str,
+        state_read_at: datetime | None = None,
+        state_valid_since: datetime | None = None,
+    ) -> SupplementalChargeAssignment | None:
+        plan = self.load_active_daily_main_plan(execution_scope_id)
+        if plan is None or plan.plan_id != plan_id or not evidence_id:
+            return None
+        segment = next((s for s in plan.segments if s.segment_id == segment_id), None)
+        if segment is None or segment.main_assignment_id is not None:
+            return None
+        goal = next(
+            (
+                a
+                for a in self.load_supplemental_assignments()
+                if a.assignment_id == segment.purpose
+                and a.plan_id == plan_id
+                and segment_id in a.segment_ids
+            ),
+            None,
+        )
+        if (
+            goal is None
+            or goal.completed_at is not None
+            or not isfinite(soc)
+            or not goal.target_soc <= soc <= 1
+        ):
+            return goal if goal is not None and goal.completed_at is not None else None
+        if not segment.starts_at <= confirmed_since <= observed_at <= segment.ends_at:
+            return None
+        at = measured_at
+        fresh = confirmed_since <= measured_at <= observed_at
+        if not fresh:
+            if not (
+                state_read_at is not None
+                and state_valid_since is not None
+                and state_valid_since <= measured_at <= state_read_at <= observed_at
+                and state_valid_since <= goal.starts_at <= state_read_at
+                and segment.starts_at <= state_read_at <= segment.ends_at
+            ):
+                return None
+            at = state_read_at
+        if not goal.starts_at <= at <= goal.ends_at:
+            return None
+        done = replace(
+            goal,
+            completed_at=at,
+            completion_evidence_id=(
+                f"confirmed-supplemental:{plan_id}:{segment_id}:{evidence_id}:"
+                f"measured={measured_at.isoformat()}:read={state_read_at}:since={state_valid_since}"
+            ),
+        )
+        payload = self._load_payload()
+        payload["supplemental_assignments"][goal.assignment_id] = self._supplemental_record(done)
+        self._write(payload)
+        return done
+
     def load_daily_bridge_state(self, assignment_id: str) -> DailyBridgeState | None:
         try:
             raw = self._load_payload().get("daily_bridge_states", {}).get(assignment_id)
             if raw is None:
                 return None
             return DailyBridgeState(
-                assignment_id, raw["plan_id"], datetime.fromisoformat(raw["next_starts_at"]),
-                tuple(BridgeEnergyInterval(
-                    datetime.fromisoformat(i["starts_at"]), datetime.fromisoformat(i["ends_at"]),
-                    float(i["deficit_wh"]),
-                ) for i in raw["accepted_deficits"]),
+                assignment_id,
+                raw["plan_id"],
+                datetime.fromisoformat(raw["next_starts_at"]),
+                tuple(
+                    BridgeEnergyInterval(
+                        datetime.fromisoformat(i["starts_at"]),
+                        datetime.fromisoformat(i["ends_at"]),
+                        float(i["deficit_wh"]),
+                    )
+                    for i in raw["accepted_deficits"]
+                ),
             )
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise ValueError("saved bridge assessment is invalid") from exc

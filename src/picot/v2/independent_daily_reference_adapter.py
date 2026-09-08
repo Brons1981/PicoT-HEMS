@@ -86,6 +86,7 @@ from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
 from picot.v2.plan_commitment_store import active_pv_preservation_dates
+from picot.v2.supplemental_charge_planning import attach_supplemental_goals
 
 METHOD_VERSION = "v2-independent-daily-reference-adapter:v7"
 DAILY_REFERENCE_DURATION = timedelta(hours=24)
@@ -165,6 +166,14 @@ class IndependentDailyReferenceAdapter:
         state = next((s for s in context.bridge_states if s.assignment_id == owner.assignment_id),
                      None)
         needed = needs_bridge_review(deficits, state, plan_id=plan.plan_id, next_starts_at=until)
+        missed_goal = next((a for a in context.supplemental_assignments
+                           if a.completed_at is None and a.next_assignment_id == owner.assignment_id
+                           and a.required_by > snapshot.captured_at and not any(
+                               a.starts_at <= i.ends_at <= min(a.ends_at, a.required_by)
+                               and i.storage_energy_at_end_wh + 1e-6
+                               >= a.target_soc * inputs.storage.usable_capacity_wh
+                               for i in projection.intervals)), None)
+        needed = needed or missed_goal is not None
         trigger = None
         if needed:
             assert owner.route_plan_id is not None
@@ -172,6 +181,7 @@ class IndependentDailyReferenceAdapter:
                 owner.assignment_id, owner.route_plan_id, owner.revision, plan.plan_id,
                 snapshot.snapshot_id, snapshot.captured_at, inputs.storage.usable_capacity_wh,
                 max(previous, key=lambda a: a.delivery_date).assignment_id, until, deficits,
+                missed_goal.assignment_id if missed_goal is not None else None,
             )
             trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
         return DailyBridgeAssessment(
@@ -310,6 +320,8 @@ class IndependentDailyReferenceAdapter:
                     owner.assignment_id, "hybrid", schedule, main, projection,
                     reaches[owner.assignment_id], inputs.storage.usable_capacity_wh, others,
                 ))
+        windows = [attached for w in windows if (attached := attach_supplemental_goals(
+            w, snapshot, trigger)) is not None]
         return DailyMainChargeWindowSet(
             owner.assignment_id, snapshot.snapshot_id, tuple(windows),
             "discovered" if windows else "unreachable", "reserve_bridge_alternatives",
@@ -529,7 +541,11 @@ class IndependentDailyReferenceAdapter:
             if not feasible:
                 return replace(result, windows=(), status="unreachable",
                                reason="pv_comparison_has_no_admissible_grid_reduction")
-        return replace(result, windows=feasible)
+        feasible = tuple(attached for w in feasible
+                         if (attached := attach_supplemental_goals(w, snapshot)) is not None)
+        return replace(result, windows=feasible) if feasible else replace(
+            result, windows=(), status="unreachable", reason="supplemental_goal_unreachable"
+        )
 
     @staticmethod
     def _retained_main_schedule(

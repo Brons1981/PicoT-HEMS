@@ -26,6 +26,7 @@ from picot.architecture_ownership import architecture_ownership
 from picot.domain.execution_plan import ExecutionPlan
 from picot.domain.runtime import RuntimeObservation
 from picot.domain.storage_conversion_model import StorageConversionModel
+from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.planner.market_daily_planner import MarketTradingPolicy
 from picot.runtime.runtime_monitor import RuntimeMonitorSession
 from picot.v2.canonical_execution_runtime import (
@@ -850,6 +851,9 @@ def _planning_input_signature(
                 "reason": daily_context.reason,
                 "timezone": daily_context.timezone,
                 "active_main_plan_ids": daily_context.active_main_plan_ids,
+                "supplemental_assignments": [
+                    repr(a) for a in daily_context.supplemental_assignments
+                ],
                 "bridge_states": [
                     (s.assignment_id, s.plan_id, s.next_starts_at.isoformat(),
                      tuple((i.starts_at.isoformat(), i.ends_at.isoformat(), i.deficit_wh)
@@ -926,6 +930,7 @@ def _restore_daily_charge_context(
     started = perf_counter()
     assignments: tuple[DailyChargeAssignment, ...] = ()
     bridge_states: tuple[DailyBridgeState, ...] = ()
+    supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
     plans: list[ExecutionPlan] = []
     active_main_plan_ids: list[str] = []
     status, reason = "ready", None
@@ -984,6 +989,7 @@ def _restore_daily_charge_context(
             if a.execution_scope_id in scopes
             and (a.ends_at >= earliest_observation or a.assignment_id in latest_completed_ids)
         )
+        supplemental_assignments = store.load_supplemental_assignments()
         bridge_states = tuple(
             state for a in assignments
             if (state := store.load_daily_bridge_state(a.assignment_id)) is not None
@@ -1000,6 +1006,7 @@ def _restore_daily_charge_context(
         main_plans=tuple(plans),
         active_main_plan_ids=tuple(active_main_plan_ids),
         bridge_states=bridge_states,
+        supplemental_assignments=supplemental_assignments,
         pv_comparison_states=tuple(
             store.load_daily_pv_comparison(a.assignment_id) for a in assignments
             if a.route_plan_id is not None

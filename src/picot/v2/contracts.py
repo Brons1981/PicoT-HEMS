@@ -13,6 +13,7 @@ from picot.domain.energy_path import PathSegment, ProjectedEnergyState, Retained
 from picot.domain.evaluation import CandidateOutcome as CanonicalCandidateOutcome
 from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.v2.daily_bridge import DailyBridgeAssessment, DailyBridgeState
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
 from picot.v2.daily_pv_comparison import (
@@ -659,6 +660,7 @@ class DailyChargePlanningContext:
     active_main_plan_ids: tuple[str, ...] = ()
     pv_comparison_states: tuple[DailyPVComparisonState, ...] = ()
     bridge_states: tuple[DailyBridgeState, ...] = ()
+    supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
     duration_ms: float = 0.0
 
     def __post_init__(self) -> None:

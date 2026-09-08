@@ -374,7 +374,11 @@ class IndependentDailyReferenceAdapter:
                     snapshot.snapshot_id, snapshot.captured_at, peak,
                     inputs.storage.usable_capacity_wh,
                 ))
-        return tuple(sorted(triggers, key=lambda t: t.assignment_id))
+        owners = {a.assignment_id: a for a in pending}
+        return tuple(sorted(triggers, key=lambda t: (
+            owners[t.assignment_id].delivery_date, owners[t.assignment_id].execution_scope_id,
+            t.assignment_id,
+        )))
 
     def pv_surplus_trigger(
         self, *, snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
@@ -516,6 +520,21 @@ class IndependentDailyReferenceAdapter:
             and owner.ends_at > snapshot.captured_at
             and (optimisation_trigger is None or owner.assignment_id != assignment.assignment_id)
         )
+        # Correct one day at a time. A later route that was already insufficient
+        # keeps its owner and gets its own turn; it cannot veto this day's repair.
+        # Healthy retained goals and all earlier goals still have to remain feasible.
+        deferred_ids: set[str] = set()
+        if isinstance(optimisation_trigger, DailyMainShortfallTrigger) and pending:
+            # Use monitoring of the complete active route, not the discovery
+            # baseline where the selected owner's actions have been removed.
+            existing_shortfalls = {t.assignment_id for t in self.main_route_shortfalls(
+                snapshot=snapshot, conversion_model=conversion_model,
+            )}
+            deferred_ids = {
+                owner.assignment_id for owner in pending
+                if owner.delivery_date > assignment.delivery_date
+                and owner.assignment_id in existing_shortfalls
+            }
         feasible = tuple(window for window in windows if all(
             any(
                 (
@@ -527,7 +546,7 @@ class IndependentDailyReferenceAdapter:
                     and interval.storage_energy_at_end_wh + 1e-6 >= inputs.target_storage_energy_wh
                 )
                 for main in owner.main_segments for interval in window.projection.intervals
-            ) for owner in pending
+            ) for owner in pending if owner.assignment_id not in deferred_ids
         ))
         if windows and not feasible:
             return replace(result, windows=(), status="unreachable",

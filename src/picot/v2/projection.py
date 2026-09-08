@@ -661,6 +661,14 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "evaluated_candidate_ids": list(e.evaluated_candidate_ids),
                 "decisive_step": e.decisive_step,
                 "reason": e.reason,
+                "daily_main_input_shortfalls": [
+                    {"assignment_id": t.assignment_id, "snapshot_id": t.snapshot_id,
+                     "projected_main_peak_wh": t.projected_main_peak_wh,
+                     "target_wh": t.target_wh,
+                     "selected_for_revision": e.daily_main_shortfall is not None
+                     and t.assignment_id == e.daily_main_shortfall.assignment_id}
+                    for t in e.daily_main_input_shortfalls
+                ],
                 "supplemental_charge_assignments": [
                     {"assignment_id": a.assignment_id, "next_assignment_id": a.next_assignment_id,
                      "target_soc": a.target_soc,

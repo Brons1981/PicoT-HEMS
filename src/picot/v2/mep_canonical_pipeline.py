@@ -1286,6 +1286,7 @@ def _build_daily_main_run(
     ) = None
     pv_comparison = None
     bridge_assessment = None
+    input_shortfalls: tuple[DailyMainShortfallTrigger, ...] = ()
     canonical_set = None
     planning_blocked = False
     optional_pv_review = False
@@ -1321,8 +1322,13 @@ def _build_daily_main_run(
         triggers = adapter.main_route_shortfalls(
             snapshot=snapshot, conversion_model=conversion,
         ) if context.active_main_plan_ids else ()
+        input_shortfalls = triggers
         if triggers:
-            optimisation_trigger = triggers[0]
+            owners = {a.assignment_id: a for a in context.assignments}
+            optimisation_trigger = min(triggers, key=lambda t: (
+                owners[t.assignment_id].delivery_date, owners[t.assignment_id].execution_scope_id,
+                t.assignment_id,
+            ))
             pending = [next(a for a in context.assignments
                             if a.assignment_id == optimisation_trigger.assignment_id)]
         if not triggers:
@@ -1567,6 +1573,7 @@ def _build_daily_main_run(
             optimisation_trigger, DailyMainShortfallTrigger,
         ) else None),
         daily_bridge=bridge_assessment,
+        daily_main_input_shortfalls=input_shortfalls,
         daily_pv_comparison=pv_comparison,
         daily_pv_surplus_trigger=(optimisation_trigger if isinstance(
             optimisation_trigger, DailyMainPVSurplusTrigger,

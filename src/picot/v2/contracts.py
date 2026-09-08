@@ -1346,6 +1346,7 @@ class EvaluationRecord:
     commitment_decision: str | None = None
     daily_bridge: DailyBridgeAssessment | None = None
     daily_main_shortfall: DailyMainShortfallTrigger | None = None
+    daily_main_input_shortfalls: tuple[DailyMainShortfallTrigger, ...] = ()
     daily_pv_comparison: DailyPVComparison | None = None
     daily_pv_surplus_trigger: DailyMainPVSurplusTrigger | None = None
 

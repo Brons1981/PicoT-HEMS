@@ -56,3 +56,9 @@ Deze tests bewijzen geselecteerde bestaande gedragingen. Geen ervan bewijst een 
 4. Afzonderlijke user-rule-marktroute blijft vervolgwerk; geen hersteltoets terug invoeren via de laadcyclus.
 
 Deze beurt is uitsluitend een toets. Geen implementatie, versie-bump, merge, deployment of batterijcommando.
+
+## Vervolg — interdag-implementatie na expliciete opdracht
+
+De interdag-blokkade is gericht gecorrigeerd met behoud van zelfstandige dagopdrachten. Alleen een latere hoofdroute die volgens monitoring van het complete actieve plan al ontoereikend is, mag haar eigen revisiebeurt afwachten zonder de huidige herstelkandidaat te blokkeren. Eerdere en reeds haalbare andere doelen blijven beschermd. Selectie is chronologisch, één eigenaar per gewone run.
+
+Nieuwe lokale ketentests tonen: vandaag corrigeren, morgen exact behouden, Store-herstart, morgen afzonderlijk corrigeren, vandaag exact behouden, daarna beide fysieke doelen haalbaar en nog geen werkelijk dagdoel afgevinkt. Na beide correcties geen verdere vensterzoektocht bij dezelfde invoer. De oorspronkelijke afwijzingsproef is daarmee aangevuld met een aantoonbaar fysiek haalbare oplossing. 35 relevante regressies en 2 nadere tweedaagse controles geslaagd (overlappende sets). Zie de aansluitende DEVELOPMENT_LOG-vermelding voor bewijs en grenzen. Geen live-vrijgave of gezamenlijke wijziging van beide opdrachtidentiteiten.

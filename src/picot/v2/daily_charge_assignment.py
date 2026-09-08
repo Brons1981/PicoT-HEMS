@@ -168,6 +168,8 @@ class DailyChargeAssignment:
         plan_id: str,
         segment_id: str,
         execution_allowed: bool,
+        state_read_at: datetime | None = None,
+        state_valid_since: datetime | None = None,
     ) -> "DailyChargeAssignment":
         """Use actual telemetry for the explicitly admitted executing segment.
 
@@ -180,23 +182,33 @@ class DailyChargeAssignment:
             raise ValueError("observed SOC must be finite and between zero and one")
         if not evidence_id.strip():
             raise ValueError("completion evidence must be explicit")
+        completed_at = measured_at
+        if state_read_at is not None and state_valid_since is not None:
+            _aware(state_read_at)
+            _aware(state_valid_since)
+            main = next((s for s in self.main_segments if s.segment_id == segment_id), None)
+            if (main is not None and state_valid_since <= measured_at <= state_read_at
+                    and state_valid_since <= main.starts_at <= state_read_at < main.ends_at):
+                # A current HA state read proves full-at-start without inventing
+                # a fresh sensor measurement or backdating the completion event.
+                completed_at = state_read_at
         if (
             self.completed_at is not None
             or not execution_allowed
             or soc < 1.0
             or plan_id != self.route_plan_id
             or self.revised_at is None
-            or measured_at < self.revised_at
+            or completed_at < self.revised_at
         ):
             return self
         if not any(
-            s.segment_id == segment_id and s.starts_at <= measured_at <= s.ends_at
+            s.segment_id == segment_id and s.starts_at <= completed_at <= s.ends_at
             for s in self.main_segments
         ):
             return self
         return replace(
             self,
-            completed_at=measured_at,
+            completed_at=completed_at,
             completion_evidence_id=evidence_id,
             completion_segment_id=segment_id,
         )

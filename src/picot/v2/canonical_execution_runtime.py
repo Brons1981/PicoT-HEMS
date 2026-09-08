@@ -101,6 +101,8 @@ class CanonicalExecutionRuntime:
             measured_at=state.measured_at,
             soc=state.current_soc,
             evidence_id="|".join(state.evidence_ids),
+            state_read_at=state.state_read_at,
+            state_valid_since=state.state_valid_since,
         )
 
     @staticmethod

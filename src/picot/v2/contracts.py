@@ -51,8 +51,17 @@ class CurrentStorageState:
     measured_at: datetime
     confidence: float
     evidence_ids: tuple[str, ...]
+    state_read_at: datetime | None = None
+    state_valid_since: datetime | None = None
 
     def __post_init__(self) -> None:
+        if (self.state_read_at is None) != (self.state_valid_since is None):
+            raise ValueError("current HA state requires both read time and validity start")
+        if self.state_read_at is not None and self.state_valid_since is not None:
+            if any(t.utcoffset() is None for t in (
+                self.state_read_at, self.state_valid_since, self.measured_at,
+            )) or not self.state_valid_since <= self.measured_at <= self.state_read_at:
+                raise ValueError("current HA state times must be aware and ordered")
         if not 0.0 <= self.current_soc <= 1.0:
             raise ValueError("current_soc must be between 0.0 and 1.0")
         if self.usable_capacity_wh <= 0.0:

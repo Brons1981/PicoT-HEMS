@@ -68,3 +68,13 @@ Daarom geen volledig gereconstrueerde of live-uitgevoerde nieuwe hoofdroute pres
 ## Vervolg
 
 Eerst deze twee concrete invoer-/bewijsovergangen herstellen binnen de geaccepteerde ADR's en met passende regressies. Daarna opnieuw de HA-keten beoordelen. De geaccepteerde plannerregels blijven behouden; er is geen reden gevonden om ze met nieuwe gedragsdrempels te vervangen. Een echte live-verificatie vereist daarnaast actuele gegevens en uitvoeringsbewijs van de nieuwe ontwikkelversie in HA.
+
+## Vervolg — herstel na expliciet gebruikersakkoord
+
+Beide hierboven beschreven reproducties zijn in de aansluitende herstelstap lokaal opgelost. De oorspronkelijke bevindingen blijven als historische verificatie van de genoemde basiscommit staan.
+
+- De SOC-ingang bewaart de werkelijke succesvolle HA-leestijd apart van `last_updated` en `last_changed`. De runtime kan daarmee, bij bevestigde toegestane uitvoering, aantonen dat 100% al op de oorspronkelijke hoofdsegmentstart gold. De oorspronkelijke meettijd blijft ongewijzigd; voltooiing wordt geregistreerd op de actuele leestijd, niet achteraf op een verzonnen meetmoment. Bewijs en tijden worden in Store en diagnose vastgelegd. Ontbrekende bewijsvelden in oudere snapshots geven geen nieuwe bevoegdheid.
+- Mislukte en onvolledige PV-historie worden niet als herbruikbaar eindresultaat gecachet. De volgende gewone poll mag dezelfde begrensde periode opnieuw lezen. Volledig geldig resultaat wordt weer gecachet. Er is geen extra pollinglus of nieuwe wachttijd. Het herleesbeleid voor reeds volledig geldige maar later gecorrigeerde historie blijft gekoppeld aan de bestaande cache-/tijdvakvernieuwing; deze gerichte fix introduceert geen onmiddellijke detectie van iedere broncorrectie.
+- Verse lokale controles: 134 regressietests geslaagd; vervolgens 31 gerichte tests voor nieuwe voltooiingsbewijzen, diagnoseopslag en live-PV-koppeling geslaagd. Vier aanvullende bestaande invoer-/assemblagetests geslaagd. De sets overlappen. Type- en lintcontroles geslaagd.
+
+Dit is **IMPLEMENTED en lokaal geverifieerd**, geen LIVE_VERIFIED. De beperkte beschikbaarheid van originele HA-capabilitysnapshots en bewijs van de werkelijk draaiende nieuwe versie blijft bestaan. Ook gevallen waarin 100% pas tijdens een onbevestigde/offline periode ná hoofdstart ontstond zijn niet door dit specifieke vol-bij-start-bewijs automatisch toegelaten.

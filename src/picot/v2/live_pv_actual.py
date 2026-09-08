@@ -176,7 +176,12 @@ def apply_latest_closed_actual_pv(
             error=history.error,
             diagnoses=diagnoses,
         )
-        cache.store(key, cached)
+        # Missing/failed coverage is retryable on the next normal planning
+        # poll. Do not turn a temporary history failure into permanent proof.
+        if history.status == "available" and history.error is None and all(
+            diagnosis.interval is not None for diagnosis in diagnoses
+        ):
+            cache.store(key, cached)
 
     actual_by_forecast_id: dict[str, PVEnergyTimelineInterval] = {}
     deviation_results: list[PVDeviationResult] = []

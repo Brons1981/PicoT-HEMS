@@ -1192,3 +1192,33 @@ def test_regime_duration_window_is_not_reset_by_one_positive_interval() -> None:
         deviations,
         direction="above_forecast",
     ) == 1800
+
+
+@pytest.mark.parametrize("initial_status", ["unavailable", "available"])
+def test_missing_history_is_retried_on_normal_poll_after_recovery(initial_status):
+    calls = []
+
+    def history_reader(**kwargs):
+        calls.append(kwargs)
+        recovered = len(calls) > 1
+        return PVHistoryReadResult(
+            **kwargs, status="available" if recovered else initial_status,
+            error="temporary error" if not recovered and initial_status == "unavailable" else None,
+            observations=(PVPowerObservation(1000, CLOSED_START, "anchor"),
+                          PVPowerObservation(1000, CLOSED_END, "end")) if recovered else (),
+        )
+
+    cache = LivePVActualCache()
+    results = []
+    for n in range(3):
+        _, diagnostics = apply_latest_closed_actual_pv(
+            _bundle(captured_at=CAPTURED_AT + timedelta(seconds=n)),
+            entity_id=ENTITY_ID, history_reader=history_reader, cache=cache,
+            telemetry_interval_seconds=10,
+        )
+        results.append(diagnostics)
+    assert results[0].actual_interval_count == 0
+    assert results[1].actual_interval_count == 1
+    assert not results[1].cache_hit
+    assert results[2].cache_hit
+    assert len(calls) == 2

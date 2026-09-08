@@ -43,3 +43,5 @@ De gebruiker heeft vastlegging en een start van de herbouw bevestigd. Acceptatie
 [ADR-019.2 — Handelsomvang en fictieve referentiespread](ADR-019.2-volume-based-reference-spread.md) is ACCEPTED: vrij instelbaar capaciteitpercentage en minimumspread over passende energiegewogen vensters; goedkoop referentievenster is geen laadopdracht.
 
 [ADR-037.7 — Gemiste prijspublicatie](ADR-037.7-missed-publication-recovery.md) is ACCEPTED: bij opstart beschikbare leveringsdagen vergelijken met bestaande opdrachten; herstellen of eenmaal aanmaken, met NOM bij ontbrekende planningsgegevens.
+
+[ADR-037.10 — Aanvullende laadopdracht met eigen commitment en voltooiing](ADR-037.10-supplemental-charge-commitment.md) is ACCEPTED. Nieuwe aanscherping van ADR-037.9: eigen identiteit, doel, venster en bewezen voltooiing; noodzakelijke energie niet voorbij het verwachte tekort doorschuiven. Aanvullende voltooiing blijft gescheiden van het dagdoel. Nog niet geïmplementeerd.

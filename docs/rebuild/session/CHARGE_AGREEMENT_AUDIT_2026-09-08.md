@@ -2,7 +2,11 @@
 
 Datum: 2026-09-08. Basis lokaal `2264479`, gepubliceerd `123929f32921a6768914ef63f8433b6e3ad233de`, tree `113eace98dbcf509d76a358cfc338f556f690eb5`; branch `implement/first-daily-charge-cycle`, basis dev.243.
 
-## Oordeel
+## Correctie na gebruikersverduidelijking
+
+De gebruiker heeft na deze toets expliciet aangegeven dat het eigen afvinken van aanvullende laadopdrachten een nieuwe aanscherping is. De onderstaande constatering dat die functionaliteit ontbreekt blijft technisch juist, maar de kwalificatie als eerder gemiste afspraak is ingetrokken. Het betreft nieuwe, inmiddels geaccepteerde scope in ADR-037.10. De historische toets hieronder beschrijft de toen gehanteerde lezing; zij mag niet worden aangehaald als bewijs dat deze aanvullende levenscyclus al eerder verplicht was. De afzonderlijke interdag-blokkade blijft een bestaand implementatieprobleem.
+
+## Oordeel (historische toets vóór deze verduidelijking)
 
 **Niet volledig conform.** De hoofdlaadcyclus is in belangrijke onderdelen aanwezig. Een aanvullende laadopdracht heeft echter geen eigen vastgelegd laaddoel en bewezen voltooiing. Bovendien kan de haalbaarheidseis voor een andere ongewijzigde dagopdracht de huidige optimalisatie blokkeren. Dit zijn geen redenen om de besproken gebruikersroute te vervangen door gezamenlijke wijziging van dagopdrachten.
 

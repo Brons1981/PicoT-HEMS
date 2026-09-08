@@ -142,3 +142,11 @@ Na akkoord is uitsluitend de bestaande provenance-overgang aangepast. De werkeli
 De nieuwe gerichte tests dekken opslag/herstart en raw HA-metadata via de bestaande input-attachment. De volledige gecombineerde dispatch-/SOC-volgorde en echte HA-uitvoering zijn hiermee nog niet als LIVE_VERIFIED aangemerkt. Plannerbeleid en bevroren ADRs blijven ongewijzigd.
 
 Definitieve geïntegreerde regressie: `python -m pytest tests/test_pending_mode_feedback.py tests/test_v2_storage_mode_provenance_integration.py tests/test_v2_live_storage_mode_provenance.py tests/test_charge_segment_closure.py tests/test_v2_zendure_mode_capabilities.py tests/test_v2_live_replan_poll_cycle.py -q`: **52 passed in 28,37 s**, exit 0. `git diff --check` geslaagd.
+
+## Gecombineerde uitvoeringsproef
+
+De eerder ontbrekende combinatie is nu lokaal uitgevoerd in `tests/test_ha_charge_transition_chain.py`: bestaand pipelineplan → klokruntime → één dispatch → vertraagde oude HA-feedback → nieuwe modus → late SOC-eindmeting → afzonderlijke Store-voltooiing → verse input vóór execute. Hoofd- en aanvullende opdracht slagen beide. Een handmatige wijziging en een te late meettijd vinken niet af. Eerste run: **4 passed in 12,04 s**.
+
+De proef gebruikt echte lokale opslag en de gewone poll-/provenance-/uitvoeringscode, met gesimuleerde HA-antwoorden en een testdispatcher. De execute-ingang wordt gecontroleerd op verse voltooiingscontext; de volledige kandidaatselectie na die ingang is hier niet opnieuw uitgevoerd. Daarmee is de genoemde volgorde lokaal gedekt, maar daadwerkelijke HA-uitvoering, transporttiming en hardwaregedrag blijven onbewezen. Geen productiewijziging of live-vrijgave in deze stap.
+
+Definitieve gecombineerde regressie: `python -m pytest tests/test_ha_charge_transition_chain.py tests/test_pending_mode_feedback.py tests/test_charge_segment_closure.py -q`: **22 passed in 34,22 s**, exit 0. Dit omvat de vier nieuwe combinatiegevallen; aantallen niet optellen.

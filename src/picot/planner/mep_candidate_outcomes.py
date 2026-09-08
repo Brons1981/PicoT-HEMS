@@ -37,7 +37,7 @@ from picot.domain.daily_reference_intent import (
     DailyStorageIntent,
 )
 from picot.domain.daily_reference_portfolio import DailyReferenceStrategyResult
-from picot.domain.daily_reference_simulation import PVScenario
+from picot.domain.daily_reference_simulation import DailyPlanningProjection, PVScenario
 from picot.domain.daily_reference_tariff import DailyReferenceTariffSchedule
 from picot.domain.energy_path import EnergyPath as DomainEnergyPath
 from picot.domain.energy_path import (
@@ -226,6 +226,7 @@ def _execution_path_intervals(
     schedule: DailyReferenceIntentSchedule,
     *,
     maximum_discharge_output_power_w: float,
+    projection: DailyPlanningProjection | None = None,
 ) -> tuple[DailyReferenceIntentInterval, ...]:
     """Project export-energy hourglasses to exact execution boundaries.
 
@@ -235,22 +236,52 @@ def _execution_path_intervals(
     """
 
     result: list[DailyReferenceIntentInterval] = []
-    for interval in _path_intervals(schedule):
+    if projection is not None and (
+        projection.snapshot_id != schedule.snapshot_id
+        or projection.intent_schedule_id != schedule.schedule_id
+        or tuple((i.starts_at, i.ends_at) for i in projection.intervals)
+        != tuple((i.starts_at, i.ends_at) for i in schedule.intervals)
+    ):
+        raise ValueError("export execution must use its exact physical projection")
+    physical = {(i.starts_at, i.ends_at): i for i in projection.intervals} if projection else {}
+    execution_intervals = tuple(
+        part
+        for merged in _path_intervals(schedule)
+        for part in (
+            tuple(i for i in schedule.intervals
+                  if merged.starts_at <= i.starts_at and i.ends_at <= merged.ends_at)
+            if projection is not None and merged.intent is DailyStorageIntent.STORAGE_EXPORT
+            else (merged,)
+        )
+    )
+    for interval in execution_intervals:
         if interval.intent is not DailyStorageIntent.STORAGE_EXPORT:
             result.append(interval)
             continue
+        available_export_power_w = maximum_discharge_output_power_w
+        if projection is not None:
+            source = physical[(interval.starts_at, interval.ends_at)]
+            hours = (interval.ends_at - interval.starts_at).total_seconds() / 3600
+            available_export_power_w -= source.storage_to_household_output_wh / hours
+            if available_export_power_w <= 0 or (
+                abs(source.storage_to_grid_output_wh - interval.storage_export_target_wh) > 1e-6
+            ):
+                raise ValueError("requested export is not physically executable")
         interval_capacity_wh = (
-            maximum_discharge_output_power_w
+            available_export_power_w
             * (interval.ends_at - interval.starts_at).total_seconds()
             / 3600.0
         )
+        if (projection is not None
+                and interval.storage_export_target_wh > interval_capacity_wh + 1e-6):
+            raise ValueError("export exceeds power remaining after household support")
         if interval.storage_export_target_wh + 1e-6 >= interval_capacity_wh:
             result.append(interval)
             continue
         export_ends_at = interval.starts_at + timedelta(
             hours=(
                 interval.storage_export_target_wh
-                / maximum_discharge_output_power_w
+                / available_export_power_w
             )
         )
         result.append(
@@ -1543,7 +1574,8 @@ def _main_charge_energy_path(
     assert capability_set is not None
     segments: list[PathSegment] = []
     for interval in _execution_path_intervals(
-        window.schedule, maximum_discharge_output_power_w=limits.maximum_discharge_output_power_w
+        window.schedule, maximum_discharge_output_power_w=limits.maximum_discharge_output_power_w,
+        projection=window.projection,
     ):
         # Preserve ownership even where adjacent main/retained segments use the
         # same primitive. The Plan Builder copies these source IDs unchanged.

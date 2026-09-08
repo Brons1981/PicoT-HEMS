@@ -457,3 +457,45 @@ def test_cache_bootstraps_complete_requested_history_in_one_update() -> None:
         (START + timedelta(hours=6), requested_end),
     ]
     assert result.ends_at == requested_end
+
+
+def test_market_read_preserves_unknown_gap_instead_of_holding_stale_power(monkeypatch):
+    from math import isnan
+
+    from picot.v2.market_export_measurement import measured_market_export
+
+    payload = [
+        [
+            {
+                "entity_id": entity,
+                "state": state,
+                "last_updated": (START + timedelta(minutes=i)).isoformat(),
+            }
+            for i, state in enumerate(("1200", "unavailable", "1200"))
+        ]
+        for entity in ("sensor.battery", "sensor.export")
+    ]
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self):
+            return json.dumps(payload).encode()
+
+    monkeypatch.setattr(power_history, "urlopen", lambda *a, **kw: Response())
+    result = power_history.HomeAssistantPowerHistoryReader("test").read(
+        specs=(
+            PowerSeriesSpec("battery", "battery_discharge", "sensor.battery"),
+            PowerSeriesSpec("export", "grid_export", "sensor.export"),
+        ),
+        starts_at=START,
+        ends_at=START + timedelta(minutes=3),
+        preserve_unavailable=True,
+    )
+    assert result.status == "available"
+    assert all(len(s.points) == 3 and isnan(s.points[1].power_w) for s in result.series)
+    assert measured_market_export(result, START, result.ends_at) is None

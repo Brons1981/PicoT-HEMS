@@ -1095,13 +1095,29 @@ DASHBOARD_HTML = """<!doctype html>
         </label>
         <label class="strategy-rule">
           <span class="strategy-rule-line">
-            <strong>Maximaal SoC voor handel</strong>
+            <strong>Batterijcapaciteit voor handel per leveringsdag</strong>
             <span><input id="rule-trading-soc" type="number" min="0" max="100" step="1"> %</span>
           </span>
           <span id="rule-trading-limit" class="muted">
-            PicoT begrenst dit verder met de technische ondergrens,
-            huishoudreserve en 10% extra reserve.
+            Percentagepunten van de bruikbare batterijcapaciteit. Bij onvoldoende
+            SOC wordt de opdracht overgeslagen. 0% schakelt nieuwe handel uit.
           </span>
+        </label>
+        <label class="strategy-rule">
+          <strong>Minimale spread (€/kWh)</strong>
+          <input id="rule-market-spread" type="number" min="0" step="any">
+          <span class="muted">Leeg: nieuwe handel uit.
+            Vergelijking met een fictief goedkoop laadvenster.</span>
+        </label>
+        <label class="strategy-rule">
+          <span><input id="rule-market-recovery" type="checkbox">
+            Herstel en nettowinst vereist</span>
+          <span class="muted">Toets of een toekomstig laadsegment 100% bereikt
+            met voldoende nettowinst.</span>
+        </label>
+        <label class="strategy-rule">
+          <strong>Minimale nettowinst bij herstel (€/export-kWh)</strong>
+          <input id="rule-market-margin" type="number" min="0" step="0.001" value="0.05">
         </label>
         <button id="save-user-rules" type="submit">Regels toepassen</button>
         <span id="user-rules-status" class="muted" aria-live="polite"></span>
@@ -4077,6 +4093,9 @@ DASHBOARD_HTML = """<!doctype html>
       ) ? Number(rules.maximum_trading_soc_percent) : 25;
       element("rule-saldering-tax").checked =
         rules.saldering_energy_tax_credit_enabled !== false;
+      element("rule-market-spread").value = rules.market_minimum_spread_eur_per_kwh ?? "";
+      element("rule-market-recovery").checked = rules.market_recovery_required === true;
+      element("rule-market-margin").value = rules.market_minimum_net_margin_eur_per_kwh ?? 0.05;
       element("user-rules-status").textContent = rules.revision
         ? `Actieve revisie ${rules.revision}`
         : "Wachten op de actieve gebruikersregels…";
@@ -4100,6 +4119,10 @@ DASHBOARD_HTML = """<!doctype html>
           body: JSON.stringify({
             preserve_pv_during_grid_charge: element("rule-preserve-pv").checked,
             maximum_trading_soc_percent: maximumTradingSoc,
+            market_minimum_spread_eur_per_kwh: element("rule-market-spread").value === ""
+              ? null : Number(element("rule-market-spread").value),
+            market_recovery_required: element("rule-market-recovery").checked,
+            market_minimum_net_margin_eur_per_kwh: Number(element("rule-market-margin").value),
             saldering_energy_tax_credit_enabled:
               element("rule-saldering-tax").checked,
           }),
@@ -4107,7 +4130,7 @@ DASHBOARD_HTML = """<!doctype html>
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const result = await response.json();
         renderUserRules(result.user_rules ?? {});
-        status.textContent = "Regels opgeslagen; PicoT bouwt een nieuw plan.";
+        status.textContent = "Regels opgeslagen; lopende opdrachten blijven behouden.";
       } catch (error) {
         status.textContent = `Opslaan mislukt: ${error.message}`;
       } finally {

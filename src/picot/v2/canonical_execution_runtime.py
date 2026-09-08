@@ -21,6 +21,7 @@ from picot.domain.home_assistant import (
     HomeAssistantDispatchMode,
 )
 from picot.v2.contracts import CanonicalPipelineRun, PlanningInputSnapshot
+from picot.v2.market_execution_guard import guarded_market_primitive
 from picot.v2.plan_commitment_store import ActivePlanCommitmentStore, CommittedPlanSegment
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("execution_engine", __name__)
@@ -77,6 +78,67 @@ class CanonicalExecutionRuntime:
     _confirmed_daily_observation: _ChargeConfirmation | None = None
     _pending_daily_closure: _ChargeConfirmation | None = None
     completion_generation: int = 0
+
+    def _market_primitive(
+        self,
+        snapshot: PlanningInputSnapshot,
+        scope_id: str,
+        requested: ExecutionPrimitive,
+        *,
+        ownership_lost: bool = False,
+    ) -> ExecutionPrimitive:
+        if self.commitment_store is None or snapshot.daily_charge_context is None:
+            return requested
+        mode = snapshot.storage_mode_capability_evidence
+        mapping = (
+            self._mapping(
+                evidence=mode,
+                primitive=ExecutionPrimitive.DISCHARGE_AT_POWER,
+                capability_id=mode.capability_id,
+                execution_scope_id=scope_id,
+            )
+            if mode
+            else None
+        )
+        ids = tuple(
+            b.assignment_id
+            for b in self.commitment_store.load_market_plan_bindings()
+            if b.execution_scope_id == scope_id
+        )
+
+        def phases() -> tuple[object, ...]:
+            assert self.commitment_store is not None
+            return tuple(
+                (p.started_at, p.stop_requested_at, p.stopped_at) if p else None
+                for key in ids
+                for p in (self.commitment_store.load_market_progress(key),)
+            )
+
+        before = phases()
+        result = guarded_market_primitive(
+            snapshot=snapshot,
+            store=self.commitment_store,
+            scope_id=scope_id,
+            requested=requested,
+            ownership_lost=ownership_lost,
+            export_mode_confirmed=bool(
+                mode and mapping and mode.current_vendor_mode == mapping.fixed_value
+            ),
+        )
+        if phases() != before:
+            self.completion_generation += 1
+        return result
+
+    def _observe_market_interruption(self, snapshot: PlanningInputSnapshot) -> None:
+        provenance = snapshot.storage_mode_control_provenance
+        if provenance is not None and provenance.manual_override_active:
+            for state in snapshot.current_storage_states:
+                self._market_primitive(
+                    snapshot,
+                    state.execution_scope_id,
+                    ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                    ownership_lost=True,
+                )
 
     def reset_pending_state(self) -> None:
         """Drop only process-local dispatch state after a manual plan reset."""
@@ -390,6 +452,7 @@ class CanonicalExecutionRuntime:
         """Execute the due stored segment without invoking Candidate planning."""
 
         try:
+            self._observe_market_interruption(snapshot)
             self._close_previous_charge(snapshot, enabled=execution_enabled)
         except (OSError, ValueError) as exc:
             return CommittedBoundaryDispatchOutcome(
@@ -498,6 +561,14 @@ class CanonicalExecutionRuntime:
                 plan_id=plan_id,
                 failure_reason="storage_mode_capability_evidence_unavailable",
             )
+        market_override = False
+        if daily_plan is not None:
+            try:
+                guarded = self._market_primitive(snapshot, scope_id, primitive)
+            except (ValueError, OSError):
+                guarded = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+            market_override = guarded is not primitive
+            primitive = guarded
         mapping = self._mapping(
             evidence=evidence,
             primitive=primitive,
@@ -555,7 +626,7 @@ class CanonicalExecutionRuntime:
                     failure_reason="daily_main_capability_changed",
                     **common,
                 )
-            if original.requested_power_w != requested_power_w:
+            if not market_override and original.requested_power_w != requested_power_w:
                 return CommittedBoundaryDispatchOutcome(
                     status="blocked",
                     failure_reason="daily_main_configured_power_changed",
@@ -567,7 +638,7 @@ class CanonicalExecutionRuntime:
                 scope_id=scope_id,
                 capability_id=original.capability_id,
                 primitive=primitive,
-                requested_power_w=original.requested_power_w,
+                requested_power_w=requested_power_w,
             )
             if blocker is not None:
                 return CommittedBoundaryDispatchOutcome(
@@ -633,6 +704,7 @@ class CanonicalExecutionRuntime:
     def apply(self, run: CanonicalPipelineRun) -> CanonicalPipelineRun:
         """Translate at the adapter boundary and dispatch only with live authority."""
         try:
+            self._observe_market_interruption(run.planning_input)
             self._close_previous_charge(
                 run.planning_input,
                 enabled=run.execution_record.status == "live_plan_ready",
@@ -696,7 +768,23 @@ class CanonicalExecutionRuntime:
             scope_id, capability_id = plan.execution_scope_id, segment.capability_id
             plan_id, segment_id = plan.plan_id, segment.segment_id
             requested_power_w = segment.requested_power_w
+        if not fallback and run.execution_record.status == "live_plan_ready":
+            try:
+                guarded = self._market_primitive(
+                    run.planning_input, scope_id, boundary.planned_primitive
+                )
+            except (ValueError, OSError):
+                guarded = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+            if guarded is not boundary.planned_primitive:
+                boundary = replace(
+                    boundary,
+                    planned_primitive=guarded,
+                    request_id=f"{boundary.request_id}:market-stop",
+                )
+                requested_power_w = None
         if not fallback and run.planning_input.daily_charge_context is not None:
+            assert boundary.planned_primitive is not None
+            assert boundary.request_id is not None
             blocker = self._daily_execution_blocker(
                 run.planning_input,
                 scope_id=scope_id,
@@ -714,6 +802,8 @@ class CanonicalExecutionRuntime:
                         blockers=(*boundary.blockers, blocker),
                     ),
                 )
+        assert boundary.planned_primitive is not None
+        assert boundary.request_id is not None
         mapping = (
             self._mapping(
                 evidence=evidence,

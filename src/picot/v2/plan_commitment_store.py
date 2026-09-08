@@ -18,6 +18,7 @@ from picot.domain.energy_path import RetainedExecutionOrigin, SocConstraint
 from picot.domain.execution_plan import ExecutionPlan, ExecutionPlanLifecycle, ExecutionPlanSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.market_daily_assignment import MarketAssignmentStatus, MarketDailyAssignment
+from picot.domain.market_execution import MarketExecutionProgress
 from picot.domain.market_plan_binding import MarketPlanBinding
 from picot.domain.market_user_rule import MarketUserRule
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
@@ -406,6 +407,8 @@ class ActivePlanCommitmentStore:
         ) = None,
         bridge_deficits: tuple[BridgeEnergyInterval, ...] = (),
         pv_comparison_basis: DailyPVComparisonBasis | None = None,
+        market_binding: MarketPlanBinding | None = None,
+        market_admission: MarketAdmission | None = None,
     ) -> DailyChargeAssignment:
         """Bind explicit winning source segments, never infer ownership from mode.
 
@@ -603,6 +606,49 @@ class ActivePlanCommitmentStore:
         if activate:
             self._preserve_market_bindings(payload, plan)
         self._bind_supplemental(payload, plan, window)
+        if market_binding is not None:
+            if not activate or market_admission is None:
+                raise ValueError("combined market publication requires active admission")
+            market_day = next(
+                (
+                    a
+                    for a in self.load_market_daily_assignments()
+                    if a.assignment_id == market_binding.assignment_id
+                ),
+                None,
+            )
+            if (
+                market_day is None
+                or market_day.status != "pending"
+                or any(
+                    b.assignment_id == market_binding.assignment_id
+                    for b in self.load_market_plan_bindings()
+                )
+            ):
+                raise ValueError("combined market publication requires an unbound daily action")
+            self._validate_market_binding(market_binding, market_day, plan)
+            if market_admission.status != "admissible" or (
+                market_admission.assignment_id,
+                market_admission.snapshot_id,
+                market_admission.expected_export_wh,
+            ) != (
+                market_binding.assignment_id,
+                plan.snapshot_id,
+                market_binding.expected_export_wh,
+            ):
+                raise ValueError("combined market publication requires matching admission")
+            if not isinstance(optimisation_trigger, DailyMainShortfallTrigger) or (
+                optimisation_trigger.extra_load_assignment_id != market_binding.assignment_id
+            ):
+                raise ValueError("combined charge optimisation requires its explicit user load")
+            payload.setdefault("market_plan_bindings", {})[market_binding.assignment_id] = asdict(
+                market_binding
+            )
+        elif market_admission is not None or (
+            isinstance(optimisation_trigger, DailyMainShortfallTrigger)
+            and optimisation_trigger.extra_load_assignment_id is not None
+        ):
+            raise ValueError("user-load revision cannot omit its market binding")
         plans[bound.assignment_id] = serialized
         payload.setdefault("daily_assignments", {})[bound.assignment_id] = _serialize_daily(bound)
         if activate:
@@ -1167,6 +1213,81 @@ class ActivePlanCommitmentStore:
             ValueError(reason),
         )
 
+    def load_market_progress(self, assignment_id: str) -> MarketExecutionProgress | None:
+        raw = self._load_payload().get("market_execution_progress", {}).get(assignment_id)
+        if raw is None:
+            return None
+        try:
+            values = dict(raw)
+            for field in ("started_at", "stop_requested_at", "stopped_at"):
+                values[field] = datetime.fromisoformat(values[field]) if values.get(field) else None
+            progress = MarketExecutionProgress(**values)
+            if progress.assignment_id != assignment_id:
+                raise ValueError("market progress identity differs")
+            return progress
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ValueError("stored market execution progress is invalid") from exc
+
+    def save_market_progress(self, progress: MarketExecutionProgress) -> None:
+        assignment = next(
+            (
+                a
+                for a in self.load_market_daily_assignments()
+                if a.assignment_id == progress.assignment_id
+            ),
+            None,
+        )
+        if assignment is None:
+            raise ValueError("market progress requires its daily assignment")
+        previous = self.load_market_progress(progress.assignment_id)
+        if progress == previous:
+            return
+        if assignment.status != "pending":
+            raise ValueError("closed market execution cannot be overwritten")
+        if previous is not None and (
+            previous.started_at is not None
+            and progress.started_at != previous.started_at
+            or previous.stop_requested_at is not None
+            and progress.stop_requested_at != previous.stop_requested_at
+            or previous.stopped_at is not None
+            and progress.stopped_at != previous.stopped_at
+        ):
+            raise ValueError("market execution cannot forget its start or stop")
+        payload = self._load_payload()
+        values = asdict(progress)
+        for field in ("started_at", "stop_requested_at", "stopped_at"):
+            value = getattr(progress, field)
+            values[field] = value.isoformat() if value is not None else None
+        payload.setdefault("market_execution_progress", {})[progress.assignment_id] = values
+        if progress.started_at is None and progress.stop_requested_at is not None:
+            assignment = assignment.close(
+                status="skipped",
+                at=progress.stop_requested_at,
+                evidence_id=f"market-skipped:{progress.reason}",
+            )
+        elif progress.stopped_at is not None and (
+            progress.measured_export_wh is not None or progress.measurement_unavailable
+        ):
+            assert progress.started_at is not None
+            binding = next(
+                b
+                for b in self.load_market_plan_bindings()
+                if b.assignment_id == progress.assignment_id
+            )
+            assignment = assignment.close(
+                status="completed"
+                if progress.measured_export_wh is not None
+                and progress.measured_export_wh >= binding.expected_export_wh
+                else "stopped",
+                at=progress.stopped_at,
+                measured_export_wh=progress.measured_export_wh,
+                evidence_id=f"market-execution-ended:{progress.started_at.isoformat()}:{progress.stopped_at.isoformat()}:{progress.reason}:measurement_unavailable={progress.measurement_unavailable}",
+            )
+        payload["market_daily_assignments"][assignment.assignment_id] = (
+            self._market_assignment_payload(assignment)
+        )
+        self._write(payload)
+
     def load_market_plan_bindings(self) -> tuple[MarketPlanBinding, ...]:
         payload = self._load_payload()
         records = payload.get("market_plan_bindings", {})
@@ -1179,16 +1300,40 @@ class ActivePlanCommitmentStore:
                 data = dict(raw)
                 data["segment_ids"] = tuple(data["segment_ids"])
                 data["segment_export_wh"] = tuple(data["segment_export_wh"])
+                data["original_segment_ids"] = tuple(data.get("original_segment_ids", ()))
                 binding = MarketPlanBinding(**data)
                 assignment = assignments[key]
                 plan = _deserialize_execution_plan(payload["execution_plans"][binding.plan_id])
                 if binding.assignment_id != key:
                     raise ValueError("market binding identity mismatch")
                 self._validate_market_binding(binding, assignment, plan)
+                if binding.original_plan_id is not None:
+                    original = _registered_execution_plan(payload, binding.original_plan_id)
+                    original_parts = tuple(
+                        s for s in original.segments if s.segment_id in binding.original_segment_ids
+                    )
+                    if (
+                        original.execution_scope_id != binding.execution_scope_id
+                        or tuple(s.segment_id for s in original_parts)
+                        != binding.original_segment_ids
+                        or any(s.purpose != binding.assignment_id for s in original_parts)
+                    ):
+                        raise ValueError("original market execution lineage is invalid")
             except (KeyError, TypeError, ValueError, AttributeError) as exc:
                 raise ValueError("invalid stored market plan binding") from exc
             result.append(binding)
         return tuple(sorted(result, key=lambda b: b.assignment_id))
+
+    def load_market_bound_plan(self, assignment_id: str) -> ExecutionPlan:
+        binding = next(
+            b for b in self.load_market_plan_bindings() if b.assignment_id == assignment_id
+        )
+        return _registered_execution_plan(self._load_payload(), binding.plan_id)
+
+    def load_market_original_plan(self, binding: MarketPlanBinding) -> ExecutionPlan:
+        return _registered_execution_plan(
+            self._load_payload(), binding.original_plan_id or binding.plan_id
+        )
 
     @staticmethod
     def _validate_market_binding(
@@ -1264,19 +1409,58 @@ class ActivePlanCommitmentStore:
                 continue
             original = _deserialize_execution_plan(payload["execution_plans"][old.plan_id])
             parts = tuple(s for s in original.segments if s.segment_id in old.segment_ids)
-            if assignments[old.assignment_id].status != "pending" or (
-                parts[-1].ends_at <= plan.created_at
+            progress = self.load_market_progress(old.assignment_id)
+            if (
+                (progress is not None and progress.stop_requested_at is not None)
+                or (assignments[old.assignment_id].status != "pending")
+                or (parts[-1].ends_at <= plan.created_at)
             ):
                 continue
             retained = tuple(s for s in plan.segments if s.purpose == old.assignment_id)
-            fields = ("starts_at", "ends_at", "primitive", "capability_id", "requested_power_w",
-                      "soc_constraint", "energy_profile_id", "charge_source_policy")
-            if tuple(tuple(getattr(s, f) for f in fields) for s in retained) != tuple(
-                tuple(getattr(s, f) for f in fields) for s in parts
-            ):
+            fields = (
+                "primitive",
+                "capability_id",
+                "requested_power_w",
+                "soc_constraint",
+                "energy_profile_id",
+                "charge_source_policy",
+            )
+            energy = []
+            cursor = max(parts[0].starts_at, plan.valid_from)
+            for segment in retained:
+                source = next(
+                    (
+                        p
+                        for p in parts
+                        if p.starts_at <= segment.starts_at < segment.ends_at <= p.ends_at
+                    ),
+                    None,
+                )
+                if (
+                    source is None
+                    or segment.starts_at != cursor
+                    or any(getattr(segment, f) != getattr(source, f) for f in fields)
+                ):
+                    raise ValueError("pending market window cannot be removed or relocated")
+                amount = old.segment_export_wh[old.segment_ids.index(source.segment_id)]
+                energy.append(
+                    amount
+                    * (segment.ends_at - segment.starts_at).total_seconds()
+                    / (source.ends_at - source.starts_at).total_seconds()
+                )
+                cursor = segment.ends_at
+            if not retained or cursor != parts[-1].ends_at:
                 raise ValueError("pending market window cannot be removed or relocated")
-            bound = replace(old, plan_id=plan.plan_id, snapshot_id=plan.snapshot_id,
-                            segment_ids=tuple(s.segment_id for s in retained))
+            bound = replace(
+                old,
+                plan_id=plan.plan_id,
+                snapshot_id=plan.snapshot_id,
+                segment_ids=tuple(s.segment_id for s in retained),
+                segment_export_wh=tuple(energy),
+                elapsed_planned_export_wh=old.expected_export_wh - sum(energy),
+                original_plan_id=old.original_plan_id or old.plan_id,
+                original_segment_ids=old.original_segment_ids or old.segment_ids,
+            )
             self._validate_market_binding(bound, assignments[old.assignment_id], plan)
             payload["market_plan_bindings"][old.assignment_id] = asdict(bound)
             payload.setdefault("execution_plans", {})[plan.plan_id] = (

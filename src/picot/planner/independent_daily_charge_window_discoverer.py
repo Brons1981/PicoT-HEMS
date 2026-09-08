@@ -61,6 +61,7 @@ class IndependentDailyChargeWindowDiscoverer:
         maximum_discharge_output_power_w: float,
         retained_schedule: DailyReferenceIntentSchedule | None = None,
         optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None,
+        protected_intervals: tuple[tuple[datetime, datetime], ...] = (),
     ) -> DailyMainChargeWindowSet:
         """Discover the first main route under an existing daily identity.
 
@@ -134,7 +135,13 @@ class IndependentDailyChargeWindowDiscoverer:
         indexes = tuple(
             i
             for i, interval in enumerate(household.intervals)
-            if assignment.starts_at <= interval.starts_at and interval.ends_at <= assignment.ends_at
+            if assignment.starts_at <= interval.starts_at
+            and interval.ends_at <= assignment.ends_at
+            and baseline.intervals[i].intent is not DailyStorageIntent.STORAGE_EXPORT
+            and not any(
+                start < interval.ends_at and interval.starts_at < end
+                for start, end in protected_intervals
+            )
         )
         if not indexes:
             return result((), "unreachable", "no_remaining_delivery_day_intervals")

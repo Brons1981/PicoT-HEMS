@@ -227,6 +227,7 @@ def _execution_path_intervals(
     *,
     maximum_discharge_output_power_w: float,
     projection: DailyPlanningProjection | None = None,
+    retained_exports: tuple[tuple[datetime, datetime], ...] = (),
 ) -> tuple[DailyReferenceIntentInterval, ...]:
     """Project export-energy hourglasses to exact execution boundaries.
 
@@ -255,6 +256,13 @@ def _execution_path_intervals(
         )
     )
     for interval in execution_intervals:
+        if interval.intent is DailyStorageIntent.STORAGE_EXPORT and any(
+            start <= interval.starts_at < interval.ends_at <= end for start, end in retained_exports
+        ):
+            # An existing user action keeps its window. Fresh physics may
+            # predict curtailment; execution owns the start check and stop.
+            result.append(interval)
+            continue
         if interval.intent is not DailyStorageIntent.STORAGE_EXPORT:
             result.append(interval)
             continue
@@ -1573,9 +1581,20 @@ def _main_charge_energy_path(
     capability_set = snapshot.capability_snapshot_set
     assert capability_set is not None
     segments: list[PathSegment] = []
+    context = snapshot.daily_charge_context
+    retained_market = tuple(
+        (binding.assignment_id, segment)
+        for binding in (context.market_plan_bindings if context else ())
+        for plan in (context.main_plans if context else ())
+        if plan.plan_id == binding.plan_id
+        for segment in plan.segments
+        if segment.segment_id in binding.segment_ids
+    )
     for interval in _execution_path_intervals(
-        window.schedule, maximum_discharge_output_power_w=limits.maximum_discharge_output_power_w,
+        window.schedule,
+        maximum_discharge_output_power_w=limits.maximum_discharge_output_power_w,
         projection=window.projection,
+        retained_exports=tuple((s.starts_at, s.ends_at) for _, s in retained_market),
     ):
         # Preserve ownership even where adjacent main/retained segments use the
         # same primitive. The Plan Builder copies these source IDs unchanged.
@@ -1583,9 +1602,18 @@ def _main_charge_energy_path(
             {
                 interval.starts_at,
                 interval.ends_at,
-                *(t for goal in window.supplemental_assignments
-                  for t in (goal.starts_at, goal.ends_at)
-                  if interval.starts_at < t < interval.ends_at),
+                *(
+                    t
+                    for _, s in retained_market
+                    for t in (s.starts_at, s.ends_at)
+                    if interval.starts_at < t < interval.ends_at
+                ),
+                *(
+                    t
+                    for goal in window.supplemental_assignments
+                    for t in (goal.starts_at, goal.ends_at)
+                    if interval.starts_at < t < interval.ends_at
+                ),
                 *(
                     t
                     for s in window.main_segments
@@ -1617,6 +1645,9 @@ def _main_charge_energy_path(
             )
             supplemental_goal = next((g for g in window.supplemental_assignments
                                       if g.starts_at <= start and end <= g.ends_at), None)
+            market_owner = next(
+                (key for key, s in retained_market if s.starts_at <= start < end <= s.ends_at), None
+            )
             segments.append(
                 PathSegment(
                     segment_id=segment_id,
@@ -1626,11 +1657,16 @@ def _main_charge_energy_path(
                     ends_at=end,
                     primitive=_primitive(interval.intent),
                     capability_id=storage.capability_id,
-                    purpose=supplemental_goal.assignment_id if supplemental_goal is not None
+                    purpose=market_owner
+                    if market_owner is not None
+                    and interval.intent is DailyStorageIntent.STORAGE_EXPORT
+                    else supplemental_goal.assignment_id
+                    if supplemental_goal is not None
                     else f"main-charge:{window.assignment_id}"
                     if owner is not None
                     else f"bridge:{window.assignment_id}"
-                    if supplemental and retained_main is None
+                    if supplemental
+                    and retained_main is None
                     and end <= window.main_segments[0].starts_at
                     else "retained-route",
                     evidence_ids=(
@@ -1649,14 +1685,18 @@ def _main_charge_energy_path(
                     else None,
                     soc_constraint=SocConstraint(limits.minimum_soc, limits.maximum_soc),
                     main_assignment_id=(
-                        window.assignment_id if owner is not None
-                        else retained_main.assignment_id if retained_main is not None else None
+                        window.assignment_id
+                        if owner is not None
+                        else retained_main.assignment_id
+                        if retained_main is not None
+                        else None
                     ),
                     retained_execution_origin=(
                         RetainedExecutionOrigin(
                             retained_main.plan_id, retained_main.segment.segment_id
                         )
-                        if retained_main is not None else None
+                        if retained_main is not None
+                        else None
                     ),
                 )
             )

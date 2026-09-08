@@ -18,6 +18,8 @@ from picot.domain.daily_reference_intent import (
 from picot.domain.daily_reference_portfolio import DailyReferenceStrategyResult
 from picot.domain.energy_path import PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.market_daily_assignment import MarketDailyAssignment
+from picot.domain.market_plan_binding import MarketPlanBinding
 from picot.planner.evaluation_engine import EvaluationEngine
 from picot.planner.execution_plan_builder import ExecutionPlanBuilder
 from picot.planner.market_daily_planner import (
@@ -59,6 +61,7 @@ from picot.v2.market_daily_runtime import (
     MarketDailyPlannerRuntime,
     MarketDailyRuntimeOutcome,
 )
+from picot.v2.market_rule_planning import market_rule_portfolio
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
@@ -1317,7 +1320,7 @@ def _build_daily_main_run(
             ),
             key=lambda a: (a.delivery_date, a.execution_scope_id),
         )
-        conversion, _ = planner_runtime.planning_configuration(snapshot)
+        conversion, market_policy = planner_runtime.planning_configuration(snapshot)
         adapter = IndependentDailyReferenceAdapter()
         triggers = adapter.main_route_shortfalls(
             snapshot=snapshot, conversion_model=conversion,
@@ -1471,6 +1474,110 @@ def _build_daily_main_run(
         except (ValueError, OSError) as exc:
             planning_blocked = not isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
             reason = str(exc) or exc.__class__.__name__
+    if (
+        not planning_blocked
+        and canonical_set is None
+        and len(retained) == 1
+        and snapshot.market_user_rule is not None
+        and commitment_store is not None
+    ):
+        try:
+            incumbent = retained[0]
+            assigned = {b.assignment_id for b in commitment_store.load_market_plan_bindings()}
+            for day in sorted(context.assignments, key=lambda a: a.delivery_date):
+                if (
+                    day.execution_scope_id != incumbent.execution_scope_id
+                    or day.ends_at <= snapshot.captured_at
+                ):
+                    continue
+                market_day = commitment_store.ensure_market_daily_assignment(
+                    MarketDailyAssignment(
+                        snapshot.market_user_rule,
+                        day.execution_scope_id,
+                        day.delivery_date,
+                        day.timezone,
+                        snapshot.captured_at,
+                        snapshot.current_storage_states[0].usable_capacity_wh,
+                    )
+                )
+                if market_day.status != "pending" or market_day.assignment_id in assigned:
+                    continue
+                try:
+                    market = market_rule_portfolio(
+                        snapshot=snapshot,
+                        plan=incumbent,
+                        assignment=market_day,
+                        conversion=conversion,
+                        opportunity_ids=opportunities.opportunity_ids,
+                        wear_eur_per_export_kwh=market_policy.wear_eur_per_export_kwh,
+                        saldering_energy_tax_credit_enabled=market_policy.saldering_energy_tax_credit_enabled,
+                    )
+                    if not market.comparable.candidate_set.candidates:
+                        reason = "market_not_admitted:" + ",".join(market.reasons)
+                        continue
+                    market_result = EvaluationEngine().evaluate(
+                        market.comparable.candidate_set,
+                        market.comparable.strategy,
+                        market.comparable.outcome_set,
+                        created_at=snapshot.captured_at,
+                    )
+                    if market_result.winning_energy_path is None:
+                        reason = "market_evaluation_has_no_winner"
+                        continue
+                    market_plans = ExecutionPlanBuilder().build(
+                        market_result,
+                        created_at=snapshot.captured_at,
+                        fallback_policy_id="guarded-nom",
+                    )
+                    source = next(
+                        e
+                        for e in market.evidence
+                        if e.candidate_id == market_result.record.winning_candidate_id
+                    )
+                    market_plan = market_plans.plans[0]
+                    energy = dict(source.segment_energy)
+                    bound_parts = tuple(
+                        s for s in market_plan.segments if s.source_path_segment_id in energy
+                    )
+                    binding = MarketPlanBinding(
+                        market_day.assignment_id,
+                        market_day.execution_scope_id,
+                        market_plan.plan_id,
+                        market_plan.snapshot_id,
+                        tuple(s.segment_id for s in bound_parts),
+                        source.admission.expected_export_wh,
+                        tuple(energy[s.source_path_segment_id] for s in bound_parts),
+                        source.expected_battery_draw_wh,
+                    )
+                    if source.charge_window is not None:
+                        optimisation_trigger = source.charge_trigger
+                        commitment_store.bind_daily_main_plan(
+                            plan=market_plan,
+                            window=source.charge_window,
+                            activate=True,
+                            optimisation_trigger=source.charge_trigger,
+                            market_binding=binding,
+                            market_admission=source.admission,
+                        )
+                    else:
+                        commitment_store.bind_market_plan(
+                            plan=market_plan,
+                            previous_plan_id=incumbent.plan_id,
+                            binding=binding,
+                            admission=source.admission,
+                        )
+                    comparable, result, canonical_set = (
+                        market.comparable,
+                        market_result,
+                        market_plans,
+                    )
+                    reason = "user_market_rule_selected"
+                    break
+                except (ValueError, OSError) as exc:
+                    # A rejected optional user action cannot erase the charge plan.
+                    reason = "market_not_admitted:" + str(exc)
+        except (ValueError, OSError) as exc:
+            reason = "market_not_admitted:" + str(exc)
     candidate_set_id = _id("daily-main-candidates", snapshot.snapshot_id)
     candidates = tuple(
         Candidate(

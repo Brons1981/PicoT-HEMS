@@ -663,9 +663,20 @@ class IndependentDailyReferenceAdapter:
                     if len(bindings) != 1:
                         raise DailyReferenceInputError("retained_market_energy_binding_missing")
                     binding = bindings[0]
-                    energy = binding.segment_export_wh[binding.segment_ids.index(source.segment_id)]
-                    export_wh = energy * ((grid.ends_at - grid.starts_at).total_seconds()
-                                          / (source.ends_at - source.starts_at).total_seconds())
+                    stopped = any(
+                        p.assignment_id == binding.assignment_id and p.stop_requested_at is not None
+                        for p in context.market_execution_progress
+                    )
+                    if stopped:
+                        intent = DailyStorageIntent.NOM
+                    else:
+                        energy = binding.segment_export_wh[
+                            binding.segment_ids.index(source.segment_id)
+                        ]
+                        export_wh = energy * (
+                            (grid.ends_at - grid.starts_at).total_seconds()
+                            / (source.ends_at - source.starts_at).total_seconds()
+                        )
                 if revising_assignment_id is not None and (
                     source.main_assignment_id == revising_assignment_id
                 ):
@@ -1155,6 +1166,7 @@ class IndependentDailyReferenceAdapter:
         *,
         horizon_end: datetime | None = None,
         maximum_duration: timedelta = DAILY_REFERENCE_DURATION,
+        extra_boundaries: tuple[datetime, ...] = (),
     ) -> _DailyReferenceInputs:
         """Expose the validated simulator inputs to composition-only planners."""
 
@@ -1162,6 +1174,7 @@ class IndependentDailyReferenceAdapter:
             snapshot,
             horizon_end=horizon_end,
             maximum_duration=maximum_duration,
+            extra_boundaries=extra_boundaries,
         )
 
     def _inputs(
@@ -1170,6 +1183,7 @@ class IndependentDailyReferenceAdapter:
         *,
         horizon_end: datetime | None = None,
         maximum_duration: timedelta = DAILY_REFERENCE_DURATION,
+        extra_boundaries: tuple[datetime, ...] = (),
     ) -> _DailyReferenceInputs:
         if snapshot.horizon_end is None:
             raise DailyReferenceInputError("daily_reference_horizon_missing")
@@ -1231,10 +1245,14 @@ class IndependentDailyReferenceAdapter:
             snapshot.household_load_forecast,
             captured_at=snapshot.captured_at,
             horizon_end=reference_horizon_end,
-            extra_boundaries=tuple(
+            extra_boundaries=extra_boundaries
+            + tuple(
                 boundary
-                for plan in (snapshot.daily_charge_context.main_plans
-                             if snapshot.daily_charge_context else ())
+                for plan in (
+                    snapshot.daily_charge_context.main_plans
+                    if snapshot.daily_charge_context
+                    else ()
+                )
                 if snapshot.daily_charge_context is not None
                 and snapshot.daily_charge_context.market_plan_bindings
                 and plan.plan_id in snapshot.daily_charge_context.active_main_plan_ids

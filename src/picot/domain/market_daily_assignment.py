@@ -54,13 +54,13 @@ class MarketDailyAssignment:
                 raise ValueError("market outcome requires explicit evidence")
             if self.status == "skipped" and self.measured_export_wh is not None:
                 raise ValueError("skipping cannot claim measured export")
-            if self.status != "skipped" and (
-                self.measured_export_wh is None
-                or not isfinite(self.measured_export_wh)
-                or self.measured_export_wh < 0
+            if self.measured_export_wh is not None and (
+                not isfinite(self.measured_export_wh) or self.measured_export_wh < 0
             ):
                 raise ValueError("executed market outcome requires measured nonnegative export")
-            if self.status == "completed" and self.measured_export_wh == 0:
+            if self.status == "completed" and (
+                self.measured_export_wh is None or self.measured_export_wh == 0
+            ):
                 raise ValueError("completed market action requires positive measured export")
 
     @property

@@ -280,6 +280,7 @@ class DailyMainShortfallTrigger:
     assessed_at: datetime
     projected_main_peak_wh: float
     target_wh: float
+    extra_load_assignment_id: str | None = None
 
     def __post_init__(self) -> None:
         _aware(self.assessed_at)
@@ -295,6 +296,8 @@ class DailyMainShortfallTrigger:
 
     @property
     def revision_reason(self) -> DailyChargeRevisionReason:
+        if self.extra_load_assignment_id is not None:
+            return DailyChargeRevisionReason.LOAD
         return DailyChargeRevisionReason.TARGET_UNREACHABLE
 
     def validate(self, assignment: DailyChargeAssignment, snapshot_id: str, at: datetime) -> None:

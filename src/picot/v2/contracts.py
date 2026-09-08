@@ -13,7 +13,9 @@ from picot.domain.energy_path import PathSegment, ProjectedEnergyState, Retained
 from picot.domain.evaluation import CandidateOutcome as CanonicalCandidateOutcome
 from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.market_execution import MarketExecutionProgress
 from picot.domain.market_plan_binding import MarketPlanBinding
+from picot.domain.market_user_rule import MarketUserRule
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.v2.daily_bridge import DailyBridgeAssessment, DailyBridgeState
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
@@ -27,6 +29,7 @@ from picot.v2.household_planning_regime import (
     UserObjectiveProfile,
 )
 from picot.v2.plan_commitment_store import ActivePlanCommitment
+from picot.v2.power_history import PowerHistorySnapshot
 
 if TYPE_CHECKING:
     from picot.v2.storage_mode_provenance import StorageModeControlProvenance
@@ -663,6 +666,7 @@ class DailyChargePlanningContext:
     bridge_states: tuple[DailyBridgeState, ...] = ()
     supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
     market_plan_bindings: tuple[MarketPlanBinding, ...] = ()
+    market_execution_progress: tuple[MarketExecutionProgress, ...] = ()
     duration_ms: float = 0.0
 
     def __post_init__(self) -> None:
@@ -734,6 +738,8 @@ class PlanningInputSnapshot:
     active_plan_commitments: tuple[ActivePlanCommitment, ...] = ()
     household_unexpected_reserve_fraction: float = 0.10
     daily_charge_context: DailyChargePlanningContext | None = None
+    market_user_rule: MarketUserRule | None = None
+    market_power_history: PowerHistorySnapshot | None = None
 
     def __post_init__(self) -> None:
         if self.daily_charge_context is not None and (

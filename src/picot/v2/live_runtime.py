@@ -1261,7 +1261,7 @@ def _poll_live_cycle(
     ) = None,
     refresh_unchanged: Callable[[PlanningInputBundle], None] | None = None,
     advance_clock_boundaries: (
-        Callable[[PlanningInputBundle], None] | None
+        Callable[[PlanningInputBundle], bool | None] | None
     ) = None,
     observe: Callable[[PlanningInputBundle], None] | None = None,
     runtime_monitor: RuntimeMonitorSession | None = None,
@@ -1317,8 +1317,13 @@ def _poll_live_cycle(
         if prepare_bundle is not None:
             bundle, preparation_diagnostics = prepare_bundle(bundle)
 
-    if advance_clock_boundaries is not None:
-        advance_clock_boundaries(bundle)
+    if advance_clock_boundaries is not None and advance_clock_boundaries(bundle):
+        # A proven completion changes durable ownership. Capture fresh input
+        # before planning; never mutate or reuse the pre-completion snapshot.
+        bundle = load_current_bundle()
+        preparation_diagnostics = None
+        if prepare_bundle is not None:
+            bundle, preparation_diagnostics = prepare_bundle(bundle)
 
     if observe is not None:
         observe(bundle)
@@ -3009,7 +3014,8 @@ def main() -> None:
             financial_result_ledger=financial_result_ledger,
         )
 
-    def advance_clock_boundaries(bundle: PlanningInputBundle) -> None:
+    def advance_clock_boundaries(bundle: PlanningInputBundle) -> bool:
+        before_completion = canonical_execution_runtime.completion_generation
         outcome = canonical_execution_runtime.advance_committed_boundary(
             bundle.snapshot,
             execution_enabled=execution_enabled,
@@ -3051,6 +3057,8 @@ def main() -> None:
                 ),
                 flush=True,
             )
+
+        return canonical_execution_runtime.completion_generation != before_completion
 
     runtime_monitor = RuntimeMonitorSession()
     material_replanning = MaterialReplanningObservationProducer(

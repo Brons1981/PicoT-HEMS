@@ -84,6 +84,14 @@ class ZendureModeCapabilityEvidence:
     excluded_dynamic_vendor_modes: tuple[str, ...]
     mappings: tuple[ZendureModeMapping, ...]
     method_version: str = METHOD_VERSION
+    state_changed_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.state_changed_at is not None and (
+            self.state_changed_at.utcoffset() is None or self.state_changed_at > self.captured_at
+        ):
+            raise ValueError("mode transition proof must be aware and not from the future")
+
 
 
 class HomeAssistantZendureModeCapabilityReader:
@@ -190,6 +198,15 @@ def derive_zendure_mode_capability_evidence(
         )
         for mode in usable_modes
     )
+    changed_at = None
+    raw_changed = payload.get("last_changed")
+    if isinstance(raw_changed, str):
+        try:
+            parsed = datetime.fromisoformat(raw_changed.replace("Z", "+00:00"))
+            if parsed.utcoffset() is not None and parsed <= captured_at:
+                changed_at = parsed
+        except ValueError:
+            pass  # Missing/invalid history cannot grant closing-proof authority.
     return ZendureModeCapabilityEvidence(
         captured_at=captured_at,
         source_entity_id=source_entity_id,
@@ -201,6 +218,7 @@ def derive_zendure_mode_capability_evidence(
         usable_vendor_modes=usable_modes,
         excluded_dynamic_vendor_modes=dynamic_modes,
         mappings=mappings,
+        state_changed_at=changed_at,
     )
 
 

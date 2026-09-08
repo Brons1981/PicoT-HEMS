@@ -122,3 +122,13 @@ Gevolg: een opdracht kan onbewezen blijven terwijl een uitlezing vlak na het ven
 Eerstvolgende gerichte herstelstap: afsluitend SOC-/uitvoeringsbewijs van het vorige segment beoordelen wanneer een gewone HA-uitlezing een overgang constateert. Oorspronkelijke meettijd en opdracht-/plan-/segmentreferenties behouden, beide voltooiingssoorten gescheiden houden en de bestaande uitvoeringsguards handhaven. Bewijs moet expliciet aantonen wat werkelijk bij de vorige uitvoering hoort; bij onvoldoende bewijs open laten en de reden tonen. Geen nieuwe plannerregel of willekeurige tolerantieperiode toevoegen.
 
 Alleen rapport en ontwikkellog gewijzigd. Geen productiecode, tests, bevroren ADR's, configuratie of versie gewijzigd. Geen CI_VERIFIED of LIVE_VERIFIED, merge of deployment.
+
+## Implementatie afsluitend bewijs — lokaal geverifieerd
+
+Na akkoord is de hierboven gereproduceerde grens gericht aangepakt in de bestaande uitvoeringsruntime en Store. Een eindmeting kan aan het vorige hoofd- of aanvullende segment worden aangeboden met de oorspronkelijke meettijd en expliciet uitvoeringsbewijs. De HA-moduswisseltijd en plannerprovenance begrenzen dit bewijs. Alleen een nieuwe modus, dispatchbevestiging of verstreken tijd volstaat niet. Zonder eerdere bevestiging na herstart blijft het doel onbewezen; er wordt geen historische uitvoering verzonnen.
+
+De gewone livepoll leest na geregistreerde voltooiing de invoer opnieuw voordat planning plaatsvindt. Opslaguitval blokkeert de overgang en laat herverwerking toe. Beide doelsoorten blijven gescheiden.
+
+Controles: brede set **58 passed in 62,05 s**, daarna definitieve gerichte set inclusief opslaguitval **12 passed in 26,26 s**; aantallen overlappen. Gedekt zijn vertraagde ontvangst, een nog latere poll, een te late meettijd, hoofd- en aanvullende voltooiing, passend/ontbrekend/te vroeg moduswisselbewijs, handmatige blokkade, restart zonder bewijs en verse input vóór planning.
+
+Dit sluit de gedemonstreerde lokale fout met voldoende overgangsbewijs. Het is geen volledige HA-replay of live-vrijgave. Werkelijke beschikbaarheid en samenhang van HA-modusmetadata en plannerprovenance moeten nog in de integratie worden vastgesteld. Bevroren ADRs en plannerbeleid zijn niet gewijzigd.

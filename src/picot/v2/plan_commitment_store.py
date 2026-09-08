@@ -728,6 +728,7 @@ class ActivePlanCommitmentStore:
         evidence_id: str,
         state_read_at: datetime | None = None,
         state_valid_since: datetime | None = None,
+        confirmed_until: datetime | None = None,
     ) -> SupplementalChargeAssignment | None:
         plan = self.load_active_daily_main_plan(execution_scope_id)
         if plan is None or plan.plan_id != plan_id or not evidence_id:
@@ -752,7 +753,13 @@ class ActivePlanCommitmentStore:
             or not goal.target_soc <= soc <= 1
         ):
             return goal if goal is not None and goal.completed_at is not None else None
-        if not segment.starts_at <= confirmed_since <= observed_at <= segment.ends_at:
+        if not segment.starts_at <= confirmed_since <= min(observed_at, segment.ends_at):
+            return None
+        if observed_at > segment.ends_at and not (
+            confirmed_until is not None and confirmed_until.utcoffset() is not None
+            and confirmed_since <= measured_at <= min(confirmed_until, segment.ends_at)
+            and confirmed_until <= observed_at
+        ):
             return None
         at = measured_at
         fresh = confirmed_since <= measured_at <= observed_at
@@ -773,7 +780,8 @@ class ActivePlanCommitmentStore:
             completed_at=at,
             completion_evidence_id=(
                 f"confirmed-supplemental:{plan_id}:{segment_id}:{evidence_id}:"
-                f"measured={measured_at.isoformat()}:read={state_read_at}:since={state_valid_since}"
+                f"measured={measured_at.isoformat()}:read={state_read_at}:since={state_valid_since}:"
+                f"received={observed_at.isoformat()}:confirmed_until={confirmed_until}"
             ),
         )
         payload = self._load_payload()
@@ -857,6 +865,7 @@ class ActivePlanCommitmentStore:
         soc: float, evidence_id: str,
         state_read_at: datetime | None = None,
         state_valid_since: datetime | None = None,
+        confirmed_until: datetime | None = None,
     ) -> DailyChargeAssignment | None:
         """Resolve validated execution origin after the runtime confirms the mode.
 
@@ -871,6 +880,12 @@ class ActivePlanCommitmentStore:
             return None
         segment = next((s for s in plan.segments if s.segment_id == segment_id), None)
         if segment is None or segment.main_assignment_id is None:
+            return None
+        if observed_at > segment.ends_at and not (
+            confirmed_until is not None and confirmed_until.utcoffset() is not None
+            and confirmed_since <= measured_at <= min(confirmed_until, segment.ends_at)
+            and confirmed_until <= observed_at
+        ):
             return None
         owner = next((a for a in self.load_daily_assignments()
                       if a.assignment_id == segment.main_assignment_id), None)
@@ -901,7 +916,8 @@ class ActivePlanCommitmentStore:
             evidence_id=(f"confirmed-execution:{plan_id}:{segment_id}:"
                          f"{confirmed_since.isoformat()}:{evidence_id}:"
                          f"measured={measured_at.isoformat()}:"
-                         f"state_read={state_read_at}:state_since={state_valid_since}"),
+                         f"state_read={state_read_at}:state_since={state_valid_since}:"
+                         f"received={observed_at.isoformat()}:confirmed_until={confirmed_until}"),
         )
         if completed != owner:
             self.save_daily_assignment(completed)

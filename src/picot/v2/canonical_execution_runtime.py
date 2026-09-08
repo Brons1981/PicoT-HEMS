@@ -54,6 +54,17 @@ DispatchCanonicalMode = Callable[
 ]
 
 
+@dataclass(frozen=True, slots=True)
+class _ChargeConfirmation:
+    plan_id: str
+    segment_id: str
+    scope_id: str
+    since: datetime
+    last_seen_at: datetime
+    vendor_mode: str
+    source_entity_id: str
+
+
 @dataclass(slots=True)
 class CanonicalExecutionRuntime:
     """Consume one approved canonical dispatch intent idempotently."""
@@ -63,12 +74,17 @@ class CanonicalExecutionRuntime:
     _pending_vendor_mode: str | None = None
     _confirmed_daily_segment: tuple[str, str, datetime] | None = None
     _daily_execution_suspended: bool = False
+    _confirmed_daily_observation: _ChargeConfirmation | None = None
+    _pending_daily_closure: _ChargeConfirmation | None = None
+    completion_generation: int = 0
 
     def reset_pending_state(self) -> None:
         """Drop only process-local dispatch state after a manual plan reset."""
 
         self._pending_vendor_mode = None
         self._confirmed_daily_segment = None
+        self._confirmed_daily_observation = None
+        self._pending_daily_closure = None
 
     def _observe_daily_completion(
         self,
@@ -87,12 +103,23 @@ class CanonicalExecutionRuntime:
             else (snapshot.captured_at)
         )
         self._confirmed_daily_segment = (plan_id, segment_id, since)
+        mode = snapshot.storage_mode_capability_evidence
+        if mode is not None and mode.current_vendor_mode is not None:
+            self._confirmed_daily_observation = _ChargeConfirmation(
+                plan_id,
+                segment_id,
+                scope_id,
+                since,
+                snapshot.captured_at,
+                mode.current_vendor_mode,
+                mode.source_entity_id,
+            )
         state = next(
             (s for s in snapshot.current_storage_states if s.execution_scope_id == scope_id), None
         )
         if state is None or not state.evidence_ids:
             return
-        self.commitment_store.observe_daily_main_completion(
+        main = self.commitment_store.observe_daily_main_completion(
             execution_scope_id=scope_id,
             plan_id=plan_id,
             segment_id=segment_id,
@@ -104,7 +131,7 @@ class CanonicalExecutionRuntime:
             state_read_at=state.state_read_at,
             state_valid_since=state.state_valid_since,
         )
-        self.commitment_store.observe_supplemental_completion(
+        extra = self.commitment_store.observe_supplemental_completion(
             execution_scope_id=scope_id,
             plan_id=plan_id,
             segment_id=segment_id,
@@ -116,6 +143,161 @@ class CanonicalExecutionRuntime:
             state_read_at=state.state_read_at,
             state_valid_since=state.state_valid_since,
         )
+        self._note_completions(
+            snapshot,
+            tuple(
+                a.assignment_id
+                for a in (main, extra)
+                if a is not None and a.completed_at is not None
+            ),
+        )
+
+    def _note_completions(
+        self, snapshot: PlanningInputSnapshot, completed_ids: tuple[str, ...]
+    ) -> None:
+        context = snapshot.daily_charge_context
+        if context is None:
+            return
+        known = {a.assignment_id for a in context.assignments if a.completed_at is not None}
+        known.update(
+            a.assignment_id for a in context.supplemental_assignments if a.completed_at is not None
+        )
+        if set(completed_ids) - known:
+            self.completion_generation += 1
+
+    def _close_previous_charge(self, snapshot: PlanningInputSnapshot, *, enabled: bool) -> None:
+        """Attribute a delayed measurement before processing the next execution.
+
+        This consumes an actual prior mode confirmation. It never fabricates a
+        fresh SOC timestamp or derives past execution from the next mode alone.
+        """
+        context = snapshot.daily_charge_context
+        mode = snapshot.storage_mode_capability_evidence
+        provenance = snapshot.storage_mode_control_provenance
+        if (
+            not enabled
+            or self._daily_execution_suspended
+            or self.commitment_store is None
+            or context is None
+            or context.status != "ready"
+            or not snapshot.price_points
+            or snapshot.pv_energy_timeline is None
+            or snapshot.household_load_forecast is None
+            or provenance is None
+            or provenance.manual_override_active
+            or mode is None
+            or mode.status != "available"
+            or mode.current_vendor_mode is None
+            or (
+                snapshot.bms_calibration_evidence is not None
+                and snapshot.bms_calibration_evidence.active
+            )
+        ):
+            self._pending_daily_closure = None
+            return
+        prior = self._confirmed_daily_observation
+        if prior is not None:
+            plan = self.commitment_store.load_active_daily_main_plan(prior.scope_id)
+            old = (
+                next((s for s in plan.segments if s.segment_id == prior.segment_id), None)
+                if plan is not None and plan.plan_id == prior.plan_id
+                else None
+            )
+            if (
+                old is not None
+                and old.ends_at <= snapshot.captured_at
+                and (old.main_assignment_id is not None or old.purpose.startswith("supplemental:"))
+            ):
+                self._pending_daily_closure = prior
+        proof = self._pending_daily_closure
+        if proof is None:
+            return
+        plan = self.commitment_store.load_active_daily_main_plan(proof.scope_id)
+        old = (
+            next((s for s in plan.segments if s.segment_id == proof.segment_id), None)
+            if plan is not None and plan.plan_id == proof.plan_id
+            else None
+        )
+        state = next(
+            (s for s in snapshot.current_storage_states if s.execution_scope_id == proof.scope_id),
+            None,
+        )
+        if (
+            old is None
+            or state is None
+            or mode.source_entity_id != proof.source_entity_id
+            or mode.execution_scope_id != proof.scope_id
+            or mode.capability_id != old.capability_id
+        ):
+            self._pending_daily_closure = None
+            return
+        if state.measured_at > old.ends_at:
+            self._pending_daily_closure = None
+            return
+        if (
+            self._daily_execution_blocker(
+                snapshot,
+                scope_id=proof.scope_id,
+                capability_id=old.capability_id,
+                primitive=old.primitive,
+                requested_power_w=old.requested_power_w,
+            )
+            is not None
+        ):
+            self._pending_daily_closure = None
+            return
+        if not proof.since <= state.measured_at <= snapshot.captured_at or not state.evidence_ids:
+            return
+        changed = mode.state_changed_at
+        if mode.current_vendor_mode == proof.vendor_mode:
+            if changed is None or changed > proof.last_seen_at:
+                return  # A changed-away-and-back mode is not uninterrupted evidence.
+            until = snapshot.captured_at
+        else:
+            if (
+                changed is None
+                or changed.utcoffset() is None
+                or not max(proof.last_seen_at, state.measured_at) <= changed <= snapshot.captured_at
+                or provenance.status != "planner_owned"
+                or provenance.last_planner_vendor_mode != mode.current_vendor_mode
+                or provenance.last_planner_applied_at is None
+                or not state.measured_at
+                <= provenance.last_planner_applied_at
+                <= snapshot.captured_at
+            ):
+                return
+            until = changed
+        evidence_id = (
+            "segment-closure:"
+            + "|".join(state.evidence_ids)
+            + f":previous_mode={proof.vendor_mode}:mode_changed_at={changed}"
+            + f":last_confirmed_at={proof.last_seen_at.isoformat()}"
+        )
+        arguments: dict[str, Any] = dict(
+            execution_scope_id=proof.scope_id,
+            plan_id=proof.plan_id,
+            segment_id=proof.segment_id,
+            confirmed_since=proof.since,
+            observed_at=snapshot.captured_at,
+            measured_at=state.measured_at,
+            soc=state.current_soc,
+            evidence_id=evidence_id,
+            confirmed_until=until,
+        )
+        main = self.commitment_store.observe_daily_main_completion(**arguments)
+        extra = self.commitment_store.observe_supplemental_completion(**arguments)
+        self._note_completions(
+            snapshot,
+            tuple(
+                a.assignment_id
+                for a in (main, extra)
+                if a is not None and a.completed_at is not None
+            ),
+        )
+        if (main is not None and main.completed_at is not None) or (
+            extra is not None and extra.completed_at is not None
+        ):
+            self._pending_daily_closure = None
 
     @staticmethod
     def _daily_execution_blocker(
@@ -207,6 +389,14 @@ class CanonicalExecutionRuntime:
     ) -> CommittedBoundaryDispatchOutcome:
         """Execute the due stored segment without invoking Candidate planning."""
 
+        try:
+            self._close_previous_charge(snapshot, enabled=execution_enabled)
+        except (OSError, ValueError) as exc:
+            return CommittedBoundaryDispatchOutcome(
+                status="blocked",
+                failure_reason=f"charge_completion_evidence_failed:{exc}",
+            )
+        self._confirmed_daily_observation = None
         prior_confirmation = self._confirmed_daily_segment
         self._confirmed_daily_segment = None
         context = snapshot.daily_charge_context
@@ -442,6 +632,25 @@ class CanonicalExecutionRuntime:
 
     def apply(self, run: CanonicalPipelineRun) -> CanonicalPipelineRun:
         """Translate at the adapter boundary and dispatch only with live authority."""
+        try:
+            self._close_previous_charge(
+                run.planning_input,
+                enabled=run.execution_record.status == "live_plan_ready",
+            )
+        except (OSError, ValueError) as exc:
+            return replace(
+                run,
+                primitive_boundary=replace(
+                    run.primitive_boundary,
+                    request_id=None,
+                    status="dry_run_blocked",
+                    blockers=(
+                        *run.primitive_boundary.blockers,
+                        f"charge_completion_evidence_failed:{exc}",
+                    ),
+                ),
+            )
+        self._confirmed_daily_observation = None
         prior_confirmation = self._confirmed_daily_segment
         self._confirmed_daily_segment = None
         boundary = run.primitive_boundary

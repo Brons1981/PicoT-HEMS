@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from picot.architecture_ownership import architecture_ownership
 from picot.domain.execution_plan import ExecutionPlan
+from picot.domain.market_plan_binding import MarketPlanBinding
 from picot.domain.runtime import RuntimeObservation
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
@@ -851,6 +852,7 @@ def _planning_input_signature(
                 "reason": daily_context.reason,
                 "timezone": daily_context.timezone,
                 "active_main_plan_ids": daily_context.active_main_plan_ids,
+                "market_plan_bindings": [asdict(b) for b in daily_context.market_plan_bindings],
                 "supplemental_assignments": [
                     repr(a) for a in daily_context.supplemental_assignments
                 ],
@@ -931,6 +933,7 @@ def _restore_daily_charge_context(
     assignments: tuple[DailyChargeAssignment, ...] = ()
     bridge_states: tuple[DailyBridgeState, ...] = ()
     supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
+    market_plan_bindings: tuple[MarketPlanBinding, ...] = ()
     plans: list[ExecutionPlan] = []
     active_main_plan_ids: list[str] = []
     status, reason = "ready", None
@@ -964,11 +967,16 @@ def _restore_daily_charge_context(
                         raise ValueError("daily_charge_shared_plan_content_conflict")
                     if previous is None:
                         plans.append(plan)
+        stored_market_bindings = store.load_market_plan_bindings()
         for scope in sorted(scopes):
             active = store.load_active_daily_main_plan(scope)
             if active is not None and active.valid_until > snapshot.captured_at:
+                bindings = tuple(b for b in stored_market_bindings if b.plan_id == active.plan_id)
                 if active.plan_id not in {p.plan_id for p in plans}:
-                    raise ValueError("active_daily_main_plan_owner_not_restored")
+                    if not bindings:
+                        raise ValueError("active_daily_main_plan_owner_not_restored")
+                    plans.append(active)
+                market_plan_bindings += bindings
                 active_main_plan_ids.append(active.plan_id)
         if not scopes:
             raise ValueError("daily_charge_execution_scope_unavailable")
@@ -1007,6 +1015,7 @@ def _restore_daily_charge_context(
         active_main_plan_ids=tuple(active_main_plan_ids),
         bridge_states=bridge_states,
         supplemental_assignments=supplemental_assignments,
+        market_plan_bindings=market_plan_bindings,
         pv_comparison_states=tuple(
             store.load_daily_pv_comparison(a.assignment_id) for a in assignments
             if a.route_plan_id is not None
@@ -1874,6 +1883,7 @@ def _with_planning_input_diagnostics(
                 for a in daily_context.assignments
             ],
             "daily_charge_recovered_plan_ids": [p.plan_id for p in daily_context.main_plans],
+            "market_plan_bindings": [asdict(b) for b in daily_context.market_plan_bindings],
         }
         if daily_context is not None else {}
     )

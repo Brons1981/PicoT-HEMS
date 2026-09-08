@@ -612,9 +612,11 @@ class IndependentDailyReferenceAdapter:
             ExecutionPrimitive.CHARGE_AT_POWER: DailyStorageIntent.GRID_REQUIREMENT,
             ExecutionPrimitive.BALANCE_DISCHARGE_ONLY: DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
             ExecutionPrimitive.STANDBY: DailyStorageIntent.STANDBY,
+            ExecutionPrimitive.DISCHARGE_AT_POWER: DailyStorageIntent.STORAGE_EXPORT,
         }
         intervals = []
         for grid in inputs.household.intervals:
+            export_wh = 0.0
             retained_main = next((r for r in retained if r.segment.starts_at <= grid.starts_at
                                   and grid.ends_at <= r.segment.ends_at), None)
             intent = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
@@ -655,11 +657,22 @@ class IndependentDailyReferenceAdapter:
                         "retained_charge_power_requires_explicit_revision"
                     )
                 intent = intents[source.primitive]
+                if intent is DailyStorageIntent.STORAGE_EXPORT:
+                    bindings = tuple(b for b in context.market_plan_bindings
+                                     if source.segment_id in b.segment_ids)
+                    if len(bindings) != 1:
+                        raise DailyReferenceInputError("retained_market_energy_binding_missing")
+                    binding = bindings[0]
+                    energy = binding.segment_export_wh[binding.segment_ids.index(source.segment_id)]
+                    export_wh = energy * ((grid.ends_at - grid.starts_at).total_seconds()
+                                          / (source.ends_at - source.starts_at).total_seconds())
                 if revising_assignment_id is not None and (
                     source.main_assignment_id == revising_assignment_id
                 ):
                     intent = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
-            intervals.append(DailyReferenceIntentInterval(grid.starts_at, grid.ends_at, intent))
+            intervals.append(DailyReferenceIntentInterval(
+                grid.starts_at, grid.ends_at, intent, storage_export_target_wh=export_wh,
+            ))
         schedule = DailyReferenceIntentSchedule(
             schedule_id="retained-main:" + sha256(
                 (snapshot.snapshot_id + "|" + "|".join(sorted(plans))).encode()
@@ -1218,6 +1231,16 @@ class IndependentDailyReferenceAdapter:
             snapshot.household_load_forecast,
             captured_at=snapshot.captured_at,
             horizon_end=reference_horizon_end,
+            extra_boundaries=tuple(
+                boundary
+                for plan in (snapshot.daily_charge_context.main_plans
+                             if snapshot.daily_charge_context else ())
+                if snapshot.daily_charge_context is not None
+                and snapshot.daily_charge_context.market_plan_bindings
+                and plan.plan_id in snapshot.daily_charge_context.active_main_plan_ids
+                for segment in plan.segments
+                for boundary in (segment.starts_at, segment.ends_at)
+            ),
         )
         pv_scenarios = self._pv_scenarios(
             snapshot.pv_energy_timeline,
@@ -1264,6 +1287,7 @@ class IndependentDailyReferenceAdapter:
         *,
         captured_at: datetime,
         horizon_end: datetime,
+        extra_boundaries: tuple[datetime, ...] = (),
     ) -> DomainHouseholdForecast:
         source_intervals = tuple(
             interval
@@ -1285,6 +1309,9 @@ class IndependentDailyReferenceAdapter:
             boundaries.append(boundaries[-1] + timedelta(minutes=15))
         if boundaries[-1] != horizon_end:
             boundaries.append(horizon_end)
+        boundaries = sorted(set(boundaries) | {
+            t for t in extra_boundaries if captured_at < t < horizon_end
+        })
 
         normalised: list[DomainHouseholdInterval] = []
         for starts_at, ends_at in zip(boundaries, boundaries[1:], strict=False):

@@ -13,6 +13,7 @@ from picot.domain.energy_path import PathSegment, ProjectedEnergyState, Retained
 from picot.domain.evaluation import CandidateOutcome as CanonicalCandidateOutcome
 from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.market_plan_binding import MarketPlanBinding
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.v2.daily_bridge import DailyBridgeAssessment, DailyBridgeState
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
@@ -661,6 +662,7 @@ class DailyChargePlanningContext:
     pv_comparison_states: tuple[DailyPVComparisonState, ...] = ()
     bridge_states: tuple[DailyBridgeState, ...] = ()
     supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
+    market_plan_bindings: tuple[MarketPlanBinding, ...] = ()
     duration_ms: float = 0.0
 
     def __post_init__(self) -> None:
@@ -689,9 +691,17 @@ class DailyChargePlanningContext:
         if set(self.active_main_plan_ids) - set(plans):
             raise ValueError("active main plan requires its restored plan")
         owners = {a.route_plan_id: a for a in self.assignments if a.route_plan_id is not None}
-        if set(plans) - set(owners):
+        market_owners = {b.plan_id for b in self.market_plan_bindings}
+        market_ids = [b.assignment_id for b in self.market_plan_bindings]
+        if len(market_ids) != len(set(market_ids)):
+            raise ValueError("market recovery must not duplicate assignments")
+        for binding in self.market_plan_bindings:
+            plan = plans.get(binding.plan_id)
+            if plan is None or plan.execution_scope_id != binding.execution_scope_id:
+                raise ValueError("market binding requires its restored shared plan")
+        if set(plans) - (set(owners) | market_owners):
             raise ValueError("recovered plan requires its daily owner")
-        if self.status == "ready" and set(plans) != set(owners):
+        if self.status == "ready" and set(plans) != set(owners) | market_owners:
             raise ValueError("ready daily charge recovery requires every bound plan")
         for owner in self.assignments:
             plan = plans.get(owner.route_plan_id) if owner.route_plan_id is not None else None

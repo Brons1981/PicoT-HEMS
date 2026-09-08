@@ -254,3 +254,40 @@ def published_assignments(
                 known.setdefault(candidate.assignment_id, candidate)
                 break
     return tuple(sorted(known.values(), key=lambda a: a.starts_at))
+
+
+@dataclass(frozen=True, slots=True)
+class DailyMainShortfallTrigger:
+    """Fresh physical evidence authorising a revision of one existing route."""
+
+    assignment_id: str
+    route_plan_id: str
+    revision: int
+    active_plan_id: str
+    snapshot_id: str
+    assessed_at: datetime
+    projected_main_peak_wh: float
+    target_wh: float
+
+    def __post_init__(self) -> None:
+        _aware(self.assessed_at)
+        if any(not value.strip() for value in (
+            self.assignment_id, self.route_plan_id, self.active_plan_id, self.snapshot_id,
+        )) or self.revision < 1:
+            raise ValueError("shortfall trigger requires explicit bound route lineage")
+        if not all(isfinite(v) for v in (self.projected_main_peak_wh, self.target_wh)) or (
+            self.projected_main_peak_wh < 0 or self.target_wh <= 0
+            or self.projected_main_peak_wh + 1e-6 >= self.target_wh
+        ):
+            raise ValueError("shortfall trigger requires a physically insufficient main route")
+
+    def validate(self, assignment: DailyChargeAssignment, snapshot_id: str, at: datetime) -> None:
+        if (
+            assignment.assignment_id != self.assignment_id
+            or assignment.route_plan_id != self.route_plan_id
+            or assignment.revision != self.revision
+            or assignment.completed_at is not None
+            or self.snapshot_id != snapshot_id or self.assessed_at != at
+            or at >= assignment.ends_at
+        ):
+            raise ValueError("shortfall trigger does not match the current open route and input")

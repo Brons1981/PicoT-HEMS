@@ -303,3 +303,31 @@ def test_confirmed_retained_execution_completes_original_owner_only(two_days, tm
     # A repeat of yesterday's binding must not move the active pointer backwards.
     store.bind_daily_main_plan(plan=two_days["first_plan"], window=two_days["first_window"])
     assert store.load_active_daily_main_plan(plan.execution_scope_id) == plan
+
+
+def test_revising_today_preserves_tomorrow_and_historical_execution_origins(two_days, tmp_path):
+    from test_daily_main_route_optimisation import fresh
+
+    from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
+    from picot.v2.pipeline import CanonicalPipeline
+
+    store = stored(tmp_path, two_days)
+    tomorrow = store.bind_daily_main_plan(
+        plan=two_days["second_set"].plans[0], window=two_days["second_window"], activate=True,
+    )
+    old_today_plan = store.load_daily_main_plan(two_days["first"].assignment_id)
+    source = recover(fresh(two_days["source"], soc=0.1), store)
+    pipeline = CanonicalPipeline(
+        market_daily_planner_runtime=MarketDailyPlannerRuntime(two_days["conversion"]),
+        commitment_store=store,
+    )
+    result = pipeline.run(planning_input=source)
+    assert result.evaluation.commitment_decision == "triggered_revision", result.evaluation.reason
+    owners = {a.assignment_id: a for a in store.load_daily_assignments()}
+    assert owners[tomorrow.assignment_id] == tomorrow
+    assert owners[two_days["first"].assignment_id].revision == two_days["first"].revision + 1
+    restored = recover(source, store)
+    assert restored.daily_charge_context.status == "ready", restored.daily_charge_context.reason
+    assert store.load_daily_main_plan(tomorrow.assignment_id) == two_days["second_set"].plans[0]
+    payload = json.loads(store._path.read_text())
+    assert old_today_plan.plan_id in payload["daily_main_history"]

@@ -13,7 +13,7 @@ from picot.domain.energy_path import PathSegment, ProjectedEnergyState, Retained
 from picot.domain.evaluation import CandidateOutcome as CanonicalCandidateOutcome
 from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
-from picot.v2.daily_charge_assignment import DailyChargeAssignment
+from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
 from picot.v2.household_planning_regime import (
     HouseholdPlanningRegime,
     UserObjectiveProfile,
@@ -1319,6 +1319,7 @@ class EvaluationRecord:
     incumbent_candidate_id: str | None = None
     financial_equivalence_margin_eur: float = 0.0
     commitment_decision: str | None = None
+    daily_main_shortfall: DailyMainShortfallTrigger | None = None
 
 
 @dataclass(frozen=True, slots=True)

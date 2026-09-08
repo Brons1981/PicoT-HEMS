@@ -32,7 +32,7 @@ from picot.planner.independent_daily_intent_simulator import (
     IndependentDailyIntentSimulator,
 )
 from picot.planner.independent_daily_simulator import ScenarioTimeline
-from picot.v2.daily_charge_assignment import DailyChargeAssignment
+from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
 
 METHOD_VERSION = "independent-daily-charge-window-discoverer:v5"
 BASELINE_INTENT = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
@@ -59,6 +59,7 @@ class IndependentDailyChargeWindowDiscoverer:
         maximum_charge_input_power_w: float,
         maximum_discharge_output_power_w: float,
         retained_schedule: DailyReferenceIntentSchedule | None = None,
+        optimisation_trigger: DailyMainShortfallTrigger | None = None,
     ) -> DailyMainChargeWindowSet:
         """Discover the first main route under an existing daily identity.
 
@@ -80,7 +81,9 @@ class IndependentDailyChargeWindowDiscoverer:
 
         if assignment.completed_at is not None:
             return result((), "completed", "observed_main_goal_already_completed")
-        if assignment.revision:
+        if optimisation_trigger is not None:
+            optimisation_trigger.validate(assignment, snapshot_id, household.horizon_start)
+        elif assignment.revision:
             raise ValueError(
                 "existing main route requires explicit optimisation, not first discovery"
             )

@@ -51,6 +51,7 @@ from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.independent_daily_charge_window_discoverer import (
     IndependentDailyChargeWindowDiscoverer,
 )
+from picot.planner.independent_daily_intent_simulator import IndependentDailyIntentSimulator
 from picot.planner.independent_daily_simulator import (
     IndependentDailySimulator,
     ScenarioTimeline,
@@ -67,7 +68,7 @@ from picot.v2.contracts import (
     PVEnergyTimeline,
     PVEnergyTimelineInterval,
 )
-from picot.v2.daily_charge_assignment import DailyChargeAssignment
+from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
 from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
@@ -95,6 +96,54 @@ class _DailyReferenceInputs:
 class IndependentDailyReferenceAdapter:
     """Build and run the daily simulation without reading planner Candidates."""
 
+    def main_route_shortfalls(
+        self, *, snapshot: PlanningInputSnapshot, conversion_model: StorageConversionModel,
+    ) -> tuple[DailyMainShortfallTrigger, ...]:
+        """Simulate the retained route once; no tariff settlement or window search."""
+        context = snapshot.daily_charge_context
+        if context is None or context.status != "ready":
+            raise DailyReferenceInputError("main_charge_recovery_context_blocked")
+        pending = tuple(a for a in context.assignments if a.route_plan_id is not None
+                        and a.completed_at is None and a.ends_at > snapshot.captured_at)
+        if not pending:
+            return ()
+        active = tuple(p for p in context.main_plans if p.plan_id in context.active_main_plan_ids)
+        if len(active) != 1:
+            raise DailyReferenceInputError("main_charge_active_plan_required_for_monitoring")
+        plan = active[0]
+        inputs = self._inputs(snapshot, horizon_end=plan.valid_until,
+                              maximum_duration=timedelta(hours=36))
+        schedule, _ = self._retained_main_schedule(
+            snapshot=snapshot, assignment=pending[0], inputs=inputs, supplied=None,
+        )
+        assert schedule is not None
+        projection = IndependentDailyIntentSimulator().simulate_planning_basis(
+            snapshot_id=snapshot.snapshot_id, household=inputs.household,
+            pv_scenarios=inputs.pv_scenarios, storage_state=inputs.storage,
+            conversion_model=conversion_model, intent_schedule=schedule,
+            minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+            target_storage_energy_wh=inputs.target_storage_energy_wh,
+            maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+        )
+        triggers = []
+        for owner in pending:
+            energies = [energy for main in owner.main_segments for interval in projection.intervals
+                        for at, energy in (
+                            (interval.starts_at, interval.storage_energy_at_start_wh),
+                            (interval.ends_at, interval.storage_energy_at_end_wh),
+                        )
+                        if main.starts_at <= at <= main.ends_at]
+            peak = max(energies, default=0.0)
+            if peak + 1e-6 < inputs.storage.usable_capacity_wh:
+                assert owner.route_plan_id is not None
+                triggers.append(DailyMainShortfallTrigger(
+                    owner.assignment_id, owner.route_plan_id, owner.revision, plan.plan_id,
+                    snapshot.snapshot_id, snapshot.captured_at, peak,
+                    inputs.storage.usable_capacity_wh,
+                ))
+        return tuple(sorted(triggers, key=lambda t: t.assignment_id))
+
     def main_charge_windows(
         self,
         *,
@@ -102,6 +151,7 @@ class IndependentDailyReferenceAdapter:
         assignment: DailyChargeAssignment,
         conversion_model: StorageConversionModel,
         retained_schedule: DailyReferenceIntentSchedule | None = None,
+        optimisation_trigger: DailyMainShortfallTrigger | None = None,
     ) -> DailyMainChargeWindowSet:
         """Canonical input seam for first main-route Candidate construction.
 
@@ -113,7 +163,9 @@ class IndependentDailyReferenceAdapter:
             return DailyMainChargeWindowSet(
                 assignment.assignment_id, snapshot.snapshot_id, (), "completed",
                 "observed_main_goal_already_completed", 0)
-        if assignment.revision:
+        if optimisation_trigger is not None:
+            optimisation_trigger.validate(assignment, snapshot.snapshot_id, snapshot.captured_at)
+        elif assignment.revision:
             raise DailyReferenceInputError("main_charge_existing_route_requires_optimisation")
         if snapshot.horizon_end is None:
             raise DailyReferenceInputError("daily_reference_horizon_missing")
@@ -133,6 +185,7 @@ class IndependentDailyReferenceAdapter:
         retained_schedule, retained_main = self._retained_main_schedule(
             snapshot=snapshot, assignment=assignment, inputs=inputs,
             supplied=retained_schedule,
+            revising_assignment_id=assignment.assignment_id if optimisation_trigger else None,
         )
         result = IndependentDailyChargeWindowDiscoverer().discover_main_charge(
             snapshot_id=snapshot.snapshot_id,
@@ -146,6 +199,7 @@ class IndependentDailyReferenceAdapter:
             maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
             maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
             retained_schedule=retained_schedule,
+            optimisation_trigger=optimisation_trigger,
         )
         windows = tuple(
             replace(window, retained_main_segments=retained_main) for window in result.windows
@@ -156,6 +210,7 @@ class IndependentDailyReferenceAdapter:
             if owner.route_plan_id is not None and owner.completed_at is None
             and owner.execution_scope_id == assignment.execution_scope_id
             and owner.ends_at > snapshot.captured_at
+            and (optimisation_trigger is None or owner.assignment_id != assignment.assignment_id)
         )
         feasible = tuple(window for window in windows if all(
             any(
@@ -179,6 +234,7 @@ class IndependentDailyReferenceAdapter:
     def _retained_main_schedule(
         *, snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
         inputs: _DailyReferenceInputs, supplied: DailyReferenceIntentSchedule | None,
+        revising_assignment_id: str | None = None,
     ) -> tuple[DailyReferenceIntentSchedule | None, tuple[DailyRetainedMainSegment, ...]]:
         context = snapshot.daily_charge_context
         if context is None:
@@ -201,6 +257,8 @@ class IndependentDailyReferenceAdapter:
             if plan.created_at > snapshot.captured_at:
                 raise DailyReferenceInputError("retained_main_plan_is_from_future_input")
             for main in owner.main_segments:
+                if owner.assignment_id == revising_assignment_id:
+                    continue
                 source = next((s for s in plan.segments if s.segment_id == main.segment_id), None)
                 if source is None or (source.starts_at, source.ends_at) != (
                     main.starts_at, main.ends_at,
@@ -225,9 +283,10 @@ class IndependentDailyReferenceAdapter:
                                   and grid.ends_at <= r.segment.ends_at), None)
             intent = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
             sources = []
-            for owner in owners:
-                assert owner.route_plan_id is not None
-                plan = plans[owner.route_plan_id]
+            source_plans = tuple(
+                p for p in plans.values() if p.plan_id in context.active_main_plan_ids
+            ) or tuple(plans.values())
+            for plan in source_plans:
                 if plan.valid_from >= grid.ends_at or plan.valid_until <= grid.starts_at:
                     continue
                 part = next((s for s in plan.segments if s.starts_at <= grid.starts_at
@@ -260,6 +319,10 @@ class IndependentDailyReferenceAdapter:
                         "retained_charge_power_requires_explicit_revision"
                     )
                 intent = intents[source.primitive]
+                if revising_assignment_id is not None and (
+                    source.main_assignment_id == revising_assignment_id
+                ):
+                    intent = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
             intervals.append(DailyReferenceIntentInterval(grid.starts_at, grid.ends_at, intent))
         schedule = DailyReferenceIntentSchedule(
             schedule_id="retained-main:" + sha256(

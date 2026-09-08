@@ -1274,6 +1274,7 @@ def _build_daily_main_run(
     result = None
     reason = "daily_main_route_retained_without_optimisation_trigger"
     selected_window = None
+    optimisation_trigger = None
     canonical_set = None
     planning_blocked = False
     retained = tuple(
@@ -1303,12 +1304,21 @@ def _build_daily_main_run(
             ),
             key=lambda a: (a.delivery_date, a.execution_scope_id),
         )
+        conversion, _ = planner_runtime.planning_configuration(snapshot)
+        adapter = IndependentDailyReferenceAdapter()
+        triggers = adapter.main_route_shortfalls(
+            snapshot=snapshot, conversion_model=conversion,
+        ) if context.active_main_plan_ids else ()
+        if triggers:
+            optimisation_trigger = triggers[0]
+            pending = [next(a for a in context.assignments
+                            if a.assignment_id == optimisation_trigger.assignment_id)]
         if pending:
-            conversion, _ = planner_runtime.planning_configuration(snapshot)
-            windows = IndependentDailyReferenceAdapter().main_charge_windows(
+            windows = adapter.main_charge_windows(
                 snapshot=snapshot,
                 assignment=pending[0],
                 conversion_model=conversion,
+                optimisation_trigger=optimisation_trigger,
             )
             if not windows.windows:
                 raise ValueError(windows.reason or "daily_main_no_feasible_window")
@@ -1363,6 +1373,7 @@ def _build_daily_main_run(
                 plan=proposed.plans[0],
                 window=selected_window,
                 activate=True,
+                optimisation_trigger=optimisation_trigger,
             )
             canonical_set = proposed
         except (ValueError, OSError) as exc:
@@ -1466,6 +1477,7 @@ def _build_daily_main_run(
         winning_candidate_id=winner_id,
         winning_energy_path_id=winning_path.path_id if winning_path is not None else None,
         reason=reason,
+        daily_main_shortfall=optimisation_trigger,
         status="fallback_active"
         if planning_blocked
         else "winner_selected"
@@ -1475,7 +1487,9 @@ def _build_daily_main_run(
         else "fallback_active",
         evaluated_candidate_ids=result.record.evaluated_candidate_ids if result is not None else (),
         decisive_step=result.record.decisive_step if result is not None else None,
-        commitment_decision="initial_binding"
+        commitment_decision="triggered_revision"
+        if canonical_set is not None and optimisation_trigger is not None
+        else "initial_binding"
         if canonical_set is not None
         else "retained"
         if retained

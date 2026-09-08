@@ -20,6 +20,7 @@ from picot.v2.daily_charge_assignment import (
     DailyChargeAssignment,
     DailyChargeRevisionReason,
     DailyChargeSegment,
+    DailyMainShortfallTrigger,
     published_assignments,
 )
 
@@ -388,6 +389,7 @@ class ActivePlanCommitmentStore:
         plan: ExecutionPlan,
         window: DailyMainChargeWindow,
         activate: bool = False,
+        optimisation_trigger: DailyMainShortfallTrigger | None = None,
     ) -> DailyChargeAssignment:
         """Bind explicit winning source segments, never infer ownership from mode.
 
@@ -427,7 +429,16 @@ class ActivePlanCommitmentStore:
             assignment.revision_evidence_id, assignment.revised_at,
         ):
             raise ValueError("winning plan does not match the stored daily revision evidence")
-        if assignment.revision and not same_binding:
+        if optimisation_trigger is not None:
+            optimisation_trigger.validate(assignment, plan.snapshot_id, plan.created_at)
+            if optimisation_trigger.target_wh != window.target_storage_energy_wh:
+                raise ValueError("shortfall trigger and revised target must match")
+            active_plan = self.load_active_daily_main_plan(plan.execution_scope_id)
+            if active_plan is None or active_plan.plan_id != optimisation_trigger.active_plan_id:
+                raise ValueError("shortfall trigger active plan has changed")
+            if not activate:
+                raise ValueError("a main revision must atomically activate its execution plan")
+        elif assignment.revision and not same_binding:
             raise ValueError("bound daily main route requires an explicit optimisation trigger")
         if not same_binding:
             self._validate_retained_main_segments(plan, window)
@@ -435,7 +446,8 @@ class ActivePlanCommitmentStore:
             plan_id=plan.plan_id,
             segments=main_segments,
             at=plan.created_at,
-            reason=DailyChargeRevisionReason.INITIAL,
+            reason=(DailyChargeRevisionReason.TARGET_UNREACHABLE if optimisation_trigger is not None
+                    else DailyChargeRevisionReason.INITIAL),
             evidence_id=plan.evaluation_id,
         )
         payload = self._load_payload()
@@ -445,7 +457,20 @@ class ActivePlanCommitmentStore:
         serialized = _serialize_execution_plan(plan)
         previous = plans.get(bound.assignment_id)
         if previous is not None and _deserialize_execution_plan(previous) != plan:
-            raise ValueError("stored daily execution plan is immutable; revision required")
+            if optimisation_trigger is None:
+                raise ValueError("stored daily execution plan is immutable; revision required")
+            history = payload.setdefault("daily_main_history", {})
+            if not isinstance(history, dict):
+                raise ValueError("daily main history must be an object")
+            record = {"assignment": _serialize_daily(assignment), "plan": previous}
+            if assignment.route_plan_id in history and history[assignment.route_plan_id] != record:
+                raise ValueError("historical daily main revision is immutable")
+            history[assignment.route_plan_id] = record
+            triggers = payload.setdefault("daily_main_revision_triggers", {})
+            triggers[plan.plan_id] = {
+                **asdict(optimisation_trigger),
+                "assessed_at": optimisation_trigger.assessed_at.isoformat(),
+            }
         if same_binding and previous is not None:
             return bound
         plans[bound.assignment_id] = serialized
@@ -610,9 +635,24 @@ class ActivePlanCommitmentStore:
                     continue
                 owner = next((a for a in assignments
                               if a.assignment_id == segment.main_assignment_id), None)
-                if owner is None or owner.route_plan_id != origin.plan_id:
+                if owner is None:
                     raise ValueError("stored retained main origin no longer matches its owner")
-                original_plan = _deserialize_execution_plan(records[owner.assignment_id])
+                if owner.route_plan_id == origin.plan_id:
+                    original_plan = _deserialize_execution_plan(records[owner.assignment_id])
+                else:
+                    historical = self._load_payload().get("daily_main_history", {}).get(
+                        origin.plan_id,
+                    )
+                    if historical is None:
+                        raise ValueError("stored retained main origin has no historical revision")
+                    historical_owner = _deserialize_daily(historical["assignment"])
+                    original_plan = _deserialize_execution_plan(historical["plan"])
+                    if (historical_owner.assignment_id != owner.assignment_id
+                        or historical_owner.route_plan_id != origin.plan_id
+                        or original_plan.evaluation_id != historical_owner.revision_evidence_id
+                        or original_plan.created_at != historical_owner.revised_at):
+                        raise ValueError("historical main revision lineage mismatch")
+                    owner = historical_owner
                 if original_plan.plan_id != origin.plan_id or (
                     original_plan.execution_scope_id != plan.execution_scope_id
                 ):

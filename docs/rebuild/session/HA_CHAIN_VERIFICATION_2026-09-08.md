@@ -93,3 +93,32 @@ Getoetste basis: lokale commit `fdf854d`, gepubliceerde commit `7f0bde0adc2c2455
 Eerstvolgende implementatiestap: gezamenlijke tekortcorrectie binnen dezelfde bestaande Candidate → Evaluation → Plan Builder → Store-keten. Alle getroffen oorspronkelijke dagidentiteiten en bewezen voltooiingen behouden; alleen expliciet getriggerde routes mogen wijzigen. Kandidaten moeten alle open doelen toetsen. Planversies, oorspronkelijke uitvoeringsreferenties en actieve pointer moeten samen atomair worden vastgelegd. Geen selectie op toevallige opdracht-ID-volgorde, geen tijdelijk ongeldige tussenplannen en geen tweede planner. Vereiste checks: twee afzonderlijk haalbare maar samen bedreigde hoofdopdrachten, behoud van een derde onaangetaste opdracht waar toepasselijk, herstart/schrijffout en werkelijk onhaalbare gezamenlijke situatie.
 
 De marktroute blijft afzonderlijk vervolgwerk. CI_VERIFIED en LIVE_VERIFIED zijn niet vastgesteld; geen versie-bump, merge of deployment.
+
+## Herbeoordeling na ADR-037.10 en interdag-correctie — eindmeting bij overgang
+
+Basis: lokale commit `737da21`, gepubliceerd `bf4a9d86175f3595c7fa58b335d93d21fb6c9320`, tree `8e354360d16b6eaef2a8357cbf1ac9ac6e5b237d`; ontwikkelbranch `implement/first-daily-charge-cycle`. De gebruiker vroeg de volgende stap; overeenkomstig het ontwikkellog is de uitvoeringsgrens read-only getoetst.
+
+**Oordeel: gedeeltelijk geverifieerd, nog geen volledige live-vrijgave.** De interdag-blokkade en aanvullende opdrachtlevenscyclus slagen in de bestaande lokale controles. De reeds eerder benoemde grens rond laat ontvangen eindmetingen is nu ook bij aanvullende opdrachten concreet gereproduceerd.
+
+| Waarneming | Actuele bevestigde primitive | Runtime | SOC bereikt aanvullend doel | Aanvullend doel afgevinkt |
+| --- | --- | --- | --- | --- |
+| Eén seconde vóór einde laadsegment | charge_at_power | already_active | nee | nee |
+| Eén seconde ná einde; SOC-meettijd exact op einde | balance_bidirectional | already_active | ja | nee |
+
+De tijdelijke reproductie gebruikt de bestaande `charged`-fixture, werkelijke lokale Store, dezelfde CanonicalExecutionRuntime over beide waarnemingen, passende testcapabilities/modusmapping voor elk actueel segment, en een testdispatcher. Beide definitieve runtime-uitkomsten hebben geen failure_reason. Er zijn geen echte batterijcommando's verstuurd. Een eerste variant hield alleen de mapping van de vorige primitive beschikbaar en werd daardoor technisch geblokkeerd; dat was onvoldoende bewijs van deze overgang. De bovenstaande definitieve variant heeft voor beide actuele segmenten geldige mapping en bevestiging en reproduceert het open blijven zonder die blokkade.
+
+### Mechanisme en gevolgen
+
+`CanonicalExecutionRuntime.advance_committed_boundary` bewaart de vorige bevestiging tijdelijk, maar selecteert het segment op de huidige uitleestijd. Bij de volgende modus wordt voltooiing alleen voor dat nieuwe segment beoordeeld. De meting met tijdstip op de vorige segmentgrens wordt niet aan de vorige aanvullende opdracht aangeboden. `ActivePlanCommitmentStore.observe_supplemental_completion` verlangt daarnaast `observed_at <= segment.ends_at`; een later ontvangen meting kan dus ook via deze ingang niet worden geregistreerd voor het afgelopen segment. De planningscode hoeft voor deze oorzaak niet te veranderen.
+
+Ernst: hoog voor betrouwbare doelregistratie bij een algemene live-vrijgave; hoge zekerheid over het gedemonstreerde niet verwerken van eindmetingen. Dit is geen bewijs dat iedere laat ontvangen meting automatisch geldige voltooiing oplevert. De synthetische moduswaarnemingen begrenzen een overgang, maar vervangen geen werkelijke HA-modushistorie. De huidige keten heeft nog geen afhandeling om afsluitend bewijs bij de vorige uitvoering te beoordelen. Een gefingeerde verse meettijd, alleen verstreken tijd, een dispatch-ack of de nieuwe modus als bewijs voor oude uitvoering gebruiken is geen geldige oplossing.
+
+Gevolg: een opdracht kan onbewezen blijven terwijl een uitlezing vlak na het venster het doel op de eindtijd rapporteert. Bij een aanvullende opdracht blijft dit zichtbaar als open of later onbewezen voorbij de benodigde tijd. Geen feitelijke herhaalde lading of historische HA-fout als gevolg geclaimd; die vervolgeffecten zijn niet in deze proef onderzocht.
+
+### Verse controles en vervolg
+
+`python -m pytest tests/test_supplemental_charge_commitment.py tests/test_daily_ha_completion_recovery.py tests/test_daily_independent_shortfalls.py -q`: **23 passed in 52,62 s**, exit 0. Deze tests bewijzen hun bestaande binnen-segment-/startbewijs en dagelijkse revisies; zij omvatten niet de bovenstaande overgangsreproductie. De afzonderlijke definitieve tijdelijke reproductie eindigde met exit 0 en de twee gerapporteerde already_active-uitkomsten, zonder voltooiing.
+
+Eerstvolgende gerichte herstelstap: afsluitend SOC-/uitvoeringsbewijs van het vorige segment beoordelen wanneer een gewone HA-uitlezing een overgang constateert. Oorspronkelijke meettijd en opdracht-/plan-/segmentreferenties behouden, beide voltooiingssoorten gescheiden houden en de bestaande uitvoeringsguards handhaven. Bewijs moet expliciet aantonen wat werkelijk bij de vorige uitvoering hoort; bij onvoldoende bewijs open laten en de reden tonen. Geen nieuwe plannerregel of willekeurige tolerantieperiode toevoegen.
+
+Alleen rapport en ontwikkellog gewijzigd. Geen productiecode, tests, bevroren ADR's, configuratie of versie gewijzigd. Geen CI_VERIFIED of LIVE_VERIFIED, merge of deployment.

@@ -253,6 +253,9 @@ def market_rule_portfolio(
                 energy += amount
         return cost / energy
 
+    # Tariffs also split at rolling household forecast boundaries. Refine the
+    # physical schedule at those cuts before assigning one tariff to each part.
+    tariff_boundaries = tuple(t for p in prices.intervals for t in (p.starts_at, p.ends_at))
     priced = sorted(((window_price(w), w) for w in windows), key=lambda item: -item[0])
     admitted_price: float | None = None
     dominated = False
@@ -278,7 +281,7 @@ def market_rule_portfolio(
             snapshot,
             horizon_end=plan.valid_until,
             maximum_duration=timedelta(hours=36),
-            extra_boundaries=boundaries + (first, last),
+            extra_boundaries=boundaries + tariff_boundaries + (first, last),
         )
         schedule, _ = adapter._retained_main_schedule(
             snapshot=snapshot,
@@ -289,6 +292,7 @@ def market_rule_portfolio(
         assert schedule is not None
         baseline = adapter._bridge_projection(snapshot, refined, schedule, conversion)
         parts, price_parts = [], []
+        price_coverage_complete = True
         for i in schedule.intervals:
             allocation = next(
                 (p for p in window if p.starts_at <= i.starts_at < i.ends_at <= p.ends_at), None
@@ -303,8 +307,16 @@ def market_rule_portfolio(
                 )
             )
             price = next(
-                p for p in prices.intervals if p.starts_at <= i.starts_at < i.ends_at <= p.ends_at
+                (
+                    p for p in prices.intervals
+                    if p.starts_at <= i.starts_at < i.ends_at <= p.ends_at
+                ),
+                None,
             )
+            if price is None:
+                reasons.append("market_export_price_coverage_incomplete")
+                price_coverage_complete = False
+                break
             price_parts.append(
                 MarketPricePart(
                     i.starts_at,
@@ -316,6 +328,8 @@ def market_rule_portfolio(
                     price.evidence_ids,
                 )
             )
+        if not price_coverage_complete:
+            continue
         proposed_schedule = replace(schedule, schedule_id=candidate_id, intervals=tuple(parts))
         proposed = adapter._bridge_projection(snapshot, refined, proposed_schedule, conversion)
         spread = replace(seeds[0], export_window=MarketPriceWindow(tuple(price_parts), False))

@@ -109,6 +109,55 @@ def test_market_uses_full_publication_after_live_input_removes_elapsed_quarters(
     )
 
 
+def test_market_with_rolling_household_boundaries_preserves_trade_volume(tmp_path, monkeypatch):
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    source = trading_source(recover())
+    forecast = source.household_load_forecast
+    # Live forecasts start at the poll timestamp, not a clock quarter.
+    offset = timedelta(minutes=6, seconds=24, microseconds=686799)
+    intervals = []
+    for interval in forecast.intervals:
+        cut = interval.starts_at + offset
+        for left, right in ((interval.starts_at, cut), (cut, interval.ends_at)):
+            intervals.append(replace(
+                interval,
+                interval_id=f"{interval.interval_id}:{left.isoformat()}",
+                starts_at=left,
+                ends_at=right,
+                expected_energy_wh=interval.expected_energy_wh
+                * (right - left).total_seconds()
+                / (interval.ends_at - interval.starts_at).total_seconds(),
+            ))
+    source = replace(source, household_load_forecast=replace(forecast, intervals=tuple(intervals)))
+    first = pipeline.run(planning_input=recover(source))
+    assert first.execution_plan_set.plans
+    owners = store.load_daily_assignments()
+    selected = pipeline.run(planning_input=recover(source))
+    assert selected.evaluation.reason == "user_market_rule_selected", selected.evaluation.reason
+    binding, = store.load_market_plan_bindings()
+    assert sum(binding.segment_export_wh) == pytest.approx(binding.expected_export_wh)
+    assert store.load_daily_assignments() == owners
+    plan = store.load_active_daily_main_plan("battery")
+    assert binding.plan_id == plan.plan_id
+    assert plan.winning_candidate_id == selected.evaluation.winning_candidate_id
+    assert all(s.starts_at.hour == 15 for s in plan.segments if s.segment_id in binding.segment_ids)
+
+
+def test_missing_published_tariff_keeps_charge_plan_without_trade(tmp_path, monkeypatch):
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    source = trading_source(recover())
+    pipeline.run(planning_input=recover(source))
+    original = store.load_active_daily_main_plan("battery")
+    owners = store.load_daily_assignments()
+    source = replace(source, published_price_points=source.price_points[1:])
+    result = pipeline.run(planning_input=recover(source))
+    assert "daily_tariff_price_coverage_incomplete" in result.evaluation.reason
+    assert store.load_active_daily_main_plan("battery") == original
+    assert store.load_daily_assignments() == owners
+    assert store.load_market_plan_bindings() == ()
+    assert [p.plan_id for p in result.execution_plan_set.plans] == [original.plan_id]
+
+
 def winter_source(source):
     source = trading_source(source)
     return replace(

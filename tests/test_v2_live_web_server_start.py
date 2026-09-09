@@ -139,6 +139,7 @@ def test_main_starts_one_web_server_before_pipeline_loop(
     assert len(stores) == 1
     assert [path.name for path in stores[0].diagnostic_paths()] == [
         "picot_v2_planning_incident_history.jsonl",
+        "picot_v2_soc_projection.json",
         "picot_v2_household_load_history.jsonl",
         "picot_v2_pv_forecast_basis.jsonl",
         "picot_v2_pv_attenuation_evidence.jsonl",

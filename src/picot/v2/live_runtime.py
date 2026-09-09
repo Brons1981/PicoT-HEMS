@@ -143,6 +143,7 @@ from picot.v2.pv_sunset_source import (
     SunsetReadResult,
 )
 from picot.v2.soc_history_recovery import HistoricalSOCRecovery
+from picot.v2.soc_projection_cache import SOCProjectionCache
 from picot.v2.storage_mode_transition_history import (
     StorageModeTransitionEvent,
     StorageModeTransitionHistoryStore,
@@ -180,6 +181,7 @@ ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH = Path(
 PLANNING_INCIDENT_HISTORY_PATH = Path(
     "/data/picot_v2_planning_incident_history.jsonl"
 )
+SOC_PROJECTION_CACHE_PATH = Path("/data/picot_v2_soc_projection.json")
 FINANCIAL_RESULT_STATE_PATH = Path("/data/picot_v2_financial_results.json")
 MARKET_DAILY_LATEST_PATH = Path(
     "/data/picot_v2_market_daily_latest.json"
@@ -2497,7 +2499,9 @@ def main() -> None:
     price_config = _price_opportunity_config(options)
     household_objective_profile = _household_objective_profile(options)
     adaptive_household_policy = _adaptive_household_policy(options)
-    web_view_store = WebViewStore()
+    web_view_store = WebViewStore(soc_cache=SOCProjectionCache(
+        SOC_PROJECTION_CACHE_PATH, history_path=PLANNING_INCIDENT_HISTORY_PATH,
+    ))
     energy_device_placement_store = EnergyDevicePlacementStore(
         ENERGY_DEVICE_PLACEMENTS_PATH
     )
@@ -2614,6 +2618,7 @@ def main() -> None:
     web_view_store.set_diagnostic_paths(
         (
             PLANNING_INCIDENT_HISTORY_PATH,
+            SOC_PROJECTION_CACHE_PATH,
             HOUSEHOLD_LOAD_HISTORY_PATH,
             PV_ATTENUATION_FORECAST_BASIS_PATH,
             PV_ATTENUATION_EVIDENCE_PATH,

@@ -2971,6 +2971,9 @@ DASHBOARD_HTML = """<!doctype html>
       const decision = status.decision ?? {};
       addCard("Besluit", [
         ["Status", decision.status],
+        ["SOC-prognose", status.soc_projection_retained
+          ? "Oorspronkelijke prognose van behouden plan" : null],
+        ["SOC-prognose berekend", formatTimestamp(status.soc_projection_captured_at)],
         ["Gekozen planfamilie", decision.candidate_family],
         ["Beslisregel", decision.decisive_step],
         ["Reden", decision.reason],
@@ -4538,6 +4541,30 @@ class WebViewStore:
     def publish(self, view: dict[str, object]) -> None:
         """Serialize completely before atomically replacing the snapshot."""
         with self._condition:
+            previous = json.loads(self._latest_json) if self._latest_json is not None else {}
+            current_status = view.get("planning_status")
+            previous_status = previous.get("planning_status")
+            if isinstance(current_status, dict) and isinstance(previous_status, dict):
+                current_plan = current_status.get("chosen_plan") or {}
+                previous_plan = previous_status.get("chosen_plan") or {}
+                decision = current_status.get("decision") or {}
+                if (
+                    decision.get("status") == "plan_retained"
+                    and current_plan.get("plan_id") is not None
+                    and current_plan.get("plan_id") == previous_plan.get("plan_id")
+                    and current_plan.get("energy_path_id") == previous_plan.get("energy_path_id")
+                    and not current_status.get("soc_timeline")
+                    and previous_status.get("soc_timeline")
+                ):
+                    # Display the original canonical projection, never a new
+                    # UI simulation or an observation of actual battery energy.
+                    current_status = dict(current_status)
+                    current_status["soc_timeline"] = previous_status["soc_timeline"]
+                    current_status["soc_projection_captured_at"] = previous_status.get(
+                        "soc_projection_captured_at", previous_status.get("captured_at")
+                    )
+                    current_status["soc_projection_retained"] = True
+                    view = {**view, "planning_status": current_status}
             self._replace_latest_locked(view)
 
     def publish_fast_grid_power_source(
@@ -5539,6 +5566,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 plan
                 for plan in run.execution_plan_set.plans
                 if plan.winning_candidate_id == winning_candidate_id
+                or run.evaluation.status == "plan_retained"
             ),
             key=lambda plan: (plan.valid_from, plan.valid_until, plan.plan_id),
         )
@@ -5564,6 +5592,10 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         for plan in winning_execution_plans
         for segment in plan.segments
         if segment.primitive.value == "charge_at_power"
+        or (
+            segment.primitive.value == "balance_bidirectional"
+            and segment.main_assignment_id is not None
+        )
     )
     requirement = next(
         iter(run.candidate_set.storage_requirements),
@@ -5650,6 +5682,11 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             initial_storage_state.current_soc if initial_storage_state is not None else None
         ),
         "soc_timeline": soc_timeline if not fallback_active else [],
+        "soc_projection_captured_at": (
+            run.planning_input.captured_at.isoformat() if soc_timeline and not fallback_active
+            else None
+        ),
+        "soc_projection_retained": False,
         "valid_until": (
             run.planning_input.horizon_end.isoformat()
             if run.planning_input.horizon_end is not None
@@ -5838,11 +5875,15 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "candidate_id": (
                 winning_candidate.candidate_id
                 if winning_candidate is not None and not fallback_active
+                else winning_execution_plan.winning_candidate_id
+                if winning_execution_plan is not None and not fallback_active
                 else None
             ),
             "energy_path_id": (
                 winning_candidate.energy_path_id
                 if winning_candidate is not None and not fallback_active
+                else winning_execution_plan.winning_energy_path_id
+                if winning_execution_plan is not None and not fallback_active
                 else None
             ),
             "family": (
@@ -5857,7 +5898,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 if winning_outcome is not None and not fallback_active
                 else (
                     charge_segments[0].starts_at.isoformat()
-                    if len(charge_segments) == 1 and not fallback_active
+                    if charge_segments and not fallback_active
                     else None
                 )
             ),
@@ -5866,7 +5907,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 if winning_outcome is not None and not fallback_active
                 else (
                     charge_segments[-1].ends_at.isoformat()
-                    if len(charge_segments) == 1 and not fallback_active
+                    if charge_segments and not fallback_active
                     else None
                 )
             ),

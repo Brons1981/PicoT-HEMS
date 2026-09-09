@@ -51,6 +51,9 @@ def test_snapshot_horizon_is_derived_from_future_price_evidence(monkeypatch: obj
         confidence=1.0,
         evidence_id="evidence-1",
     )
+    past = PriceForecastPoint(
+        "past", BASE - timedelta(hours=1), BASE, 0.05, 1.0, "evidence-1"
+    )
 
     def fake_read(
         self: HomeAssistantStateReader,
@@ -67,7 +70,7 @@ def test_snapshot_horizon_is_derived_from_future_price_evidence(monkeypatch: obj
             observed_at=BASE,
             availability="available",
             mapping_version="mapping-1",
-            price_points=(point,),
+            price_points=(past, point),
         )
 
     monkeypatch.setattr(HomeAssistantStateReader, "read", fake_read)  # type: ignore[attr-defined]
@@ -78,6 +81,7 @@ def test_snapshot_horizon_is_derived_from_future_price_evidence(monkeypatch: obj
     )
 
     assert bundle.snapshot.price_points == (point,)
+    assert bundle.snapshot.published_price_points == (past, point)
     assert bundle.snapshot.horizon_end == future_end
 
 

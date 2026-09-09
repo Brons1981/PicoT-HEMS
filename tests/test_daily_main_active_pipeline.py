@@ -56,6 +56,62 @@ def test_first_selection_activates_exact_plan_and_repeated_poll_does_not_reprice
     assert all(a.completed_at is None for a in store.load_daily_assignments())
 
 
+def test_retained_plan_remains_visible_with_its_original_nom_window(tmp_path, monkeypatch):
+    import json
+
+    from picot.v2.web_ui import WebViewStore, _build_planning_status
+
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    source = recover()
+    source = replace(source, pv_energy_timeline=replace(
+        source.pv_energy_timeline,
+        intervals=tuple(replace(
+            p, pv_energy_wh=1000.0 if i < 12 else 0.0,
+            forecast_lower_energy_wh=800.0 if i < 12 else 0.0,
+            forecast_central_energy_wh=1000.0 if i < 12 else 0.0,
+            forecast_upper_energy_wh=1200.0 if i < 12 else 0.0,
+        ) for i, p in enumerate(source.pv_energy_timeline.intervals)),
+    ))
+    first = pipeline.run(planning_input=recover(source))
+    original = first.execution_plan_set.plans[0]
+    before = store._path.read_bytes()
+    retained = pipeline.run(planning_input=recover(source))
+    view = _build_planning_status(retained)
+    assert retained.evaluation.winning_candidate_id is None
+    assert view["chosen_plan"]["plan_id"] == original.plan_id
+    assert view["chosen_plan"]["candidate_id"] == original.winning_candidate_id
+    assert view["chosen_plan"]["energy_path_id"] == original.winning_energy_path_id
+    assert view["execution_plans"] == _build_planning_status(first)["execution_plans"]
+    nom = [s for s in original.segments if s.primitive.value == "balance_bidirectional"]
+    assert nom
+    assert view["chosen_plan"]["charge_window_starts_at"] == nom[0].starts_at.isoformat()
+    assert view["chosen_plan"]["charge_window_ends_at"] == nom[-1].ends_at.isoformat()
+    assert store._path.read_bytes() == before
+    web = WebViewStore()
+    initial_view = _build_planning_status(first)
+    assert initial_view["soc_timeline"]
+    web.publish({"planning_status": initial_view})
+    for _ in range(2):
+        web.publish({"planning_status": view})
+        shown = json.loads(web.latest_json())["planning_status"]
+        assert shown["soc_timeline"] == initial_view["soc_timeline"]
+        assert shown["soc_projection_captured_at"] == first.planning_input.captured_at.isoformat()
+        assert shown["soc_projection_retained"] is True
+    assert view["soc_timeline"] == []  # publishing did not mutate the run projection
+
+    different = {**view, "chosen_plan": {**view["chosen_plan"], "plan_id": "different"}}
+    web.publish({"planning_status": different})
+    assert json.loads(web.latest_json())["planning_status"]["soc_timeline"] == []
+    # Without an earlier canonical projection (restart), do not invent a curve.
+    restarted = WebViewStore()
+    restarted.publish({"planning_status": view})
+    assert json.loads(restarted.latest_json())["planning_status"]["soc_timeline"] == []
+    web.publish({"planning_status": initial_view})
+    fallback = {**view, "decision": {"status": "fallback_active"}}
+    web.publish({"planning_status": fallback})
+    assert json.loads(web.latest_json())["planning_status"]["soc_timeline"] == []
+
+
 def test_missing_data_requests_guarded_nom_without_erasing_the_main_plan(tmp_path, monkeypatch):
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     first = pipeline.run(planning_input=recover())

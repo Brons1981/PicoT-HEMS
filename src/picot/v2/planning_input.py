@@ -932,10 +932,13 @@ def assemble_planning_input(
         ),
         method_version="zendure-total-rte-percent:v1",
     )
-    price_points = tuple(
+    published_price_points = tuple(
         point
         for item in evidence
         for point in item.price_points
+    )
+    price_points = tuple(
+        point for point in published_price_points
         if point.ends_at > capture
     )
     price_horizon_end = max(
@@ -1021,6 +1024,7 @@ def assemble_planning_input(
         strategy_id="strategy:no-objectives:v1",
         horizon_end=horizon_end,
         price_points=price_points,
+        published_price_points=published_price_points,
         current_storage_states=current_storage_states,
         pv_energy_timeline=pv_energy_timeline,
         household_load_forecast=household_load_forecast,

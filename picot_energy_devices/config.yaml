@@ -1,5 +1,5 @@
 name: PicoT Energy Devices
-version: "0.1.0"
+version: "0.2.0"
 slug: picot_energy_devices
 description: Leert energieprofielen van door de gebruiker gekozen Home Assistant-meetpunten
 url: https://github.com/Brons1981/PicoT-HEMS

@@ -9,6 +9,7 @@ from hashlib import sha256
 from pathlib import Path
 from statistics import median
 
+from picot_energy_devices import recordings
 from picot_energy_devices.contracts import (
     CATALOG_SCHEMA_VERSION,
     PROFILE_METHOD_VERSION,
@@ -102,6 +103,8 @@ class EnergyDeviceStore:
                 """
             )
 
+            connection.executescript(recordings.SCHEMA)
+
     @staticmethod
     def _definition(row: sqlite3.Row) -> DeviceDefinition:
         energy_entity = row["energy_entity_id"]
@@ -181,6 +184,11 @@ class EnergyDeviceStore:
 
     def disable_device(self, device_id: str) -> None:
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute(
+                "SELECT 1 FROM recordings WHERE device_id=? AND ends_at IS NULL", (device_id,)
+            ).fetchone():
+                raise ValueError("Rond de opname eerst af of verwijder deze")
             cursor = connection.execute(
                 "UPDATE devices SET enabled = 0, updated_at = ? WHERE device_id = ?",
                 (self._now().isoformat(), device_id.strip()),
@@ -209,6 +217,8 @@ class EnergyDeviceStore:
                 """,
                 (device_id, observed_at.isoformat(), error[:240]),
             )
+
+            recordings.append_sample(connection, device_id, observed_at, None, error=error[:240])
 
     def record_observation(self, device_id: str, observation: DeviceObservation) -> None:
         with self._connect() as connection:
@@ -240,93 +250,92 @@ class EnergyDeviceStore:
                 """,
                 (device_id, observation.observed_at.isoformat(), observation.power_w),
             )
-            active = connection.execute(
-                "SELECT * FROM active_sessions WHERE device_id = ?",
-                (device_id,),
-            ).fetchone()
-            is_active = observation.power_w >= float(device["active_threshold_w"])
-            if active is None and is_active:
-                connection.execute(
-                    """
-                    INSERT INTO active_sessions(
-                        device_id, starts_at, last_observed_at, last_power_w,
-                        integrated_energy_wh, energy_meter_start_wh,
-                        peak_power_w, sample_count
-                    ) VALUES (?, ?, ?, ?, 0, ?, ?, 1)
-                    """,
-                    (
-                        device_id,
-                        observation.observed_at.isoformat(),
-                        observation.observed_at.isoformat(),
-                        observation.power_w,
-                        observation.energy_meter_wh,
-                        observation.power_w,
-                    ),
-                )
-                return
-            if active is None:
-                return
+            recordings.append_sample(
+                connection, device_id, observation.observed_at,
+                observation.power_w, observation.energy_meter_wh,
+            )
 
-            previous_at = datetime.fromisoformat(str(active["last_observed_at"]))
-            elapsed = max(0.0, (observation.observed_at - previous_at).total_seconds())
-            accepted_elapsed = (
-                elapsed if elapsed <= self._maximum_sample_gap_seconds else 0.0
-            )
-            integrated = float(active["integrated_energy_wh"]) + (
-                float(active["last_power_w"]) * accepted_elapsed / 3600.0
-            )
-            peak = max(float(active["peak_power_w"]), observation.power_w)
-            sample_count = int(active["sample_count"]) + 1
-            if is_active:
-                connection.execute(
-                    """
-                    UPDATE active_sessions SET
-                        last_observed_at=?, last_power_w=?, integrated_energy_wh=?,
-                        peak_power_w=?, sample_count=? WHERE device_id=?
-                    """,
-                    (
-                        observation.observed_at.isoformat(),
-                        observation.power_w,
-                        integrated,
-                        peak,
-                        sample_count,
-                        device_id,
-                    ),
-                )
-                return
-
-            starts_at = datetime.fromisoformat(str(active["starts_at"]))
-            duration = max(1.0, (observation.observed_at - starts_at).total_seconds())
-            meter_start = active["energy_meter_start_wh"]
-            meter_energy = (
-                observation.energy_meter_wh - float(meter_start)
-                if observation.energy_meter_wh is not None and meter_start is not None
-                else None
-            )
-            energy_wh = (
-                meter_energy
-                if meter_energy is not None and meter_energy >= 0.0
-                else integrated
-            )
+    def start_recording(self, device_id: str, name: str) -> None:
+        name = name.strip()
+        if not name or len(name) > 120:
+            raise ValueError("Geef de opname een naam van maximaal 120 tekens")
+        now = self._now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if not connection.execute(
+                "SELECT 1 FROM devices WHERE device_id=? AND enabled=1", (device_id,)
+            ).fetchone():
+                raise ValueError("Onbekend apparaat")
+            if connection.execute(
+                "SELECT 1 FROM recordings WHERE device_id=? AND ends_at IS NULL", (device_id,)
+            ).fetchone():
+                raise ValueError("Er loopt al een opname voor dit apparaat")
             connection.execute(
-                """
-                INSERT INTO sessions(
-                    device_id, starts_at, ends_at, duration_seconds, energy_wh,
-                    average_power_w, peak_power_w, sample_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    device_id,
-                    starts_at.isoformat(),
-                    observation.observed_at.isoformat(),
-                    duration,
-                    energy_wh,
-                    energy_wh * 3600.0 / duration,
-                    peak,
-                    sample_count,
-                ),
+                "INSERT INTO recordings(device_id,name,starts_at) VALUES (?,?,?)",
+                (device_id, name, now.isoformat()),
             )
-            connection.execute("DELETE FROM active_sessions WHERE device_id = ?", (device_id,))
+            status = connection.execute(
+                "SELECT * FROM latest_status WHERE device_id=?", (device_id,)
+            ).fetchone()
+            power = None
+            if status is not None and status["availability"] == "available":
+                age = (now - datetime.fromisoformat(status["observed_at"])).total_seconds()
+                if 0 <= age <= self._maximum_sample_gap_seconds:
+                    power = float(status["power_w"])
+            recordings.append_sample(connection, device_id, now, power,
+                                     error="start_boundary_held_last_reading" if power is not None
+                                     else "no_fresh_start_measurement")
+            self._increment_revision(connection)
+
+    def finish_recording(self, device_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            recordings.finish(connection, device_id, self._now(), self._maximum_sample_gap_seconds)
+            self._increment_revision(connection)
+
+    def recording_list(self, device_id: str) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM recordings WHERE device_id=? ORDER BY recording_id DESC",
+                (device_id,),
+            )]
+
+    def recording_detail(self, recording_id: int) -> dict[str, object]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM recordings WHERE recording_id=?", (recording_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Onbekende opname")
+            return {**dict(row), "samples": [dict(item) for item in connection.execute(
+                "SELECT * FROM recording_samples WHERE recording_id=? ORDER BY observed_at",
+                (recording_id,),
+            )], "maximum_sample_gap_seconds": self._maximum_sample_gap_seconds}
+
+    def rename_recording(self, recording_id: int, name: str) -> None:
+        name = name.strip()
+        if not name or len(name) > 120:
+            raise ValueError("Geef de opname een naam van maximaal 120 tekens")
+        with self._connect() as connection:
+            if connection.execute("UPDATE recordings SET name=? WHERE recording_id=?",
+                                  (name, recording_id)).rowcount != 1:
+                raise ValueError("Onbekende opname")
+            self._increment_revision(connection)
+
+    def delete_recording(self, recording_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM recording_samples WHERE recording_id=?", (recording_id,)
+            )
+            if connection.execute("DELETE FROM recordings WHERE recording_id=?",
+                                  (recording_id,)).rowcount != 1:
+                raise ValueError("Onbekende opname")
+            self._increment_revision(connection)
+
+    def clear_legacy_sessions(self, device_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute("DELETE FROM sessions WHERE device_id=?", (device_id,))
+            connection.execute("DELETE FROM active_sessions WHERE device_id=?", (device_id,))
             self._increment_revision(connection)
 
     def catalog(self) -> dict[str, object]:
@@ -341,13 +350,17 @@ class EnergyDeviceStore:
                     (device.device_id,),
                 ).fetchone()
                 active = connection.execute(
-                    "SELECT * FROM active_sessions WHERE device_id = ?",
+                    "SELECT * FROM recordings WHERE device_id = ? AND ends_at IS NULL",
                     (device.device_id,),
                 ).fetchone()
                 sessions = connection.execute(
                     """
-                    SELECT duration_seconds, energy_wh, average_power_w, peak_power_w
-                    FROM sessions WHERE device_id = ? ORDER BY ends_at DESC LIMIT 30
+                    SELECT duration_seconds, observed_energy_wh AS energy_wh,
+                        observed_energy_wh * 3600 / duration_seconds AS average_power_w,
+                        peak_power_w
+                    FROM recordings WHERE device_id = ? AND ends_at IS NOT NULL
+                        AND missing_seconds=0 AND sample_count>=2
+                    ORDER BY ends_at DESC LIMIT 30
                     """,
                     (device.device_id,),
                 ).fetchall()
@@ -363,7 +376,14 @@ class EnergyDeviceStore:
                         "availability": (
                             str(status["availability"]) if status is not None else "unknown"
                         ),
-                        "active": active is not None,
+                        "active": (
+                            status is not None and status["power_w"] is not None
+                            and float(status["power_w"]) >= device.active_threshold_w
+                        ),
+                        "recording": dict(active) if active is not None else None,
+                        "legacy_session_count": connection.execute(
+                            "SELECT COUNT(*) FROM sessions WHERE device_id=?", (device.device_id,)
+                        ).fetchone()[0],
                         "current_power_w": (
                             float(status["power_w"])
                             if status is not None and status["power_w"] is not None

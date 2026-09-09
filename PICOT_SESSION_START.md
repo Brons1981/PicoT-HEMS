@@ -201,3 +201,16 @@ ADR-030 ownership: native and market Candidate Energy Paths publish central
 scenario Projected Energy States, and the UI renders only those immutable
 states plus the actual starting SoC.  Hybrid NOM/PV plus residual-grid
 Candidate construction remains a separate MEP Candidate Generation slice.
+
+
+## 2026-09-09 — historical SOC recovery and market volume alignment
+
+Accepted supplement: `docs/architecture/ADR-037.11-historical-main-completion-recovery.md`.
+A raw 100% HA Recorder observation inside a then-valid admitted main window can
+recover missed completion without claiming vendor execution by PicoT. The old
+revision, actual timestamp and evidence remain durable; current identity is kept.
+Only Candidate Generation / Evaluation / Plan Builder reconcile remaining actions.
+The execution boundary refuses stale historically completed main segments until
+reconciliation. Manual override is unchanged. Market capacity and final simulation
+must use the same tariff/household boundaries; never relax volume validity to hide
+an interval mismatch. See the development log for implementation/test status.

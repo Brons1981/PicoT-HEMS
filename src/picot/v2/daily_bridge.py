@@ -60,6 +60,7 @@ class DailyBridgeTrigger:
     next_starts_at: datetime
     deficits: tuple[BridgeEnergyInterval, ...]
     supplemental_shortfall_id: str | None = None
+    historical_completion_id: str | None = None
 
     @property
     def revision_reason(self) -> DailyChargeRevisionReason:
@@ -76,7 +77,7 @@ class DailyBridgeTrigger:
             raise ValueError("bridge requires a future open main session")
         if not isfinite(self.target_wh) or self.target_wh <= 0 or not self.deficits:
             raise ValueError("bridge requires an explicit target and energy deficit")
-        if not self.supplemental_shortfall_id and not any(
+        if (not self.supplemental_shortfall_id and not self.historical_completion_id) and not any(
             i.deficit_wh > 1e-6 for i in self.deficits
         ):
             raise ValueError("bridge requires positive energy shortage")

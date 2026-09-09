@@ -381,7 +381,9 @@ class ActivePlanCommitmentStore:
             if assignment.revision == previous.revision:
                 expected = replace(previous, completed_at=assignment.completed_at,
                                    completion_evidence_id=assignment.completion_evidence_id,
-                                   completion_segment_id=assignment.completion_segment_id)
+                                   completion_segment_id=assignment.completion_segment_id,
+                                   historical_completion_segment=assignment.historical_completion_segment,
+                                   historical_completion_plan_id=assignment.historical_completion_plan_id)
                 if assignment != expected:
                     raise ValueError("route changes require a new daily revision")
             elif assignment.revision != previous.revision + 1:
@@ -479,6 +481,13 @@ class ActivePlanCommitmentStore:
                     or completed.execution_scope_id != assignment.execution_scope_id
                     or completed.delivery_date >= assignment.delivery_date):
                 raise ValueError("bridge requires a proven completed daily goal")
+            if optimisation_trigger.historical_completion_id is not None:
+                recovered_id = optimisation_trigger.historical_completion_id
+                recovered = next((a for a in self.load_daily_assignments()
+                                  if a.assignment_id == recovered_id), None)
+                if (recovered is None or recovered.historical_completion_segment is None
+                        or recovered.execution_scope_id != assignment.execution_scope_id):
+                    raise ValueError("reconciliation requires historical completion evidence")
             previous_plan = self.load_daily_main_plan(assignment.assignment_id)
             assert previous_plan is not None
             originals = tuple(s for s in previous_plan.segments
@@ -953,6 +962,49 @@ class ActivePlanCommitmentStore:
             raise ValueError("active daily main plan scope or binding invalid")
         return legacy_plan
 
+    def recover_historical_main_completion(
+        self, *, assignment_id: str, measured_at: datetime, observed_at: datetime,
+        soc: float, evidence_id: str,
+    ) -> DailyChargeAssignment | None:
+        """Recover a real full sample inside a previously admitted main window.
+
+        Historical route validity ends at its successor's admission. No vendor
+        execution claim is inferred, and no plan is edited by this transition.
+        """
+        owner = next((a for a in self.load_daily_assignments()
+                      if a.assignment_id == assignment_id), None)
+        if owner is None or owner.completed_at is not None:
+            return owner
+        if (soc != 1.0 or not evidence_id.strip() or measured_at.utcoffset() is None
+                or observed_at.utcoffset() is None or measured_at > observed_at):
+            return None
+        revisions = [owner]
+        for row in self._load_payload().get("daily_main_history", {}).values():
+            previous = _deserialize_daily(row["assignment"])
+            if previous.assignment_id == assignment_id:
+                revisions.append(previous)
+        revisions.sort(key=lambda a: a.revision)
+        for index, revision in enumerate(revisions):
+            if revision.revised_at is None or revision.route_plan_id is None:
+                continue
+            until = (revisions[index + 1].revised_at if index + 1 < len(revisions)
+                     else observed_at)
+            if until is None or not revision.revised_at <= measured_at <= until:
+                continue
+            segment = next((s for s in revision.main_segments
+                            if s.starts_at <= measured_at <= s.ends_at), None)
+            if segment is None:
+                continue
+            completed = replace(
+                owner, completed_at=measured_at, completion_segment_id=segment.segment_id,
+                completion_evidence_id=evidence_id,
+                historical_completion_segment=segment,
+                historical_completion_plan_id=revision.route_plan_id,
+            )
+            self.save_daily_assignment(completed)
+            return completed
+        return None
+
     def observe_daily_main_completion(
         self, *, execution_scope_id: str, plan_id: str, segment_id: str,
         confirmed_since: datetime, observed_at: datetime, measured_at: datetime,
@@ -1024,6 +1076,7 @@ class ActivePlanCommitmentStore:
         for owner in self.load_daily_assignments():
             if (
                 owner.assignment_id == window.assignment_id
+                or owner.historical_completion_segment is not None
                 or owner.execution_scope_id != plan.execution_scope_id
             ):
                 continue
@@ -1837,6 +1890,12 @@ def _serialize_daily(assignment: DailyChargeAssignment) -> dict[str, Any]:
         {"segment_id": s.segment_id, "starts_at": s.starts_at.isoformat(),
          "ends_at": s.ends_at.isoformat()} for s in assignment.main_segments
     ]
+    if assignment.historical_completion_segment is not None:
+        segment = assignment.historical_completion_segment
+        record["historical_completion_segment"] = {
+            "segment_id": segment.segment_id, "starts_at": segment.starts_at.isoformat(),
+            "ends_at": segment.ends_at.isoformat(),
+        }
     return record
 
 
@@ -1859,4 +1918,10 @@ def _deserialize_daily(item: dict[str, Any]) -> DailyChargeAssignment:
                      if item.get("completed_at") else None,
         completion_evidence_id=item.get("completion_evidence_id"),
         completion_segment_id=item.get("completion_segment_id"),
+        historical_completion_plan_id=item.get("historical_completion_plan_id"),
+        historical_completion_segment=DailyChargeSegment(
+            segment_id=item["historical_completion_segment"]["segment_id"],
+            starts_at=datetime.fromisoformat(item["historical_completion_segment"]["starts_at"]),
+            ends_at=datetime.fromisoformat(item["historical_completion_segment"]["ends_at"]),
+        ) if item.get("historical_completion_segment") else None,
     )

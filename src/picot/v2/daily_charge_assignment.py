@@ -58,6 +58,8 @@ class DailyChargeAssignment:
     completed_at: datetime | None = None
     completion_evidence_id: str | None = None
     completion_segment_id: str | None = None
+    historical_completion_segment: DailyChargeSegment | None = None
+    historical_completion_plan_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.execution_scope_id.strip():
@@ -101,14 +103,25 @@ class DailyChargeAssignment:
             self.completion_segment_id is not None
         ):
             raise ValueError("completion requires observed evidence and main segment identity")
+        historical = self.historical_completion_segment
+        if (historical is None) != (self.historical_completion_plan_id is None):
+            raise ValueError("historical completion requires segment and plan provenance")
+        if historical is not None and (
+            not complete or not self.historical_completion_plan_id
+            or not self.starts_at <= historical.starts_at < historical.ends_at <= self.ends_at
+            or self.completed_at is None or self.completed_at < self.created_at
+        ):
+            raise ValueError("invalid historical main completion")
         if self.completed_at is not None:
             _aware(self.completed_at)
-            if self.revised_at is None or self.completed_at < self.revised_at:
+            if historical is None and (
+                self.revised_at is None or self.completed_at < self.revised_at
+            ):
                 raise ValueError("completion must follow the admitted route")
             if not any(
                 s.segment_id == self.completion_segment_id
                 and s.starts_at <= self.completed_at <= s.ends_at
-                for s in self.main_segments
+                for s in ((historical,) if historical is not None else self.main_segments)
             ):
                 raise ValueError("completion must belong to an explicit main segment")
 

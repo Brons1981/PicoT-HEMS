@@ -140,6 +140,7 @@ def market_rule_portfolio(
         if a.route_plan_id is not None and a.execution_scope_id == plan.execution_scope_id
     )
     boundaries = tuple(t for p in plan.segments for t in (p.starts_at, p.ends_at))
+    boundaries += tuple(t for p in prices.intervals for t in (p.starts_at, p.ends_at))
     data = adapter.build_inputs(
         snapshot,
         horizon_end=plan.valid_until,

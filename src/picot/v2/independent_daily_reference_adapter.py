@@ -1361,12 +1361,17 @@ class IndependentDailyReferenceAdapter:
                 for item in source_intervals
                 if item.starts_at < ends_at and item.ends_at > starts_at
             )
-            covered_seconds = sum(
-                (min(item.ends_at, ends_at) - max(item.starts_at, starts_at)).total_seconds()
-                for item in overlapping
+            # Keep coverage exact: float seconds can reject contiguous intervals
+            # at microsecond market boundaries due to addition roundoff.
+            covered_duration = sum(
+                (
+                    min(item.ends_at, ends_at) - max(item.starts_at, starts_at)
+                    for item in overlapping
+                ),
+                timedelta(),
             )
-            required_seconds = (ends_at - starts_at).total_seconds()
-            if not overlapping or covered_seconds != required_seconds:
+            required_duration = ends_at - starts_at
+            if not overlapping or covered_duration != required_duration:
                 raise DailyReferenceInputError("daily_reference_household_horizon_incomplete")
             expected_energy_wh = sum(
                 item.expected_energy_wh

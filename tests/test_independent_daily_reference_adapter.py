@@ -375,3 +375,38 @@ def test_adapter_does_not_import_current_pipeline_selection_types() -> None:
     assert "Candidate" not in imported_names
     assert "EvaluationRecord" not in imported_names
     assert "ActivePlanCommitment" not in imported_names
+
+
+@pytest.mark.parametrize("gap_us", [0, 1, 1000000])
+def test_household_coverage_at_fractional_market_boundary(gap_us: int) -> None:
+    # Reduced from the dev.247 incident at 2026-09-09 19:53:54 local.
+    start = datetime(2026, 9, 10, 17, 45, tzinfo=UTC)
+    split = start + timedelta(seconds=534, microseconds=70048)
+    end = start + timedelta(seconds=811, microseconds=126572)
+    template = _snapshot().household_load_forecast
+    forecast = replace(
+        template,
+        intervals=(
+            replace(template.intervals[0], starts_at=start, ends_at=split,
+                    expected_energy_wh=100.0),
+            replace(template.intervals[1],
+                    starts_at=split + timedelta(microseconds=gap_us),
+                    ends_at=start + QUARTER, expected_energy_wh=200.0),
+        ),
+    )
+    if gap_us:
+        with pytest.raises(DailyReferenceInputError,
+                           match="daily_reference_household_horizon_incomplete"):
+            IndependentDailyReferenceAdapter._household(
+                forecast, captured_at=start, horizon_end=start + QUARTER,
+                extra_boundaries=(end,),
+            )
+        return
+    result = IndependentDailyReferenceAdapter._household(
+        forecast, captured_at=start, horizon_end=start + QUARTER,
+        extra_boundaries=(end,),
+    )
+    assert len(result.intervals) == 2
+    assert result.intervals[0].ends_at == end
+    assert result.intervals[1].starts_at == end
+    assert sum(i.expected_energy_wh for i in result.intervals) == pytest.approx(300.0)

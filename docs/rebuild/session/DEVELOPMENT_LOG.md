@@ -3086,3 +3086,36 @@ while a subsequent market action is selected and bound with its full export volu
 ### 2026-09-09 — Release 2.0.0-dev.247
 
 Gebruiker heeft publicatie goedgekeurd met “akkoord”. Release bundelt historische SOC-voltooiingsherkenning en consistente marktcapaciteit/tariefintervallen (ADR-037.11). Versie, add-onmanifest en versiecontract zijn bijgewerkt; changelog beschrijft gedrag en livecontrole. Gerichte regressies: 101 geslaagd; aanvullende marktvervolgscenario’s: 2 geslaagd; Ruff en mypy (69 modules) geslaagd. Publicatie via PR; samenvoegen uitsluitend nadat alle drie CI-workflows slagen. Home Assistant is niet bijgewerkt vanuit deze sessie.
+
+
+### 2026-09-09 — Exact household horizon coverage (IMPLEMENTED)
+
+Dev.247 was published through PR #620 (966d22a2); all three CI workflows passed,
+including 1439 tests. Alex initially confirmed NOM, market route and release of
+manual override working live. Later transitions at 19:53:54 and 19:57:54 local
+reported daily_reference_household_horizon_incomplete, with recovery between.
+The 19:56:23 diagnostics reproduce the first failure in the input adapter.
+
+Root cause: summing float seconds at fractional retained market boundaries yields
+811.1265720000001 instead of 811.126572; all 144 source intervals are contiguous.
+The strategy setting was 25%, but causation by its change is not established.
+User approved the bounded repair. Owner: daily simulation input adaptation under
+ADR-030/031. Coverage now compares exact timedelta sums, without tolerance or
+invented demand. Energy integration, market policy, Evaluation, Plan Builder,
+Store, execution and UI are unchanged. Rollback boundary: this patch alone.
+
+Branch fix/exact-household-time-coverage; base local release ea170b6 (same tree as
+published dev.247). Regression failed before the fix for the correct reason;
+real 19:53:54 incident replay now succeeds with 149 output intervals and conserved
+energy. Regression also rejects actual 1 microsecond and 1 second gaps.
+Fresh affected adapter/market binding/execution/architecture suites: 49 passed
+in 47.22 seconds. Ruff passed; mypy passed for all 69 v2 modules; diff check clean.
+Status IMPLEMENTED, locally verified; no new CI, release or live result claimed.
+Next action: publish a separately authorized dev.248 release and verify that
+repeated polls no longer cause the erroneous NOM fallback. Energy Devices session
+counting is a separate unresolved issue. Do not weaken actual coverage validation.
+
+
+### 2026-09-09 — Release dev.248 voorbereid
+
+Alex heeft dev.248 expliciet aangevraagd. Versie, manifest, changelog en versiecontract bijgewerkt. De release bevat uitsluitend de exacte tijdsdekkingsfix en bijbehorende regressies/documentatie. Lokale patch: 49 tests, Ruff en mypy geslaagd. Publicatie via PR; samenvoegen na alle drie groene CI-workflows. Livewerking na installatie nog te bevestigen.

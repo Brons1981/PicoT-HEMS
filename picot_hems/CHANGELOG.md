@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.248
+
+- Herstelt de onterechte melding `daily_reference_household_horizon_incomplete` bij handelssegmenten met tijdgrenzen op fracties van seconden.
+- De prognosedekking wordt met exacte tijdsduren gecontroleerd. Afrondingsverschillen veroorzaken hierdoor geen onnodige terugval naar NOM; echte gaten blijven afgewezen.
+
+Na installatie: controleer dev.248 en of NOM- en marktvensters over opeenvolgende berekeningen behouden blijven zonder deze foutmelding.
+
 ## 2.0.0-dev.247
 
 - Herkent een historisch gemeten SOC van 100% tijdens het toen geldige hoofdlaadvenster, ook als PicoT op dat moment niet draaide. Het bewijs en de oorspronkelijke laadopdracht blijven bewaard.

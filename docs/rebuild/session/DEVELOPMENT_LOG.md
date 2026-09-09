@@ -2957,3 +2957,5 @@ Nog te bevestigen bij opdrachtbinding: geldt het ingestelde handelsvolume eenmaa
 - Runtimeversie, HA-manifest en versiecontrole naar 2.0.0-dev.244; add-on-changelog toegevoegd met werking en instelvereisten. De bestaande Dockerfile bouwt uit main; publicatie vereist daarom samenvoegen van de release-PR na CI. Geen wijziging aan plannerbeleid of installatie-instellingen. De gebruiker installeert de HA-update; in deze stap worden geen batterijcommando's gegeven.
 
 - Versie- en verpakkingscontroles lokaal uitgevoerd; de volledige releasecontrole loopt daarnaast op de PR. Nog geen HA-livebewijs.
+
+- Eerste release-CI: Core geslaagd; v2 623 geslaagd en één verouderde exacte veldlijst gefaald. De SOC-read-evidence uit de eerdere sessiestap voegde state_read_at/state_valid_since toe, geen capabilitylimieten. Alleen de contracttest bijgewerkt met die twee optionele meetbewijsvelden, hun lege defaults en expliciet ontbreken van laad-/ontlaadvermogenslimieten. Geen productieregel gewijzigd; PR-controles worden opnieuw uitgevoerd.

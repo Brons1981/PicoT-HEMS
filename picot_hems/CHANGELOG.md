@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0-dev.249
+
+- Bewaart de oorspronkelijke SOC-prognose bij het plan, zodat de lijn na een herstart terugkomt bij hetzelfde behouden plan.
+- Kan voor bestaande installaties de oorspronkelijke prognose eenmalig uit de diagnosehistorie herstellen, uitsluitend bij overeenkomende plan- en energiepadidentiteit.
+- Het oorspronkelijke berekenmoment blijft zichtbaar. Een prognose van een ander plan of een verlopen prognose wordt niet overgenomen.
+
+Na installatie: controleer de SOC-lijn en het oorspronkelijke berekenmoment. De planningslogica blijft ongewijzigd.
+
 ## 2.0.0-dev.248
 
 - Herstelt de onterechte melding `daily_reference_household_horizon_incomplete` bij handelssegmenten met tijdgrenzen op fracties van seconden.

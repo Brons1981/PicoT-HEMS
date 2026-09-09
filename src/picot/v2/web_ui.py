@@ -27,6 +27,7 @@ from picot.v2.contracts import (
 from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.projection import Projection
+from picot.v2.soc_projection_cache import SOCProjectionCache
 from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
 
 POWER_HISTORY_DISPLAY_INTERVAL = timedelta(minutes=5)
@@ -4447,7 +4448,8 @@ DASHBOARD_HTML = """<!doctype html>
 class WebViewStore:
     """Thread-safe in-memory store for the latest serialized web view."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, soc_cache: SOCProjectionCache | None = None) -> None:
+        self._soc_cache = soc_cache
         self._lock = Lock()
         self._condition = Condition(self._lock)
         self._latest_json: str | None = None
@@ -4565,6 +4567,18 @@ class WebViewStore:
                     )
                     current_status["soc_projection_retained"] = True
                     view = {**view, "planning_status": current_status}
+            status = view.get("planning_status")
+            if self._soc_cache is not None and isinstance(status, dict):
+                decision = status.get("decision") or {}
+                if decision.get("status") == "plan_retained" and not status.get("soc_timeline"):
+                    restored = self._soc_cache.restore(status)
+                    if restored is not None:
+                        status = restored
+                elif decision.get("status") == "winner_selected" and status.get("soc_timeline"):
+                    self._soc_cache.remember(status)
+                view = {**view, "planning_status": {
+                    **status, "soc_projection_cache_status": self._soc_cache.status,
+                }}
             self._replace_latest_locked(view)
 
     def publish_fast_grid_power_source(

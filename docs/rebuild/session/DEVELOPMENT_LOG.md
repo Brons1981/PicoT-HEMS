@@ -3167,3 +3167,51 @@ Final local verification: 24 tests passed in 1.87 s; Ruff, mypy for all 8 produc
 ### 2026-09-09 — Energy Devices 0.2.0 release voorbereid
 
 Gebruiker heeft de vervolgstap bevestigd met akkoord. Energy Devices-versie en manifest naar 0.2.0, changelog toegevoegd. Publicatie via PR na drie groene CI-workflows. PicoT HEMS blijft dev.248. Lokale verificatie: 24 tests, Ruff, mypy en JavaScript-syntax geslaagd. Visuele/browser- en liveverificatie nog vereist na installatie.
+
+
+### 2026-09-09 — Persistent original SOC projection (IMPLEMENTED)
+
+Energy Devices 0.2.0 was published through PR #622 (21614c4352420ab5bf4cc500474c72e5d1e46519),
+all three CI workflows green, 1447 tests passed. Alex confirmed installation.
+PicoT remains dev.248. User then authorized repair of the missing SOC line.
+
+First bad boundary: WebViewStore retained the original canonical SOC curve only
+in process memory. The dev.248 restart retained plan-9e4ff40db87105dc but lost its
+original display curve; latest diagnosis showed plan_retained/live_plan_ready,
+not a new planner fallback. Original winner at 19:59:14 local remains in the
+incident history. No new winning Energy Path is emitted on a retain-only poll.
+
+Owner: passive projection persistence under ADR-017/030 and the frozen pipeline.
+Branch fix/persistent-soc-projection; base be586ed (Energy Devices 0.2.0 release tree).
+WebViewStore accepts an optional bounded SOCProjectionCache. Live runtime wires
+/data/picot_v2_soc_projection.json and includes it in diagnostics. Original SOC
+points and capture time are atomically saved only on a winner with a curve.
+Retained views restore only the exact plan/candidate/path and validity identity;
+UTC/local representations of the same instant compare equally. Expired curves,
+other plans, invalid/corrupt data and fallback views do not restore a curve.
+Disk failures cannot block publishing or planning. Repeat retained polls do not
+rewrite the file. No planning, simulation, store authority or vendor logic changed.
+
+For existing installations without the cache, one bounded tail scan (32 MB,
+8 MB maximum line) can recover the original selected path from incident history.
+It validates winner, plan, path and snapshot/run identity; it copies only original
+projected states and segment primitive labels, never re-simulates or creates a
+new prediction. The recovered curve retains its old capture time. No matching
+history means unavailable, not guessed. The scan is attempted at most once per
+cache instance; a truncated file cannot cause an endless read loop.
+
+Fresh replay of Alex's 21:22:04 diagnosis recovered 118 original points from
+17:59:14 UTC for the exact active plan; a second restart restored the same curve
+from the new cache. Tests cover restart, identity mismatch, equivalent timezone,
+expiry, corruption, fallback, write failure, historical lineage and one-time scan.
+Affected cache/daily-main/market-binding/web/architecture suites: 74 passed in
+10.77 seconds. Ruff passed; mypy passed for all 70 v2 modules; diff check clean.
+Status IMPLEMENTED and locally verified. No new CI, release or live validation
+claimed. Rollback boundary: this display-cache patch; cache file is optional.
+Next: separately authorized dev.249 release, then confirm the original curve and
+its timestamp remain visible across a restart. Energy Devices 0.2.0 is unchanged.
+
+
+### 2026-09-09 — Release dev.249 voorbereid
+
+Alex vraagt expliciet om de release van de SOC-weergavefix. Runtimeversie, manifest, versiecontract en changelog bijgewerkt naar dev.249. Patch lokaal geverifieerd met 74 tests, Ruff en mypy (70 modules), inclusief herstel van 118 SOC-punten uit de aangeleverde diagnose. Publicatie via PR na drie groene CI-workflows. Livecontrole na installatie nog vereist. Energy Devices blijft 0.2.0.

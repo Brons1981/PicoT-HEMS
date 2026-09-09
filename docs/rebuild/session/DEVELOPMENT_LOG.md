@@ -3215,3 +3215,5 @@ its timestamp remain visible across a restart. Energy Devices 0.2.0 is unchanged
 ### 2026-09-09 — Release dev.249 voorbereid
 
 Alex vraagt expliciet om de release van de SOC-weergavefix. Runtimeversie, manifest, versiecontract en changelog bijgewerkt naar dev.249. Patch lokaal geverifieerd met 74 tests, Ruff en mypy (70 modules), inclusief herstel van 118 SOC-punten uit de aangeleverde diagnose. Publicatie via PR na drie groene CI-workflows. Livecontrole na installatie nog vereist. Energy Devices blijft 0.2.0.
+
+Release CI correction: v2 reported 623 passing tests and one stale diagnostic-file-list assertion in test_v2_live_web_server_start. Added the intentional SOC projection cache to that expected list; production behavior unchanged. Rerun all CI on the corrected PR head before merge.

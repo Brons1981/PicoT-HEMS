@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from hashlib import sha256
@@ -18,6 +19,8 @@ from picot.domain.daily_reference_intent import (
 from picot.domain.daily_reference_portfolio import DailyReferenceStrategyResult
 from picot.domain.energy_path import PathSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.market_daily_assignment import MarketDailyAssignment
+from picot.domain.market_plan_binding import MarketPlanBinding
 from picot.planner.evaluation_engine import EvaluationEngine
 from picot.planner.execution_plan_builder import ExecutionPlanBuilder
 from picot.planner.market_daily_planner import (
@@ -25,7 +28,10 @@ from picot.planner.market_daily_planner import (
     MarketDailyPlan,
     MarketRouteAssessment,
 )
-from picot.planner.mep_candidate_outcomes import produce_mep_comparable_portfolio
+from picot.planner.mep_candidate_outcomes import (
+    produce_main_charge_portfolio,
+    produce_mep_comparable_portfolio,
+)
 from picot.v2.contracts import (
     Candidate,
     CandidateOutcomeSet,
@@ -42,11 +48,21 @@ from picot.v2.contracts import (
     PVChargeProgressEvidence,
     VendorBoundaryResult,
 )
-from picot.v2.execution_plan_projection import project_execution_plan_set
+from picot.v2.daily_bridge import DailyBridgeTrigger, energy_deficits
+from picot.v2.daily_charge_assignment import DailyMainShortfallTrigger
+from picot.v2.daily_pv_comparison import (
+    DailyMainPVSurplusTrigger,
+    DailyPVComparisonBasis,
+    compare_daily_pv,
+)
+from picot.v2.execution_plan_projection import _project_plan, project_execution_plan_set
+from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
+from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
 from picot.v2.market_daily_runtime import (
     MarketDailyPlannerRuntime,
     MarketDailyRuntimeOutcome,
 )
+from picot.v2.market_rule_planning import market_rule_portfolio
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
@@ -389,11 +405,14 @@ def _measured_pv_basis_covers_remaining_acquisition(
 ) -> bool:
     """Keep NOM while actual SoC plus conservative future PV can reach target."""
 
-    return _pv_charge_progress_evidence(
-        snapshot=snapshot,
-        path=path,
-        due_segment=due_segment,
-    ).decision == "defer_grid_charge"
+    return (
+        _pv_charge_progress_evidence(
+            snapshot=snapshot,
+            path=path,
+            due_segment=due_segment,
+        ).decision
+        == "defer_grid_charge"
+    )
 
 
 def _pv_charge_progress_evidence(
@@ -488,8 +507,10 @@ def _pv_charge_progress_evidence(
     target_energy_wh = limits.maximum_soc * storage.usable_capacity_wh
     remaining_target_wh = max(0.0, target_energy_wh - storage.current_stored_energy_wh)
     required_grid_input_wh = remaining_target_wh / conservative_charge_efficiency
-    latest_safe_start = acquisition_end - timedelta(minutes=15) - timedelta(
-        hours=required_grid_input_wh / limits.maximum_charge_input_power_w
+    latest_safe_start = (
+        acquisition_end
+        - timedelta(minutes=15)
+        - timedelta(hours=required_grid_input_wh / limits.maximum_charge_input_power_w)
     )
     pv_covers_target = conservative_pv_to_storage_wh + 1e-6 >= remaining_target_wh
     before_latest_safe_start = snapshot.captured_at < latest_safe_start
@@ -763,7 +784,17 @@ def build_mep_canonical_run(
     commitment_store: ActivePlanCommitmentStore | None,
     control_change_allowed: bool,
     switching_margin_eur: float,
-) -> tuple[CanonicalPipelineRun, MepCanonicalStageTimings, MarketDailyRuntimeOutcome]:
+    planning_checkpoint: Callable[[], None] | None = None,
+) -> tuple[CanonicalPipelineRun, MepCanonicalStageTimings, MarketDailyRuntimeOutcome | None]:
+    if snapshot.daily_charge_context is not None:
+        return _build_daily_main_run(
+            snapshot=snapshot,
+            opportunities=opportunities,
+            planner_runtime=planner_runtime,
+            commitment_store=commitment_store,
+            control_change_allowed=control_change_allowed,
+            planning_checkpoint=planning_checkpoint,
+        )
     retained_commitment = next(iter(snapshot.active_plan_commitments), None)
     if retained_commitment is not None:
         completed_revision = _complete_acquisition_revision(
@@ -900,12 +931,8 @@ def build_mep_canonical_run(
         candidate_set_id=_id("mep-candidate-set", opportunities.opportunity_set_id),
         candidates=tuple(candidates),
         energy_paths=tuple(paths),
-        projected_balances=(
-            (comparable.projected_balance,) if comparable is not None else ()
-        ),
-        storage_requirements=(
-            (comparable.storage_requirement,) if comparable is not None else ()
-        ),
+        projected_balances=((comparable.projected_balance,) if comparable is not None else ()),
+        storage_requirements=((comparable.storage_requirement,) if comparable is not None else ()),
         derivation_status=("ready" if winner is not None else "blocked"),
         derivation_reason=(None if winner is not None else planner_outcome.reason),
     )
@@ -968,8 +995,7 @@ def build_mep_canonical_run(
             created_at=snapshot.captured_at,
             fallback_policy_id="mep-safe-fallback:v1",
         )
-        if canonical_evaluation is not None
-        and canonical_evaluation.winning_energy_path is not None
+        if canonical_evaluation is not None and canonical_evaluation.winning_energy_path is not None
         else None
     )
     admitted_plan_ids_by_scope = (
@@ -1012,9 +1038,7 @@ def build_mep_canonical_run(
                 plan_id=plan_id,
                 native=(None if selected_prefix_composed else native_winner),
                 market=(None if selected_prefix_composed else market_winner),
-                projected_result=(
-                    selected_projected_result if selected_prefix_composed else None
-                ),
+                projected_result=(selected_projected_result if selected_prefix_composed else None),
                 candidate_family=(
                     "market_route"
                     if market_winner is not None
@@ -1032,6 +1056,43 @@ def build_mep_canonical_run(
             )
     execution_plan_builder_ms = round((perf_counter() - stage_started) * 1000.0, 3)
 
+    run, timings = _finish_mep_run(
+        snapshot=snapshot,
+        opportunities=opportunities,
+        candidate_set=candidate_set,
+        outcomes=outcomes,
+        evaluation=evaluation,
+        execution_plan_set=execution_plan_set,
+        winning_path=winning_path,
+        commitment_store=commitment_store,
+        control_change_allowed=control_change_allowed,
+        legacy_revisions=True,
+        candidate_engine_ms=candidate_engine_ms,
+        evaluation_engine_ms=evaluation_engine_ms,
+        execution_plan_builder_ms=execution_plan_builder_ms,
+    )
+    return run, timings, planner_outcome
+
+
+def _finish_mep_run(
+    *,
+    snapshot: PlanningInputSnapshot,
+    opportunities: OpportunitySet,
+    candidate_set: CandidateSet,
+    outcomes: CandidateOutcomeSet,
+    evaluation: EvaluationRecord,
+    execution_plan_set: ExecutionPlanSet,
+    winning_path: EnergyPath | None,
+    commitment_store: ActivePlanCommitmentStore | None,
+    control_change_allowed: bool,
+    legacy_revisions: bool,
+    nom_fallback: bool = False,
+    candidate_engine_ms: float,
+    evaluation_engine_ms: float,
+    execution_plan_builder_ms: float,
+) -> tuple[CanonicalPipelineRun, MepCanonicalStageTimings]:
+    """Shared execution boundary; daily ownership never uses legacy PV revisions."""
+    plans = list(execution_plan_set.plans)
     stage_started = perf_counter()
     execution_record = ExecutionRecord(
         run_id=snapshot.run_id,
@@ -1039,7 +1100,11 @@ def build_mep_canonical_run(
         execution_record_id=_id("mep-execution", execution_plan_set.plan_set_id),
         plan_set_id=execution_plan_set.plan_set_id,
         status=(
-            "live_plan_ready"
+            "live_fallback_ready"
+            if nom_fallback and control_change_allowed
+            else "observer_fallback_ready"
+            if nom_fallback
+            else "live_plan_ready"
             if plans and control_change_allowed
             else "observer_only_plan_ready"
             if plans
@@ -1059,6 +1124,8 @@ def build_mep_canonical_run(
         ),
         None,
     )
+    if nom_fallback:
+        due_segment = None
     due_path_segment = next(
         (
             item
@@ -1071,8 +1138,8 @@ def build_mep_canonical_run(
     provenance = snapshot.storage_mode_control_provenance
     blockers: list[str] = []
     pv_charge_progress = None
-    if due_segment is not None:
-        if mode_evidence is None:
+    if due_segment is not None or nom_fallback:
+        if mode_evidence is None or mode_evidence.current_vendor_mode is None:
             blockers.append("storage_mode_capability_evidence_unavailable")
         if (
             snapshot.bms_calibration_evidence is not None
@@ -1083,27 +1150,28 @@ def build_mep_canonical_run(
             blockers.append("manual_override_provenance_unverified")
         elif provenance.manual_override_active:
             blockers.append("manual_override_active")
-        if winning_path is not None and due_path_segment is not None:
+        if legacy_revisions and winning_path is not None and due_path_segment is not None:
             pv_charge_progress = _pv_charge_progress_evidence(
                 snapshot=snapshot,
                 path=winning_path,
                 due_segment=due_path_segment,
             )
-        if (
-            pv_charge_progress is not None
-            and pv_charge_progress.decision == "defer_grid_charge"
-        ):
+        if pv_charge_progress is not None and pv_charge_progress.decision == "defer_grid_charge":
             blockers.append("measured_pv_progress_covers_grid_charge")
         if not control_change_allowed:
             blockers.append("observer_only_authority")
-    request_ready = due_segment is not None and blockers in ([], ["observer_only_authority"])
+    request_ready = (due_segment is not None or nom_fallback) and blockers in (
+        [],
+        ["observer_only_authority"],
+    )
     measured_progress_deferred = blockers == ["measured_pv_progress_covers_grid_charge"]
     request_id = (
         _id(
             "mep-primitive-request",
-            f"{execution_record.execution_record_id}|{due_segment.segment_id}",
+            f"{execution_record.execution_record_id}|"
+            f"{due_segment.segment_id if due_segment is not None else 'guarded-nom'}",
         )
-        if request_ready and due_segment is not None
+        if request_ready
         else None
     )
     primitive_boundary = ExecutionPrimitiveBoundary(
@@ -1119,10 +1187,16 @@ def build_mep_canonical_run(
             else "execution_deferred"
             if measured_progress_deferred
             else "dry_run_blocked"
-            if due_segment is not None
+            if due_segment is not None or nom_fallback
             else "not_emitted"
         ),
-        planned_primitive=(due_segment.primitive if due_segment is not None else None),
+        planned_primitive=(
+            ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+            if nom_fallback
+            else due_segment.primitive
+            if due_segment is not None
+            else None
+        ),
         mapping_status=("pending_adapter" if request_id is not None else "not_requested"),
         source_entity_id=(mode_evidence.source_entity_id if mode_evidence is not None else None),
         current_vendor_mode=(
@@ -1190,5 +1264,468 @@ def build_mep_canonical_run(
             device_adapter_ms=device_adapter_ms,
             vendor_result_ms=vendor_result_ms,
         ),
-        planner_outcome,
     )
+
+
+def _build_daily_main_run(
+    *,
+    snapshot: PlanningInputSnapshot,
+    opportunities: OpportunitySet,
+    planner_runtime: MarketDailyPlannerRuntime,
+    commitment_store: ActivePlanCommitmentStore | None,
+    control_change_allowed: bool,
+    planning_checkpoint: Callable[[], None] | None = None,
+) -> tuple[CanonicalPipelineRun, MepCanonicalStageTimings, None]:
+    """Select only an unbound daily goal; retain a bound route without repricing.
+
+    The live input always supplies daily context. Legacy snapshots without this
+    context remain readable by the historical replay entry point above.
+    """
+    context = snapshot.daily_charge_context
+    assert context is not None
+    started = perf_counter()
+    comparable = None
+    result = None
+    reason = "daily_main_route_retained_without_optimisation_trigger"
+    selected_window = None
+    optimisation_trigger: (
+        DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | DailyBridgeTrigger | None
+    ) = None
+    pv_comparison = None
+    bridge_assessment = None
+    input_shortfalls: tuple[DailyMainShortfallTrigger, ...] = ()
+    canonical_set = None
+    planning_blocked = False
+    optional_pv_review = False
+    retained = tuple(
+        p
+        for p in context.main_plans
+        if p.plan_id in context.active_main_plan_ids
+        and p.valid_from <= snapshot.captured_at < p.valid_until
+    )
+    try:
+        if context.status != "ready":
+            raise ValueError(context.reason or "daily_charge_recovery_blocked")
+        if commitment_store is None:
+            raise ValueError("daily_charge_store_unavailable")
+        if (
+            not snapshot.price_points
+            or snapshot.pv_energy_timeline is None
+            or (snapshot.household_load_forecast is None or not snapshot.current_storage_states)
+        ):
+            raise ValueError("daily_main_planning_data_unavailable")
+        pending = sorted(
+            (
+                a
+                for a in context.assignments
+                if a.route_plan_id is None
+                and a.completed_at is None
+                and a.ends_at > snapshot.captured_at
+            ),
+            key=lambda a: (a.delivery_date, a.execution_scope_id),
+        )
+        conversion, market_policy = planner_runtime.planning_configuration(snapshot)
+        adapter = IndependentDailyReferenceAdapter()
+        triggers = adapter.main_route_shortfalls(
+            snapshot=snapshot, conversion_model=conversion,
+        ) if context.active_main_plan_ids else ()
+        input_shortfalls = triggers
+        if triggers:
+            owners = {a.assignment_id: a for a in context.assignments}
+            optimisation_trigger = min(triggers, key=lambda t: (
+                owners[t.assignment_id].delivery_date, owners[t.assignment_id].execution_scope_id,
+                t.assignment_id,
+            ))
+            pending = [next(a for a in context.assignments
+                            if a.assignment_id == optimisation_trigger.assignment_id)]
+        if not triggers:
+            optional_pv_review = bool(retained) and not pending
+            for state in context.pv_comparison_states:
+                owner = next(
+                    a for a in context.assignments if a.assignment_id == state.assignment_id
+                )
+                if state.basis is None or owner.completed_at is not None or (
+                    owner.ends_at <= snapshot.captured_at
+                ):
+                    continue
+                pv_comparison = compare_daily_pv(
+                    state.basis, snapshot.pv_energy_timeline, at=snapshot.captured_at,
+                )
+                if pv_comparison.status != "complete" or (
+                    pv_comparison.evidence_id in state.assessed_evidence_ids
+                ):
+                    continue
+                surplus = adapter.pv_surplus_trigger(
+                    snapshot=snapshot, assignment=owner, comparison=pv_comparison,
+                    conversion_model=conversion,
+                )
+                if surplus is not None:
+                    optimisation_trigger = surplus
+                    pending = [owner]
+                    break
+                commitment_store.record_daily_pv_assessment(
+                    assignment_id=owner.assignment_id, basis_id=state.basis.basis_id,
+                    evidence_id=pv_comparison.evidence_id, outcome="no_route_change",
+                )
+        if not pending and optimisation_trigger is None and retained:
+            bridge_assessment = adapter.bridge_assessment(
+                snapshot=snapshot, conversion_model=conversion,
+            )
+            if bridge_assessment.trigger is not None:
+                optimisation_trigger = bridge_assessment.trigger
+                pending = [next(a for a in context.assignments
+                                if a.assignment_id == optimisation_trigger.assignment_id)]
+        if pending:
+            optional_pv_review = isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
+            if isinstance(optimisation_trigger, DailyBridgeTrigger):
+                windows = adapter.bridge_windows(
+                    snapshot=snapshot, trigger=optimisation_trigger, conversion_model=conversion,
+                )
+            else:
+                windows = adapter.main_charge_windows(
+                    snapshot=snapshot, assignment=pending[0], conversion_model=conversion,
+                    optimisation_trigger=optimisation_trigger,
+                )
+            if not windows.windows:
+                if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
+                    commitment_store.record_daily_pv_assessment(
+                        assignment_id=optimisation_trigger.assignment_id,
+                        basis_id=optimisation_trigger.basis_id,
+                        evidence_id=optimisation_trigger.comparison_evidence_id,
+                        outcome="no_admissible_grid_reduction",
+                    )
+                    reason = windows.reason or "pv_comparison_retains_main_route"
+                else:
+                    raise ValueError(windows.reason or "daily_main_no_feasible_window")
+            else:
+                tariffs = IndependentDailyTariffAdapter().build(
+                    snapshot, horizon_end=windows.windows[0].schedule.horizon_end,
+                )
+                comparable = produce_main_charge_portfolio(
+                    snapshot=snapshot, windows=windows, tariffs=tariffs,
+                    opportunity_ids=opportunities.opportunity_ids,
+                )
+        elif not retained:
+            raise ValueError("daily_main_active_plan_unavailable")
+    except (ValueError, OSError) as exc:
+        planning_blocked = not optional_pv_review
+        reason = str(exc) or exc.__class__.__name__
+    candidate_ms = round((perf_counter() - started) * 1000, 3)
+    started = perf_counter()
+    if comparable is not None:
+        # EUR/kWh-stored: deliberately no legacy EUR switching margin/incumbent.
+        result = EvaluationEngine().evaluate(
+            comparable.candidate_set,
+            comparable.strategy,
+            comparable.outcome_set,
+            created_at=snapshot.captured_at,
+        )
+        if result.winning_energy_path is not None:
+            selected_window = next(
+                s.window
+                for s in comparable.sources
+                if s.candidate_id == result.record.winning_candidate_id
+            )
+            reason = result.record.decisive_step or "daily_main_winner_selected"
+        else:
+            planning_blocked = not isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
+            reason = "daily_main_evaluation_has_no_winner"
+            if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
+                assert commitment_store is not None
+                try:
+                    commitment_store.record_daily_pv_assessment(
+                        assignment_id=optimisation_trigger.assignment_id,
+                        basis_id=optimisation_trigger.basis_id,
+                        evidence_id=optimisation_trigger.comparison_evidence_id,
+                        outcome="no_valid_grid_reduction_candidate",
+                    )
+                except (ValueError, OSError) as exc:
+                    reason = str(exc) or exc.__class__.__name__
+    evaluation_ms = round((perf_counter() - started) * 1000, 3)
+    started = perf_counter()
+    if selected_window is not None and result is not None:
+        assert commitment_store is not None
+        try:
+            if planning_checkpoint is not None:
+                planning_checkpoint()
+            proposed = ExecutionPlanBuilder().build(
+                result,
+                created_at=snapshot.captured_at,
+                fallback_policy_id="guarded-nom",
+            )
+            if len(proposed.plans) != 1:
+                raise ValueError("daily_main_requires_single_storage_scope")
+            selected_owner = next(a for a in context.assignments
+                                  if a.assignment_id == selected_window.assignment_id)
+            pv_basis = DailyPVComparisonBasis.capture(snapshot, selected_owner) if (
+                selected_owner.revision == 0
+            ) else None
+            commitment_store.bind_daily_main_plan(
+                plan=proposed.plans[0],
+                window=selected_window,
+                activate=True,
+                optimisation_trigger=optimisation_trigger,
+                pv_comparison_basis=pv_basis,
+                bridge_deficits=energy_deficits(
+                    selected_window.projection, selected_window.schedule,
+                    until=optimisation_trigger.next_starts_at,
+                    maximum_discharge_output_power_w=next(
+                        limit.maximum_discharge_output_power_w
+                        for limit in snapshot.storage_physical_limits
+                        if limit.execution_scope_id == selected_owner.execution_scope_id
+                    ),
+                ) if isinstance(optimisation_trigger, DailyBridgeTrigger) else (),
+            )
+            canonical_set = proposed
+        except (ValueError, OSError) as exc:
+            planning_blocked = not isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
+            reason = str(exc) or exc.__class__.__name__
+    if (
+        not planning_blocked
+        and canonical_set is None
+        and len(retained) == 1
+        and snapshot.market_user_rule is not None
+        and commitment_store is not None
+    ):
+        try:
+            incumbent = retained[0]
+            assigned = {b.assignment_id for b in commitment_store.load_market_plan_bindings()}
+            for day in sorted(context.assignments, key=lambda a: a.delivery_date):
+                if (
+                    day.execution_scope_id != incumbent.execution_scope_id
+                    or day.ends_at <= snapshot.captured_at
+                ):
+                    continue
+                market_day = commitment_store.ensure_market_daily_assignment(
+                    MarketDailyAssignment(
+                        snapshot.market_user_rule,
+                        day.execution_scope_id,
+                        day.delivery_date,
+                        day.timezone,
+                        snapshot.captured_at,
+                        snapshot.current_storage_states[0].usable_capacity_wh,
+                    )
+                )
+                if market_day.status != "pending" or market_day.assignment_id in assigned:
+                    continue
+                try:
+                    market = market_rule_portfolio(
+                        planning_checkpoint=planning_checkpoint,
+                        snapshot=snapshot,
+                        plan=incumbent,
+                        assignment=market_day,
+                        conversion=conversion,
+                        opportunity_ids=opportunities.opportunity_ids,
+                        wear_eur_per_export_kwh=market_policy.wear_eur_per_export_kwh,
+                        saldering_energy_tax_credit_enabled=market_policy.saldering_energy_tax_credit_enabled,
+                    )
+                    if not market.comparable.candidate_set.candidates:
+                        reason = "market_not_admitted:" + ",".join(market.reasons)
+                        continue
+                    market_result = EvaluationEngine().evaluate(
+                        market.comparable.candidate_set,
+                        market.comparable.strategy,
+                        market.comparable.outcome_set,
+                        created_at=snapshot.captured_at,
+                    )
+                    if market_result.winning_energy_path is None:
+                        reason = "market_evaluation_has_no_winner"
+                        continue
+                    market_plans = ExecutionPlanBuilder().build(
+                        market_result,
+                        created_at=snapshot.captured_at,
+                        fallback_policy_id="guarded-nom",
+                    )
+                    source = next(
+                        e
+                        for e in market.evidence
+                        if e.candidate_id == market_result.record.winning_candidate_id
+                    )
+                    market_plan = market_plans.plans[0]
+                    energy = dict(source.segment_energy)
+                    bound_parts = tuple(
+                        s for s in market_plan.segments if s.source_path_segment_id in energy
+                    )
+                    binding = MarketPlanBinding(
+                        market_day.assignment_id,
+                        market_day.execution_scope_id,
+                        market_plan.plan_id,
+                        market_plan.snapshot_id,
+                        tuple(s.segment_id for s in bound_parts),
+                        source.admission.expected_export_wh,
+                        tuple(energy[s.source_path_segment_id] for s in bound_parts),
+                        source.expected_battery_draw_wh,
+                    )
+                    if planning_checkpoint is not None:
+                        planning_checkpoint()
+                    if source.charge_window is not None:
+                        optimisation_trigger = source.charge_trigger
+                        commitment_store.bind_daily_main_plan(
+                            plan=market_plan,
+                            window=source.charge_window,
+                            activate=True,
+                            optimisation_trigger=source.charge_trigger,
+                            market_binding=binding,
+                            market_admission=source.admission,
+                        )
+                    else:
+                        commitment_store.bind_market_plan(
+                            plan=market_plan,
+                            previous_plan_id=incumbent.plan_id,
+                            binding=binding,
+                            admission=source.admission,
+                        )
+                    comparable, result, canonical_set = (
+                        market.comparable,
+                        market_result,
+                        market_plans,
+                    )
+                    reason = "user_market_rule_selected"
+                    break
+                except (ValueError, OSError) as exc:
+                    # A rejected optional user action cannot erase the charge plan.
+                    reason = "market_not_admitted:" + str(exc)
+        except (ValueError, OSError) as exc:
+            reason = "market_not_admitted:" + str(exc)
+    candidate_set_id = _id("daily-main-candidates", snapshot.snapshot_id)
+    candidates = tuple(
+        Candidate(
+            run_id=snapshot.run_id,
+            snapshot_id=snapshot.snapshot_id,
+            candidate_id=c.candidate_id,
+            energy_path_id=c.energy_path_id,
+            family=c.family.value,
+            pv_forecast_basis="mean-lower-central",
+        )
+        for c in (comparable.candidate_set.candidates if comparable is not None else ())
+    )
+    paths = tuple(
+        EnergyPath(
+            run_id=snapshot.run_id,
+            snapshot_id=snapshot.snapshot_id,
+            path_id=p.path_id,
+            family=p.family.value,
+            segment_ids=tuple(s.segment_id for s in p.segments),
+            segments=p.segments,
+            projected_states=p.projected_states,
+            capability_confidence=p.confidence,
+        )
+        for p in (comparable.candidate_set.energy_paths if comparable is not None else ())
+    )
+    evaluation_id = (
+        result.record.evaluation_id
+        if result is not None
+        else _id("daily-main-observation", snapshot.snapshot_id)
+    )
+    if canonical_set is not None:
+        plan_set = project_execution_plan_set(
+            canonical_set,
+            run_id=snapshot.run_id,
+            captured_at=snapshot.captured_at,
+            observer_only=not control_change_allowed,
+        )
+    else:
+        # The observation has fresh lineage; the saved plan keeps its original
+        # Evaluation and execution identities. No fictitious re-evaluation.
+        plans = tuple(
+            _project_plan(
+                p,
+                captured_at=snapshot.captured_at,
+                observer_only=not control_change_allowed,
+                admitted_plan_id=p.plan_id,
+            )
+            for p in retained
+        )
+        plan_set = ExecutionPlanSet(
+            run_id=snapshot.run_id,
+            snapshot_id=snapshot.snapshot_id,
+            plan_set_id=_id("daily-main-observed-plans", snapshot.snapshot_id),
+            evaluation_id=evaluation_id,
+            winning_energy_path_id=None,
+            plan_ids=tuple(p.plan_id for p in plans),
+            plans=plans,
+        )
+    winner_id = result.record.winning_candidate_id if result is not None else None
+    winning_path = next(
+        (
+            p
+            for p in paths
+            if result is not None
+            and result.winning_energy_path is not None
+            and p.path_id == result.winning_energy_path.path_id
+        ),
+        None,
+    )
+    candidate_set = CandidateSet(
+        run_id=snapshot.run_id,
+        snapshot_id=snapshot.snapshot_id,
+        candidate_set_id=candidate_set_id,
+        candidates=candidates,
+        energy_paths=paths,
+        derivation_status="ready"
+        if canonical_set is not None
+        else "retained"
+        if retained
+        else "blocked",
+        derivation_reason=reason,
+    )
+    outcomes = CandidateOutcomeSet(
+        run_id=snapshot.run_id,
+        snapshot_id=snapshot.snapshot_id,
+        candidate_set_id=candidate_set_id,
+        outcome_set_id=_id("daily-main-outcomes", candidate_set_id),
+        candidate_ids=tuple(c.candidate_id for c in candidates),
+        canonical_outcomes=comparable.outcome_set.outcomes if comparable is not None else (),
+    )
+    evaluation = EvaluationRecord(
+        run_id=snapshot.run_id,
+        snapshot_id=snapshot.snapshot_id,
+        evaluation_id=evaluation_id,
+        candidate_set_id=candidate_set_id,
+        winning_candidate_id=winner_id,
+        winning_energy_path_id=winning_path.path_id if winning_path is not None else None,
+        reason=reason,
+        daily_main_shortfall=(optimisation_trigger if isinstance(
+            optimisation_trigger, DailyMainShortfallTrigger,
+        ) else None),
+        daily_bridge=bridge_assessment,
+        daily_main_input_shortfalls=input_shortfalls,
+        daily_pv_comparison=pv_comparison,
+        daily_pv_surplus_trigger=(optimisation_trigger if isinstance(
+            optimisation_trigger, DailyMainPVSurplusTrigger,
+        ) else None),
+        status="fallback_active"
+        if planning_blocked
+        else "winner_selected"
+        if canonical_set is not None
+        else "plan_retained"
+        if retained
+        else "fallback_active",
+        evaluated_candidate_ids=result.record.evaluated_candidate_ids if result is not None else (),
+        decisive_step=result.record.decisive_step if result is not None else None,
+        commitment_decision="triggered_revision"
+        if canonical_set is not None and optimisation_trigger is not None
+        else "initial_binding"
+        if canonical_set is not None
+        else "retained"
+        if retained
+        else "not_applicable",
+    )
+    builder_ms = round((perf_counter() - started) * 1000, 3)
+    run, timings = _finish_mep_run(
+        snapshot=snapshot,
+        opportunities=opportunities,
+        candidate_set=candidate_set,
+        outcomes=outcomes,
+        evaluation=evaluation,
+        execution_plan_set=plan_set,
+        winning_path=winning_path,
+        commitment_store=commitment_store,
+        control_change_allowed=control_change_allowed,
+        legacy_revisions=False,
+        nom_fallback=planning_blocked,
+        candidate_engine_ms=candidate_ms,
+        evaluation_engine_ms=evaluation_ms,
+        execution_plan_builder_ms=builder_ms,
+    )
+    return run, timings, None

@@ -44,6 +44,8 @@ def _entity_observations(bundle: PlanningInputBundle) -> list[dict[str, object]]
                 "unit": evidence.raw_unit,
                 "availability": evidence.availability,
                 "observed_at": evidence.observed_at,
+                **({"state_read_at": evidence.state_read_at}
+                   if evidence.state_read_at is not None else {}),
                 "last_changed_at": evidence.last_changed_at,
                 "last_updated_at": evidence.last_updated_at,
                 "error": evidence.error,

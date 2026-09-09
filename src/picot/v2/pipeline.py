@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -13,6 +14,10 @@ from picot.v2.market_daily_runtime import MarketDailyPlannerRuntime
 from picot.v2.mep_canonical_pipeline import build_mep_canonical_run
 from picot.v2.opportunity_engine import OpportunityEngine, PriceOpportunityConfig
 from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
+
+
+class PlanningInputSuperseded(RuntimeError):
+    """Observed execution changed ownership while candidates were calculated."""
 
 
 def _id(prefix: str, seed: str) -> str:
@@ -77,12 +82,14 @@ class CanonicalPipeline:
         captured_at: datetime | None = None,
         price_opportunity_config: PriceOpportunityConfig | None = None,
         control_change_allowed: bool = False,
+        planning_checkpoint: Callable[[], None] | None = None,
     ) -> CanonicalPipelineRun:
         run, _ = self._execute(
             planning_input=planning_input,
             captured_at=captured_at,
             price_opportunity_config=price_opportunity_config,
             control_change_allowed=control_change_allowed,
+            planning_checkpoint=planning_checkpoint,
         )
         return run
 
@@ -93,12 +100,14 @@ class CanonicalPipeline:
         captured_at: datetime | None = None,
         price_opportunity_config: PriceOpportunityConfig | None = None,
         control_change_allowed: bool = False,
+        planning_checkpoint: Callable[[], None] | None = None,
     ) -> tuple[CanonicalPipelineRun, PipelineStageTimings]:
         return self._execute(
             planning_input=planning_input,
             captured_at=captured_at,
             price_opportunity_config=price_opportunity_config,
             control_change_allowed=control_change_allowed,
+            planning_checkpoint=planning_checkpoint,
         )
 
     def _execute(
@@ -108,6 +117,7 @@ class CanonicalPipeline:
         captured_at: datetime | None,
         price_opportunity_config: PriceOpportunityConfig | None,
         control_change_allowed: bool,
+        planning_checkpoint: Callable[[], None] | None,
     ) -> tuple[CanonicalPipelineRun, PipelineStageTimings]:
         total_started = perf_counter()
         snapshot = planning_input or _bootstrap_snapshot(captured_at)
@@ -123,6 +133,7 @@ class CanonicalPipeline:
             planner_runtime=self._market_daily_planner_runtime,
             commitment_store=self._commitment_store,
             control_change_allowed=control_change_allowed,
+            planning_checkpoint=planning_checkpoint,
             switching_margin_eur=self._plan_switching_margin_eur,
         )
         return run, PipelineStageTimings(

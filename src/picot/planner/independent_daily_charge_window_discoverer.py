@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
+from hashlib import sha256
+from math import isfinite
 
 from picot.domain.current_storage_state import CurrentStorageState
 from picot.domain.daily_reference_charge_window import (
+    DailyMainChargeSegment,
+    DailyMainChargeWindow,
+    DailyMainChargeWindowSet,
     DailyReferenceChargeWindow,
     DailyReferenceChargeWindowScenario,
     DailyReferenceChargeWindowSet,
@@ -16,6 +22,7 @@ from picot.domain.daily_reference_intent import (
     DailyStorageIntent,
 )
 from picot.domain.daily_reference_simulation import (
+    DailyPlanningProjection,
     DailyReferenceSimulationSet,
     DailyReferenceTrajectory,
 )
@@ -25,6 +32,8 @@ from picot.planner.independent_daily_intent_simulator import (
     IndependentDailyIntentSimulator,
 )
 from picot.planner.independent_daily_simulator import ScenarioTimeline
+from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
+from picot.v2.daily_pv_comparison import DailyMainPVSurplusTrigger
 
 METHOD_VERSION = "independent-daily-charge-window-discoverer:v5"
 BASELINE_INTENT = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
@@ -36,6 +45,253 @@ CHARGE_INTENTS = (
 
 class IndependentDailyChargeWindowDiscoverer:
     """Use the simulator itself to derive sufficient minimal charge duration."""
+
+    def discover_main_charge(
+        self,
+        *,
+        snapshot_id: str,
+        assignment: DailyChargeAssignment,
+        household: HouseholdLoadForecast,
+        pv_scenarios: tuple[ScenarioTimeline, ...],
+        storage_state: CurrentStorageState,
+        conversion_model: StorageConversionModel,
+        minimum_storage_energy_wh: float,
+        target_storage_energy_wh: float,
+        maximum_charge_input_power_w: float,
+        maximum_discharge_output_power_w: float,
+        retained_schedule: DailyReferenceIntentSchedule | None = None,
+        optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None,
+        protected_intervals: tuple[tuple[datetime, datetime], ...] = (),
+    ) -> DailyMainChargeWindowSet:
+        """Discover the first main route under an existing daily identity.
+
+        Candidate ownership only: all feasible market starts remain unranked.
+        No prices, score, legacy deadline, micro-top-up suppression or trade
+        recovery policy selects a winner here. The retained complete schedule
+        is simulated unchanged outside this assignment's main segments.
+        """
+        if assignment.execution_scope_id != storage_state.execution_scope_id:
+            raise ValueError("main assignment and storage scope must match")
+        count = 0
+
+        def result(
+            windows: tuple[DailyMainChargeWindow, ...], status: str, reason: str
+        ) -> DailyMainChargeWindowSet:
+            return DailyMainChargeWindowSet(
+                assignment.assignment_id, snapshot_id, windows, status, reason, count
+            )
+
+        if assignment.completed_at is not None:
+            return result((), "completed", "observed_main_goal_already_completed")
+        if optimisation_trigger is not None:
+            optimisation_trigger.validate(assignment, snapshot_id, household.horizon_start)
+        elif assignment.revision:
+            raise ValueError(
+                "existing main route requires explicit optimisation, not first discovery"
+            )
+        if not all(
+            isfinite(x)
+            for x in (
+                target_storage_energy_wh,
+                minimum_storage_energy_wh,
+                maximum_charge_input_power_w,
+                maximum_discharge_output_power_w,
+                storage_state.usable_capacity_wh,
+            )
+        ):
+            raise ValueError("main charge physical limits must be finite")
+        if target_storage_energy_wh != storage_state.usable_capacity_wh:
+            return result((), "unreachable", "configured_maximum_conflicts_with_daily_100_percent")
+        baseline = retained_schedule or DailyReferenceIntentSchedule(
+            schedule_id=f"main-charge:{snapshot_id}:retained-baseline",
+            snapshot_id=snapshot_id,
+            horizon_start=household.horizon_start,
+            horizon_end=household.horizon_end,
+            intervals=tuple(
+                DailyReferenceIntentInterval(i.starts_at, i.ends_at, BASELINE_INTENT)
+                for i in household.intervals
+            ),
+            method_version="daily-main-charge:v1",
+        )
+        simulator = IndependentDailyIntentSimulator()
+
+        def simulate(schedule: DailyReferenceIntentSchedule) -> DailyPlanningProjection:
+            nonlocal count
+            count += 1
+            return simulator.simulate_planning_basis(
+                snapshot_id=snapshot_id,
+                household=household,
+                pv_scenarios=pv_scenarios,
+                storage_state=storage_state,
+                conversion_model=conversion_model,
+                intent_schedule=schedule,
+                minimum_storage_energy_wh=minimum_storage_energy_wh,
+                target_storage_energy_wh=target_storage_energy_wh,
+                maximum_charge_input_power_w=maximum_charge_input_power_w,
+                maximum_discharge_output_power_w=maximum_discharge_output_power_w,
+            )
+
+        reference = simulate(baseline)
+        indexes = tuple(
+            i
+            for i, interval in enumerate(household.intervals)
+            if assignment.starts_at <= interval.starts_at
+            and interval.ends_at <= assignment.ends_at
+            and baseline.intervals[i].intent is not DailyStorageIntent.STORAGE_EXPORT
+            and not any(
+                start < interval.ends_at and interval.starts_at < end
+                for start, end in protected_intervals
+            )
+        )
+        if not indexes:
+            return result((), "unreachable", "no_remaining_delivery_day_intervals")
+        pv_indexes = tuple(
+            i
+            for i in indexes
+            if reference.basis_timeline.intervals[i].energy_wh
+            > household.intervals[i].expected_energy_wh
+        )
+        windows: dict[str, DailyMainChargeWindow] = {}
+
+        def reached(
+            projection: DailyPlanningProjection, owned: set[int]
+        ) -> tuple[int, datetime] | None:
+            for i in sorted(owned):
+                interval = projection.intervals[i]
+                # Numerical conservation tolerance, not a configurable SOC goal.
+                if interval.storage_energy_at_start_wh + 1e-6 >= target_storage_energy_wh:
+                    return i, interval.starts_at
+                if interval.storage_energy_at_end_wh + 1e-6 >= target_storage_energy_wh:
+                    return i, interval.ends_at
+            return None
+
+        def propose(owned: dict[int, DailyStorageIntent]) -> DailyReferenceIntentSchedule:
+            intervals = tuple(
+                replace(interval, intent=owned[i]) if i in owned else interval
+                for i, interval in enumerate(baseline.intervals)
+            )
+            digest = sha256(repr((assignment.assignment_id, intervals)).encode()).hexdigest()[:16]
+            return replace(
+                baseline,
+                schedule_id=f"main-charge:{snapshot_id}:{digest}",
+                intervals=intervals,
+                method_version="daily-main-charge:v1",
+            )
+
+        def admit(
+            owned: dict[int, DailyStorageIntent],
+            family: str,
+            projection: DailyPlanningProjection | None = None,
+        ) -> bool:
+            if projection is None:
+                projection = simulate(propose(owned))
+            completion = reached(projection, set(owned))
+            if completion is None:
+                return False
+            last, _ = completion
+            owned = {i: intent for i, intent in owned.items() if i <= last}
+            schedule = propose(owned)
+            if schedule.schedule_id in windows:
+                return True
+            projection = simulate(schedule)
+            completion = reached(projection, set(owned))
+            if completion is None:
+                raise ValueError("trimmed main route lost its full-storage evidence")
+            segments: list[DailyMainChargeSegment] = []
+            for i, intent in sorted(owned.items()):
+                interval = schedule.intervals[i]
+                if (
+                    segments
+                    and segments[-1].ends_at == interval.starts_at
+                    and (segments[-1].intent is intent)
+                ):
+                    segments[-1] = replace(segments[-1], ends_at=interval.ends_at)
+                else:
+                    segments.append(
+                        DailyMainChargeSegment(
+                            f"{schedule.schedule_id}:main:{i}",
+                            interval.starts_at,
+                            interval.ends_at,
+                            intent,
+                        )
+                    )
+            windows[schedule.schedule_id] = DailyMainChargeWindow(
+                assignment.assignment_id,
+                family,
+                schedule,
+                tuple(segments),
+                projection,
+                completion[1],
+                target_storage_energy_wh,
+            )
+            return True
+
+        # A full battery at the first eligible main segment counts without a
+        # forced discharge/recharge. Midnight outside the main segment does not.
+        first = indexes[0]
+        if (
+            household.intervals[first].starts_at == household.horizon_start
+            and storage_state.current_stored_energy_wh >= target_storage_energy_wh
+        ):
+            admit({first: DailyStorageIntent.NOM}, "already_full")
+            return result(tuple(windows.values()), "discovered", "full_at_main_segment_start")
+        for start in pv_indexes:
+            if start != 0 and not self._is_market_quarter(household.intervals[start].starts_at):
+                continue
+            admit(
+                {i: DailyStorageIntent.NOM for i in indexes if start <= i <= pv_indexes[-1]}, "pv"
+            )
+        if windows:
+            return result(tuple(windows.values()), "discovered", "pv_only_covers_main_goal")
+
+        # Keep PV capture as a base, and let explicit grid charging take
+        # precedence inside its own interval, including during the PV window.
+        pv_owned = {
+            i: DailyStorageIntent.NOM
+            for i in indexes
+            if pv_indexes and pv_indexes[0] <= i <= pv_indexes[-1]
+        }
+        for start in indexes:
+            if start != 0 and not self._is_market_quarter(household.intervals[start].starts_at):
+                continue
+
+            def owned_until(end: int, grid_start: int = start) -> dict[int, DailyStorageIntent]:
+                return {
+                    **pv_owned,
+                    **{
+                        i: DailyStorageIntent.GRID_REQUIREMENT
+                        for i in indexes
+                        if grid_start <= i <= end
+                    },
+                }
+
+            last = indexes[-1]
+            owned = owned_until(last)
+            projection = simulate(propose(owned))
+            if not pv_owned:
+                # Without future PV charging, the first target crossing is
+                # exactly the shortest grid prefix. Retain every start.
+                admit(owned, "grid", projection)
+                continue
+            # With PV, an earlier grid stop can still reach full later through
+            # NOM. Preserve that original minimal-grid search and its result.
+            if reached(projection, set(owned)) is None:
+                continue
+            low, high = start, last
+            while low < high:
+                middle = (low + high) // 2
+                trial = owned_until(middle)
+                if reached(simulate(propose(trial)), set(trial)) is not None:
+                    high = middle
+                else:
+                    low = middle + 1
+            admit(owned_until(low), "hybrid")
+
+        return result(
+            tuple(windows.values()),
+            "discovered" if windows else "unreachable",
+            "residual_grid_windows" if windows else "insufficient_remaining_charge_capacity",
+        )
 
     def discover(
         self,

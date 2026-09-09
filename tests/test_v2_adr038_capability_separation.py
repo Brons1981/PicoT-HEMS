@@ -14,6 +14,8 @@ def test_adr038_current_storage_state_does_not_duplicate_capability_limits() -> 
         "current_soc",
         "usable_capacity_wh",
         "measured_at",
+        "state_read_at",
+        "state_valid_since",
         "confidence",
         "evidence_ids",
     }
@@ -29,4 +31,7 @@ def test_adr038_current_storage_state_does_not_duplicate_capability_limits() -> 
         evidence_ids=("zendure-soc",),
     )
 
+    assert state.state_read_at is None
+    assert state.state_valid_since is None
     assert not hasattr(state, "maximum_charge_power_w")
+    assert not hasattr(state, "maximum_discharge_power_w")

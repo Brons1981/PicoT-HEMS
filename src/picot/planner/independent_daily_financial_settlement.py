@@ -6,11 +6,13 @@ from dataclasses import replace
 from datetime import datetime
 
 from picot.domain.daily_reference_financial import (
+    DailyPlanningFinancialResult,
     DailyReferenceFinancialInterval,
     DailyReferenceFinancialPath,
     DailyReferenceFinancialSet,
 )
 from picot.domain.daily_reference_simulation import (
+    DailyPlanningProjection,
     DailyReferenceInterval,
     DailyReferenceSimulationSet,
     DailyReferenceTrajectory,
@@ -70,59 +72,8 @@ class IndependentDailyFinancialSettlement:
             or trajectory.horizon_end != tariffs.horizon_end
         ):
             raise ValueError("Daily tariff must cover the exact trajectory horizon.")
-        physical_segments: list[
-            tuple[DailyReferenceInterval, DailyReferenceTariffInterval]
-        ] = []
-        for physical in trajectory.intervals:
-            physical_tariffs = tariffs_by_physical_interval.get(
-                (physical.starts_at, physical.ends_at)
-            )
-            if not physical_tariffs:
-                raise ValueError(
-                    "Daily settlement requires complete interval tariff coverage."
-                )
-            physical_segments.extend(
-                (
-                    self._physical_segment(
-                        physical,
-                        starts_at=max(physical.starts_at, tariff.starts_at),
-                        ends_at=min(physical.ends_at, tariff.ends_at),
-                    ),
-                    tariff,
-                )
-                for tariff in physical_tariffs
-            )
-        saldering_import_wh = sum(
-            max(0.0, self._grid_import_wh(physical) - self._grid_export_wh(physical))
-            for physical, tariff in physical_segments
-            if tariff.saldering_tax_eur_per_kwh > 0.0
-        )
-        saldering_export_wh = sum(
-            max(0.0, self._grid_export_wh(physical) - self._grid_import_wh(physical))
-            for physical, tariff in physical_segments
-            if tariff.saldering_tax_eur_per_kwh > 0.0
-        )
-        remaining_saldering_wh = min(saldering_import_wh, saldering_export_wh)
-        settled: list[DailyReferenceFinancialInterval] = []
-        for physical, tariff in physical_segments:
-            interval_export_wh = max(
-                0.0,
-                self._grid_export_wh(physical) - self._grid_import_wh(physical),
-            )
-            interval_saldering_wh = (
-                min(remaining_saldering_wh, interval_export_wh)
-                if tariff.saldering_tax_eur_per_kwh > 0.0
-                else 0.0
-            )
-            settled.append(
-                self._settle_interval(
-                    physical,
-                    tariff,
-                    saldering_export_wh=interval_saldering_wh,
-                )
-            )
-            remaining_saldering_wh -= interval_saldering_wh
-        intervals = tuple(settled)
+        intervals = self._settle_intervals(
+            trajectory.intervals, tariffs_by_physical_interval=tariffs_by_physical_interval)
         duration_hours = tuple(
             (item.ends_at - item.starts_at).total_seconds() / 3600.0
             for item in tariffs.intervals
@@ -178,6 +129,134 @@ class IndependentDailyFinancialSettlement:
             evidence_ids=evidence_ids,
             method_version=METHOD_VERSION,
         )
+
+    def settle_planning_basis(
+        self,
+        *,
+        projection: DailyPlanningProjection,
+        tariffs: DailyReferenceTariffSchedule,
+        main_intervals: tuple[tuple[datetime, datetime], ...] | None = None,
+    ) -> DailyPlanningFinancialResult:
+        """Use the same interval settlement and fiscal allocation as scenarios."""
+        if projection.snapshot_id != tariffs.snapshot_id:
+            raise ValueError("planning tariff and projection snapshots must match")
+        if (
+            projection.basis_timeline.horizon_start != tariffs.horizon_start
+            or projection.basis_timeline.horizon_end != tariffs.horizon_end
+        ):
+            raise ValueError("planning tariff must cover the exact projection horizon")
+        indexed = self._index_tariffs(projection.intervals, tariffs)
+        intervals = self._settle_intervals(
+            projection.intervals, tariffs_by_physical_interval=indexed
+        )
+        owned = (
+            main_intervals
+            if main_intervals is not None
+            else ((projection.basis_timeline.horizon_start, projection.basis_timeline.horizon_end),)
+        )
+        boundaries = {i.starts_at for i in projection.intervals} | {
+            i.ends_at for i in projection.intervals
+        }
+        if any(
+            start not in boundaries or end not in boundaries or start >= end for start, end in owned
+        ):
+            raise ValueError("main acquisition intervals must align with the physical projection")
+        if any(a[1] > b[0] for a, b in zip(owned, owned[1:], strict=False)):
+            raise ValueError("main acquisition intervals must be ordered and non-overlapping")
+        input_wh = stored_wh = cost_eur = 0.0
+        for physical in projection.intervals:
+            if not any(
+                start <= physical.starts_at and physical.ends_at <= end for start, end in owned
+            ):
+                continue
+            input_wh += physical.pv_to_storage_input_wh + physical.grid_to_storage_input_wh
+            stored_wh += (
+                physical.pv_to_storage_input_wh
+                + physical.grid_to_storage_input_wh
+                - physical.storage_charge_loss_wh
+            )
+            for tariff in indexed[(physical.starts_at, physical.ends_at)]:
+                part = self._physical_segment(
+                    physical,
+                    starts_at=max(physical.starts_at, tariff.starts_at),
+                    ends_at=min(physical.ends_at, tariff.ends_at),
+                )
+                # PV's published export value is its acquisition opportunity
+                # cost. Conversion loss is accounted once in stored Wh.
+                cost_eur += (
+                    part.grid_to_storage_input_wh * tariff.import_eur_per_kwh
+                    + part.pv_to_storage_input_wh * tariff.export_eur_per_kwh
+                ) / 1000
+        return DailyPlanningFinancialResult(
+            projection.snapshot_id,
+            projection.intent_schedule_id,
+            projection.basis_timeline.timeline_id,
+            tariffs.schedule_id,
+            intervals,
+            METHOD_VERSION,
+            input_wh,
+            stored_wh,
+            cost_eur,
+        )
+
+    def _settle_intervals(
+        self,
+        physical_intervals: tuple[DailyReferenceInterval, ...],
+        *,
+        tariffs_by_physical_interval: dict[
+            tuple[datetime, datetime], tuple[DailyReferenceTariffInterval, ...]
+        ],
+    ) -> tuple[DailyReferenceFinancialInterval, ...]:
+        physical_segments: list[tuple[DailyReferenceInterval, DailyReferenceTariffInterval]] = []
+        for physical in physical_intervals:
+            physical_tariffs = tariffs_by_physical_interval.get(
+                (physical.starts_at, physical.ends_at)
+            )
+            if not physical_tariffs:
+                raise ValueError("Daily settlement requires complete interval tariff coverage.")
+            physical_segments.extend(
+                (
+                    self._physical_segment(
+                        physical,
+                        starts_at=max(physical.starts_at, tariff.starts_at),
+                        ends_at=min(physical.ends_at, tariff.ends_at),
+                    ),
+                    tariff,
+                )
+                for tariff in physical_tariffs
+            )
+        saldering_import_wh = sum(
+            max(0.0, self._grid_import_wh(physical) - self._grid_export_wh(physical))
+            for physical, tariff in physical_segments
+            if tariff.saldering_tax_eur_per_kwh > 0.0
+        )
+        saldering_export_wh = sum(
+            max(0.0, self._grid_export_wh(physical) - self._grid_import_wh(physical))
+            for physical, tariff in physical_segments
+            if tariff.saldering_tax_eur_per_kwh > 0.0
+        )
+        remaining_saldering_wh = min(saldering_import_wh, saldering_export_wh)
+        settled: list[DailyReferenceFinancialInterval] = []
+        for physical, tariff in physical_segments:
+            interval_export_wh = max(
+                0.0,
+                self._grid_export_wh(physical) - self._grid_import_wh(physical),
+            )
+            interval_saldering_wh = (
+                min(remaining_saldering_wh, interval_export_wh)
+                if tariff.saldering_tax_eur_per_kwh > 0.0
+                else 0.0
+            )
+            settled.append(
+                self._settle_interval(
+                    physical,
+                    tariff,
+                    saldering_export_wh=interval_saldering_wh,
+                )
+            )
+            remaining_saldering_wh -= interval_saldering_wh
+        intervals = tuple(settled)
+        return intervals
 
     @staticmethod
     def _index_tariffs(

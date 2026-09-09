@@ -98,6 +98,7 @@ class SourceEvidence:
     error: str | None = None
     price_points: tuple[PriceForecastPoint, ...] = ()
     pv_energy_intervals: tuple[PVEnergyTimelineInterval, ...] = ()
+    state_read_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,6 +363,8 @@ def _current_storage_states_from_evidence(
                 measured_at=item.observed_at,
                 confidence=1.0,
                 evidence_ids=(item.evidence_id,),
+                state_read_at=item.state_read_at if item.last_changed_at is not None else None,
+                state_valid_since=item.last_changed_at if item.state_read_at is not None else None,
             )
         )
     return tuple(states)
@@ -733,6 +736,8 @@ class HomeAssistantStateReader:
             raw_state=raw_state,
             raw_unit=str(unit) if unit is not None else None,
             observed_at=_parse_datetime(payload.get("last_updated")),
+            state_read_at=datetime.now(UTC) if not unavailable
+            and binding.category == "zendure" and binding.semantic_role == "storage_soc" else None,
             availability="unavailable" if unavailable else "available",
             mapping_version=mapping_version,
             last_changed_at=_parse_datetime(payload.get("last_changed")),

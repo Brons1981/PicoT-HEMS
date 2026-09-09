@@ -12,8 +12,12 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from math import isfinite
 from pathlib import Path
 from threading import Lock
+from typing import cast
+
+from picot.domain.market_user_rule import MarketUserRule
 
 SCHEMA_VERSION = 2
 METHOD_VERSION = "canonical-user-rules:v2"
@@ -27,6 +31,9 @@ class UserRuleProfile:
     maximum_trading_soc_percent: float
     saldering_energy_tax_credit_enabled: bool
     source: str
+    market_minimum_spread_eur_per_kwh: float | None = None
+    market_recovery_required: bool = False
+    market_minimum_net_margin_eur_per_kwh: float = 0.05
 
     def __post_init__(self) -> None:
         if self.revision < 1:
@@ -37,6 +44,33 @@ class UserRuleProfile:
             raise ValueError("Maximum trading SoC must be between 0 and 100 percent")
         if self.source not in {"addon_option_migration", "strategy_dashboard"}:
             raise ValueError("User-rule source must be explicit")
+        if not isinstance(self.market_recovery_required, bool):
+            raise ValueError("Market recovery choice must be boolean")
+        if self.market_minimum_net_margin_eur_per_kwh is None:
+            raise ValueError("Market net margin must be numeric")
+        for value in (
+            self.market_minimum_spread_eur_per_kwh,
+            self.market_minimum_net_margin_eur_per_kwh,
+        ):
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or value < 0
+            ):
+                raise ValueError("Market price thresholds must be finite nonnegative EUR/kWh")
+
+    def market_rule(self) -> MarketUserRule | None:
+        if self.market_minimum_spread_eur_per_kwh is None or self.maximum_trading_soc_percent == 0:
+            return None
+        return MarketUserRule(
+            "user-market",
+            self.revision,
+            self.maximum_trading_soc_percent / 100,
+            self.market_minimum_spread_eur_per_kwh,
+            self.market_recovery_required,
+            self.market_minimum_net_margin_eur_per_kwh,
+        )
 
     def as_public_dict(self) -> dict[str, object]:
         return {
@@ -48,6 +82,9 @@ class UserRuleProfile:
             "maximum_trading_soc_percent": self.maximum_trading_soc_percent,
             "saldering_energy_tax_credit_enabled": self.saldering_energy_tax_credit_enabled,
             "source": self.source,
+            "market_minimum_spread_eur_per_kwh": self.market_minimum_spread_eur_per_kwh,
+            "market_recovery_required": self.market_recovery_required,
+            "market_minimum_net_margin_eur_per_kwh": self.market_minimum_net_margin_eur_per_kwh,
         }
 
 
@@ -76,6 +113,9 @@ class UserRuleStore:
         preserve_pv_during_grid_charge: object,
         maximum_trading_soc_percent: object,
         saldering_energy_tax_credit_enabled: object | None = None,
+        market_minimum_spread_eur_per_kwh: object = ...,
+        market_recovery_required: object = ...,
+        market_minimum_net_margin_eur_per_kwh: object = ...,
     ) -> UserRuleProfile:
         if not isinstance(preserve_pv_during_grid_charge, bool):
             raise ValueError("PV-preservation rule must be boolean")
@@ -97,6 +137,21 @@ class UserRuleStore:
                 maximum_trading_soc_percent=float(maximum_trading_soc_percent),
                 saldering_energy_tax_credit_enabled=saldering_energy_tax_credit_enabled,
                 source="strategy_dashboard",
+                market_minimum_spread_eur_per_kwh=(
+                    self._profile.market_minimum_spread_eur_per_kwh
+                    if market_minimum_spread_eur_per_kwh is ...
+                    else cast(float | None, market_minimum_spread_eur_per_kwh)
+                ),
+                market_recovery_required=(
+                    self._profile.market_recovery_required
+                    if market_recovery_required is ...
+                    else cast(bool, market_recovery_required)
+                ),
+                market_minimum_net_margin_eur_per_kwh=(
+                    self._profile.market_minimum_net_margin_eur_per_kwh
+                    if market_minimum_net_margin_eur_per_kwh is ...
+                    else cast(float, market_minimum_net_margin_eur_per_kwh)
+                ),
             )
             self._write(updated)
             self._profile = updated
@@ -131,6 +186,11 @@ class UserRuleStore:
             maximum_trading_soc_percent=float(raw["maximum_trading_soc_percent"]),
             saldering_energy_tax_credit_enabled=saldering_tax,
             source=str(raw["source"]),
+            market_minimum_spread_eur_per_kwh=raw.get("market_minimum_spread_eur_per_kwh"),
+            market_recovery_required=raw.get("market_recovery_required", False),
+            market_minimum_net_margin_eur_per_kwh=raw.get(
+                "market_minimum_net_margin_eur_per_kwh", 0.05
+            ),
         )
 
     def _write(self, profile: UserRuleProfile) -> None:

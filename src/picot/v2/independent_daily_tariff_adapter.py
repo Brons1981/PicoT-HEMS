@@ -54,16 +54,15 @@ class IndependentDailyTariffAdapter:
         snapshot: PlanningInputSnapshot,
         *,
         horizon_end: datetime | None = None,
+        horizon_start: datetime | None = None,
         saldering_energy_tax_credit_enabled: bool = True,
     ) -> DailyReferenceTariffSchedule:
         selected_horizon_end = horizon_end or snapshot.horizon_end
+        selected_horizon_start = horizon_start or snapshot.captured_at
         if (
             selected_horizon_end is None
-            or selected_horizon_end <= snapshot.captured_at
-            or (
-                snapshot.horizon_end is not None
-                and selected_horizon_end > snapshot.horizon_end
-            )
+            or selected_horizon_end <= selected_horizon_start
+            or (snapshot.horizon_end is not None and selected_horizon_end > snapshot.horizon_end)
         ):
             raise DailyReferenceTariffInputError("daily_tariff_horizon_missing")
         if not snapshot.price_points:
@@ -71,34 +70,32 @@ class IndependentDailyTariffAdapter:
         points = tuple(sorted(snapshot.price_points, key=lambda item: item.starts_at))
         self._validate_coverage(
             points,
-            starts_at=snapshot.captured_at,
+            starts_at=selected_horizon_start,
             ends_at=selected_horizon_end,
         )
-        boundaries = {snapshot.captured_at, selected_horizon_end}
+        boundaries = {selected_horizon_start, selected_horizon_end}
         boundaries.update(
             point.starts_at
             for point in points
-            if snapshot.captured_at < point.starts_at < selected_horizon_end
+            if selected_horizon_start < point.starts_at < selected_horizon_end
         )
         boundaries.update(
             point.ends_at
             for point in points
-            if snapshot.captured_at < point.ends_at < selected_horizon_end
+            if selected_horizon_start < point.ends_at < selected_horizon_end
         )
         if snapshot.household_load_forecast is not None:
             boundaries.update(
                 interval.starts_at
                 for interval in snapshot.household_load_forecast.intervals
-                if snapshot.captured_at
-                < interval.starts_at
-                < selected_horizon_end
+                if selected_horizon_start < interval.starts_at < selected_horizon_end
             )
             boundaries.update(
                 interval.ends_at
                 for interval in snapshot.household_load_forecast.intervals
-                if snapshot.captured_at < interval.ends_at < selected_horizon_end
+                if selected_horizon_start < interval.ends_at < selected_horizon_end
             )
-        if snapshot.captured_at < EXPORT_TAX_TRANSITION < selected_horizon_end:
+        if selected_horizon_start < EXPORT_TAX_TRANSITION < selected_horizon_end:
             boundaries.add(EXPORT_TAX_TRANSITION)
         ordered = tuple(sorted(boundaries))
         intervals = tuple(
@@ -111,9 +108,14 @@ class IndependentDailyTariffAdapter:
             for left, right in zip(ordered, ordered[1:], strict=False)
         )
         return DailyReferenceTariffSchedule(
-            schedule_id=f"daily-tariffs:{snapshot.snapshot_id}",
+            schedule_id=f"daily-tariffs:{snapshot.snapshot_id}"
+            + (
+                f":delivery:{selected_horizon_start.isoformat()}:{selected_horizon_end.isoformat()}"
+                if horizon_start is not None
+                else ""
+            ),
             snapshot_id=snapshot.snapshot_id,
-            horizon_start=snapshot.captured_at,
+            horizon_start=selected_horizon_start,
             horizon_end=selected_horizon_end,
             intervals=intervals,
             method_version=METHOD_VERSION,

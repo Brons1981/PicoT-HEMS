@@ -9,13 +9,27 @@ from typing import TYPE_CHECKING
 
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
 from picot.domain.charge_source_policy import ChargeSourcePolicy
-from picot.domain.energy_path import PathSegment, ProjectedEnergyState
+from picot.domain.energy_path import PathSegment, ProjectedEnergyState, RetainedExecutionOrigin
+from picot.domain.evaluation import CandidateOutcome as CanonicalCandidateOutcome
+from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.market_execution import MarketExecutionProgress
+from picot.domain.market_plan_binding import MarketPlanBinding
+from picot.domain.market_user_rule import MarketUserRule
+from picot.domain.supplemental_charge import SupplementalChargeAssignment
+from picot.v2.daily_bridge import DailyBridgeAssessment, DailyBridgeState
+from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
+from picot.v2.daily_pv_comparison import (
+    DailyMainPVSurplusTrigger,
+    DailyPVComparison,
+    DailyPVComparisonState,
+)
 from picot.v2.household_planning_regime import (
     HouseholdPlanningRegime,
     UserObjectiveProfile,
 )
 from picot.v2.plan_commitment_store import ActivePlanCommitment
+from picot.v2.power_history import PowerHistorySnapshot
 
 if TYPE_CHECKING:
     from picot.v2.storage_mode_provenance import StorageModeControlProvenance
@@ -42,8 +56,17 @@ class CurrentStorageState:
     measured_at: datetime
     confidence: float
     evidence_ids: tuple[str, ...]
+    state_read_at: datetime | None = None
+    state_valid_since: datetime | None = None
 
     def __post_init__(self) -> None:
+        if (self.state_read_at is None) != (self.state_valid_since is None):
+            raise ValueError("current HA state requires both read time and validity start")
+        if self.state_read_at is not None and self.state_valid_since is not None:
+            if any(t.utcoffset() is None for t in (
+                self.state_read_at, self.state_valid_since, self.measured_at,
+            )) or not self.state_valid_since <= self.measured_at <= self.state_read_at:
+                raise ValueError("current HA state times must be aware and ordered")
         if not 0.0 <= self.current_soc <= 1.0:
             raise ValueError("current_soc must be between 0.0 and 1.0")
         if self.usable_capacity_wh <= 0.0:
@@ -628,6 +651,69 @@ class StorageRoundTripEfficiencyEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class DailyChargePlanningContext:
+    """Restored daily ownership; saved plans are evidence, not execution admission."""
+
+    snapshot_id: str
+    restored_at: datetime
+    timezone: str
+    status: str
+    reason: str | None
+    assignments: tuple[DailyChargeAssignment, ...] = ()
+    main_plans: tuple[CanonicalExecutionPlan, ...] = ()
+    active_main_plan_ids: tuple[str, ...] = ()
+    pv_comparison_states: tuple[DailyPVComparisonState, ...] = ()
+    bridge_states: tuple[DailyBridgeState, ...] = ()
+    supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
+    market_plan_bindings: tuple[MarketPlanBinding, ...] = ()
+    market_execution_progress: tuple[MarketExecutionProgress, ...] = ()
+    duration_ms: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.status not in {"ready", "blocked"}:
+            raise ValueError("daily charge recovery status must be ready or blocked")
+        if self.status == "blocked" and not self.reason:
+            raise ValueError("blocked daily charge recovery requires a reason")
+        if self.restored_at.tzinfo is None or self.restored_at.utcoffset() is None:
+            raise ValueError("daily charge recovery time must be timezone-aware")
+        if not isfinite(self.duration_ms) or self.duration_ms < 0:
+            raise ValueError("daily charge recovery duration must be finite and non-negative")
+        ids = tuple(a.assignment_id for a in self.assignments)
+        if len(ids) != len(set(ids)):
+            raise ValueError("daily charge recovery must not duplicate assignments")
+        bridge_ids = tuple(s.assignment_id for s in self.bridge_states)
+        if len(bridge_ids) != len(set(bridge_ids)) or set(bridge_ids) - set(ids):
+            raise ValueError("bridge state requires unique restored daily owners")
+        pv_ids = tuple(s.assignment_id for s in self.pv_comparison_states)
+        if len(pv_ids) != len(set(pv_ids)) or set(pv_ids) - set(ids):
+            raise ValueError("PV comparison requires unique restored daily owners")
+        plans = {p.plan_id: p for p in self.main_plans}
+        if len(plans) != len(self.main_plans):
+            raise ValueError("daily charge recovery must not duplicate plans")
+        if len(self.active_main_plan_ids) != len(set(self.active_main_plan_ids)):
+            raise ValueError("active main plan identities must be unique")
+        if set(self.active_main_plan_ids) - set(plans):
+            raise ValueError("active main plan requires its restored plan")
+        owners = {a.route_plan_id: a for a in self.assignments if a.route_plan_id is not None}
+        market_owners = {b.plan_id for b in self.market_plan_bindings}
+        market_ids = [b.assignment_id for b in self.market_plan_bindings]
+        if len(market_ids) != len(set(market_ids)):
+            raise ValueError("market recovery must not duplicate assignments")
+        for binding in self.market_plan_bindings:
+            plan = plans.get(binding.plan_id)
+            if plan is None or plan.execution_scope_id != binding.execution_scope_id:
+                raise ValueError("market binding requires its restored shared plan")
+        if set(plans) - (set(owners) | market_owners):
+            raise ValueError("recovered plan requires its daily owner")
+        if self.status == "ready" and set(plans) != set(owners) | market_owners:
+            raise ValueError("ready daily charge recovery requires every bound plan")
+        for owner in self.assignments:
+            plan = plans.get(owner.route_plan_id) if owner.route_plan_id is not None else None
+            if plan is not None and plan.execution_scope_id != owner.execution_scope_id:
+                raise ValueError("recovered plan scope must match its daily owner")
+
+
+@dataclass(frozen=True, slots=True)
 class PlanningInputSnapshot:
     run_id: str
     snapshot_id: str
@@ -651,8 +737,16 @@ class PlanningInputSnapshot:
     storage_round_trip_efficiency: StorageRoundTripEfficiencyEvidence | None = None
     active_plan_commitments: tuple[ActivePlanCommitment, ...] = ()
     household_unexpected_reserve_fraction: float = 0.10
+    daily_charge_context: DailyChargePlanningContext | None = None
+    market_user_rule: MarketUserRule | None = None
+    market_power_history: PowerHistorySnapshot | None = None
 
     def __post_init__(self) -> None:
+        if self.daily_charge_context is not None and (
+            self.daily_charge_context.snapshot_id != self.snapshot_id
+            or self.daily_charge_context.restored_at != self.captured_at
+        ):
+            raise ValueError("daily charge recovery must belong to this Planning Input")
         if not 0.0 <= self.household_unexpected_reserve_fraction <= 1.0:
             raise ValueError("household unexpected reserve must be between 0 and 1")
         scope_ids = tuple(
@@ -1238,8 +1332,13 @@ class CandidateOutcomeSet:
     outcome_set_id: str
     candidate_ids: tuple[str, ...]
     outcomes: tuple[DelegatedStorageCandidateOutcome | MepCandidateOutcome, ...] = ()
+    canonical_outcomes: tuple[CanonicalCandidateOutcome, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.canonical_outcomes and self.candidate_ids != tuple(
+            outcome.candidate_id for outcome in self.canonical_outcomes
+        ):
+            raise ValueError("Canonical outcome IDs must match candidate IDs")
         if self.outcomes and self.candidate_ids != tuple(
             outcome.candidate_id for outcome in self.outcomes
         ):
@@ -1261,6 +1360,11 @@ class EvaluationRecord:
     incumbent_candidate_id: str | None = None
     financial_equivalence_margin_eur: float = 0.0
     commitment_decision: str | None = None
+    daily_bridge: DailyBridgeAssessment | None = None
+    daily_main_shortfall: DailyMainShortfallTrigger | None = None
+    daily_main_input_shortfalls: tuple[DailyMainShortfallTrigger, ...] = ()
+    daily_pv_comparison: DailyPVComparison | None = None
+    daily_pv_surplus_trigger: DailyMainPVSurplusTrigger | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1277,6 +1381,8 @@ class ObserverExecutionPlanSegment:
     requested_power_w: float | None
     charge_source_policy: ChargeSourcePolicy | None
     planned_vendor_mode: str | None = None
+    main_assignment_id: str | None = None
+    retained_execution_origin: RetainedExecutionOrigin | None = None
 
 
 @dataclass(frozen=True, slots=True)

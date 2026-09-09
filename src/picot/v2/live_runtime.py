@@ -23,15 +23,25 @@ from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from picot.architecture_ownership import architecture_ownership
+from picot.domain.execution_plan import ExecutionPlan
+from picot.domain.market_execution import MarketExecutionProgress
+from picot.domain.market_plan_binding import MarketPlanBinding
 from picot.domain.runtime import RuntimeObservation
 from picot.domain.storage_conversion_model import StorageConversionModel
+from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.planner.market_daily_planner import MarketTradingPolicy
 from picot.runtime.runtime_monitor import RuntimeMonitorSession
 from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
     HomeAssistantCanonicalModeAdapter,
 )
-from picot.v2.contracts import CanonicalPipelineRun, PlanningInputSnapshot
+from picot.v2.contracts import (
+    CanonicalPipelineRun,
+    DailyChargePlanningContext,
+    PlanningInputSnapshot,
+)
+from picot.v2.daily_bridge import DailyBridgeState
+from picot.v2.daily_charge_assignment import DailyChargeAssignment
 from picot.v2.daily_pv_basis import (
     DailyPVBasisDecision,
     apply_daily_measured_pv_basis,
@@ -66,7 +76,7 @@ from picot.v2.market_daily_runtime import (
 )
 from picot.v2.material_replanning import MaterialReplanningObservationProducer
 from picot.v2.opportunity_engine import PriceOpportunityConfig
-from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
+from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings, PlanningInputSuperseded
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
     COMPARISON_PREVIOUS_COMMITMENT_METHOD_VERSION,
@@ -79,6 +89,7 @@ from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
 )
+from picot.v2.planning_execution_service import PlanningExecutionService
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import (
@@ -669,6 +680,11 @@ def _planning_input_signature(
             "conversion_method_version": (
                 interval.conversion_method_version
             ),
+            **({
+                "actual_evidence_ids": interval.actual_evidence_ids,
+                "forecast_lower_energy_wh": interval.forecast_lower_energy_wh,
+                "forecast_central_energy_wh": interval.forecast_central_energy_wh,
+            } if bundle.snapshot.daily_charge_context is not None else {}),
         }
         for interval in (
             pv_timeline.intervals
@@ -705,23 +721,13 @@ def _planning_input_signature(
                 "objective_order": regime.objective_order,
                 "reason": regime.reason,
                 "forecast_confidence": regime.forecast_confidence,
-                "forecast_confidence_method_version": (
-                    regime.forecast_confidence_method_version
-                ),
-                "forecast_confidence_available": (
-                    regime.forecast_confidence_available
-                ),
-                "cumulative_forecast_energy_wh": (
-                    regime.cumulative_forecast_energy_wh
-                ),
-                "cumulative_actual_energy_wh": (
-                    regime.cumulative_actual_energy_wh
-                ),
+                "forecast_confidence_method_version": (regime.forecast_confidence_method_version),
+                "forecast_confidence_available": (regime.forecast_confidence_available),
+                "cumulative_forecast_energy_wh": (regime.cumulative_forecast_energy_wh),
+                "cumulative_actual_energy_wh": (regime.cumulative_actual_energy_wh),
                 "deviation_energy_wh": regime.deviation_energy_wh,
                 "deviation_percent": regime.deviation_percent,
-                "underperformance_duration_seconds": (
-                    regime.underperformance_duration_seconds
-                ),
+                "underperformance_duration_seconds": (regime.underperformance_duration_seconds),
                 "evidence_ids": regime.evidence_ids,
                 "method_version": regime.method_version,
             }
@@ -737,64 +743,57 @@ def _planning_input_signature(
         "facts": facts,
         "price_points": price_points,
         "pv_energy_intervals": pv_energy_intervals,
+        "daily_household_forecast": (
+            [
+                (
+                    i.starts_at.isoformat(),
+                    i.ends_at.isoformat(),
+                    i.expected_energy_wh,
+                    i.confidence,
+                    i.method_version,
+                )
+                for i in household.intervals
+            ]
+            if bundle.snapshot.daily_charge_context is not None
+            and (household := bundle.snapshot.household_load_forecast) is not None
+            else None
+        ),
         "storage_mode_capability_evidence": (
             {
                 "current_vendor_mode": (
-                    None
-                    if active_commitments
-                    else mode_evidence.current_vendor_mode
+                    None if active_commitments else mode_evidence.current_vendor_mode
                 ),
                 "status": mode_evidence.status,
                 "unavailable_reason": mode_evidence.unavailable_reason,
                 "usable_vendor_modes": mode_evidence.usable_vendor_modes,
-                "excluded_dynamic_vendor_modes": (
-                    mode_evidence.excluded_dynamic_vendor_modes
-                ),
+                "excluded_dynamic_vendor_modes": (mode_evidence.excluded_dynamic_vendor_modes),
                 "method_version": mode_evidence.method_version,
             }
-            if (mode_evidence := bundle.snapshot.storage_mode_capability_evidence)
-            is not None
+            if (mode_evidence := bundle.snapshot.storage_mode_capability_evidence) is not None
             else None
         ),
         "storage_mode_control_provenance": (
             {
                 "status": mode_provenance.status,
                 "observed_vendor_mode": (
-                    None
-                    if active_commitments
-                    else mode_provenance.observed_vendor_mode
+                    None if active_commitments else mode_provenance.observed_vendor_mode
                 ),
                 "observed_at": (
-                    None
-                    if active_commitments
-                    else mode_provenance.observed_at.isoformat()
+                    None if active_commitments else mode_provenance.observed_at.isoformat()
                 ),
                 "last_planner_vendor_mode": (
-                    None
-                    if active_commitments
-                    else mode_provenance.last_planner_vendor_mode
+                    None if active_commitments else mode_provenance.last_planner_vendor_mode
                 ),
                 "last_planner_application_id": (
-                    None
-                    if active_commitments
-                    else mode_provenance.last_planner_application_id
+                    None if active_commitments else mode_provenance.last_planner_application_id
                 ),
-                "manual_override_active": (
-                    mode_provenance.manual_override_active
-                ),
+                "manual_override_active": (mode_provenance.manual_override_active),
                 "transition_reason": (
-                    None
-                    if active_commitments
-                    else mode_provenance.transition_reason
+                    None if active_commitments else mode_provenance.transition_reason
                 ),
                 "reset_id": mode_provenance.reset_id,
             }
-            if (
-                mode_provenance := (
-                    bundle.snapshot.storage_mode_control_provenance
-                )
-            )
-            is not None
+            if (mode_provenance := (bundle.snapshot.storage_mode_control_provenance)) is not None
             else None
         ),
         "active_plan_commitments": [
@@ -819,20 +818,70 @@ def _planning_input_signature(
                 "execution_scope_id": commitment.execution_scope_id,
                 "reached": any(
                     state.execution_scope_id == commitment.execution_scope_id
-                    and state.current_stored_energy_wh + 1e-6
-                    >= commitment.target_energy_wh
+                    and state.current_stored_energy_wh + 1e-6 >= commitment.target_energy_wh
                     for state in bundle.snapshot.current_storage_states
                 ),
             }
             for commitment in active_commitments
         ],
+        "daily_charge_recovery": (
+            {
+                "status": daily_context.status,
+                "reason": daily_context.reason,
+                "timezone": daily_context.timezone,
+                "active_main_plan_ids": daily_context.active_main_plan_ids,
+                "market_plan_bindings": [asdict(b) for b in daily_context.market_plan_bindings],
+                "market_execution_progress": [
+                    repr(p) for p in daily_context.market_execution_progress
+                ],
+                "supplemental_assignments": [
+                    repr(a) for a in daily_context.supplemental_assignments
+                ],
+                "bridge_states": [
+                    (
+                        s.assignment_id,
+                        s.plan_id,
+                        s.next_starts_at.isoformat(),
+                        tuple(
+                            (i.starts_at.isoformat(), i.ends_at.isoformat(), i.deficit_wh)
+                            for i in s.accepted_deficits
+                        ),
+                    )
+                    for s in daily_context.bridge_states
+                ],
+                "pv_comparison_states": [
+                    (
+                        state.assignment_id,
+                        state.basis.basis_id if state.basis else None,
+                        state.assessed_evidence_ids,
+                        state.unavailable_reason,
+                    )
+                    for state in daily_context.pv_comparison_states
+                ],
+                "assignments": [
+                    {
+                        "assignment_id": a.assignment_id,
+                        "revision": a.revision,
+                        "route_plan_id": a.route_plan_id,
+                        "completed_at": a.completed_at.isoformat() if a.completed_at else None,
+                    }
+                    for a in daily_context.assignments
+                ],
+            }
+            if (daily_context := bundle.snapshot.daily_charge_context) is not None
+            else None
+        ),
+        "market_user_rule": (
+            asdict(bundle.snapshot.market_user_rule)
+            if bundle.snapshot.market_user_rule is not None
+            else None
+        ),
         "bms_calibration": (
             {
                 "status": calibration.status,
                 "active": calibration.active,
             }
-            if (calibration := bundle.snapshot.bms_calibration_evidence)
-            is not None
+            if (calibration := bundle.snapshot.bms_calibration_evidence) is not None
             else None
         ),
     }
@@ -866,10 +915,127 @@ def _observer_input_signature(bundle: PlanningInputBundle) -> str:
     )
 
 
+def _restore_daily_charge_context(
+    snapshot: PlanningInputSnapshot,
+    store: ActivePlanCommitmentStore,
+    *,
+    local_timezone: ZoneInfo,
+) -> PlanningInputSnapshot:
+    """Read daily ownership into fresh input, recovering missed publications.
+
+    No candidate generation, execution admission or SOC completion occurs here.
+    Original plan snapshot lineage is preserved inside the recovery context.
+    """
+    started = perf_counter()
+    assignments: tuple[DailyChargeAssignment, ...] = ()
+    bridge_states: tuple[DailyBridgeState, ...] = ()
+    supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
+    market_plan_bindings: tuple[MarketPlanBinding, ...] = ()
+    market_progress: tuple[MarketExecutionProgress, ...] = ()
+    plans: list[ExecutionPlan] = []
+    active_main_plan_ids: list[str] = []
+    status, reason = "ready", None
+    scopes = {
+        state.execution_scope_id for state in snapshot.current_storage_states
+    } | {limits.execution_scope_id for limits in snapshot.storage_physical_limits}
+    # A sample just before midnight can still belong to yesterday's main
+    # segment. Keep that owner available; never infer completion here.
+    earliest_observation = min(
+        (s.measured_at for s in snapshot.current_storage_states),
+        default=snapshot.captured_at,
+    )
+    try:
+        existing = store.load_daily_assignments()
+        latest_completed_ids = {
+            max((a for a in existing if a.execution_scope_id == scope
+                 and a.completed_at is not None), key=lambda a: a.delivery_date).assignment_id
+            for scope in scopes if any(a.execution_scope_id == scope and a.completed_at is not None
+                                       for a in existing)
+        }
+        assignments = tuple(
+            a for a in existing if a.execution_scope_id in scopes
+            and (a.ends_at >= earliest_observation or a.assignment_id in latest_completed_ids)
+        )
+        for assignment in assignments:
+            if assignment.route_plan_id is not None:
+                plan = store.load_daily_main_plan(assignment.assignment_id)
+                if plan is not None:
+                    previous = next((p for p in plans if p.plan_id == plan.plan_id), None)
+                    if previous is not None and previous != plan:
+                        raise ValueError("daily_charge_shared_plan_content_conflict")
+                    if previous is None:
+                        plans.append(plan)
+        stored_market_bindings = store.load_market_plan_bindings()
+        for scope in sorted(scopes):
+            active = store.load_active_daily_main_plan(scope)
+            if active is not None and active.valid_until > snapshot.captured_at:
+                bindings = tuple(b for b in stored_market_bindings if b.plan_id == active.plan_id)
+                if active.plan_id not in {p.plan_id for p in plans}:
+                    if not bindings:
+                        raise ValueError("active_daily_main_plan_owner_not_restored")
+                    plans.append(active)
+                market_plan_bindings += bindings
+                active_main_plan_ids.append(active.plan_id)
+        if not scopes:
+            raise ValueError("daily_charge_execution_scope_unavailable")
+        if any(
+            not isfinite(p.value_eur_per_kwh) or not p.evidence_id.strip()
+            for p in snapshot.price_points
+        ):
+            raise ValueError("daily_charge_published_prices_invalid")
+        for scope in sorted(scopes):
+            store.reconcile_daily_publication(
+                now=snapshot.captured_at,
+                timezone=local_timezone.key,
+                execution_scope_id=scope,
+                price_intervals=tuple((p.starts_at, p.ends_at) for p in snapshot.price_points),
+            )
+        assignments = tuple(
+            a for a in store.load_daily_assignments()
+            if a.execution_scope_id in scopes
+            and (a.ends_at >= earliest_observation or a.assignment_id in latest_completed_ids)
+        )
+        market_progress = tuple(
+            p
+            for b in market_plan_bindings
+            if (p := store.load_market_progress(b.assignment_id)) is not None
+        )
+        supplemental_assignments = store.load_supplemental_assignments()
+        bridge_states = tuple(
+            state for a in assignments
+            if (state := store.load_daily_bridge_state(a.assignment_id)) is not None
+        )
+    except (ValueError, OSError) as exc:
+        status, reason = "blocked", str(exc) or exc.__class__.__name__
+    context = DailyChargePlanningContext(
+        snapshot_id=snapshot.snapshot_id,
+        restored_at=snapshot.captured_at,
+        timezone=local_timezone.key,
+        status=status,
+        reason=reason,
+        assignments=assignments,
+        main_plans=tuple(plans),
+        active_main_plan_ids=tuple(active_main_plan_ids),
+        bridge_states=bridge_states,
+        supplemental_assignments=supplemental_assignments,
+        market_plan_bindings=market_plan_bindings,
+        market_execution_progress=market_progress,
+        pv_comparison_states=tuple(
+            store.load_daily_pv_comparison(a.assignment_id)
+            for a in assignments
+            if a.route_plan_id is not None
+        ),
+        duration_ms=round((perf_counter() - started) * 1000, 3),
+    )
+    return replace(snapshot, daily_charge_context=context)
+
+
 def _restore_active_plan_commitments(
     snapshot: PlanningInputSnapshot,
     store: ActivePlanCommitmentStore,
 ) -> PlanningInputSnapshot:
+    if snapshot.daily_charge_context is not None:
+        return replace(snapshot, active_plan_commitments=())
     restored = []
     capabilities = (
         snapshot.capability_snapshot_set.capabilities
@@ -1109,7 +1275,7 @@ def _poll_live_cycle(
     ) = None,
     refresh_unchanged: Callable[[PlanningInputBundle], None] | None = None,
     advance_clock_boundaries: (
-        Callable[[PlanningInputBundle], None] | None
+        Callable[[PlanningInputBundle], bool | None] | None
     ) = None,
     observe: Callable[[PlanningInputBundle], None] | None = None,
     runtime_monitor: RuntimeMonitorSession | None = None,
@@ -1165,8 +1331,13 @@ def _poll_live_cycle(
         if prepare_bundle is not None:
             bundle, preparation_diagnostics = prepare_bundle(bundle)
 
-    if advance_clock_boundaries is not None:
-        advance_clock_boundaries(bundle)
+    if advance_clock_boundaries is not None and advance_clock_boundaries(bundle):
+        # A proven completion changes durable ownership. Capture fresh input
+        # before planning; never mutate or reuse the pre-completion snapshot.
+        bundle = load_current_bundle()
+        preparation_diagnostics = None
+        if prepare_bundle is not None:
+            bundle, preparation_diagnostics = prepare_bundle(bundle)
 
     if observe is not None:
         observe(bundle)
@@ -1697,6 +1868,35 @@ def _with_planning_input_diagnostics(
                 daily_pv_basis_decision.method_version
             ),
         }
+    daily_context = bundle.snapshot.daily_charge_context
+    daily_attributes = (
+        {
+            "daily_charge_recovery_status": daily_context.status,
+            "daily_charge_recovery_reason": daily_context.reason,
+            "daily_charge_recovery_ms": daily_context.duration_ms,
+            "daily_charge_timezone": daily_context.timezone,
+            "daily_charge_assignments": [
+                {
+                    "assignment_id": a.assignment_id,
+                    "delivery_date": a.delivery_date.isoformat(),
+                    "revision": a.revision,
+                    "route_plan_id": a.route_plan_id,
+                    "completed_at": a.completed_at.isoformat() if a.completed_at else None,
+                    "completion_evidence_id": a.completion_evidence_id,
+                    "main_segment_ids": [s.segment_id for s in a.main_segments],
+                }
+                for a in daily_context.assignments
+            ],
+            "daily_charge_recovered_plan_ids": [p.plan_id for p in daily_context.main_plans],
+            "market_execution_progress": [
+                {k: v.isoformat() if isinstance(v, datetime) else v for k, v in asdict(p).items()}
+                for p in daily_context.market_execution_progress
+            ],
+            "market_plan_bindings": [asdict(b) for b in daily_context.market_plan_bindings],
+        }
+        if daily_context is not None
+        else {}
+    )
     first = projection.cards[0]
     enriched = Card(
         first.entity_id,
@@ -1713,7 +1913,8 @@ def _with_planning_input_diagnostics(
             "price_point_count": len(bundle.snapshot.price_points),
             "sources": sources,
         }
-        | pv_actual_attributes,
+        | pv_actual_attributes
+        | daily_attributes,
     )
     return Projection(
         cards=(enriched, *projection.cards[1:]),
@@ -1918,9 +2119,7 @@ def _execute_planning_bundle(
     web_view_store: WebViewStore,
     power_history: PowerHistorySnapshot | None = None,
     power_history_read_ms: float = 0.0,
-    pv_actual_diagnostics: (
-        LivePVActualDiagnostics | None
-    ) = None,
+    pv_actual_diagnostics: (LivePVActualDiagnostics | None) = None,
     pv_attenuated_ranges: tuple[
         PVAttenuatedForecastRange,
         ...,
@@ -1928,21 +2127,17 @@ def _execute_planning_bundle(
     pv_sunset_source: SunsetReadResult | None = None,
     pv_sunset_local_timezone: str | None = None,
     pv_sunset_offsets: dict[str, float] | None = None,
-    pv_attenuation_learning_result: (
-        PVAttenuationLearningResult | None
-    ) = None,
-    storage_mode_provenance_runtime: (
-        LiveStorageModeProvenanceRuntime | None
-    ) = None,
-    storage_mode_transition_history: (
-        StorageModeTransitionHistoryStore | None
-    ) = None,
+    pv_attenuation_learning_result: (PVAttenuationLearningResult | None) = None,
+    storage_mode_provenance_runtime: (LiveStorageModeProvenanceRuntime | None) = None,
+    storage_mode_transition_history: (StorageModeTransitionHistoryStore | None) = None,
     canonical_execution_runtime: CanonicalExecutionRuntime | None = None,
     execution_enabled: bool = False,
     planning_fallback_notifier: PlanningFallbackNotifier | None = None,
     planning_incident_history: PlanningIncidentHistory | None = None,
     daily_pv_basis_decision: DailyPVBasisDecision | None = None,
     financial_result_ledger: FinancialResultLedger | None = None,
+    planning_checkpoint: Callable[[], None] | None = None,
+    refresh_execution_input: Callable[[], PlanningInputSnapshot] | None = None,
 ) -> bool:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -1952,14 +2147,43 @@ def _execute_planning_bundle(
 
     _log_runtime_memory("before_pipeline", run_id=bundle.snapshot.run_id)
 
-    run, stage_timings = canonical_pipeline.run_timed(
-        planning_input=bundle.snapshot,
-        price_opportunity_config=price_config,
-        control_change_allowed=execution_enabled,
+    checkpoint_arguments: dict[str, Any] = (
+        {"planning_checkpoint": planning_checkpoint} if planning_checkpoint else {}
     )
+    try:
+        run, stage_timings = canonical_pipeline.run_timed(
+            planning_input=bundle.snapshot,
+            price_opportunity_config=price_config,
+            control_change_allowed=execution_enabled,
+            **checkpoint_arguments,
+        )
+    except PlanningInputSuperseded:
+        # Execution has already used the ordinary committed boundary. Retry
+        # planning on the next fresh poll; do not apply an obsolete result.
+        return False
+    execution_observed_at = bundle.snapshot.captured_at
+    execution_observation: dict[str, Any] | None = None
     _log_runtime_memory("after_pipeline", run_id=run.planning_input.run_id)
     if canonical_execution_runtime is not None:
-        run = canonical_execution_runtime.apply(run)
+        if (
+            refresh_execution_input is not None
+            and run.execution_record.status == "live_plan_ready"
+            and run.planning_input.daily_charge_context is not None
+        ):
+            observed = refresh_execution_input()
+            execution_observed_at = observed.captured_at
+            execution_observation = {
+                "snapshot_id": observed.snapshot_id,
+                "captured_at": observed.captured_at.isoformat(),
+                "storage": [
+                    {"scope_id": state.execution_scope_id, "soc": state.current_soc,
+                     "measured_at": state.measured_at.isoformat()}
+                    for state in observed.current_storage_states
+                ],
+            }
+            run = canonical_execution_runtime.apply_committed(run, observed)
+        else:
+            run = canonical_execution_runtime.apply(run)
         if (
             run.vendor_result.status in {"dispatched", "already_active"}
             and run.vendor_result.planned_vendor_mode is not None
@@ -1972,7 +2196,7 @@ def _execute_planning_bundle(
             )
             provenance = storage_mode_provenance_runtime.record_planner_application(
                 run.vendor_result.planned_vendor_mode,
-                applied_at=bundle.snapshot.captured_at,
+                applied_at=execution_observed_at,
                 application_id=application_id,
             )
             if run.vendor_result.status == "dispatched":
@@ -1992,7 +2216,7 @@ def _execute_planning_bundle(
                         else None
                     ),
                     application_id=application_id,
-                    occurred_at=bundle.snapshot.captured_at,
+                    occurred_at=execution_observed_at,
                 )
     if planning_incident_history is not None:
         try:
@@ -2000,6 +2224,7 @@ def _execute_planning_bundle(
                 bundle=bundle,
                 run=run,
                 runtime_diagnostics={
+                    "execution_observation": execution_observation,
                     "pv_actual": (
                         asdict(pv_actual_diagnostics)
                         if pv_actual_diagnostics is not None
@@ -2445,14 +2670,14 @@ def main() -> None:
 
     def update_user_rules(payload: dict[str, object]) -> dict[str, object]:
         profile = user_rule_store.update(
-            preserve_pv_during_grid_charge=payload.get(
-                "preserve_pv_during_grid_charge"
-            ),
-            maximum_trading_soc_percent=payload.get(
-                "maximum_trading_soc_percent"
-            ),
-            saldering_energy_tax_credit_enabled=payload.get(
-                "saldering_energy_tax_credit_enabled"
+            preserve_pv_during_grid_charge=payload.get("preserve_pv_during_grid_charge"),
+            maximum_trading_soc_percent=payload.get("maximum_trading_soc_percent"),
+            saldering_energy_tax_credit_enabled=payload.get("saldering_energy_tax_credit_enabled"),
+            market_minimum_spread_eur_per_kwh=payload.get("market_minimum_spread_eur_per_kwh", ...),
+            market_recovery_required=payload.get("market_recovery_required", ...),
+            market_minimum_net_margin_eur_per_kwh=payload.get(
+                "market_minimum_net_margin_eur_per_kwh",
+                ...,
             ),
         )
         market_daily_planner_runtime.set_trading_policy(trading_policy(profile))
@@ -2637,10 +2862,52 @@ def main() -> None:
         bundle = replace(
             bundle,
             snapshot=_restore_active_plan_commitments(
-                bundle.snapshot,
+                _restore_daily_charge_context(
+                    replace(
+                        bundle.snapshot, market_user_rule=user_rule_store.current().market_rule()
+                    ),
+                    active_plan_commitment_store,
+                    local_timezone=pv_sunset_timezone,
+                ),
                 active_plan_commitment_store,
             ),
         )
+        try:
+            context = bundle.snapshot.daily_charge_context
+            if context is None or context.status != "ready":
+                raise ValueError("market input waits for valid charge context")
+            market_starts = []
+            pending_market = {
+                a.assignment_id
+                for a in active_plan_commitment_store.load_market_daily_assignments()
+                if a.status == "pending"
+            }
+            for binding in active_plan_commitment_store.load_market_plan_bindings():
+                if binding.assignment_id not in pending_market:
+                    continue
+                plan = active_plan_commitment_store.load_market_bound_plan(binding.assignment_id)
+                parts = tuple(s for s in plan.segments if s.segment_id in binding.segment_ids)
+                progress = active_plan_commitment_store.load_market_progress(binding.assignment_id)
+                if progress is not None and progress.started_at is not None:
+                    market_starts.append(progress.started_at)
+                elif parts[0].starts_at <= bundle.snapshot.captured_at < parts[-1].ends_at:
+                    market_starts.append(parts[0].starts_at)
+            if market_starts:
+                market_history = power_history_reader.read(
+                    specs=tuple(
+                        s
+                        for s in dashboard_power_history_specs
+                        if s.role in {"battery_discharge", "grid_export"}
+                    ),
+                    starts_at=min(market_starts) - FINANCIAL_ANCHOR_LOOKBACK,
+                    ends_at=bundle.snapshot.captured_at,
+                    preserve_unavailable=True,
+                )
+                bundle = replace(
+                    bundle, snapshot=replace(bundle.snapshot, market_power_history=market_history)
+                )
+        except (ValueError, OSError):
+            bundle = replace(bundle, snapshot=replace(bundle.snapshot, market_power_history=None))
         if bundle.snapshot.pv_energy_timeline is not None:
             pv_attenuation_learning.capture_forecast_basis(
                 timeline=bundle.snapshot.pv_energy_timeline,
@@ -2676,6 +2943,11 @@ def main() -> None:
         ):
             household_regime_started_at = captured_at
         previous_household_regime = current_regime
+        if prepared_bundle.snapshot.daily_charge_context is not None:
+            # Actual observations remain attached; raw LOWER/CENTRAL are the
+            # immutable inputs to the midpoint physical simulation.
+            latest_daily_pv_basis_decision = None
+            return prepared_bundle, diagnostics
         mep_snapshot, latest_daily_pv_basis_decision = apply_daily_measured_pv_basis(
             prepared_bundle.snapshot,
             diagnostics=diagnostics,
@@ -2748,6 +3020,17 @@ def main() -> None:
         bundle: PlanningInputBundle,
         pv_actual_diagnostics: LivePVActualDiagnostics,
     ) -> bool:
+        def refresh_execution_input() -> PlanningInputSnapshot:
+            current, _ = prepare_bundle(load_bundle())
+            return current.snapshot
+
+        service = PlanningExecutionService(
+            refresh=refresh_execution_input,
+            advance=lambda snapshot: advance_clock_boundaries(replace(bundle, snapshot=snapshot)),
+            now=lambda: datetime.now(UTC),
+            poll_interval_seconds=poll_interval_seconds,
+            next_check_at=bundle.snapshot.captured_at,
+        )
         power_history, power_history_read_ms = read_power_history(bundle)
         timeline = bundle.snapshot.pv_energy_timeline
         pv_sunset_source = pv_sunset_reader.read(
@@ -2795,6 +3078,8 @@ def main() -> None:
             else ()
         )
         return _execute_planning_bundle(
+            planning_checkpoint=service.checkpoint,
+            refresh_execution_input=refresh_execution_input,
             token=token,
             canonical_pipeline=canonical_pipeline,
             price_config=price_config,
@@ -2807,15 +3092,9 @@ def main() -> None:
             pv_sunset_source=pv_sunset_source,
             pv_sunset_local_timezone=pv_sunset_local_timezone,
             pv_sunset_offsets=pv_sunset_offsets,
-            pv_attenuation_learning_result=(
-                pv_attenuation_learning_result
-            ),
-            storage_mode_provenance_runtime=(
-                storage_mode_provenance_runtime
-            ),
-            storage_mode_transition_history=(
-                storage_mode_transition_history
-            ),
+            pv_attenuation_learning_result=(pv_attenuation_learning_result),
+            storage_mode_provenance_runtime=(storage_mode_provenance_runtime),
+            storage_mode_transition_history=(storage_mode_transition_history),
             canonical_execution_runtime=canonical_execution_runtime,
             execution_enabled=execution_enabled,
             planning_fallback_notifier=planning_fallback_notifier,
@@ -2824,7 +3103,8 @@ def main() -> None:
             financial_result_ledger=financial_result_ledger,
         )
 
-    def advance_clock_boundaries(bundle: PlanningInputBundle) -> None:
+    def advance_clock_boundaries(bundle: PlanningInputBundle) -> bool:
+        before_completion = canonical_execution_runtime.completion_generation
         outcome = canonical_execution_runtime.advance_committed_boundary(
             bundle.snapshot,
             execution_enabled=execution_enabled,
@@ -2866,6 +3146,8 @@ def main() -> None:
                 ),
                 flush=True,
             )
+
+        return canonical_execution_runtime.completion_generation != before_completion
 
     runtime_monitor = RuntimeMonitorSession()
     material_replanning = MaterialReplanningObservationProducer(

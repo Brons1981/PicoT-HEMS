@@ -111,6 +111,7 @@ class LiveStorageModeProvenanceRuntime:
         vendor_mode: str,
         *,
         observed_at: datetime,
+        state_changed_at: datetime | None = None,
     ) -> StorageModeControlProvenance:
         current = self._load_current()
         if current is None:
@@ -128,6 +129,7 @@ class LiveStorageModeProvenanceRuntime:
                 current,
                 observed_vendor_mode=vendor_mode,
                 observed_at=observed_at,
+                state_changed_at=state_changed_at,
             )
         self._commit(current)
         return current
@@ -214,6 +216,7 @@ def attach_storage_mode_provenance(
     provenance = runtime.observe_vendor_mode(
         evidence.current_vendor_mode,
         observed_at=evidence.captured_at,
+        state_changed_at=evidence.state_changed_at,
     )
     return replace(
         bundle,

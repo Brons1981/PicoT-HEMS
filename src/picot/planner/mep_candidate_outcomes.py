@@ -20,20 +20,32 @@ from picot.domain.candidate import (
 from picot.domain.candidate import (
     CandidateSet as DomainCandidateSet,
 )
+from picot.domain.capability_snapshot import CapabilityAvailability, CapabilityHealth
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.daily_reference_candidate import (
     DailyReferenceCandidate,
     DailyReferenceCandidateFamily,
 )
+from picot.domain.daily_reference_charge_window import (
+    DailyMainChargeWindow,
+    DailyMainChargeWindowSet,
+)
+from picot.domain.daily_reference_financial import DailyPlanningFinancialResult
 from picot.domain.daily_reference_intent import (
     DailyReferenceIntentInterval,
     DailyReferenceIntentSchedule,
     DailyStorageIntent,
 )
 from picot.domain.daily_reference_portfolio import DailyReferenceStrategyResult
-from picot.domain.daily_reference_simulation import PVScenario
+from picot.domain.daily_reference_simulation import DailyPlanningProjection, PVScenario
+from picot.domain.daily_reference_tariff import DailyReferenceTariffSchedule
 from picot.domain.energy_path import EnergyPath as DomainEnergyPath
-from picot.domain.energy_path import PathSegment, ProjectedEnergyState
+from picot.domain.energy_path import (
+    PathSegment,
+    ProjectedEnergyState,
+    RetainedExecutionOrigin,
+    SocConstraint,
+)
 from picot.domain.evaluation import (
     CandidateOutcome as DomainCandidateOutcome,
 )
@@ -58,6 +70,7 @@ from picot.planner.evaluation_engine import EvaluationEngine
 from picot.planner.independent_daily_candidate_engine import (
     IndependentDailyCandidateEngine,
 )
+from picot.planner.independent_daily_financial_settlement import IndependentDailyFinancialSettlement
 from picot.planner.independent_daily_reference_portfolio import (
     IndependentDailyReferencePortfolioProducer,
 )
@@ -213,6 +226,8 @@ def _execution_path_intervals(
     schedule: DailyReferenceIntentSchedule,
     *,
     maximum_discharge_output_power_w: float,
+    projection: DailyPlanningProjection | None = None,
+    retained_exports: tuple[tuple[datetime, datetime], ...] = (),
 ) -> tuple[DailyReferenceIntentInterval, ...]:
     """Project export-energy hourglasses to exact execution boundaries.
 
@@ -222,22 +237,59 @@ def _execution_path_intervals(
     """
 
     result: list[DailyReferenceIntentInterval] = []
-    for interval in _path_intervals(schedule):
+    if projection is not None and (
+        projection.snapshot_id != schedule.snapshot_id
+        or projection.intent_schedule_id != schedule.schedule_id
+        or tuple((i.starts_at, i.ends_at) for i in projection.intervals)
+        != tuple((i.starts_at, i.ends_at) for i in schedule.intervals)
+    ):
+        raise ValueError("export execution must use its exact physical projection")
+    physical = {(i.starts_at, i.ends_at): i for i in projection.intervals} if projection else {}
+    execution_intervals = tuple(
+        part
+        for merged in _path_intervals(schedule)
+        for part in (
+            tuple(i for i in schedule.intervals
+                  if merged.starts_at <= i.starts_at and i.ends_at <= merged.ends_at)
+            if projection is not None and merged.intent is DailyStorageIntent.STORAGE_EXPORT
+            else (merged,)
+        )
+    )
+    for interval in execution_intervals:
+        if interval.intent is DailyStorageIntent.STORAGE_EXPORT and any(
+            start <= interval.starts_at < interval.ends_at <= end for start, end in retained_exports
+        ):
+            # An existing user action keeps its window. Fresh physics may
+            # predict curtailment; execution owns the start check and stop.
+            result.append(interval)
+            continue
         if interval.intent is not DailyStorageIntent.STORAGE_EXPORT:
             result.append(interval)
             continue
+        available_export_power_w = maximum_discharge_output_power_w
+        if projection is not None:
+            source = physical[(interval.starts_at, interval.ends_at)]
+            hours = (interval.ends_at - interval.starts_at).total_seconds() / 3600
+            available_export_power_w -= source.storage_to_household_output_wh / hours
+            if available_export_power_w <= 0 or (
+                abs(source.storage_to_grid_output_wh - interval.storage_export_target_wh) > 1e-6
+            ):
+                raise ValueError("requested export is not physically executable")
         interval_capacity_wh = (
-            maximum_discharge_output_power_w
+            available_export_power_w
             * (interval.ends_at - interval.starts_at).total_seconds()
             / 3600.0
         )
+        if (projection is not None
+                and interval.storage_export_target_wh > interval_capacity_wh + 1e-6):
+            raise ValueError("export exceeds power remaining after household support")
         if interval.storage_export_target_wh + 1e-6 >= interval_capacity_wh:
             result.append(interval)
             continue
         export_ends_at = interval.starts_at + timedelta(
             hours=(
                 interval.storage_export_target_wh
-                / maximum_discharge_output_power_w
+                / available_export_power_w
             )
         )
         result.append(
@@ -1319,4 +1371,382 @@ def produce_mep_comparable_portfolio(
         incumbent_id,
         projected_balance,
         storage_requirement,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class MainChargeCandidateSource:
+    candidate_id: str
+    window: DailyMainChargeWindow
+    financial: DailyPlanningFinancialResult
+
+
+@dataclass(frozen=True, slots=True)
+class MainChargeComparablePortfolio:
+    """Canonical inputs to Evaluation; this record never selects a winner."""
+
+    candidate_set: DomainCandidateSet
+    outcome_set: DomainCandidateOutcomeSet
+    strategy: PlannerStrategy
+    sources: tuple[MainChargeCandidateSource, ...]
+
+
+def produce_main_charge_portfolio(
+    *,
+    snapshot: PlanningInputSnapshot,
+    windows: DailyMainChargeWindowSet,
+    tariffs: DailyReferenceTariffSchedule,
+    opportunity_ids: tuple[str, ...],
+) -> MainChargeComparablePortfolio:
+    """Project feasible main windows into the existing Candidate/Evaluation contract."""
+    if windows.snapshot_id != snapshot.snapshot_id or tariffs.snapshot_id != snapshot.snapshot_id:
+        raise ValueError("main charge inputs must share one snapshot")
+    if len(snapshot.current_storage_states) != 1 or snapshot.capability_snapshot_set is None:
+        raise ValueError("main charge requires one explicit storage scope and capabilities")
+    if (
+        snapshot.capability_snapshot_set.snapshot_id != snapshot.snapshot_id
+        or snapshot.capability_snapshot_set.captured_at != snapshot.captured_at
+    ):
+        raise ValueError("main charge capability lineage must match the snapshot")
+    strategy = _strategy(snapshot)
+    storage = snapshot.current_storage_states[0]
+    limits = next(
+        item
+        for item in snapshot.storage_physical_limits
+        if item.execution_scope_id == storage.execution_scope_id
+        and item.capability_id == storage.capability_id
+    )
+    capability = next(
+        item
+        for item in snapshot.capability_snapshot_set.capabilities
+        if item.execution_scope_id == storage.execution_scope_id
+        and item.capability_id == storage.capability_id
+    )
+    candidates: list[DomainCandidate] = []
+    paths: list[DomainEnergyPath] = []
+    outcomes: list[DomainCandidateOutcome] = []
+    sources: list[MainChargeCandidateSource] = []
+    settlement = IndependentDailyFinancialSettlement()
+    for window in windows.windows:
+        if window.target_storage_energy_wh != storage.usable_capacity_wh:
+            raise ValueError("main charge window must target actual full storage")
+        if window.schedule.horizon_start != snapshot.captured_at:
+            raise ValueError("main charge window must start from this snapshot")
+        if (
+            abs(
+                window.projection.intervals[0].storage_energy_at_start_wh
+                - storage.current_stored_energy_wh
+            )
+            > 1e-6
+        ):
+            raise ValueError("main charge window must use current snapshot SOC")
+        financial = settlement.settle_planning_basis(
+            projection=window.projection,
+            tariffs=tariffs,
+            main_intervals=tuple((s.starts_at, s.ends_at) for s in window.main_segments),
+        )
+        confidence = min(i.confidence for i in financial.intervals)
+        candidate_id = _id("main-charge-candidate", window.schedule.schedule_id)
+        evidence = tuple(dict.fromkeys((window.assignment_id, *financial.evidence_ids)))
+        family = (
+            CandidateFamily.PV_FIRST
+            if window.family in {"pv", "already_full"}
+            else (
+                CandidateFamily.PRIORITY_FIRST
+                if window.family == "hybrid"
+                else CandidateFamily.COST_FIRST
+            )
+        )
+        path = _main_charge_energy_path(
+            snapshot=snapshot,
+            window=window,
+            candidate_id=candidate_id,
+            family=family,
+            confidence=confidence,
+            opportunity_ids=opportunity_ids,
+            strategy_version=strategy.strategy_version,
+            supplemental=windows.purpose == "bridge",
+        )
+        candidates.append(
+            DomainCandidate(
+                candidate_id=candidate_id,
+                snapshot_id=snapshot.snapshot_id,
+                family=family,
+                energy_path_id=path.path_id,
+                opportunity_ids=path.opportunity_ids,
+                constraint_ids=path.constraint_ids,
+                strategy_version=path.strategy_version,
+                capability_ids=path.capability_ids,
+                assumptions=path.assumptions,
+                confidence=confidence,
+            )
+        )
+        paths.append(path)
+        invalid = tuple(
+            sorted(
+                {
+                    f"unsupported_primitive:{s.primitive.value}"
+                    for s in path.segments
+                    if s.primitive not in capability.supported_primitives
+                }
+            )
+        )
+        if (
+            capability.availability is not CapabilityAvailability.AVAILABLE
+            or capability.health is not CapabilityHealth.HEALTHY
+        ):
+            invalid += ("storage_capability_unavailable",)
+        if limits.maximum_soc < 1.0:
+            invalid += ("configured_maximum_conflicts_with_daily_100_percent",)
+        intervals = window.projection.intervals
+        price = financial.acquisition_eur_per_stored_kwh
+        objectives = _objective_outcomes(
+            financial=financial.cash_result_eur,
+            self_consumption=sum(
+                i.pv_to_household_wh + i.pv_to_storage_input_wh for i in intervals
+            ),
+            reserve=min(i.storage_energy_at_end_wh for i in intervals),
+            confidence=confidence,
+            evidence_ids=evidence,
+        )[1:]
+        # ADR-037.1/037.4: compare the most favourable feasible main charge
+        # window. Total horizon cash is diagnostic because the remaining
+        # inventory differs between routes; it cannot price that inventory.
+        if windows.purpose == "bridge":
+            objectives = _objective_outcomes(
+                financial=financial.cash_result_eur,
+                self_consumption=sum(
+                    i.pv_to_household_wh + i.pv_to_storage_input_wh for i in intervals
+                ),
+                reserve=min(i.storage_energy_at_end_wh for i in intervals),
+                confidence=confidence, evidence_ids=evidence,
+            )
+        elif price is not None:
+            objectives = (
+                ObjectiveOutcome(
+                    ObjectiveKind.FINANCIAL_RESULT,
+                    price,
+                    ComparisonDirection.LOWER_IS_BETTER,
+                    "EUR/kWh-stored",
+                    confidence,
+                    evidence,
+                ),
+                *objectives,
+            )
+        outcomes.append(
+            DomainCandidateOutcome(
+                candidate_id=candidate_id,
+                objective_outcomes=objectives,
+                confidence=confidence,
+                recoverability=None,
+                execution_complexity=len(path.segments),
+                expected_switching_count=max(0, len(path.segments) - 1),
+                complexity_version="main-charge-segment-count:v1",
+                validity=CandidateValidity.INVALID if invalid else CandidateValidity.VALID,
+                invalidity_reasons=invalid,
+                evidence_ids=evidence,
+            )
+        )
+        sources.append(MainChargeCandidateSource(candidate_id, window, financial))
+    candidate_set = DomainCandidateSet(
+        snapshot.snapshot_id, strategy.strategy_version, tuple(candidates), tuple(paths), ()
+    )
+    outcome_set = DomainCandidateOutcomeSet(
+        snapshot.snapshot_id,
+        strategy.strategy_version,
+        EvaluationEngine.candidate_set_reference(candidate_set),
+        tuple(outcomes),
+    )
+    return MainChargeComparablePortfolio(candidate_set, outcome_set, strategy, tuple(sources))
+
+
+def _main_charge_energy_path(
+    *,
+    snapshot: PlanningInputSnapshot,
+    window: DailyMainChargeWindow,
+    candidate_id: str,
+    family: CandidateFamily,
+    confidence: float,
+    opportunity_ids: tuple[str, ...],
+    strategy_version: int,
+    supplemental: bool = False,
+) -> DomainEnergyPath:
+    storage = snapshot.current_storage_states[0]
+    limits = next(
+        i
+        for i in snapshot.storage_physical_limits
+        if i.execution_scope_id == storage.execution_scope_id
+        and i.capability_id == storage.capability_id
+    )
+    capability_set = snapshot.capability_snapshot_set
+    assert capability_set is not None
+    segments: list[PathSegment] = []
+    context = snapshot.daily_charge_context
+    retained_market = tuple(
+        (binding.assignment_id, segment)
+        for binding in (context.market_plan_bindings if context else ())
+        for plan in (context.main_plans if context else ())
+        if plan.plan_id == binding.plan_id
+        for segment in plan.segments
+        if segment.segment_id in binding.segment_ids
+    )
+    for interval in _execution_path_intervals(
+        window.schedule,
+        maximum_discharge_output_power_w=limits.maximum_discharge_output_power_w,
+        projection=window.projection,
+        retained_exports=tuple((s.starts_at, s.ends_at) for _, s in retained_market),
+    ):
+        # Preserve ownership even where adjacent main/retained segments use the
+        # same primitive. The Plan Builder copies these source IDs unchanged.
+        boundaries = sorted(
+            {
+                interval.starts_at,
+                interval.ends_at,
+                *(
+                    t
+                    for _, s in retained_market
+                    for t in (s.starts_at, s.ends_at)
+                    if interval.starts_at < t < interval.ends_at
+                ),
+                *(
+                    t
+                    for goal in window.supplemental_assignments
+                    for t in (goal.starts_at, goal.ends_at)
+                    if interval.starts_at < t < interval.ends_at
+                ),
+                *(
+                    t
+                    for s in window.main_segments
+                    for t in (s.starts_at, s.ends_at)
+                    if interval.starts_at < t < interval.ends_at
+                ),
+                *(
+                    t
+                    for retained in window.retained_main_segments
+                    for t in (retained.segment.starts_at, retained.segment.ends_at)
+                    if interval.starts_at < t < interval.ends_at
+                ),
+            }
+        )
+        for start, end in zip(boundaries, boundaries[1:], strict=False):
+            owner = next(
+                (s for s in window.main_segments if s.starts_at <= start and end <= s.ends_at), None
+            )
+            retained_main = next(
+                (r for r in window.retained_main_segments
+                 if r.segment.starts_at <= start and end <= r.segment.ends_at), None
+            )
+            if owner is not None and retained_main is not None:
+                raise ValueError("a new main window cannot replace another daily main segment")
+            segment_id = (
+                owner.segment_id
+                if owner is not None
+                else _id("main-charge-retained-segment", f"{candidate_id}|{start}|{end}")
+            )
+            supplemental_goal = next((g for g in window.supplemental_assignments
+                                      if g.starts_at <= start and end <= g.ends_at), None)
+            market_owner = next(
+                (key for key, s in retained_market if s.starts_at <= start < end <= s.ends_at), None
+            )
+            segments.append(
+                PathSegment(
+                    segment_id=segment_id,
+                    order=len(segments) + 1,
+                    execution_scope_id=storage.execution_scope_id,
+                    starts_at=start,
+                    ends_at=end,
+                    primitive=_primitive(interval.intent),
+                    capability_id=storage.capability_id,
+                    purpose=market_owner
+                    if market_owner is not None
+                    and interval.intent is DailyStorageIntent.STORAGE_EXPORT
+                    else supplemental_goal.assignment_id
+                    if supplemental_goal is not None
+                    else f"main-charge:{window.assignment_id}"
+                    if owner is not None
+                    else f"bridge:{window.assignment_id}"
+                    if supplemental
+                    and retained_main is None
+                    and end <= window.main_segments[0].starts_at
+                    else "retained-route",
+                    evidence_ids=(
+                        window.schedule.schedule_id,
+                        window.projection.basis_timeline.timeline_id,
+                    ),
+                    requested_power_w=limits.maximum_charge_input_power_w
+                    if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+                    else limits.maximum_discharge_output_power_w
+                    if interval.intent is DailyStorageIntent.STORAGE_EXPORT
+                    else None,
+                    charge_source_policy=ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
+                    if interval.intent is DailyStorageIntent.GRID_REQUIREMENT
+                    else ChargeSourcePolicy.PV_ONLY
+                    if interval.intent is DailyStorageIntent.NOM
+                    else None,
+                    soc_constraint=SocConstraint(limits.minimum_soc, limits.maximum_soc),
+                    main_assignment_id=(
+                        window.assignment_id
+                        if owner is not None
+                        else retained_main.assignment_id
+                        if retained_main is not None
+                        else None
+                    ),
+                    retained_execution_origin=(
+                        RetainedExecutionOrigin(
+                            retained_main.plan_id, retained_main.segment.segment_id
+                        )
+                        if retained_main is not None
+                        else None
+                    ),
+                )
+            )
+            if retained_main is not None:
+                actual, original = segments[-1], retained_main.segment
+                if any(getattr(actual, field) != getattr(original, field) for field in (
+                    "primitive", "capability_id", "requested_power_w", "soc_constraint",
+                    "charge_source_policy", "energy_profile_id",
+                )):
+                    raise ValueError("retained main action changed without an explicit revision")
+    projected = window.projection.intervals
+    states = (
+        ProjectedEnergyState(
+            at=projected[0].starts_at,
+            confidence=confidence,
+            battery_soc=storage.current_soc,
+            storage_energy_wh=storage.current_stored_energy_wh,
+        ),
+    ) + tuple(
+        ProjectedEnergyState(
+            at=i.ends_at,
+            confidence=i.confidence,
+            household_import_w=(i.grid_to_household_wh + i.grid_to_storage_input_wh) / hours,
+            household_export_w=(i.pv_to_grid_wh + i.storage_to_grid_output_wh) / hours,
+            pv_production_w=i.usable_pv_wh / hours,
+            household_demand_w=i.household_demand_wh / hours,
+            battery_soc=min(1.0, i.storage_energy_at_end_wh / storage.usable_capacity_wh),
+            storage_energy_wh=i.storage_energy_at_end_wh,
+            conversion_losses_w=(i.storage_charge_loss_wh + i.storage_discharge_loss_wh) / hours,
+        )
+        for i in projected
+        for hours in ((i.ends_at - i.starts_at).total_seconds() / 3600,)
+    )
+    return DomainEnergyPath(
+        path_id=_id("main-charge-energy-path", candidate_id),
+        snapshot_id=snapshot.snapshot_id,
+        family=family,
+        horizon_start=window.schedule.horizon_start,
+        horizon_end=window.schedule.horizon_end,
+        segments=tuple(segments),
+        projected_states=states,
+        opportunity_ids=opportunity_ids,
+        constraint_ids=(window.assignment_id,),
+        capability_ids=(storage.capability_id,),
+        strategy_version=strategy_version,
+        mapping_version=capability_set.mapping_version,
+        assumptions=(
+            window.projection.basis_method,
+            "main-window acquisition EUR/kWh-stored; full-horizon cash shown separately",
+            "100 percent reached within explicit main segments",
+        ),
+        confidence=confidence,
     )

@@ -457,7 +457,11 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         planning_incident_history: object,
         daily_pv_basis_decision: object,
         financial_result_ledger: object,
+        planning_checkpoint: object,
+        refresh_execution_input: object,
         ) -> None:
+        assert callable(planning_checkpoint)
+        assert callable(refresh_execution_input)
         del (
             canonical_pipeline,
             price_config,
@@ -535,16 +539,23 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         live_runtime.PlanningIncidentHistory,
     )
     executed_bundle, diagnostics = executed[0]
+    daily_context = executed_bundle.snapshot.daily_charge_context
+    assert daily_context is not None
+    assert daily_context.snapshot_id == executed_bundle.snapshot.snapshot_id
+    assert daily_context.restored_at == executed_bundle.snapshot.captured_at
+    # This fixture has no storage scope. The live preparation must still carry
+    # an explicit recovery status, not silently omit the daily input boundary.
+    assert daily_context.status == "blocked"
+    assert daily_context.reason == "daily_charge_execution_scope_unavailable"
     assert executed_bundle.snapshot.pv_energy_timeline is not None
     actual, future = (
         executed_bundle.snapshot.pv_energy_timeline.intervals
     )
     assert actual.evidence_type == "ACTUAL"
     assert actual.pv_energy_wh == pytest.approx(300.0)
-    assert future == replace(
-        bundle.snapshot.pv_energy_timeline.intervals[1],
-            forecast_lower_energy_wh=663.0,
-    )
+    # Daily main planning uses the original LOWER/CENTRAL range. Closed
+    # intervals still carry real actuals; they do not rewrite future LOWER.
+    assert future == bundle.snapshot.pv_energy_timeline.intervals[1]
     assert diagnostics.history_status == "available"
     assert diagnostics.interval_status == "actual"
     assert diagnostics.entity_id == ENTITY_ID
@@ -1185,3 +1196,33 @@ def test_regime_duration_window_is_not_reset_by_one_positive_interval() -> None:
         deviations,
         direction="above_forecast",
     ) == 1800
+
+
+@pytest.mark.parametrize("initial_status", ["unavailable", "available"])
+def test_missing_history_is_retried_on_normal_poll_after_recovery(initial_status):
+    calls = []
+
+    def history_reader(**kwargs):
+        calls.append(kwargs)
+        recovered = len(calls) > 1
+        return PVHistoryReadResult(
+            **kwargs, status="available" if recovered else initial_status,
+            error="temporary error" if not recovered and initial_status == "unavailable" else None,
+            observations=(PVPowerObservation(1000, CLOSED_START, "anchor"),
+                          PVPowerObservation(1000, CLOSED_END, "end")) if recovered else (),
+        )
+
+    cache = LivePVActualCache()
+    results = []
+    for n in range(3):
+        _, diagnostics = apply_latest_closed_actual_pv(
+            _bundle(captured_at=CAPTURED_AT + timedelta(seconds=n)),
+            entity_id=ENTITY_ID, history_reader=history_reader, cache=cache,
+            telemetry_interval_seconds=10,
+        )
+        results.append(diagnostics)
+    assert results[0].actual_interval_count == 0
+    assert results[1].actual_interval_count == 1
+    assert not results[1].cache_hit
+    assert results[2].cache_hit
+    assert len(calls) == 2

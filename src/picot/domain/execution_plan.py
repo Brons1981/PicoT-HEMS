@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from picot.domain.charge_source_policy import ChargeSourcePolicy
-from picot.domain.energy_path import SocConstraint
+from picot.domain.energy_path import RetainedExecutionOrigin, SocConstraint
 from picot.domain.execution_primitive import ExecutionPrimitive
 
 
@@ -42,8 +42,14 @@ class ExecutionPlanSegment:
     soc_constraint: SocConstraint | None = None
     energy_profile_id: str | None = None
     charge_source_policy: ChargeSourcePolicy | None = None
+    main_assignment_id: str | None = None
+    retained_execution_origin: RetainedExecutionOrigin | None = None
 
     def __post_init__(self) -> None:
+        if self.main_assignment_id is not None and not self.main_assignment_id.strip():
+            raise ValueError("Main assignment identity must be explicit when provided.")
+        if self.retained_execution_origin is not None and self.main_assignment_id is None:
+            raise ValueError("Retained main execution requires its assignment identity.")
         for text_value, label in (
             (self.segment_id, "Execution segment ID"),
             (self.source_path_segment_id, "Source Path Segment ID"),

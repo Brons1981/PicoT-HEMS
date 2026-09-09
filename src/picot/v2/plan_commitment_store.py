@@ -4,13 +4,38 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
 from picot.architecture_ownership import architecture_ownership
+from picot.domain.charge_source_policy import ChargeSourcePolicy
+from picot.domain.daily_reference_charge_window import DailyMainChargeWindow
+from picot.domain.energy_path import RetainedExecutionOrigin, SocConstraint
+from picot.domain.execution_plan import ExecutionPlan, ExecutionPlanLifecycle, ExecutionPlanSegment
+from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.market_daily_assignment import MarketAssignmentStatus, MarketDailyAssignment
+from picot.domain.market_execution import MarketExecutionProgress
+from picot.domain.market_plan_binding import MarketPlanBinding
+from picot.domain.market_user_rule import MarketUserRule
+from picot.domain.supplemental_charge import SupplementalChargeAssignment
+from picot.planner.market_route_admission import MarketAdmission
+from picot.v2.daily_bridge import BridgeEnergyInterval, DailyBridgeState, DailyBridgeTrigger
+from picot.v2.daily_charge_assignment import (
+    DailyChargeAssignment,
+    DailyChargeRevisionReason,
+    DailyChargeSegment,
+    DailyMainShortfallTrigger,
+    published_assignments,
+)
+from picot.v2.daily_pv_comparison import (
+    DailyMainPVSurplusTrigger,
+    DailyPVComparisonBasis,
+    DailyPVComparisonState,
+)
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("plan_store", __name__)
 COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v9"
@@ -297,6 +322,846 @@ class ActivePlanCommitmentStore:
         payload["commitments"][commitment.execution_scope_id] = serialized
         self._write(payload)
 
+    def load_daily_assignments(self) -> tuple[DailyChargeAssignment, ...]:
+        """Load durable daily tasks without treating corrupt state as a new day."""
+        payload = self._load_payload()
+        try:
+            records = payload.get("daily_assignments", {})
+            if not isinstance(records, dict):
+                raise ValueError("daily assignments must be an object")
+            assignments = tuple(_deserialize_daily(item) for item in records.values())
+            if any(key != item.assignment_id for key, item in zip(
+                records, assignments, strict=True
+            )):
+                raise ValueError("daily assignment identity does not match its storage key")
+            return assignments
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            self._record_incident("daily_charge_state_unreadable", exc)
+            raise ValueError("daily charge state unreadable; refusing to recreate tasks") from exc
+
+    def reconcile_daily_publication(
+        self, *, now: datetime, timezone: str, execution_scope_id: str,
+        price_intervals: tuple[tuple[datetime, datetime], ...],
+    ) -> tuple[DailyChargeAssignment, ...]:
+        """Create missing daily identities once, including after an offline start.
+
+        This entry point consumes canonical price coverage; it neither selects
+        windows nor binds legacy execution segments to the new main task.
+        """
+        existing = self.load_daily_assignments()
+        reconciled = published_assignments(
+            now=now, timezone=timezone, execution_scope_id=execution_scope_id,
+            price_intervals=price_intervals, existing=existing,
+        )
+        previous = {a.assignment_id: a for a in existing}
+        additions = tuple(a for a in reconciled if a.assignment_id not in previous)
+        if additions:
+            payload = self._load_payload()
+            records = payload.setdefault("daily_assignments", {})
+            for assignment in additions:
+                records[assignment.assignment_id] = _serialize_daily(assignment)
+            self._write(payload)
+        return reconciled
+
+    def save_daily_assignment(self, assignment: DailyChargeAssignment) -> None:
+        """Persist one lifecycle transition using the existing single-writer store.
+
+        A stale route or duplicate publication cannot reset completion. Active
+        execution-plan resets intentionally do not remove daily goal history.
+        """
+        existing = {a.assignment_id: a for a in self.load_daily_assignments()}
+        previous = existing.get(assignment.assignment_id)
+        if previous == assignment:
+            return
+        if previous is not None:
+            if previous.completed_at is not None:
+                raise ValueError("completed daily assignment cannot be overwritten")
+            if assignment.created_at != previous.created_at:
+                raise ValueError("daily assignment creation identity cannot be replaced")
+            if assignment.revision == previous.revision:
+                expected = replace(previous, completed_at=assignment.completed_at,
+                                   completion_evidence_id=assignment.completion_evidence_id,
+                                   completion_segment_id=assignment.completion_segment_id)
+                if assignment != expected:
+                    raise ValueError("route changes require a new daily revision")
+            elif assignment.revision != previous.revision + 1:
+                raise ValueError("stale or skipped daily assignment revision")
+            elif previous.revised_at is not None and (
+                assignment.revised_at is None or assignment.revised_at < previous.revised_at
+            ):
+                raise ValueError("daily assignment revision time cannot move backwards")
+        payload = self._load_payload()
+        payload.setdefault("daily_assignments", {})[assignment.assignment_id] = _serialize_daily(
+            assignment
+        )
+        self._write(payload)
+
+    def bind_daily_main_plan(
+        self,
+        *,
+        plan: ExecutionPlan,
+        window: DailyMainChargeWindow,
+        activate: bool = False,
+        optimisation_trigger: (
+            DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | DailyBridgeTrigger | None
+        ) = None,
+        bridge_deficits: tuple[BridgeEnergyInterval, ...] = (),
+        pv_comparison_basis: DailyPVComparisonBasis | None = None,
+        market_binding: MarketPlanBinding | None = None,
+        market_admission: MarketAdmission | None = None,
+    ) -> DailyChargeAssignment:
+        """Bind explicit winning source segments, never infer ownership from mode.
+
+        The canonical Plan Builder supplies the plan and its source-path IDs.
+        The full immutable execution plan and ownership are written atomically.
+        This does not admit execution or complete the daily goal from a forecast.
+        """
+        assignment = next(
+            (a for a in self.load_daily_assignments() if a.assignment_id == window.assignment_id),
+            None,
+        )
+        if assignment is None:
+            raise ValueError("daily assignment must exist before binding its winning plan")
+        if plan.snapshot_id != window.projection.snapshot_id:
+            raise ValueError("winning plan and main window snapshot must match")
+        if plan.execution_scope_id != assignment.execution_scope_id:
+            raise ValueError("winning main plan belongs to another execution scope")
+        owned = {s.segment_id: s for s in window.main_segments}
+        matched = tuple(s for s in plan.segments if s.source_path_segment_id in owned)
+        if len(matched) != len(owned) or {s.source_path_segment_id for s in matched} != set(owned):
+            raise ValueError("winning plan must preserve every explicit main source segment")
+        for segment in matched:
+            source = owned[segment.source_path_segment_id]
+            if (segment.starts_at, segment.ends_at) != (source.starts_at, source.ends_at):
+                raise ValueError("winning plan must preserve main segment boundaries")
+            if segment.main_assignment_id not in (None, assignment.assignment_id):
+                raise ValueError("winning main segment belongs to another daily assignment")
+            if segment.retained_execution_origin is not None:
+                raise ValueError("new main goal cannot claim another route's execution origin")
+        main_segments = tuple(
+            DailyChargeSegment(s.segment_id, s.starts_at, s.ends_at) for s in matched
+        )
+        same_binding = (
+            assignment.route_plan_id == plan.plan_id and assignment.main_segments == main_segments
+        )
+        if same_binding and (plan.evaluation_id, plan.created_at) != (
+            assignment.revision_evidence_id, assignment.revised_at,
+        ):
+            raise ValueError("winning plan does not match the stored daily revision evidence")
+        if optimisation_trigger is not None:
+            optimisation_trigger.validate(assignment, plan.snapshot_id, plan.created_at)
+            if optimisation_trigger.target_wh != window.target_storage_energy_wh:
+                raise ValueError("shortfall trigger and revised target must match")
+            active_plan = self.load_active_daily_main_plan(plan.execution_scope_id)
+            if active_plan is None or active_plan.plan_id != optimisation_trigger.active_plan_id:
+                raise ValueError("shortfall trigger active plan has changed")
+            if not activate:
+                raise ValueError("a main revision must atomically activate its execution plan")
+        elif assignment.revision and not same_binding:
+            raise ValueError("bound daily main route requires an explicit optimisation trigger")
+        if isinstance(optimisation_trigger, DailyBridgeTrigger):
+            if optimisation_trigger.supplemental_shortfall_id is not None:
+                goal = next((a for a in self.load_supplemental_assignments()
+                             if a.assignment_id == optimisation_trigger.supplemental_shortfall_id),
+                            None)
+                if goal is None or goal.completed_at is not None or (
+                    goal.next_assignment_id != assignment.assignment_id
+                    or goal.plan_id != optimisation_trigger.active_plan_id
+                    or goal.required_by <= plan.created_at
+                ):
+                    raise ValueError("supplemental shortfall requires current open ownership")
+            completed = next(
+                (a for a in self.load_daily_assignments()
+                 if a.assignment_id == optimisation_trigger.completed_assignment_id), None,
+            )
+            if (completed is None or completed.completed_at is None
+                    or completed.completed_at > plan.created_at
+                    or completed.execution_scope_id != assignment.execution_scope_id
+                    or completed.delivery_date >= assignment.delivery_date):
+                raise ValueError("bridge requires a proven completed daily goal")
+            previous_plan = self.load_daily_main_plan(assignment.assignment_id)
+            assert previous_plan is not None
+            originals = tuple(s for s in previous_plan.segments
+                              if s.segment_id in {m.segment_id for m in assignment.main_segments})
+            if len(matched) != len(originals) or any(
+                any(getattr(a, field) != getattr(b, field) for field in (
+                    "starts_at", "ends_at", "primitive", "requested_power_w", "soc_constraint",
+                    "capability_id", "charge_source_policy", "energy_profile_id",
+                )) for a, b in zip(matched, originals, strict=True)
+            ):
+                raise ValueError("bridge cannot move or change the next main session")
+            if (not bridge_deficits
+                    or bridge_deficits[-1].ends_at != optimisation_trigger.next_starts_at):
+                raise ValueError("bridge requires remaining deficit evidence to its endpoint")
+            DailyBridgeState(assignment.assignment_id, plan.plan_id,
+                             optimisation_trigger.next_starts_at, bridge_deficits)
+            if bridge_deficits[0].starts_at != plan.created_at or (
+                optimisation_trigger.next_starts_at != min(s.starts_at for s in originals)
+            ):
+                raise ValueError("bridge must cover now to the unchanged next main start")
+        elif bridge_deficits:
+            raise ValueError("bridge evidence requires an explicit reserve trigger")
+        if not same_binding:
+            self._validate_retained_main_segments(plan, window)
+        bound = assignment if same_binding else assignment.bind_main_route(
+            plan_id=plan.plan_id,
+            segments=main_segments,
+            at=plan.created_at,
+            reason=(optimisation_trigger.revision_reason if optimisation_trigger is not None
+                    else DailyChargeRevisionReason.INITIAL),
+            evidence_id=plan.evaluation_id,
+        )
+        payload = self._load_payload()
+        plans = payload.setdefault("daily_execution_plans", {})
+        if not isinstance(plans, dict):
+            raise ValueError("daily execution plans must be an object")
+        serialized = _serialize_execution_plan(plan)
+        previous = plans.get(bound.assignment_id)
+        if previous is not None and _deserialize_execution_plan(previous) != plan:
+            if optimisation_trigger is None:
+                raise ValueError("stored daily execution plan is immutable; revision required")
+            history = payload.setdefault("daily_main_history", {})
+            if not isinstance(history, dict):
+                raise ValueError("daily main history must be an object")
+            record = {"assignment": _serialize_daily(assignment), "plan": previous}
+            if assignment.route_plan_id in history and history[assignment.route_plan_id] != record:
+                raise ValueError("historical daily main revision is immutable")
+            history[assignment.route_plan_id] = record
+            triggers = payload.setdefault("daily_main_revision_triggers", {})
+            triggers[plan.plan_id] = {
+                **asdict(optimisation_trigger),
+                "assessed_at": optimisation_trigger.assessed_at.isoformat(),
+                **({
+                    "next_starts_at": optimisation_trigger.next_starts_at.isoformat(),
+                    "deficits": [
+                        {"starts_at": i.starts_at.isoformat(), "ends_at": i.ends_at.isoformat(),
+                         "deficit_wh": i.deficit_wh} for i in optimisation_trigger.deficits
+                    ],
+                } if isinstance(optimisation_trigger, DailyBridgeTrigger) else {}),
+            }
+        if same_binding and previous is not None:
+            return bound
+        pv_records = payload.setdefault("daily_pv_comparison", {})
+        if pv_comparison_basis is not None:
+            if assignment.revision or (
+                pv_comparison_basis.assignment_id != assignment.assignment_id
+                or pv_comparison_basis.snapshot_id != plan.snapshot_id
+                or pv_comparison_basis.captured_at != plan.created_at
+                or (pv_comparison_basis.day_starts_at, pv_comparison_basis.day_ends_at)
+                != (assignment.starts_at, assignment.ends_at)
+            ):
+                raise ValueError("PV reference must belong to the first main binding")
+            if assignment.assignment_id in pv_records:
+                raise ValueError("initial PV comparison reference is immutable")
+            pv_records[assignment.assignment_id] = {
+                "basis": pv_comparison_basis.to_payload(), "assessed": {},
+            }
+        if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
+            pv_state = self.load_daily_pv_comparison(assignment.assignment_id)
+            if pv_state.basis is None or pv_state.basis.basis_id != optimisation_trigger.basis_id:
+                raise ValueError("PV trigger requires the saved initial reference")
+            if optimisation_trigger.comparison_evidence_id in pv_state.assessed_evidence_ids:
+                raise ValueError("PV comparison evidence was already assessed")
+            prior_plan = self.load_active_daily_main_plan(plan.execution_scope_id)
+            assert prior_plan is not None
+            prior_grid = tuple(
+                s for s in prior_plan.segments
+                if s.main_assignment_id == assignment.assignment_id
+                and s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                and s.ends_at > plan.created_at
+            )
+            if any(s.requested_power_w is None for s in prior_grid) or any(
+                s.requested_power_w is None for s in matched
+                if s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+            ):
+                raise ValueError("PV revision requires explicit grid power")
+            prior_grid_wh = sum(
+                float(s.requested_power_w)
+                * (s.ends_at - max(s.starts_at, plan.created_at)).total_seconds() / 3600
+                for s in prior_grid if s.requested_power_w is not None
+            )
+            if abs(prior_grid_wh - optimisation_trigger.prior_grid_input_wh) > 1e-6:
+                raise ValueError("PV trigger must match the active remaining grid charge")
+            new_grid_wh = sum(
+                float(part.requested_power_w)
+                * (part.ends_at - part.starts_at).total_seconds() / 3600
+                for part in matched if part.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                and part.requested_power_w is not None
+            )
+            if new_grid_wh >= optimisation_trigger.prior_grid_input_wh - 1e-6:
+                raise ValueError("PV revision must reduce the owned future grid charge")
+            assessed = pv_records[assignment.assignment_id]["assessed"]
+            assessed[optimisation_trigger.comparison_evidence_id] = {
+                "outcome": "route_revised", "plan_id": plan.plan_id,
+            }
+        if isinstance(optimisation_trigger, DailyBridgeTrigger):
+            payload.setdefault("daily_bridge_states", {})[bound.assignment_id] = {
+                "plan_id": plan.plan_id,
+                "next_starts_at": optimisation_trigger.next_starts_at.isoformat(),
+                "accepted_deficits": [
+                    {"starts_at": i.starts_at.isoformat(), "ends_at": i.ends_at.isoformat(),
+                     "deficit_wh": i.deficit_wh} for i in bridge_deficits
+                ],
+            }
+        if activate:
+            self._preserve_market_bindings(payload, plan)
+        self._bind_supplemental(payload, plan, window)
+        if market_binding is not None:
+            if not activate or market_admission is None:
+                raise ValueError("combined market publication requires active admission")
+            market_day = next(
+                (
+                    a
+                    for a in self.load_market_daily_assignments()
+                    if a.assignment_id == market_binding.assignment_id
+                ),
+                None,
+            )
+            if (
+                market_day is None
+                or market_day.status != "pending"
+                or any(
+                    b.assignment_id == market_binding.assignment_id
+                    for b in self.load_market_plan_bindings()
+                )
+            ):
+                raise ValueError("combined market publication requires an unbound daily action")
+            self._validate_market_binding(market_binding, market_day, plan)
+            if market_admission.status != "admissible" or (
+                market_admission.assignment_id,
+                market_admission.snapshot_id,
+                market_admission.expected_export_wh,
+            ) != (
+                market_binding.assignment_id,
+                plan.snapshot_id,
+                market_binding.expected_export_wh,
+            ):
+                raise ValueError("combined market publication requires matching admission")
+            if not isinstance(optimisation_trigger, DailyMainShortfallTrigger) or (
+                optimisation_trigger.extra_load_assignment_id != market_binding.assignment_id
+            ):
+                raise ValueError("combined charge optimisation requires its explicit user load")
+            payload.setdefault("market_plan_bindings", {})[market_binding.assignment_id] = asdict(
+                market_binding
+            )
+        elif market_admission is not None or (
+            isinstance(optimisation_trigger, DailyMainShortfallTrigger)
+            and optimisation_trigger.extra_load_assignment_id is not None
+        ):
+            raise ValueError("user-load revision cannot omit its market binding")
+        plans[bound.assignment_id] = serialized
+        payload.setdefault("daily_assignments", {})[bound.assignment_id] = _serialize_daily(bound)
+        if activate:
+            active = payload.setdefault("active_daily_main_assignments", {})
+            if not isinstance(active, dict):
+                raise ValueError("active daily main assignments must be an object")
+            active[plan.execution_scope_id] = bound.assignment_id
+            payload.setdefault("active_execution_plan_ids", {})[plan.execution_scope_id] = (
+                plan.plan_id
+            )
+            payload.setdefault("execution_plans", {})[plan.plan_id] = serialized
+        self._write(payload)
+        return bound
+
+    def load_supplemental_assignments(self) -> tuple[SupplementalChargeAssignment, ...]:
+        try:
+            payload = self._load_payload()
+            records = payload.get("supplemental_assignments", {})
+            result = []
+            for key, value in records.items():
+                data = dict(value)
+                for field in ("starts_at", "ends_at", "required_by", "completed_at"):
+                    data[field] = datetime.fromisoformat(data[field]) if data.get(field) else None
+                data["segment_ids"] = tuple(data["segment_ids"])
+                goal = SupplementalChargeAssignment(**data)
+                if goal.assignment_id != key or not goal.plan_id:
+                    raise ValueError("supplemental binding is invalid")
+                plan_record = next(
+                    (
+                        p
+                        for p in payload.get("daily_execution_plans", {}).values()
+                        if p.get("plan_id") == goal.plan_id
+                    ),
+                    None,
+                )
+                if plan_record is None:
+                    plan_record = payload.get("execution_plans", {}).get(goal.plan_id)
+                if plan_record is None:
+                    plan_record = (
+                        payload.get("daily_main_history", {}).get(goal.plan_id, {}).get("plan")
+                    )
+                if plan_record is None:
+                    raise ValueError("supplemental execution plan is missing")
+                plan = _deserialize_execution_plan(plan_record)
+                parts = tuple(s for s in plan.segments if s.segment_id in goal.segment_ids)
+                if (
+                    plan.execution_scope_id != goal.execution_scope_id
+                    or len(parts) != len(goal.segment_ids)
+                    or not parts
+                    or parts[0].starts_at != goal.starts_at
+                    or parts[-1].ends_at != goal.ends_at
+                    or any(
+                        s.purpose != goal.assignment_id or s.main_assignment_id is not None
+                        for s in parts
+                    )
+                ):
+                    raise ValueError("supplemental execution lineage is invalid")
+                result.append(goal)
+            return tuple(sorted(result, key=lambda a: (a.starts_at, a.assignment_id)))
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            raise ValueError("saved supplemental assignment is invalid") from exc
+
+    @staticmethod
+    def _supplemental_record(goal: SupplementalChargeAssignment) -> dict[str, Any]:
+        data = asdict(goal)
+        for field in ("starts_at", "ends_at", "required_by", "completed_at"):
+            value = data[field]
+            data[field] = value.isoformat() if value is not None else None
+        return data
+
+    def _bind_supplemental(
+        self, payload: dict[str, Any], plan: ExecutionPlan, window: DailyMainChargeWindow
+    ) -> None:
+        previous = {
+            a.assignment_id: a
+            for a in self.load_supplemental_assignments()
+            if a.execution_scope_id == plan.execution_scope_id
+        }
+        proposed = {a.assignment_id: a for a in window.supplemental_assignments}
+        if len(proposed) != len(window.supplemental_assignments):
+            raise ValueError("duplicate supplemental ownership")
+        if any(
+            a.completed_at is None and a.required_by > plan.created_at and key not in proposed
+            for key, a in previous.items()
+        ):
+            raise ValueError("open supplemental assignment cannot be discarded")
+        for key, goal in proposed.items():
+            old = previous.get(key)
+            if old is not None and (
+                old.completed_at is not None
+                or (old.target_soc, old.required_by, old.next_assignment_id)
+                != (goal.target_soc, goal.required_by, goal.next_assignment_id)
+            ):
+                raise ValueError("supplemental target and required time must be retained")
+            if goal.execution_scope_id != plan.execution_scope_id or goal.completed_at is not None:
+                raise ValueError("candidate cannot complete a supplemental goal")
+            parts = tuple(s for s in plan.segments if s.purpose == key)
+            if (
+                not parts
+                or parts[0].starts_at != goal.starts_at
+                or parts[-1].ends_at != goal.ends_at
+            ):
+                raise ValueError("supplemental window must match its execution segments")
+            if any(
+                s.main_assignment_id is not None
+                or s.primitive
+                not in {
+                    ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                    ExecutionPrimitive.CHARGE_AT_POWER,
+                }
+                for s in parts
+            ) or any(a.ends_at != b.starts_at for a, b in zip(parts, parts[1:], strict=False)):
+                raise ValueError("supplemental execution must be a separate contiguous charge")
+            if old is not None:
+                payload.setdefault("supplemental_history", {}).setdefault(key, []).append(
+                    self._supplemental_record(old)
+                )
+            bound_goal = replace(
+                goal, plan_id=plan.plan_id, segment_ids=tuple(s.segment_id for s in parts)
+            )
+            payload.setdefault("supplemental_assignments", {})[key] = self._supplemental_record(
+                bound_goal
+            )
+
+    def observe_supplemental_completion(
+        self,
+        *,
+        execution_scope_id: str,
+        plan_id: str,
+        segment_id: str,
+        confirmed_since: datetime,
+        observed_at: datetime,
+        measured_at: datetime,
+        soc: float,
+        evidence_id: str,
+        state_read_at: datetime | None = None,
+        state_valid_since: datetime | None = None,
+        confirmed_until: datetime | None = None,
+    ) -> SupplementalChargeAssignment | None:
+        plan = self.load_active_daily_main_plan(execution_scope_id)
+        if plan is None or plan.plan_id != plan_id or not evidence_id:
+            return None
+        segment = next((s for s in plan.segments if s.segment_id == segment_id), None)
+        if segment is None or segment.main_assignment_id is not None:
+            return None
+        goal = next(
+            (
+                a
+                for a in self.load_supplemental_assignments()
+                if a.assignment_id == segment.purpose
+                and a.plan_id == plan_id
+                and segment_id in a.segment_ids
+            ),
+            None,
+        )
+        if (
+            goal is None
+            or goal.completed_at is not None
+            or not isfinite(soc)
+            or not goal.target_soc <= soc <= 1
+        ):
+            return goal if goal is not None and goal.completed_at is not None else None
+        if not segment.starts_at <= confirmed_since <= min(observed_at, segment.ends_at):
+            return None
+        if observed_at > segment.ends_at and not (
+            confirmed_until is not None and confirmed_until.utcoffset() is not None
+            and confirmed_since <= measured_at <= min(confirmed_until, segment.ends_at)
+            and confirmed_until <= observed_at
+        ):
+            return None
+        at = measured_at
+        fresh = confirmed_since <= measured_at <= observed_at
+        if not fresh:
+            if not (
+                state_read_at is not None
+                and state_valid_since is not None
+                and state_valid_since <= measured_at <= state_read_at <= observed_at
+                and state_valid_since <= goal.starts_at <= state_read_at
+                and segment.starts_at <= state_read_at <= segment.ends_at
+            ):
+                return None
+            at = state_read_at
+        if not goal.starts_at <= at <= goal.ends_at:
+            return None
+        done = replace(
+            goal,
+            completed_at=at,
+            completion_evidence_id=(
+                f"confirmed-supplemental:{plan_id}:{segment_id}:{evidence_id}:"
+                f"measured={measured_at.isoformat()}:read={state_read_at}:since={state_valid_since}:"
+                f"received={observed_at.isoformat()}:confirmed_until={confirmed_until}"
+            ),
+        )
+        payload = self._load_payload()
+        payload["supplemental_assignments"][goal.assignment_id] = self._supplemental_record(done)
+        self._write(payload)
+        return done
+
+    def load_daily_bridge_state(self, assignment_id: str) -> DailyBridgeState | None:
+        try:
+            raw = self._load_payload().get("daily_bridge_states", {}).get(assignment_id)
+            if raw is None:
+                return None
+            return DailyBridgeState(
+                assignment_id,
+                raw["plan_id"],
+                datetime.fromisoformat(raw["next_starts_at"]),
+                tuple(
+                    BridgeEnergyInterval(
+                        datetime.fromisoformat(i["starts_at"]),
+                        datetime.fromisoformat(i["ends_at"]),
+                        float(i["deficit_wh"]),
+                    )
+                    for i in raw["accepted_deficits"]
+                ),
+            )
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise ValueError("saved bridge assessment is invalid") from exc
+
+    def load_daily_pv_comparison(self, assignment_id: str) -> DailyPVComparisonState:
+        """Unavailable optional comparison evidence cannot erase the main route."""
+        try:
+            raw = self._load_payload().get("daily_pv_comparison", {}).get(assignment_id)
+            if raw is None:
+                return DailyPVComparisonState(assignment_id, None,
+                                              unavailable_reason="initial_reference_unavailable")
+            basis = DailyPVComparisonBasis.from_payload(raw["basis"])
+            if basis.assignment_id != assignment_id:
+                raise ValueError("PV reference belongs to another daily assignment")
+            assessed = raw["assessed"]
+            if not isinstance(assessed, dict) or any(not isinstance(k, str) for k in assessed):
+                raise ValueError("PV assessment history is invalid")
+            return DailyPVComparisonState(assignment_id, basis, tuple(sorted(assessed)))
+        except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
+            self._record_incident("daily_pv_comparison_unreadable", exc)
+            return DailyPVComparisonState(assignment_id, None,
+                                          unavailable_reason="initial_reference_unreadable")
+
+    def record_daily_pv_assessment(
+        self, *, assignment_id: str, basis_id: str, evidence_id: str, outcome: str,
+    ) -> None:
+        state = self.load_daily_pv_comparison(assignment_id)
+        if state.basis is None or state.basis.basis_id != basis_id:
+            raise ValueError("PV assessment requires its saved initial reference")
+        if evidence_id in state.assessed_evidence_ids:
+            return
+        if not evidence_id or not outcome:
+            raise ValueError("PV assessment requires explicit evidence and outcome")
+        payload = self._load_payload()
+        assessed = payload["daily_pv_comparison"][assignment_id]["assessed"]
+        assessed[evidence_id] = {"outcome": outcome}
+        self._write(payload)
+
+    def load_active_daily_main_plan(self, execution_scope_id: str) -> ExecutionPlan | None:
+        """Read the explicit active pointer; never guess from plan timestamps."""
+        payload = self._load_payload()
+        pointers = payload.get("active_execution_plan_ids", {})
+        if not isinstance(pointers, dict):
+            raise ValueError("active execution plan pointers must be an object")
+        if execution_scope_id in pointers:
+            plan_id = pointers[execution_scope_id]
+            plan = _registered_execution_plan(payload, plan_id)
+            if plan.plan_id != plan_id or plan.execution_scope_id != execution_scope_id:
+                raise ValueError("active execution plan identity or scope invalid")
+            owners = self.load_daily_assignments()
+            owner = next((a for a in owners if a.route_plan_id == plan_id), None)
+            if owner is not None:
+                # Keep all original daily lineage validation, including old pointers.
+                if payload.get("active_daily_main_assignments", {}).get(execution_scope_id) != (
+                    owner.assignment_id
+                ) or self.load_daily_main_plan(owner.assignment_id) != plan:
+                    raise ValueError("active daily main plan scope or binding invalid")
+            else:
+                if not any(b.plan_id == plan_id for b in self.load_market_plan_bindings()):
+                    raise ValueError("active shared execution plan has no market owner")
+                seen = {plan_id}
+                shared = plan
+                while shared.plan_id in payload.get("shared_plan_origins", {}):
+                    origin_id = payload["shared_plan_origins"][shared.plan_id]
+                    if origin_id in seen:
+                        raise ValueError("shared plan origin cycle")
+                    seen.add(origin_id)
+                    origin = _registered_execution_plan(payload, origin_id)
+                    if origin.plan_id != origin_id:
+                        raise ValueError("shared plan origin identity mismatch")
+                    self._retains_shared_charge_plan(origin, shared)
+                    shared = origin
+                owner = next((a for a in owners if a.route_plan_id == shared.plan_id), None)
+                if owner is None or self.load_daily_main_plan(owner.assignment_id) != shared:
+                    raise ValueError("shared plan must resolve to its original charge plan")
+            return plan
+        active = payload.get("active_daily_main_assignments", {})
+        if not isinstance(active, dict):
+            raise ValueError("active daily main assignments must be an object")
+        assignment_id = active.get(execution_scope_id)
+        if assignment_id is None:
+            return None
+        if not isinstance(assignment_id, str):
+            raise ValueError("active daily main assignment must be an identity")
+        legacy_plan = self.load_daily_main_plan(assignment_id)
+        if legacy_plan is None or legacy_plan.execution_scope_id != execution_scope_id:
+            raise ValueError("active daily main plan scope or binding invalid")
+        return legacy_plan
+
+    def observe_daily_main_completion(
+        self, *, execution_scope_id: str, plan_id: str, segment_id: str,
+        confirmed_since: datetime, observed_at: datetime, measured_at: datetime,
+        soc: float, evidence_id: str,
+        state_read_at: datetime | None = None,
+        state_valid_since: datetime | None = None,
+        confirmed_until: datetime | None = None,
+    ) -> DailyChargeAssignment | None:
+        """Resolve validated execution origin after the runtime confirms the mode.
+
+        A dispatch acknowledgement or old SOC sample alone cannot complete a goal.
+        Fresh HA state reads can separately prove full-at-main-start while keeping
+        the original sensor timestamp. Runtime guards and main ownership still apply.
+        """
+        if not confirmed_since <= observed_at or measured_at > observed_at:
+            return None
+        plan = self.load_active_daily_main_plan(execution_scope_id)
+        if plan is None or plan.plan_id != plan_id:
+            return None
+        segment = next((s for s in plan.segments if s.segment_id == segment_id), None)
+        if segment is None or segment.main_assignment_id is None:
+            return None
+        if observed_at > segment.ends_at and not (
+            confirmed_until is not None and confirmed_until.utcoffset() is not None
+            and confirmed_since <= measured_at <= min(confirmed_until, segment.ends_at)
+            and confirmed_until <= observed_at
+        ):
+            return None
+        owner = next((a for a in self.load_daily_assignments()
+                      if a.assignment_id == segment.main_assignment_id), None)
+        if owner is None:
+            raise ValueError("confirmed main segment has no daily owner")
+        origin = segment.retained_execution_origin
+        original_segment_id = origin.segment_id if origin is not None else segment_id
+        original_main = next((s for s in owner.main_segments
+                              if s.segment_id == original_segment_id), None)
+        current_full_at_start = (
+            original_main is not None and soc == 1.0
+            and state_read_at is not None and state_valid_since is not None
+            and state_valid_since <= measured_at <= state_read_at <= observed_at
+            and state_valid_since <= original_main.starts_at <= state_read_at
+            and segment.starts_at <= confirmed_since <= observed_at < segment.ends_at
+        )
+        if not current_full_at_start and not (
+            confirmed_since <= measured_at <= observed_at
+            and segment.starts_at <= measured_at <= segment.ends_at
+        ):
+            return None
+        completed = owner.observe_completion(
+            measured_at=measured_at, soc=soc, execution_allowed=True,
+            plan_id=origin.plan_id if origin is not None else plan_id,
+            segment_id=origin.segment_id if origin is not None else segment_id,
+            state_read_at=state_read_at if current_full_at_start else None,
+            state_valid_since=state_valid_since if current_full_at_start else None,
+            evidence_id=(f"confirmed-execution:{plan_id}:{segment_id}:"
+                         f"{confirmed_since.isoformat()}:{evidence_id}:"
+                         f"measured={measured_at.isoformat()}:"
+                         f"state_read={state_read_at}:state_since={state_valid_since}:"
+                         f"received={observed_at.isoformat()}:confirmed_until={confirmed_until}"),
+        )
+        if completed != owner:
+            self.save_daily_assignment(completed)
+        return completed
+
+    def _validate_retained_main_segments(
+        self, plan: ExecutionPlan, window: DailyMainChargeWindow,
+    ) -> None:
+        expected = {}
+        for owner in self.load_daily_assignments():
+            if (
+                owner.assignment_id == window.assignment_id
+                or owner.execution_scope_id != plan.execution_scope_id
+            ):
+                continue
+            for main in owner.main_segments:
+                if main.ends_at <= plan.valid_from or main.starts_at >= plan.valid_until:
+                    continue
+                original_plan = self.load_daily_main_plan(owner.assignment_id)
+                assert original_plan is not None
+                original = next(
+                    s for s in original_plan.segments if s.segment_id == main.segment_id
+                )
+                expected[(original_plan.plan_id, main.segment_id)] = (owner, original)
+        declared = {(r.plan_id, r.segment.segment_id): r for r in window.retained_main_segments}
+        if set(declared) != set(expected):
+            raise ValueError("new horizon must preserve every overlapping daily main segment")
+        for key, (owner, original) in expected.items():
+            reference = declared[key]
+            if reference.assignment_id != owner.assignment_id or reference.segment != original:
+                raise ValueError("retained main reference differs from its stored origin")
+            origin = RetainedExecutionOrigin(*key)
+            remaining = sorted(
+                (s for s in plan.segments if s.retained_execution_origin == origin),
+                key=lambda s: s.starts_at,
+            )
+            cursor = max(plan.valid_from, original.starts_at)
+            end = min(plan.valid_until, original.ends_at)
+            for segment in remaining:
+                if segment.main_assignment_id != owner.assignment_id or segment.starts_at != cursor:
+                    raise ValueError("retained main execution has changed ownership or a gap")
+                if segment.ends_at > end or any(
+                    getattr(segment, field) != getattr(original, field) for field in (
+                        "primitive", "capability_id", "requested_power_w", "soc_constraint",
+                        "charge_source_policy", "energy_profile_id",
+                    )
+                ):
+                    raise ValueError("retained main execution changed without an explicit revision")
+                cursor = segment.ends_at
+            if cursor != end:
+                raise ValueError("new horizon omits remaining main execution")
+        for segment in plan.segments:
+            actual_origin = segment.retained_execution_origin
+            if actual_origin is None and segment.main_assignment_id not in (
+                None, window.assignment_id,
+            ):
+                raise ValueError("other main ownership requires a verified execution origin")
+            if actual_origin is not None and (
+                actual_origin.plan_id, actual_origin.segment_id
+            ) not in expected:
+                raise ValueError("execution refers to an unverified retained main origin")
+
+    def load_daily_main_plan(self, assignment_id: str) -> ExecutionPlan | None:
+        """Recover the exact main route, without selecting or admitting execution.
+
+        A bound assignment without its plan is an explicit recovery error, not
+        permission to replace the route. Older identity-only records are kept.
+        """
+        assignments = self.load_daily_assignments()
+        assignment = next((a for a in assignments if a.assignment_id == assignment_id), None)
+        if assignment is None:
+            raise ValueError("daily assignment does not exist")
+        try:
+            records = self._load_payload().get("daily_execution_plans", {})
+            if not isinstance(records, dict):
+                raise ValueError("daily execution plans must be an object")
+            raw = records.get(assignment_id)
+            if assignment.route_plan_id is None:
+                if raw is not None:
+                    raise ValueError("unbound daily assignment has an execution plan")
+                return None
+            if raw is None:
+                raise ValueError("bound daily assignment has no stored execution plan")
+            plan = _deserialize_execution_plan(raw)
+            if (plan.plan_id, plan.execution_scope_id, plan.evaluation_id, plan.created_at) != (
+                assignment.route_plan_id, assignment.execution_scope_id,
+                assignment.revision_evidence_id, assignment.revised_at,
+            ):
+                raise ValueError("stored execution plan does not match daily ownership")
+            segments = {s.segment_id: s for s in plan.segments}
+            for main in assignment.main_segments:
+                segment = segments.get(main.segment_id)
+                if segment is None or (segment.starts_at, segment.ends_at) != (
+                    main.starts_at, main.ends_at,
+                ):
+                    raise ValueError("stored execution plan does not preserve main segments")
+                if segment.main_assignment_id not in (None, assignment_id):
+                    raise ValueError("stored main segment belongs to another assignment")
+                if segment.retained_execution_origin is not None:
+                    raise ValueError("stored own main segment cannot claim a retained origin")
+            for segment in plan.segments:
+                origin = segment.retained_execution_origin
+                if origin is None:
+                    continue
+                owner = next((a for a in assignments
+                              if a.assignment_id == segment.main_assignment_id), None)
+                if owner is None:
+                    raise ValueError("stored retained main origin no longer matches its owner")
+                if owner.route_plan_id == origin.plan_id:
+                    original_plan = _deserialize_execution_plan(records[owner.assignment_id])
+                else:
+                    historical = self._load_payload().get("daily_main_history", {}).get(
+                        origin.plan_id,
+                    )
+                    if historical is None:
+                        raise ValueError("stored retained main origin has no historical revision")
+                    historical_owner = _deserialize_daily(historical["assignment"])
+                    original_plan = _deserialize_execution_plan(historical["plan"])
+                    if (historical_owner.assignment_id != owner.assignment_id
+                        or historical_owner.route_plan_id != origin.plan_id
+                        or original_plan.evaluation_id != historical_owner.revision_evidence_id
+                        or original_plan.created_at != historical_owner.revised_at):
+                        raise ValueError("historical main revision lineage mismatch")
+                    owner = historical_owner
+                if original_plan.plan_id != origin.plan_id or (
+                    original_plan.execution_scope_id != plan.execution_scope_id
+                ):
+                    raise ValueError("stored retained plan identity or scope does not match")
+                original = next((s for s in original_plan.segments
+                                 if s.segment_id == origin.segment_id), None)
+                if original is None or not any(
+                    s.segment_id == origin.segment_id for s in owner.main_segments
+                ):
+                    raise ValueError("stored retained origin is not an owned main segment")
+                if not (
+                    original.starts_at <= segment.starts_at < segment.ends_at <= original.ends_at
+                ):
+                    raise ValueError("stored retained main interval exceeds its original bounds")
+                if any(getattr(segment, field) != getattr(original, field) for field in (
+                    "primitive", "capability_id", "requested_power_w", "soc_constraint",
+                    "charge_source_policy", "energy_profile_id",
+                )):
+                    raise ValueError("stored retained main action differs from its original")
+            return plan
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            self._record_incident("daily_main_plan_unreadable", exc)
+            raise ValueError(
+                "daily main plan unreadable; refusing to invent a replacement"
+            ) from exc
+
     def clear(self, execution_scope_id: str) -> None:
         payload = self._load_payload()
         if payload["commitments"].pop(execution_scope_id, None) is not None:
@@ -348,19 +1213,413 @@ class ActivePlanCommitmentStore:
             ValueError(reason),
         )
 
+    def load_market_progress(self, assignment_id: str) -> MarketExecutionProgress | None:
+        raw = self._load_payload().get("market_execution_progress", {}).get(assignment_id)
+        if raw is None:
+            return None
+        try:
+            values = dict(raw)
+            for field in ("started_at", "stop_requested_at", "stopped_at"):
+                values[field] = datetime.fromisoformat(values[field]) if values.get(field) else None
+            progress = MarketExecutionProgress(**values)
+            if progress.assignment_id != assignment_id:
+                raise ValueError("market progress identity differs")
+            return progress
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ValueError("stored market execution progress is invalid") from exc
+
+    def save_market_progress(self, progress: MarketExecutionProgress) -> None:
+        assignment = next(
+            (
+                a
+                for a in self.load_market_daily_assignments()
+                if a.assignment_id == progress.assignment_id
+            ),
+            None,
+        )
+        if assignment is None:
+            raise ValueError("market progress requires its daily assignment")
+        previous = self.load_market_progress(progress.assignment_id)
+        if progress == previous:
+            return
+        if assignment.status != "pending":
+            raise ValueError("closed market execution cannot be overwritten")
+        if previous is not None and (
+            previous.started_at is not None
+            and progress.started_at != previous.started_at
+            or previous.stop_requested_at is not None
+            and progress.stop_requested_at != previous.stop_requested_at
+            or previous.stopped_at is not None
+            and progress.stopped_at != previous.stopped_at
+        ):
+            raise ValueError("market execution cannot forget its start or stop")
+        payload = self._load_payload()
+        values = asdict(progress)
+        for field in ("started_at", "stop_requested_at", "stopped_at"):
+            value = getattr(progress, field)
+            values[field] = value.isoformat() if value is not None else None
+        payload.setdefault("market_execution_progress", {})[progress.assignment_id] = values
+        if progress.started_at is None and progress.stop_requested_at is not None:
+            assignment = assignment.close(
+                status="skipped",
+                at=progress.stop_requested_at,
+                evidence_id=f"market-skipped:{progress.reason}",
+            )
+        elif progress.stopped_at is not None and (
+            progress.measured_export_wh is not None or progress.measurement_unavailable
+        ):
+            assert progress.started_at is not None
+            binding = next(
+                b
+                for b in self.load_market_plan_bindings()
+                if b.assignment_id == progress.assignment_id
+            )
+            assignment = assignment.close(
+                status="completed"
+                if progress.measured_export_wh is not None
+                and progress.measured_export_wh >= binding.expected_export_wh
+                else "stopped",
+                at=progress.stopped_at,
+                measured_export_wh=progress.measured_export_wh,
+                evidence_id=f"market-execution-ended:{progress.started_at.isoformat()}:{progress.stopped_at.isoformat()}:{progress.reason}:measurement_unavailable={progress.measurement_unavailable}",
+            )
+        payload["market_daily_assignments"][assignment.assignment_id] = (
+            self._market_assignment_payload(assignment)
+        )
+        self._write(payload)
+
+    def load_market_plan_bindings(self) -> tuple[MarketPlanBinding, ...]:
+        payload = self._load_payload()
+        records = payload.get("market_plan_bindings", {})
+        if not isinstance(records, dict):
+            raise ValueError("market plan bindings must be an object")
+        assignments = {a.assignment_id: a for a in self.load_market_daily_assignments()}
+        result = []
+        for key, raw in records.items():
+            try:
+                data = dict(raw)
+                data["segment_ids"] = tuple(data["segment_ids"])
+                data["segment_export_wh"] = tuple(data["segment_export_wh"])
+                data["original_segment_ids"] = tuple(data.get("original_segment_ids", ()))
+                binding = MarketPlanBinding(**data)
+                assignment = assignments[key]
+                plan = _deserialize_execution_plan(payload["execution_plans"][binding.plan_id])
+                if binding.assignment_id != key:
+                    raise ValueError("market binding identity mismatch")
+                self._validate_market_binding(binding, assignment, plan)
+                if binding.original_plan_id is not None:
+                    original = _registered_execution_plan(payload, binding.original_plan_id)
+                    original_parts = tuple(
+                        s for s in original.segments if s.segment_id in binding.original_segment_ids
+                    )
+                    if (
+                        original.execution_scope_id != binding.execution_scope_id
+                        or tuple(s.segment_id for s in original_parts)
+                        != binding.original_segment_ids
+                        or any(s.purpose != binding.assignment_id for s in original_parts)
+                    ):
+                        raise ValueError("original market execution lineage is invalid")
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                raise ValueError("invalid stored market plan binding") from exc
+            result.append(binding)
+        return tuple(sorted(result, key=lambda b: b.assignment_id))
+
+    def load_market_bound_plan(self, assignment_id: str) -> ExecutionPlan:
+        binding = next(
+            b for b in self.load_market_plan_bindings() if b.assignment_id == assignment_id
+        )
+        return _registered_execution_plan(self._load_payload(), binding.plan_id)
+
+    def load_market_original_plan(self, binding: MarketPlanBinding) -> ExecutionPlan:
+        return _registered_execution_plan(
+            self._load_payload(), binding.original_plan_id or binding.plan_id
+        )
+
+    @staticmethod
+    def _validate_market_binding(
+        binding: MarketPlanBinding, assignment: MarketDailyAssignment, plan: ExecutionPlan,
+    ) -> None:
+        parts = tuple(s for s in plan.segments if s.segment_id in binding.segment_ids)
+        if (
+            (binding.execution_scope_id, binding.plan_id, binding.snapshot_id)
+            != (plan.execution_scope_id, plan.plan_id, plan.snapshot_id)
+            or assignment.execution_scope_id != plan.execution_scope_id
+            or binding.assignment_id != assignment.assignment_id
+            or tuple(s.segment_id for s in parts) != binding.segment_ids
+            or tuple(s.segment_id for s in plan.segments if s.purpose == binding.assignment_id)
+            != binding.segment_ids
+            or binding.expected_export_wh > assignment.battery_energy_wh + 1e-6
+            or any(
+                s.primitive is not ExecutionPrimitive.DISCHARGE_AT_POWER
+                or s.purpose != assignment.assignment_id
+                or s.main_assignment_id is not None
+                or s.requested_power_w is None or s.requested_power_w <= 0
+                or not assignment.starts_at <= s.starts_at < s.ends_at <= assignment.ends_at
+                for s in parts
+            )
+            or any(a.ends_at != b.starts_at for a, b in zip(parts, parts[1:], strict=False))
+            or any(energy > (s.requested_power_w or 0)
+                   * (s.ends_at - s.starts_at).total_seconds() / 3600 + 1e-6
+                   for s, energy in zip(parts, binding.segment_export_wh, strict=False))
+        ):
+            raise ValueError("market execution ownership or window invalid")
+
+    @staticmethod
+    def _retains_shared_charge_plan(previous: ExecutionPlan, proposed: ExecutionPlan) -> None:
+        """A market-only publication cannot revise any existing charge instruction."""
+        if (previous.execution_scope_id != proposed.execution_scope_id
+                or previous.valid_from != proposed.valid_from
+                or previous.valid_until != proposed.valid_until):
+            raise ValueError("shared market publication must retain the existing horizon")
+        cursor = proposed.valid_from
+        for part in proposed.segments:
+            if part.starts_at != cursor:
+                raise ValueError("shared execution plan must have continuous coverage")
+            cursor = part.ends_at
+            old = next((s for s in previous.segments
+                        if s.starts_at <= part.starts_at < part.ends_at <= s.ends_at), None)
+            if old is None:
+                raise ValueError("shared segment must preserve existing interval boundaries")
+            market = part.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+            protected = old.main_assignment_id is not None or old.purpose.startswith(
+                "supplemental:"
+            ) or old.primitive in {
+                ExecutionPrimitive.CHARGE_AT_POWER, ExecutionPrimitive.DISCHARGE_AT_POWER,
+            }
+            if not market or protected:
+                if any(getattr(part, f) != getattr(old, f) for f in (
+                    "primitive", "capability_id", "requested_power_w", "soc_constraint",
+                    "charge_source_policy", "energy_profile_id", "main_assignment_id", "purpose",
+                )):
+                    raise ValueError("market publication cannot change retained instructions")
+                origin = old.retained_execution_origin
+                if old.main_assignment_id is not None:
+                    origin = origin or RetainedExecutionOrigin(previous.plan_id, old.segment_id)
+                if part.retained_execution_origin != origin:
+                    raise ValueError("shared main segment must retain original completion lineage")
+            elif part.main_assignment_id is not None:
+                raise ValueError("market export cannot own a charge goal")
+        if cursor != proposed.valid_until:
+            raise ValueError("shared execution plan omits remaining execution")
+
+    def _preserve_market_bindings(self, payload: dict[str, Any], plan: ExecutionPlan) -> None:
+        assignments = {a.assignment_id: a for a in self.load_market_daily_assignments()}
+        for old in self.load_market_plan_bindings():
+            if old.execution_scope_id != plan.execution_scope_id:
+                continue
+            original = _deserialize_execution_plan(payload["execution_plans"][old.plan_id])
+            parts = tuple(s for s in original.segments if s.segment_id in old.segment_ids)
+            progress = self.load_market_progress(old.assignment_id)
+            if (
+                (progress is not None and progress.stop_requested_at is not None)
+                or (assignments[old.assignment_id].status != "pending")
+                or (parts[-1].ends_at <= plan.created_at)
+            ):
+                continue
+            retained = tuple(s for s in plan.segments if s.purpose == old.assignment_id)
+            fields = (
+                "primitive",
+                "capability_id",
+                "requested_power_w",
+                "soc_constraint",
+                "energy_profile_id",
+                "charge_source_policy",
+            )
+            energy = []
+            cursor = max(parts[0].starts_at, plan.valid_from)
+            for segment in retained:
+                source = next(
+                    (
+                        p
+                        for p in parts
+                        if p.starts_at <= segment.starts_at < segment.ends_at <= p.ends_at
+                    ),
+                    None,
+                )
+                if (
+                    source is None
+                    or segment.starts_at != cursor
+                    or any(getattr(segment, f) != getattr(source, f) for f in fields)
+                ):
+                    raise ValueError("pending market window cannot be removed or relocated")
+                amount = old.segment_export_wh[old.segment_ids.index(source.segment_id)]
+                energy.append(
+                    amount
+                    * (segment.ends_at - segment.starts_at).total_seconds()
+                    / (source.ends_at - source.starts_at).total_seconds()
+                )
+                cursor = segment.ends_at
+            if not retained or cursor != parts[-1].ends_at:
+                raise ValueError("pending market window cannot be removed or relocated")
+            bound = replace(
+                old,
+                plan_id=plan.plan_id,
+                snapshot_id=plan.snapshot_id,
+                segment_ids=tuple(s.segment_id for s in retained),
+                segment_export_wh=tuple(energy),
+                elapsed_planned_export_wh=old.expected_export_wh - sum(energy),
+                original_plan_id=old.original_plan_id or old.plan_id,
+                original_segment_ids=old.original_segment_ids or old.segment_ids,
+            )
+            self._validate_market_binding(bound, assignments[old.assignment_id], plan)
+            payload["market_plan_bindings"][old.assignment_id] = asdict(bound)
+            payload.setdefault("execution_plans", {})[plan.plan_id] = (
+                _serialize_execution_plan(plan)
+            )
+
+    def bind_market_plan(
+        self, *, plan: ExecutionPlan, previous_plan_id: str,
+        binding: MarketPlanBinding, admission: MarketAdmission,
+    ) -> MarketPlanBinding:
+        """Atomically attach an evaluated trade to the one active execution plan.
+
+        Price/SOC admission is supplied by the canonical candidate chain. This
+        transaction checks ownership; it neither ranks candidates nor dispatches.
+        """
+        assignment = next((a for a in self.load_market_daily_assignments()
+                           if a.assignment_id == binding.assignment_id), None)
+        if assignment is None or assignment.status != "pending":
+            raise ValueError("market binding requires an existing pending daily assignment")
+        if (admission.status != "admissible"
+                or (admission.assignment_id, admission.snapshot_id, admission.expected_export_wh)
+                != (binding.assignment_id, binding.snapshot_id, binding.expected_export_wh)):
+            raise ValueError("market plan requires matching successful admission")
+        self._validate_market_binding(binding, assignment, plan)
+        if any(s.starts_at < plan.created_at for s in plan.segments
+               if s.segment_id in binding.segment_ids):
+            raise ValueError("new market execution cannot start in the past")
+        payload = self._load_payload()
+        previous = self.load_active_daily_main_plan(plan.execution_scope_id)
+        old = next((b for b in self.load_market_plan_bindings()
+                    if b.assignment_id == binding.assignment_id), None)
+        if old is not None:
+            if old == binding and previous == plan:
+                return old
+            raise ValueError("existing daily market binding cannot create another action")
+        if previous is None or previous.plan_id != previous_plan_id:
+            raise ValueError("shared publication requires the current active plan")
+        if plan.plan_id == previous.plan_id or plan.plan_id in payload.get("execution_plans", {}):
+            raise ValueError("shared publication requires a new immutable plan identity")
+        self._retains_shared_charge_plan(previous, plan)
+        known_market = {b.assignment_id for b in self.load_market_plan_bindings()}
+        if any(s.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+               and s.purpose not in known_market | {binding.assignment_id} for s in plan.segments):
+            raise ValueError("shared plan contains unowned market execution")
+        self._preserve_market_bindings(payload, plan)
+        for goal in self.load_supplemental_assignments():
+            if goal.execution_scope_id != plan.execution_scope_id or goal.completed_at is not None:
+                continue
+            parts = tuple(s for s in plan.segments if s.purpose == goal.assignment_id)
+            if not parts or (parts[0].starts_at, parts[-1].ends_at) != (
+                goal.starts_at, goal.ends_at,
+            ):
+                raise ValueError("shared plan cannot discard supplemental charge ownership")
+            updated = replace(goal, plan_id=plan.plan_id,
+                              segment_ids=tuple(s.segment_id for s in parts))
+            history = payload.setdefault("supplemental_history", {}).setdefault(
+                goal.assignment_id, [],
+            )
+            history.append(self._supplemental_record(goal))
+            payload["supplemental_assignments"][goal.assignment_id] = (
+                self._supplemental_record(updated)
+            )
+        payload.setdefault("execution_plans", {})[previous.plan_id] = (
+            _serialize_execution_plan(previous)
+        )
+        payload["execution_plans"][plan.plan_id] = _serialize_execution_plan(plan)
+        payload.setdefault("shared_plan_origins", {})[plan.plan_id] = previous.plan_id
+        payload.setdefault("market_plan_bindings", {})[binding.assignment_id] = asdict(binding)
+        payload.setdefault("active_execution_plan_ids", {})[plan.execution_scope_id] = plan.plan_id
+        self._write(payload)
+        return binding
+
+    def load_market_daily_assignments(self) -> tuple[MarketDailyAssignment, ...]:
+        """Read explicit daily trade identities, never infer them from charge plans."""
+        records = self._load_payload().get("market_daily_assignments", {})
+        if not isinstance(records, dict):
+            raise ValueError("market daily assignments must be an object")
+        result = []
+        for key, raw in sorted(records.items()):
+            try:
+                values = dict(raw)
+                values["rule"] = MarketUserRule(**values["rule"])
+                values["delivery_date"] = date.fromisoformat(values["delivery_date"])
+                values["created_at"] = datetime.fromisoformat(values["created_at"])
+                if values.get("ended_at") is not None:
+                    values["ended_at"] = datetime.fromisoformat(values["ended_at"])
+                assignment = MarketDailyAssignment(**values)
+                if assignment.assignment_id != key:
+                    raise ValueError("market assignment key differs from its identity")
+            except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                raise ValueError("invalid stored market daily assignment") from exc
+            result.append(assignment)
+        return tuple(result)
+
+    def ensure_market_daily_assignment(
+        self, assignment: MarketDailyAssignment,
+    ) -> MarketDailyAssignment:
+        """Reserve one day budget atomically; this does not publish an execution plan."""
+        existing = next((a for a in self.load_market_daily_assignments()
+                         if a.assignment_id == assignment.assignment_id), None)
+        if existing is not None:
+            if existing.timezone != assignment.timezone:
+                raise ValueError("existing market delivery timezone cannot change")
+            return existing  # Includes closed, skipped and stopped assignments.
+        if assignment.status != "pending":
+            raise ValueError("new market day cannot invent a past execution outcome")
+        payload = self._load_payload()
+        payload.setdefault("market_daily_assignments", {})[assignment.assignment_id] = (
+            self._market_assignment_payload(assignment)
+        )
+        self._write(payload)
+        return assignment
+
+    def close_market_daily_assignment(
+        self, *, assignment_id: str, status: MarketAssignmentStatus,
+        at: datetime, evidence_id: str, measured_export_wh: float | None = None,
+    ) -> MarketDailyAssignment:
+        """Persist caller-supplied outcome evidence; no dispatch or SOC inference."""
+        current = next((a for a in self.load_market_daily_assignments()
+                        if a.assignment_id == assignment_id), None)
+        if current is None:
+            raise ValueError("market outcome requires an existing daily assignment")
+        if current.status != "pending":
+            if (current.status, current.ended_at, current.outcome_evidence_id,
+                current.measured_export_wh) == (status, at, evidence_id, measured_export_wh):
+                return current
+            raise ValueError("recorded market outcome cannot be overwritten or reopened")
+        updated = current.close(status=status, at=at, evidence_id=evidence_id,
+                                measured_export_wh=measured_export_wh)
+        payload = self._load_payload()
+        payload["market_daily_assignments"][assignment_id] = (
+            self._market_assignment_payload(updated)
+        )
+        self._write(payload)
+        return updated
+
+    @staticmethod
+    def _market_assignment_payload(assignment: MarketDailyAssignment) -> dict[str, Any]:
+        result = asdict(assignment)
+        result["delivery_date"] = assignment.delivery_date.isoformat()
+        result["created_at"] = assignment.created_at.isoformat()
+        result["ended_at"] = assignment.ended_at.isoformat() if assignment.ended_at else None
+        return result
+
     def _load_payload(self) -> dict[str, Any]:
         if not self._path.exists():
             return {"schema_version": 1, "commitments": {}}
         try:
             payload = json.loads(self._path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("commitment state must be an object")
             if payload.get("schema_version") != 1:
                 raise ValueError("unsupported commitment schema")
             if not isinstance(payload.get("commitments"), dict):
                 raise ValueError("commitments must be an object")
             return cast(dict[str, Any], payload)
         except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
-            self._record_incident("commitment_store_reset_before_write", exc)
-            return {"schema_version": 1, "commitments": {}}
+            self._record_incident("commitment_store_write_refused", exc)
+            raise ValueError("commitment state unreadable; refusing destructive reset") from exc
 
     def _write(self, payload: dict[str, Any]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -515,4 +1774,89 @@ def _deserialize(payload: dict[str, Any]) -> ActivePlanCommitment:
             date.fromisoformat(str(item))
             for item in payload.get("pv_preservation_dates", ())
         ),
+    )
+
+
+def _registered_execution_plan(payload: dict[str, Any], plan_id: Any) -> ExecutionPlan:
+    try:
+        if not isinstance(plan_id, str) or not plan_id.strip():
+            raise ValueError("execution pointer must be an identity")
+        return _deserialize_execution_plan(payload["execution_plans"][plan_id])
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("registered execution plan is missing or invalid") from exc
+
+
+def _serialize_execution_plan(plan: ExecutionPlan) -> dict[str, Any]:
+    record = asdict(plan)
+    for field in ("created_at", "valid_from", "valid_until"):
+        record[field] = getattr(plan, field).isoformat()
+    for segment in record["segments"]:
+        for field in ("starts_at", "ends_at"):
+            segment[field] = segment[field].isoformat()
+        segment["evidence_ids"] = list(segment["evidence_ids"])
+    # JSON normalization also prevents tuple/list differences from defeating
+    # idempotence immediately after an on-disk round trip.
+    return cast(dict[str, Any], json.loads(json.dumps(record)))
+
+
+def _deserialize_execution_plan(record: dict[str, Any]) -> ExecutionPlan:
+    data = dict(record)
+    for field in ("created_at", "valid_from", "valid_until"):
+        data[field] = datetime.fromisoformat(data[field])
+    data["lifecycle"] = ExecutionPlanLifecycle(data["lifecycle"])
+    segments = []
+    for raw in data["segments"]:
+        item = dict(raw)
+        for field in ("starts_at", "ends_at"):
+            item[field] = datetime.fromisoformat(item[field])
+        item["primitive"] = ExecutionPrimitive(item["primitive"])
+        item["charge_source_policy"] = (
+            ChargeSourcePolicy(item["charge_source_policy"])
+            if item["charge_source_policy"] is not None else None
+        )
+        item["soc_constraint"] = (
+            SocConstraint(**item["soc_constraint"])
+            if item["soc_constraint"] is not None else None
+        )
+        item["evidence_ids"] = tuple(item["evidence_ids"])
+        item["retained_execution_origin"] = (
+            RetainedExecutionOrigin(**item["retained_execution_origin"])
+            if item.get("retained_execution_origin") is not None else None
+        )
+        segments.append(ExecutionPlanSegment(**item))
+    data["segments"] = tuple(segments)
+    return ExecutionPlan(**data)
+
+
+def _serialize_daily(assignment: DailyChargeAssignment) -> dict[str, Any]:
+    record = asdict(assignment)
+    for key, value in record.items():
+        if isinstance(value, (date, datetime)):
+            record[key] = value.isoformat()
+    record["main_segments"] = [
+        {"segment_id": s.segment_id, "starts_at": s.starts_at.isoformat(),
+         "ends_at": s.ends_at.isoformat()} for s in assignment.main_segments
+    ]
+    return record
+
+
+def _deserialize_daily(item: dict[str, Any]) -> DailyChargeAssignment:
+    return DailyChargeAssignment(
+        execution_scope_id=item["execution_scope_id"],
+        delivery_date=date.fromisoformat(item["delivery_date"]),
+        timezone=item["timezone"], created_at=datetime.fromisoformat(item["created_at"]),
+        route_plan_id=item.get("route_plan_id"),
+        main_segments=tuple(DailyChargeSegment(
+            segment_id=s["segment_id"], starts_at=datetime.fromisoformat(s["starts_at"]),
+            ends_at=datetime.fromisoformat(s["ends_at"])
+        ) for s in item.get("main_segments", ())),
+        revision=item.get("revision", 0),
+        revised_at=datetime.fromisoformat(item["revised_at"]) if item.get("revised_at") else None,
+        revision_reason=(DailyChargeRevisionReason(item["revision_reason"])
+                         if item.get("revision_reason") else None),
+        revision_evidence_id=item.get("revision_evidence_id"),
+        completed_at=datetime.fromisoformat(item["completed_at"])
+                     if item.get("completed_at") else None,
+        completion_evidence_id=item.get("completion_evidence_id"),
+        completion_segment_id=item.get("completion_segment_id"),
     )

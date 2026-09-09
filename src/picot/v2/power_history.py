@@ -79,6 +79,7 @@ class HomeAssistantPowerHistoryReader:
         specs: tuple[PowerSeriesSpec, ...],
         starts_at: datetime,
         ends_at: datetime,
+        preserve_unavailable: bool = False,
     ) -> PowerHistorySnapshot:
         if not specs:
             raise ValueError("at least one power series spec is required")
@@ -127,6 +128,7 @@ class HomeAssistantPowerHistoryReader:
                         allowed_entity_ids=frozenset(entity_ids),
                         starts_at=starts_at,
                         ends_at=ends_at,
+                        preserve_unavailable=preserve_unavailable,
                     )
                     if decoded is not None:
                         entity_id, sampled_at, power_w, evidence_id = decoded
@@ -143,7 +145,9 @@ class HomeAssistantPowerHistoryReader:
                 points=tuple(
                     PowerHistoryPoint(
                         sampled_at=sampled_at,
-                        power_w=_transform_power(power_w, spec.transform),
+                        power_w=_transform_power(power_w, spec.transform)
+                        if isfinite(power_w)
+                        else power_w,
                         evidence_id=evidence_id,
                     )
                     for sampled_at, power_w, evidence_id in sorted(
@@ -350,6 +354,7 @@ def _decode_item(
     allowed_entity_ids: frozenset[str],
     starts_at: datetime,
     ends_at: datetime,
+    preserve_unavailable: bool = False,
 ) -> tuple[str, datetime, float, str] | None:
     if not isinstance(item, dict):
         return None
@@ -361,19 +366,24 @@ def _decode_item(
         or entity_id not in allowed_entity_ids
         or not isinstance(raw_state, str)
         or not isinstance(raw_timestamp, str)
-        or raw_state.strip().lower() in {"unknown", "unavailable"}
+        or (not preserve_unavailable and raw_state.strip().lower() in {"unknown", "unavailable"})
     ):
         return None
     try:
         sampled_at = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
-        power_w = float(raw_state)
     except ValueError:
         return None
+    try:
+        power_w = float(raw_state)
+    except ValueError:
+        if not preserve_unavailable:
+            return None
+        power_w = float("nan")
     if (
         sampled_at.tzinfo is None
         or sampled_at.utcoffset() is None
         or not starts_at <= sampled_at <= ends_at
-        or not isfinite(power_w)
+        or (not preserve_unavailable and not isfinite(power_w))
     ):
         return None
     seed = f"{entity_id}|{sampled_at.isoformat()}|{raw_state}"

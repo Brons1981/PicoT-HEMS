@@ -661,6 +661,39 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "evaluated_candidate_ids": list(e.evaluated_candidate_ids),
                 "decisive_step": e.decisive_step,
                 "reason": e.reason,
+                "daily_main_input_shortfalls": [
+                    {"assignment_id": t.assignment_id, "snapshot_id": t.snapshot_id,
+                     "projected_main_peak_wh": t.projected_main_peak_wh,
+                     "target_wh": t.target_wh,
+                     "selected_for_revision": e.daily_main_shortfall is not None
+                     and t.assignment_id == e.daily_main_shortfall.assignment_id}
+                    for t in e.daily_main_input_shortfalls
+                ],
+                "supplemental_charge_assignments": [
+                    {"assignment_id": a.assignment_id, "next_assignment_id": a.next_assignment_id,
+                     "target_soc": a.target_soc,
+                     "goal_state": "completed" if a.completed_at is not None
+                     else "unproven_past_required_time" if p.captured_at >= a.required_by
+                     else "open",
+                     "starts_at": a.starts_at.isoformat(),
+                     "ends_at": a.ends_at.isoformat(), "required_by": a.required_by.isoformat(),
+                     "plan_id": a.plan_id, "completed_at": a.completed_at.isoformat()
+                     if a.completed_at is not None else None,
+                     "completion_evidence_id": a.completion_evidence_id}
+                    for a in (run.planning_input.daily_charge_context.supplemental_assignments
+                              if run.planning_input.daily_charge_context is not None else ())
+                ],
+                "daily_bridge": {
+                    "status": e.daily_bridge.status,
+                    "next_assignment_id": e.daily_bridge.next_assignment_id,
+                    "next_starts_at": e.daily_bridge.next_starts_at.isoformat()
+                    if e.daily_bridge.next_starts_at is not None else None,
+                    "review_triggered": e.daily_bridge.trigger is not None,
+                    "energy_deficits": [
+                        {"starts_at": i.starts_at.isoformat(), "ends_at": i.ends_at.isoformat(),
+                         "deficit_wh": i.deficit_wh} for i in e.daily_bridge.deficits
+                    ],
+                } if e.daily_bridge is not None else None,
             },
         ),
         Card(

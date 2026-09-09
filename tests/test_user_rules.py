@@ -60,3 +60,45 @@ def test_user_rule_store_rejects_non_boolean_persisted_rule(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="must be boolean"):
         UserRuleStore(path, migrated_trading_soc_percent=25)
+
+
+def test_market_settings_remain_user_owned_after_restart(tmp_path):
+    path = tmp_path / "rules.json"
+    store = UserRuleStore(path, migrated_trading_soc_percent=25)
+    assert store.current().market_rule() is None
+    profile = store.update(
+        preserve_pv_during_grid_charge=True,
+        maximum_trading_soc_percent=17.5,
+        market_minimum_spread_eur_per_kwh=0.073,
+        market_recovery_required=True,
+        market_minimum_net_margin_eur_per_kwh=0.062,
+    )
+    rule = profile.market_rule()
+    assert rule.capacity_fraction == 0.175
+    assert rule.minimum_spread_eur_per_kwh == 0.073
+    assert rule.recovery_required and rule.minimum_net_margin_eur_per_export_kwh == 0.062
+    assert UserRuleStore(path, migrated_trading_soc_percent=50).current() == profile
+    preserved = store.update(preserve_pv_during_grid_charge=False, maximum_trading_soc_percent=17.5)
+    assert preserved.market_rule().minimum_spread_eur_per_kwh == 0.073
+    disabled = store.update(preserve_pv_during_grid_charge=True, maximum_trading_soc_percent=0)
+    assert disabled.market_rule() is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("market_minimum_spread_eur_per_kwh", -0.1),
+        ("market_minimum_spread_eur_per_kwh", float("nan")),
+        ("market_minimum_spread_eur_per_kwh", True),
+        ("market_recovery_required", "false"),
+        ("market_minimum_net_margin_eur_per_kwh", None),
+    ],
+)
+def test_invalid_market_setting_cannot_change_profile(tmp_path, field, value):
+    store = UserRuleStore(tmp_path / "rules.json", migrated_trading_soc_percent=25)
+    original = store.current()
+    with pytest.raises(ValueError):
+        store.update(
+            preserve_pv_during_grid_charge=True, maximum_trading_soc_percent=25, **{field: value}
+        )
+    assert store.current() == original

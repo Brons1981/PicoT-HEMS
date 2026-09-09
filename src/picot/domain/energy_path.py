@@ -27,6 +27,18 @@ class SocConstraint:
 
 
 @dataclass(frozen=True, slots=True)
+class RetainedExecutionOrigin:
+    """Exact original execution identity of an unchanged retained action."""
+
+    plan_id: str
+    segment_id: str
+
+    def __post_init__(self) -> None:
+        if not self.plan_id.strip() or not self.segment_id.strip():
+            raise ValueError("Retained execution origin must be explicit.")
+
+
+@dataclass(frozen=True, slots=True)
 class PathSegment:
     """Logical planned behaviour for one execution scope and time interval."""
 
@@ -43,8 +55,14 @@ class PathSegment:
     soc_constraint: SocConstraint | None = None
     energy_profile_id: str | None = None
     charge_source_policy: ChargeSourcePolicy | None = None
+    main_assignment_id: str | None = None
+    retained_execution_origin: RetainedExecutionOrigin | None = None
 
     def __post_init__(self) -> None:
+        if self.main_assignment_id is not None and not self.main_assignment_id.strip():
+            raise ValueError("Main assignment identity must be explicit when provided.")
+        if self.retained_execution_origin is not None and self.main_assignment_id is None:
+            raise ValueError("Retained main execution requires its assignment identity.")
         for text_value, label in (
             (self.segment_id, "Segment ID"),
             (self.execution_scope_id, "Execution scope ID"),

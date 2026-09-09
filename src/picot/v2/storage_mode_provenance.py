@@ -95,6 +95,7 @@ def observe_storage_mode(
     *,
     observed_vendor_mode: str,
     observed_at: datetime,
+    state_changed_at: datetime | None = None,
 ) -> StorageModeControlProvenance:
     if previous.status == "manual_override":
         status: StorageModeProvenanceStatus = "manual_override"
@@ -107,6 +108,22 @@ def observe_storage_mode(
         status = "planner_owned"
         manual_override_active = False
         reason = "observed_mode_matches_planner_mode"
+    elif (
+        previous.status == "planner_owned"
+        and previous.transition_reason in {
+            "planner_application_recorded",
+            "planner_application_awaiting_mode_feedback",
+        }
+        and observed_vendor_mode == previous.observed_vendor_mode
+        and state_changed_at is not None
+        and state_changed_at.utcoffset() is not None
+        and state_changed_at <= previous.observed_at <= observed_at
+    ):
+        # HA still reports the unchanged pre-command state. This proves neither
+        # successful execution nor a manual change; keep awaiting actual feedback.
+        status = "planner_owned"
+        manual_override_active = False
+        reason = "planner_application_awaiting_mode_feedback"
     elif previous.status == "planner_owned":
         status = "manual_override"
         manual_override_active = True

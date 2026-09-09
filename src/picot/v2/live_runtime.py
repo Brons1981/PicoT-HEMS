@@ -142,6 +142,7 @@ from picot.v2.pv_sunset_source import (
     HomeAssistantSunsetReader,
     SunsetReadResult,
 )
+from picot.v2.soc_history_recovery import HistoricalSOCRecovery
 from picot.v2.storage_mode_transition_history import (
     StorageModeTransitionEvent,
     StorageModeTransitionHistoryStore,
@@ -2519,6 +2520,7 @@ def main() -> None:
         HOUSEHOLD_LOAD_HISTORY_PATH
     )
     pv_history_reader = HomeAssistantPVHistoryReader(token)
+    soc_history_recovery = HistoricalSOCRecovery(token)
     power_history_reader = HomeAssistantPowerHistoryReader(token)
     power_history_cache = PowerHistoryCache()
     pv_actual_cache = LivePVActualCache()
@@ -2859,6 +2861,24 @@ def main() -> None:
             bundle,
             storage_mode_provenance_runtime,
         )
+        for storage in bundle.snapshot.current_storage_states:
+            previous_status = soc_history_recovery.status
+            try:
+                soc_history_recovery.recover(
+                    active_plan_commitment_store,
+                    entity_id=str(options.get("zendure_soc_entity", "")).strip(),
+                    execution_scope_id=storage.execution_scope_id,
+                    now=bundle.snapshot.captured_at,
+                )
+            except (ValueError, OSError) as exc:
+                soc_history_recovery.status = "soc_history_recovery_failed:" + type(exc).__name__
+            if soc_history_recovery.status != previous_status:
+                print(json.dumps({
+                    "event": "picot_v2_soc_history_recovery",
+                    "status": soc_history_recovery.status,
+                    "snapshot_id": bundle.snapshot.snapshot_id,
+                    "scope_id": storage.execution_scope_id,
+                }), flush=True)
         bundle = replace(
             bundle,
             snapshot=_restore_active_plan_commitments(

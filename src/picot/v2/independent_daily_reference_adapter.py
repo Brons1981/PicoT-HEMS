@@ -173,7 +173,14 @@ class IndependentDailyReferenceAdapter:
                                and i.storage_energy_at_end_wh + 1e-6
                                >= a.target_soc * inputs.storage.usable_capacity_wh
                                for i in projection.intervals)), None)
-        needed = needed or missed_goal is not None
+        # Recovery can prove an earlier main completed while a later retry is
+        # still scheduled. Reconcile through the existing candidate/evaluation
+        # path, keeping the next main and independently assessing the bridge.
+        recovered_ids = {a.assignment_id for a in completed
+                         if a.historical_completion_segment is not None}
+        obsolete_retry = any(s.main_assignment_id in recovered_ids
+                             and s.ends_at > snapshot.captured_at for s in plan.segments)
+        needed = needed or missed_goal is not None or obsolete_retry
         trigger = None
         if needed:
             assert owner.route_plan_id is not None
@@ -182,9 +189,11 @@ class IndependentDailyReferenceAdapter:
                 snapshot.snapshot_id, snapshot.captured_at, inputs.storage.usable_capacity_wh,
                 max(previous, key=lambda a: a.delivery_date).assignment_id, until, deficits,
                 missed_goal.assignment_id if missed_goal is not None else None,
+                next(iter(sorted(recovered_ids))) if obsolete_retry else None,
             )
             trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
         return DailyBridgeAssessment(
+            "completion_reconciliation" if obsolete_retry else
             "energy_shortfall" if needed else "accepted_grid_support" if state else "sufficient",
             owner.assignment_id, until, deficits, trigger,
         )
@@ -226,6 +235,11 @@ class IndependentDailyReferenceAdapter:
                      if i.ends_at <= trigger.next_starts_at and not any(
                          r.segment.starts_at < i.ends_at and i.starts_at < r.segment.ends_at
                          for r in retained))
+        if trigger.historical_completion_id is not None and not any(
+            i.deficit_wh > 1e-6 for i in trigger.deficits
+        ):
+            # A missing completion record alone is no new acquisition need.
+            free = ()
         schedules = {baseline.intervals: baseline}
         simulations = 0
         projections: dict[str, DailyPlanningProjection] = {}
@@ -588,6 +602,8 @@ class IndependentDailyReferenceAdapter:
         plans = {p.plan_id: p for p in context.main_plans}
         retained = []
         for owner in owners:
+            if owner.historical_completion_segment is not None:
+                continue
             assert owner.route_plan_id is not None
             plan = plans[owner.route_plan_id]
             if plan.created_at > snapshot.captured_at:
@@ -631,6 +647,13 @@ class IndependentDailyReferenceAdapter:
                              and grid.ends_at <= s.ends_at), None)
                 if part is None:
                     raise DailyReferenceInputError("retained_main_plan_has_a_schedule_gap")
+                recovered = next((a for a in context.assignments
+                                  if a.assignment_id == part.main_assignment_id
+                                  and a.historical_completion_segment is not None), None)
+                if recovered is not None:
+                    part = replace(part, primitive=ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+                                   requested_power_w=None, charge_source_policy=None,
+                                   main_assignment_id=None, retained_execution_origin=None)
                 sources.append(part)
             # Explicit main ownership overrides an older horizon's unowned
             # baseline. Otherwise retained plans must agree; never guess which

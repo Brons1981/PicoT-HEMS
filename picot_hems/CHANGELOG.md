@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.247
+
+- Herkent een historisch gemeten SOC van 100% tijdens het toen geldige hoofdlaadvenster, ook als PicoT op dat moment niet draaide. Het bewijs en de oorspronkelijke laadopdracht blijven bewaard.
+- Beoordeelt overbodige herstel-laadsegmenten opnieuw via de canonieke planner. Een achterhaald hoofdlaadsegment wordt niet uitgevoerd terwijl die herbeoordeling nog loopt.
+- Gebruikt dezelfde tariefgrenzen bij de berekening van handelscapaciteit en exportsimulatie. Dit voorkomt onterechte afwijzing door een verschil tussen gevraagd en berekend exportvolume.
+- Spreadvoorwaarden blijven van toepassing; een groot prijsverschil alleen garandeert geen uitvoerbare marktroute.
+
+Na installatie: controleer dev.247, de historische SOC-herkenning en de nieuwe marktberekening. Werking in Home Assistant moet live worden bevestigd.
+
 ## 2.0.0-dev.246
 
 - Verhelpt de StopIteration-crash in de marktplanner bij verschoven tijdgrenzen van de huisverbruiksvoorspelling.

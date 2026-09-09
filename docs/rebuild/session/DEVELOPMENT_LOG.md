@@ -3023,3 +3023,66 @@ The fix passed 62 affected tests, Ruff and targeted mypy locally. Release CI
 must pass on the final PR head before squash merge to main. The add-on builds
 from main; installation remains a user action. No direct HA actuation or live
 verification is claimed. No further planner policy changes in this release.
+
+
+## 2026-09-09 — historical SOC completion and consistent market volume
+
+Authorization: "oke maak een fix voor het bereiken van het soc en de berekning".
+Base c99dda9/dev.246, branch fix/soc-history-and-market-volume. IMPLEMENTED locally;
+no release or live verification in this task. ADR-037.11 records the explicit user
+exception to execution-only completion during missed observations / outage.
+
+Evidence: dev.246 diagnostics at 18:53 show tomorrow's market action assessed and
+rejected with requested_export_not_physically_deliverable and user_spread_not_met.
+The latter applies to other candidates; spread-qualified candidates fail volume.
+Variable household demand reproduced requested 816 Wh versus ~793 Wh delivered.
+The earlier dev.246 fix split final simulation only. Capacity construction now
+includes the same tariff boundaries, so required volume is physically consistent.
+No thresholds, spread, reserve, daily budget or admission tolerance changed.
+
+HA screenshot shows 100% during the stored daytime main window, but the process
+missed it and later revised today's goal to 22:45–00:00. Raw HA Recorder states are
+checked before restoring daily context, bounded to the open bound current-day
+assignment and throttled to five minutes. Only exact 100%, the mapped entity,
+aware actual timestamps and a then-valid main revision can complete the goal.
+Prior revisions are checked up to successor admission. The actual historical
+segment, plan and evidence are persisted alongside the current assignment; no
+backdated command or new assignment is invented. Missing/invalid history leaves
+completion untouched and is exposed by a status-change runtime event.
+
+The reference adapter removes historically completed main retries from candidate
+simulation. Normal main feasibility and next-goal optimisation remain authoritative.
+When no new main shortage exists, historical completion explicitly triggers bridge
+reconciliation; with no reserve deficit it does not generate additional acquisition
+alternatives. Store validates historical evidence and permits removal of those
+obsolete main segments only. Existing candidate outcome / Evaluation / Plan Builder
+publication is used. The execution boundary blocks stale completed main segments
+pending reconciliation; no replacement vendor mode is invented. This extends the
+change boundary to execution validity because a clock tick must not reissue an
+obsolete charge before the new plan is published. Manual override remains intact.
+
+Regression coverage includes original variable-load market failure, exact export
+volume and winner lineage; recorder recovery, 99.9/unavailable/wrong entity/future/
+before-main rejection, timeout throttling, durable restart, older revision proof,
+removal of a later retry through canonical publication, next-goal preservation and
+re-evaluation from actual SOC, and stale-segment dispatch refusal. Two recovery
+scenarios exercise both next-main reoptimisation and no-shortage reconciliation.
+Ruff and mypy for all 69 v2 modules passed. Final affected suite result follows.
+
+Rollback is this bounded commit; pre-existing stores remain readable. New historical
+completion evidence must not be discarded or reused as a claim of PicoT execution.
+Next: PR/CI and a separately requested release, then live HA validation using the
+actual 100% history and tomorrow's market route. No HA command, setting change,
+remote push, merge or version bump performed by this local fix.
+
+Final local evidence: 101 affected tests passed in 66.39 s. Afterwards the two
+historical-reconciliation scenarios were extended with subsequent real-pipeline
+market selection and export-volume assertions; both passed in 2.47 s. Final Ruff
+and mypy (all 69 v2 modules) passed, and git diff --check was clean. No CI or live
+result is claimed. Combined tests demonstrate recovered completion remains closed
+while a subsequent market action is selected and bound with its full export volume.
+
+
+### 2026-09-09 — Release 2.0.0-dev.247
+
+Gebruiker heeft publicatie goedgekeurd met “akkoord”. Release bundelt historische SOC-voltooiingsherkenning en consistente marktcapaciteit/tariefintervallen (ADR-037.11). Versie, add-onmanifest en versiecontract zijn bijgewerkt; changelog beschrijft gedrag en livecontrole. Gerichte regressies: 101 geslaagd; aanvullende marktvervolgscenario’s: 2 geslaagd; Ruff en mypy (69 modules) geslaagd. Publicatie via PR; samenvoegen uitsluitend nadat alle drie CI-workflows slagen. Home Assistant is niet bijgewerkt vanuit deze sessie.

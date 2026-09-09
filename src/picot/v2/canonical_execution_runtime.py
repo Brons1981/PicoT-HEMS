@@ -622,6 +622,16 @@ class CanonicalExecutionRuntime:
             )
         if daily_plan is not None:
             original = next(s for s in daily_plan.segments if s.starts_at == segment.starts_at)
+            assert self.commitment_store is not None
+            completed_owner = next((a for a in self.commitment_store.load_daily_assignments()
+                                    if a.assignment_id == original.main_assignment_id
+                                    and a.historical_completion_segment is not None), None)
+            if completed_owner is not None:
+                return CommittedBoundaryDispatchOutcome(
+                    status="blocked",
+                    failure_reason="historical_main_completed_waiting_for_reconciliation",
+                    **common,
+                )
             if original.capability_id != evidence.capability_id:
                 return CommittedBoundaryDispatchOutcome(
                     status="blocked",

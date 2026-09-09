@@ -109,7 +109,10 @@ def test_market_uses_full_publication_after_live_input_removes_elapsed_quarters(
     )
 
 
-def test_market_with_rolling_household_boundaries_preserves_trade_volume(tmp_path, monkeypatch):
+@pytest.mark.parametrize("varying_load", [False, True])
+def test_market_with_rolling_household_boundaries_preserves_trade_volume(
+    tmp_path, monkeypatch, varying_load,
+):
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = trading_source(recover())
     forecast = source.household_load_forecast
@@ -124,8 +127,11 @@ def test_market_with_rolling_household_boundaries_preserves_trade_volume(tmp_pat
                 interval_id=f"{interval.interval_id}:{left.isoformat()}",
                 starts_at=left,
                 ends_at=right,
-                expected_energy_wh=interval.expected_energy_wh
-                * (right - left).total_seconds()
+                expected_energy_wh=(
+                    (80 if left == interval.starts_at else 400)
+                    * (interval.ends_at - interval.starts_at).total_seconds() / 3600
+                    if varying_load else interval.expected_energy_wh
+                ) * (right - left).total_seconds()
                 / (interval.ends_at - interval.starts_at).total_seconds(),
             ))
     source = replace(source, household_load_forecast=replace(forecast, intervals=tuple(intervals)))

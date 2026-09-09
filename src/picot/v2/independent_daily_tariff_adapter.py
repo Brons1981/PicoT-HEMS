@@ -65,9 +65,16 @@ class IndependentDailyTariffAdapter:
             or (snapshot.horizon_end is not None and selected_horizon_end > snapshot.horizon_end)
         ):
             raise DailyReferenceTariffInputError("daily_tariff_horizon_missing")
-        if not snapshot.price_points:
+        # An explicit delivery window may start before this observation. Its
+        # reference prices must retain published elapsed quarters as evidence.
+        source_points = (
+            snapshot.published_price_points
+            if horizon_start is not None and snapshot.published_price_points
+            else snapshot.price_points
+        )
+        if not source_points:
             raise DailyReferenceTariffInputError("daily_tariff_prices_missing")
-        points = tuple(sorted(snapshot.price_points, key=lambda item: item.starts_at))
+        points = tuple(sorted(source_points, key=lambda item: item.starts_at))
         self._validate_coverage(
             points,
             starts_at=selected_horizon_start,

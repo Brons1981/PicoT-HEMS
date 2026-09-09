@@ -85,6 +85,30 @@ def test_real_pipeline_selects_trade_and_keeps_charge_identity(tmp_path, monkeyp
     assert any(s.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER for s in shared.segments)
 
 
+def test_market_uses_full_publication_after_live_input_removes_elapsed_quarters(
+    tmp_path, monkeypatch,
+):
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    source = trading_source(recover())
+    source = replace(
+        source,
+        published_price_points=source.price_points,
+        price_points=tuple(p for p in source.price_points if p.ends_at > source.captured_at),
+    )
+    assert len(source.price_points) < len(source.published_price_points)
+    first = pipeline.run(planning_input=recover(source))
+    assert first.execution_plan_set.plans
+    owners = store.load_daily_assignments()
+    second = pipeline.run(planning_input=recover(source))
+    assert second.evaluation.reason == "user_market_rule_selected", second.evaluation.reason
+    assert store.load_daily_assignments() == owners
+    assert all(
+        s.starts_at >= source.captured_at
+        for s in store.load_active_daily_main_plan("battery").segments
+        if s.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+    )
+
+
 def winter_source(source):
     source = trading_source(source)
     return replace(

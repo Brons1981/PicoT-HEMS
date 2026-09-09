@@ -740,6 +740,9 @@ class PlanningInputSnapshot:
     daily_charge_context: DailyChargePlanningContext | None = None
     market_user_rule: MarketUserRule | None = None
     market_power_history: PowerHistorySnapshot | None = None
+    # Complete published price evidence, including elapsed reference windows.
+    # Executable opportunities continue to use the future-only price_points.
+    published_price_points: tuple[PriceForecastPoint, ...] = ()
 
     def __post_init__(self) -> None:
         if self.daily_charge_context is not None and (

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.245
+
+- Het behouden laadplan blijft zichtbaar, inclusief het oorspronkelijke NOM-venster en de planidentiteit.
+- Bij hetzelfde behouden plan blijft de oorspronkelijke SOC-prognose zichtbaar met het berekenmoment. Na een herstart zonder eerdere prognose blijven de laadvensters zichtbaar; er wordt geen SOC-lijn verzonnen.
+- De marktroute kan alle gepubliceerde dagprijzen gebruiken voor haar fictieve laadreferentie, inclusief verstreken kwartieren. Uitvoerbare acties blijven in het resterende tijdvenster.
+- Echte gaten in de prijspublicatie blijven de marktvergelijking blokkeren.
+
+De afspraken voor dagelijks laden, optimalisatie en optionele herstelbaarheid blijven ongewijzigd. Na installatie: controleer dev.245, het behouden NOM-venster en de marktroute. Werking in Home Assistant moet live worden bevestigd.
+
 ## 2.0.0-dev.244
 
 Ontwikkelrelease voor de gezamenlijke liveproef van de dagelijkse laadcyclus en de user-rule-marktroute.

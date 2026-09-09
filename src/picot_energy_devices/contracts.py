@@ -7,7 +7,7 @@ from datetime import datetime
 from math import isfinite
 
 CATALOG_SCHEMA_VERSION = 1
-PROFILE_METHOD_VERSION = "observed-device-sessions:v1"
+PROFILE_METHOD_VERSION = "manual-device-recordings:v2"
 
 
 def _aware(value: datetime, label: str) -> None:

@@ -3119,3 +3119,51 @@ counting is a separate unresolved issue. Do not weaken actual coverage validatio
 ### 2026-09-09 — Release dev.248 voorbereid
 
 Alex heeft dev.248 expliciet aangevraagd. Versie, manifest, changelog en versiecontract bijgewerkt. De release bevat uitsluitend de exacte tijdsdekkingsfix en bijbehorende regressies/documentatie. Lokale patch: 49 tests, Ruff en mypy geslaagd. Publicatie via PR; samenvoegen na alle drie groene CI-workflows. Livewerking na installatie nog te bevestigen.
+
+
+### 2026-09-09 — Energy Devices manual learning (IMPLEMENTED)
+
+User scope: collect reliable named whole-program recordings independently while
+PicoT dev.248 remains under live observation. No device actuation, automatic
+threshold learning or planning integration in this slice. ADR-064 owns the
+independent producer. First bad boundary was threshold-based automatic session
+closure in EnergyDeviceStore: one dishwasher program replay became 15 sessions.
+User explicitly authorized the Energy Devices code change.
+
+Branch feature/manual-device-learning, local base e5334ff (published dev.248 tree).
+Manual start/finish now own session boundaries. New SQLite tables preserve names,
+start/end times, power waveform, optional meter readings and unavailable samples.
+An open recording survives restart. Start uses a fresh last observation as an
+explicitly labelled held boundary value; unknown starts remain missing. Power
+integration estimates energy only across supported sample intervals. Missing data
+and long gaps are counted and drawn as breaks, not zero power. Partial recordings
+remain inspectable but do not become complete energy profiles. Existing automatic
+sessions are excluded from the manual summary and can be explicitly cleared.
+
+UI/API provide start, finish, inspect waveform/readings, rename and delete/cancel.
+Deletion requires UI confirmation. Automatic session production is disabled during
+this learning phase. Method version manual-device-recordings:v2 separates the new
+semantics. Card aggregate is device-level; individual program names/recordings are
+preserved. No PicoT consumer, planner, policy, vendor adapter or release version
+changed. No physical device commands or live database changes performed.
+
+Verification: uploaded dishwasher CSV replay produces one recording containing all
+255 observations, including three unavailable events. Store/API tests cover pauses,
+restart, duplicate start/stop, missing and long-gap energy, legacy cleanup, rename,
+delete and cancellation. Existing producer runtime and PicoT card/dashboard tests
+included. JavaScript syntax passed Node check. Ruff and mypy (8 producer modules)
+passed. Browser visual/interaction attempt blocked by absent Chromium; browser
+download timed out. Do not claim visual or live validation. Final suite count below.
+
+Rollback boundary: producer-only code/UI patch; additive tables preserve existing
+registry/history. Retain new recordings when rolling back; old code would resume
+its defective automatic session learning. Next: review/publish a separately requested
+Energy Devices release, then test start/finish and waveform rendering in HA. PicoT
+stability observation and all planning authority boundaries remain unchanged.
+
+Final local verification: 24 tests passed in 1.87 s; Ruff, mypy for all 8 producer modules and git diff --check passed. No CI or live result claimed.
+
+
+### 2026-09-09 — Energy Devices 0.2.0 release voorbereid
+
+Gebruiker heeft de vervolgstap bevestigd met akkoord. Energy Devices-versie en manifest naar 0.2.0, changelog toegevoegd. Publicatie via PR na drie groene CI-workflows. PicoT HEMS blijft dev.248. Lokale verificatie: 24 tests, Ruff, mypy en JavaScript-syntax geslaagd. Visuele/browser- en liveverificatie nog vereist na installatie.

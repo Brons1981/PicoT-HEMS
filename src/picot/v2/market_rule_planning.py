@@ -3,6 +3,7 @@
 This module supplies candidates; Evaluation and PlanBuilder retain authority.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from hashlib import sha256
@@ -90,6 +91,7 @@ def market_rule_portfolio(
     assignment: MarketDailyAssignment,
     conversion: StorageConversionModel,
     opportunity_ids: tuple[str, ...],
+    planning_checkpoint: Callable[[], None] | None = None,
     wear_eur_per_export_kwh: float = 0.0,
     saldering_energy_tax_credit_enabled: bool = True,
 ) -> MarketRulePortfolio:
@@ -255,6 +257,8 @@ def market_rule_portfolio(
     admitted_price: float | None = None
     dominated = False
     for price_bound, window in priced:
+        if planning_checkpoint is not None:
+            planning_checkpoint()
         # Candidate dominance, not a new winner selector: a strictly lower
         # export price cannot beat an already admitted candidate under this
         # explicit one-objective user rule. All arithmetic ties still reach

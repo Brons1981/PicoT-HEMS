@@ -47,6 +47,7 @@ class CommittedBoundaryDispatchOutcome:
     previous_vendor_mode: str | None = None
     planned_vendor_mode: str | None = None
     failure_reason: str | None = None
+    primitive: ExecutionPrimitive | None = None
 
 
 DispatchCanonicalMode = Callable[
@@ -587,11 +588,12 @@ class CanonicalExecutionRuntime:
             f"{plan_id}:{plan_revision}:"
             f"{segment.starts_at.isoformat()}:{primitive.value}"
         )
-        common = {
+        common: dict[str, Any] = {
             "application_id": application_id,
             "plan_id": plan_id,
             "previous_vendor_mode": evidence.current_vendor_mode,
             "planned_vendor_mode": planned_vendor_mode,
+            "primitive": primitive,
         }
         requested_power_w = None
         if primitive in {
@@ -699,6 +701,68 @@ class CanonicalExecutionRuntime:
             status=outcome.status,
             command_id=outcome.command_id,
             **common,
+        )
+
+    def apply_committed(
+        self, run: CanonicalPipelineRun, observed: PlanningInputSnapshot
+    ) -> CanonicalPipelineRun:
+        """Execute the saved daily plan against a separate, fresh observation.
+
+        The planning snapshot and plan lineage remain immutable. The existing
+        committed boundary owns current-time selection, SOC guards and mapping.
+        """
+        if run.execution_record.status != "live_plan_ready":
+            raise ValueError("fresh committed execution requires live plan authority")
+        self._daily_execution_suspended = False
+        outcome = self.advance_committed_boundary(observed, execution_enabled=True)
+        request_id = (
+            f"commitment-boundary-request:{outcome.application_id}"
+            if outcome.application_id is not None
+            else None
+        )
+        return replace(
+            run,
+            primitive_boundary=replace(
+                run.primitive_boundary,
+                request_id=request_id,
+                planned_primitive=outcome.primitive,
+                mapping_status="validated" if outcome.planned_vendor_mode else "unavailable",
+                source_entity_id=(
+                    observed.storage_mode_capability_evidence.source_entity_id
+                    if observed.storage_mode_capability_evidence
+                    else None
+                ),
+                mapping_method_version=(
+                    observed.storage_mode_capability_evidence.method_version
+                    if observed.storage_mode_capability_evidence
+                    else None
+                ),
+                current_vendor_mode=outcome.previous_vendor_mode,
+                planned_vendor_mode=outcome.planned_vendor_mode,
+                status=outcome.status,
+                blockers=(outcome.failure_reason,) if outcome.failure_reason else (),
+            ),
+            adapter_boundary=replace(
+                run.adapter_boundary,
+                primitive_request_id=request_id,
+                translation_id=None,
+                status=outcome.status,
+            ),
+            vendor_result=replace(
+                run.vendor_result,
+                command_id=outcome.command_id,
+                adapter_translation_id=None,
+                dispatch_intent_id=outcome.application_id,
+                planned_vendor_mode=outcome.planned_vendor_mode,
+                status=outcome.status,
+                failure_reason=outcome.failure_reason,
+                observed_result_id=f"execution-observation:{observed.snapshot_id}",
+                target_entity_id=(
+                    observed.storage_mode_capability_evidence.source_entity_id
+                    if observed.storage_mode_capability_evidence
+                    else None
+                ),
+            ),
         )
 
     def apply(self, run: CanonicalPipelineRun) -> CanonicalPipelineRun:

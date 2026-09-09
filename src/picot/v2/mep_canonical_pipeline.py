@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from hashlib import sha256
@@ -783,6 +784,7 @@ def build_mep_canonical_run(
     commitment_store: ActivePlanCommitmentStore | None,
     control_change_allowed: bool,
     switching_margin_eur: float,
+    planning_checkpoint: Callable[[], None] | None = None,
 ) -> tuple[CanonicalPipelineRun, MepCanonicalStageTimings, MarketDailyRuntimeOutcome | None]:
     if snapshot.daily_charge_context is not None:
         return _build_daily_main_run(
@@ -791,6 +793,7 @@ def build_mep_canonical_run(
             planner_runtime=planner_runtime,
             commitment_store=commitment_store,
             control_change_allowed=control_change_allowed,
+            planning_checkpoint=planning_checkpoint,
         )
     retained_commitment = next(iter(snapshot.active_plan_commitments), None)
     if retained_commitment is not None:
@@ -1271,6 +1274,7 @@ def _build_daily_main_run(
     planner_runtime: MarketDailyPlannerRuntime,
     commitment_store: ActivePlanCommitmentStore | None,
     control_change_allowed: bool,
+    planning_checkpoint: Callable[[], None] | None = None,
 ) -> tuple[CanonicalPipelineRun, MepCanonicalStageTimings, None]:
     """Select only an unbound daily goal; retain a bound route without repricing.
 
@@ -1442,6 +1446,8 @@ def _build_daily_main_run(
     if selected_window is not None and result is not None:
         assert commitment_store is not None
         try:
+            if planning_checkpoint is not None:
+                planning_checkpoint()
             proposed = ExecutionPlanBuilder().build(
                 result,
                 created_at=snapshot.captured_at,
@@ -1504,6 +1510,7 @@ def _build_daily_main_run(
                     continue
                 try:
                     market = market_rule_portfolio(
+                        planning_checkpoint=planning_checkpoint,
                         snapshot=snapshot,
                         plan=incumbent,
                         assignment=market_day,
@@ -1549,6 +1556,8 @@ def _build_daily_main_run(
                         tuple(energy[s.source_path_segment_id] for s in bound_parts),
                         source.expected_battery_draw_wh,
                     )
+                    if planning_checkpoint is not None:
+                        planning_checkpoint()
                     if source.charge_window is not None:
                         optimisation_trigger = source.charge_trigger
                         commitment_store.bind_daily_main_plan(

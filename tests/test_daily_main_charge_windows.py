@@ -441,3 +441,9 @@ def test_completed_goal_does_not_restart_price_or_forecast_discovery():
     assert result.status == "completed"
     assert result.simulation_count == 0
     assert result.windows == ()
+
+
+def test_grid_discovery_avoids_repeated_end_searches():
+    result = discover(lower=0, central=0)
+    assert result.windows
+    assert result.simulation_count <= 1 + 2 * len(inputs()["household"].intervals)

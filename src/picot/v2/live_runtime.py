@@ -76,7 +76,7 @@ from picot.v2.market_daily_runtime import (
 )
 from picot.v2.material_replanning import MaterialReplanningObservationProducer
 from picot.v2.opportunity_engine import PriceOpportunityConfig
-from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings
+from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings, PlanningInputSuperseded
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
     COMPARISON_PREVIOUS_COMMITMENT_METHOD_VERSION,
@@ -89,6 +89,7 @@ from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     ActivePlanCommitmentStore,
 )
+from picot.v2.planning_execution_service import PlanningExecutionService
 from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import (
@@ -2118,9 +2119,7 @@ def _execute_planning_bundle(
     web_view_store: WebViewStore,
     power_history: PowerHistorySnapshot | None = None,
     power_history_read_ms: float = 0.0,
-    pv_actual_diagnostics: (
-        LivePVActualDiagnostics | None
-    ) = None,
+    pv_actual_diagnostics: (LivePVActualDiagnostics | None) = None,
     pv_attenuated_ranges: tuple[
         PVAttenuatedForecastRange,
         ...,
@@ -2128,21 +2127,17 @@ def _execute_planning_bundle(
     pv_sunset_source: SunsetReadResult | None = None,
     pv_sunset_local_timezone: str | None = None,
     pv_sunset_offsets: dict[str, float] | None = None,
-    pv_attenuation_learning_result: (
-        PVAttenuationLearningResult | None
-    ) = None,
-    storage_mode_provenance_runtime: (
-        LiveStorageModeProvenanceRuntime | None
-    ) = None,
-    storage_mode_transition_history: (
-        StorageModeTransitionHistoryStore | None
-    ) = None,
+    pv_attenuation_learning_result: (PVAttenuationLearningResult | None) = None,
+    storage_mode_provenance_runtime: (LiveStorageModeProvenanceRuntime | None) = None,
+    storage_mode_transition_history: (StorageModeTransitionHistoryStore | None) = None,
     canonical_execution_runtime: CanonicalExecutionRuntime | None = None,
     execution_enabled: bool = False,
     planning_fallback_notifier: PlanningFallbackNotifier | None = None,
     planning_incident_history: PlanningIncidentHistory | None = None,
     daily_pv_basis_decision: DailyPVBasisDecision | None = None,
     financial_result_ledger: FinancialResultLedger | None = None,
+    planning_checkpoint: Callable[[], None] | None = None,
+    refresh_execution_input: Callable[[], PlanningInputSnapshot] | None = None,
 ) -> bool:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -2152,14 +2147,43 @@ def _execute_planning_bundle(
 
     _log_runtime_memory("before_pipeline", run_id=bundle.snapshot.run_id)
 
-    run, stage_timings = canonical_pipeline.run_timed(
-        planning_input=bundle.snapshot,
-        price_opportunity_config=price_config,
-        control_change_allowed=execution_enabled,
+    checkpoint_arguments: dict[str, Any] = (
+        {"planning_checkpoint": planning_checkpoint} if planning_checkpoint else {}
     )
+    try:
+        run, stage_timings = canonical_pipeline.run_timed(
+            planning_input=bundle.snapshot,
+            price_opportunity_config=price_config,
+            control_change_allowed=execution_enabled,
+            **checkpoint_arguments,
+        )
+    except PlanningInputSuperseded:
+        # Execution has already used the ordinary committed boundary. Retry
+        # planning on the next fresh poll; do not apply an obsolete result.
+        return False
+    execution_observed_at = bundle.snapshot.captured_at
+    execution_observation: dict[str, Any] | None = None
     _log_runtime_memory("after_pipeline", run_id=run.planning_input.run_id)
     if canonical_execution_runtime is not None:
-        run = canonical_execution_runtime.apply(run)
+        if (
+            refresh_execution_input is not None
+            and run.execution_record.status == "live_plan_ready"
+            and run.planning_input.daily_charge_context is not None
+        ):
+            observed = refresh_execution_input()
+            execution_observed_at = observed.captured_at
+            execution_observation = {
+                "snapshot_id": observed.snapshot_id,
+                "captured_at": observed.captured_at.isoformat(),
+                "storage": [
+                    {"scope_id": state.execution_scope_id, "soc": state.current_soc,
+                     "measured_at": state.measured_at.isoformat()}
+                    for state in observed.current_storage_states
+                ],
+            }
+            run = canonical_execution_runtime.apply_committed(run, observed)
+        else:
+            run = canonical_execution_runtime.apply(run)
         if (
             run.vendor_result.status in {"dispatched", "already_active"}
             and run.vendor_result.planned_vendor_mode is not None
@@ -2172,7 +2196,7 @@ def _execute_planning_bundle(
             )
             provenance = storage_mode_provenance_runtime.record_planner_application(
                 run.vendor_result.planned_vendor_mode,
-                applied_at=bundle.snapshot.captured_at,
+                applied_at=execution_observed_at,
                 application_id=application_id,
             )
             if run.vendor_result.status == "dispatched":
@@ -2192,7 +2216,7 @@ def _execute_planning_bundle(
                         else None
                     ),
                     application_id=application_id,
-                    occurred_at=bundle.snapshot.captured_at,
+                    occurred_at=execution_observed_at,
                 )
     if planning_incident_history is not None:
         try:
@@ -2200,6 +2224,7 @@ def _execute_planning_bundle(
                 bundle=bundle,
                 run=run,
                 runtime_diagnostics={
+                    "execution_observation": execution_observation,
                     "pv_actual": (
                         asdict(pv_actual_diagnostics)
                         if pv_actual_diagnostics is not None
@@ -2995,6 +3020,17 @@ def main() -> None:
         bundle: PlanningInputBundle,
         pv_actual_diagnostics: LivePVActualDiagnostics,
     ) -> bool:
+        def refresh_execution_input() -> PlanningInputSnapshot:
+            current, _ = prepare_bundle(load_bundle())
+            return current.snapshot
+
+        service = PlanningExecutionService(
+            refresh=refresh_execution_input,
+            advance=lambda snapshot: advance_clock_boundaries(replace(bundle, snapshot=snapshot)),
+            now=lambda: datetime.now(UTC),
+            poll_interval_seconds=poll_interval_seconds,
+            next_check_at=bundle.snapshot.captured_at,
+        )
         power_history, power_history_read_ms = read_power_history(bundle)
         timeline = bundle.snapshot.pv_energy_timeline
         pv_sunset_source = pv_sunset_reader.read(
@@ -3042,6 +3078,8 @@ def main() -> None:
             else ()
         )
         return _execute_planning_bundle(
+            planning_checkpoint=service.checkpoint,
+            refresh_execution_input=refresh_execution_input,
             token=token,
             canonical_pipeline=canonical_pipeline,
             price_config=price_config,
@@ -3054,15 +3092,9 @@ def main() -> None:
             pv_sunset_source=pv_sunset_source,
             pv_sunset_local_timezone=pv_sunset_local_timezone,
             pv_sunset_offsets=pv_sunset_offsets,
-            pv_attenuation_learning_result=(
-                pv_attenuation_learning_result
-            ),
-            storage_mode_provenance_runtime=(
-                storage_mode_provenance_runtime
-            ),
-            storage_mode_transition_history=(
-                storage_mode_transition_history
-            ),
+            pv_attenuation_learning_result=(pv_attenuation_learning_result),
+            storage_mode_provenance_runtime=(storage_mode_provenance_runtime),
+            storage_mode_transition_history=(storage_mode_transition_history),
             canonical_execution_runtime=canonical_execution_runtime,
             execution_enabled=execution_enabled,
             planning_fallback_notifier=planning_fallback_notifier,

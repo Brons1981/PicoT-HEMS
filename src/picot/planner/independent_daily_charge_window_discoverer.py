@@ -178,8 +178,13 @@ class IndependentDailyChargeWindowDiscoverer:
                 method_version="daily-main-charge:v1",
             )
 
-        def admit(owned: dict[int, DailyStorageIntent], family: str) -> bool:
-            projection = simulate(propose(owned))
+        def admit(
+            owned: dict[int, DailyStorageIntent],
+            family: str,
+            projection: DailyPlanningProjection | None = None,
+        ) -> bool:
+            if projection is None:
+                projection = simulate(propose(owned))
             completion = reached(projection, set(owned))
             if completion is None:
                 return False
@@ -262,10 +267,16 @@ class IndependentDailyChargeWindowDiscoverer:
 
             last = indexes[-1]
             owned = owned_until(last)
-            if reached(simulate(propose(owned)), set(owned)) is None:
+            projection = simulate(propose(owned))
+            if not pv_owned:
+                # Without future PV charging, the first target crossing is
+                # exactly the shortest grid prefix. Retain every start.
+                admit(owned, "grid", projection)
                 continue
-            # Added grid intervals cannot reduce stored energy under these
-            # intents. Binary search finds minimal grid duration for each start.
+            # With PV, an earlier grid stop can still reach full later through
+            # NOM. Preserve that original minimal-grid search and its result.
+            if reached(projection, set(owned)) is None:
+                continue
             low, high = start, last
             while low < high:
                 middle = (low + high) // 2
@@ -274,7 +285,8 @@ class IndependentDailyChargeWindowDiscoverer:
                     high = middle
                 else:
                     low = middle + 1
-            admit(owned_until(low), "hybrid" if pv_owned else "grid")
+            admit(owned_until(low), "hybrid")
+
         return result(
             tuple(windows.values()),
             "discovered" if windows else "unreachable",

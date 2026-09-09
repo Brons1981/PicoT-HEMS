@@ -457,7 +457,11 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         planning_incident_history: object,
         daily_pv_basis_decision: object,
         financial_result_ledger: object,
+        planning_checkpoint: object,
+        refresh_execution_input: object,
         ) -> None:
+        assert callable(planning_checkpoint)
+        assert callable(refresh_execution_input)
         del (
             canonical_pipeline,
             price_config,

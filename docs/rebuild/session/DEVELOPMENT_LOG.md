@@ -2949,3 +2949,11 @@ Nog te bevestigen bij opdrachtbinding: geldt het ingestelde handelsvolume eenmaa
 
 - Definitieve geïntegreerde regressie: python -m pytest -q tests/test_planning_execution_service.py tests/test_daily_main_charge_windows.py tests/test_market_rule_selection.py tests/test_market_execution_guard.py tests/test_daily_main_active_pipeline.py tests/test_daily_main_route_optimisation.py tests/test_ha_charge_transition_chain.py tests/test_pending_mode_feedback.py tests/test_charge_segment_closure.py tests/test_v2_live_replan_poll_cycle.py tests/test_v2_live_web_view_publish.py tests/test_v2_live_pv_actual_coupling.py --durations=10: 99 passed in 91.01 s. Hersteltest 29,38 s tegenover vooraf 66,96 s; wintercombinatie zonder herstel 2,60 s tegenover 6,06 s. Dit betreft dezelfde lokale testgevallen, geen HA-hostmeting.
 - Na de brede run is de uitvoeringsweergave aangescherpt zodat ook mappingstatus, bronentiteit en mappingmethode uit de verse uitvoeringswaarneming komen. Definitieve volledige nieuwe service-set: 5 passed in 5.92 s (overlap met de 99, niet optellen). Ruff op alle productiemodules en gewijzigde tests: geslaagd. Mypy src/picot met aparte cache: geen fouten in 205 modules. git diff --check geslaagd. Geen CI_VERIFIED of LIVE_VERIFIED geclaimd.
+
+
+### 2026-09-09 — release dev.244 voorbereiden
+
+- Expliciete opdracht: "akkoord maak release" voor de gezamenlijke laad- en marktrouteproef. Main staat op 39e5fd50bba47367f3934ef7bc93fb9e302b2985/dev.243; de sessiebranch b5d5eb96cb25a0ab9daa9e139004b7639f7e21e8 is 62 commits vooruit en nul achter. Dit is de overeengekomen cumulatieve sessierelease.
+- Runtimeversie, HA-manifest en versiecontrole naar 2.0.0-dev.244; add-on-changelog toegevoegd met werking en instelvereisten. De bestaande Dockerfile bouwt uit main; publicatie vereist daarom samenvoegen van de release-PR na CI. Geen wijziging aan plannerbeleid of installatie-instellingen. De gebruiker installeert de HA-update; in deze stap worden geen batterijcommando's gegeven.
+
+- Versie- en verpakkingscontroles lokaal uitgevoerd; de volledige releasecontrole loopt daarnaast op de PR. Nog geen HA-livebewijs.

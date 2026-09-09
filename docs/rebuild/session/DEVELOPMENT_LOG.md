@@ -2975,3 +2975,51 @@ Validation: original dashboard failure reproduced before change; original full-d
 ## 2026-09-09 — release dev.245
 
 User explicitly requested "maak release" after approval of PR #618's fix. Prepare runtime/add-on version 2.0.0-dev.245, align version contract test and add release notes. Base main c54e28e5a79b7a716bc3e38fe8222de4528df8d0; fix head c09e44aa4ce139cfa006f0090cfbeac216768e5c, tree 033e2815dc38d633cf3fa662407f748492d8d774. All three CI checks passed on that fix, including 1,426 repository tests. Publish via PR #618 after checks on the final release head; GitHub only permits squash/rebase, so use squash. The HA add-on build reads main; installation remains a user action. No direct HA actuation.
+
+
+## 2026-09-09 — market tariff boundary crash fix
+
+User authorization: "oke maak de fix". Base main cd8adc2 (dev.245), branch
+fix/market-tariff-boundaries. Status: IMPLEMENTED; no CI or live verification.
+
+First bad boundary: market candidate construction assumes that each simulated
+export interval fits inside one tariff interval. IndependentDailyTariffAdapter
+also splits tariffs at rolling household forecast boundaries, while the physical
+schedule uses clock quarters. The morning archive's 06:24.686799 minute offset
+reproduces StopIteration at market_rule_planning.py:305 with complete prices.
+The exact crash run is absent from the archives; this is a reproduced mechanism,
+not a full replay of that missing run.
+
+Under ADR-019.2 and ADR-031/032, refine each market candidate simulation using the
+existing tariff boundaries. Reject a candidate with an explicit
+market_export_price_coverage_incomplete reason if containment still fails.
+No fallback tariff or partial export candidate is admitted. Candidate window
+construction, configured spread/volume, Evaluation, Plan Builder, Store, runtime,
+UI, vendor dispatch and Accepted ADRs remain unchanged. Rollback boundary is this
+single fix; no schema migration or version bump.
+
+The new pipeline regression failed with the original StopIteration before the
+production edit, then selected the market route while preserving export volume,
+main assignment identities and winner/plan lineage. A missing published quarter
+also preserves the exact stored charge plan and produces no market binding.
+Ruff and targeted mypy passed. The final affected suite result is recorded below.
+A test-only assertion initially compared domain and observer plan types; corrected
+to compare their canonical plan IDs. No production change was needed for it.
+
+Next action: publish/review the fix and run CI before release; then verify the
+installed version with live diagnostics. No HA commands or deployment performed.
+
+Final local validation: 62 affected tests passed in 44.36 s, covering market
+selection, price windows, admission, plan bindings, execution guards, active daily
+planning and sole-planner architecture. Ruff, targeted mypy and diff check passed.
+
+
+## 2026-09-09 — release dev.246
+
+User explicitly requested "maak relase". Release contains the market tariff
+boundary fix b41982e on base main cd8adc2/dev.245. Align runtime version,
+HA add-on manifest, version test and add-on changelog to 2.0.0-dev.246.
+The fix passed 62 affected tests, Ruff and targeted mypy locally. Release CI
+must pass on the final PR head before squash merge to main. The add-on builds
+from main; installation remains a user action. No direct HA actuation or live
+verification is claimed. No further planner policy changes in this release.

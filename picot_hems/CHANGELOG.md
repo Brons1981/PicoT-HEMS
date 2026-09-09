@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.246
+
+- Verhelpt de StopIteration-crash in de marktplanner bij verschoven tijdgrenzen van de huisverbruiksvoorspelling.
+- De exportsimulatie wordt gesplitst op de tariefgrenzen, zodat ieder exportdeel een passend tarief krijgt.
+- Een ontbrekende prijsmatch wijst de handelskandidaat af met een expliciete reden. Er wordt geen prijs verzonnen of gedeeltelijke kandidaat gepubliceerd.
+- Dagelijkse laadopdrachten, handelsvolume en spreadregels blijven behouden.
+
+Na installatie: controleer dev.246 en of de planner zonder crash blijft draaien. Livewerking moet in Home Assistant worden bevestigd.
+
 ## 2.0.0-dev.245
 
 - Het behouden laadplan blijft zichtbaar, inclusief het oorspronkelijke NOM-venster en de planidentiteit.

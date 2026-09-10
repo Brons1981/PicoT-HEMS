@@ -400,7 +400,7 @@ class IndependentDailyReferenceAdapter:
     ) -> DailyMainPVSurplusTrigger | None:
         """Prove a removable future grid interval before any price window search."""
         if comparison.assignment_id != assignment.assignment_id or (
-            comparison.status != "complete" or comparison.boundary != "above_central"
+            comparison.status != "complete"
             or assignment.completed_at is not None or assignment.route_plan_id is None
         ):
             return None
@@ -463,6 +463,7 @@ class IndependentDailyReferenceAdapter:
                     comparison.actual_wh, comparison.central_wh, prior_grid_wh,
                     inputs.maximum_charge_input_power_w
                     * (interval.ends_at - interval.starts_at).total_seconds() / 3600,
+                    soc_based=comparison.boundary != "above_central",
                 )
         return None
 

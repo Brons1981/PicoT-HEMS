@@ -1351,6 +1351,18 @@ def _build_daily_main_run(
                 pv_comparison = compare_daily_pv(
                     state.basis, snapshot.pv_energy_timeline, at=snapshot.captured_at,
                 )
+                # A changed stored energy can make charging removable even with
+                # unchanged closed PV observations. Poll time is not new evidence.
+                storage_basis = tuple(
+                    (s.execution_scope_id, s.current_soc, s.usable_capacity_wh)
+                    for s in snapshot.current_storage_states
+                    if s.execution_scope_id == owner.execution_scope_id
+                )
+                pv_comparison = replace(
+                    pv_comparison, evidence_id="grid-review:" + sha256(
+                        repr((pv_comparison.evidence_id, storage_basis)).encode()
+                    ).hexdigest(),
+                )
                 if pv_comparison.status != "complete" or (
                     pv_comparison.evidence_id in state.assessed_evidence_ids
                 ):

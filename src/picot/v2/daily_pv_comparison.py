@@ -277,10 +277,12 @@ class DailyMainPVSurplusTrigger:
     central_wh: float
     prior_grid_input_wh: float
     removable_grid_input_wh: float
+    soc_based: bool = False
 
     @property
     def revision_reason(self) -> DailyChargeRevisionReason:
-        return DailyChargeRevisionReason.PV_UPPER
+        return (DailyChargeRevisionReason.GRID_REDUCTION if self.soc_based
+                else DailyChargeRevisionReason.PV_UPPER)
 
     def __post_init__(self) -> None:
         if self.assessed_at.utcoffset() is None or self.revision < 1:
@@ -308,11 +310,12 @@ class DailyMainPVSurplusTrigger:
             )
         ) or (
             self.target_wh <= 0
-            or not self.actual_wh > self.central_wh >= 0
+            or min(self.actual_wh, self.central_wh) < 0
+            or (not self.soc_based and self.actual_wh <= self.central_wh)
             or not 0 < self.removable_grid_input_wh <= self.prior_grid_input_wh
         ):
             raise ValueError(
-                "PV trigger requires above-CENTRAL evidence and removable grid charging"
+                "Grid reduction requires valid evidence and removable grid charging"
             )
 
     def validate(self, assignment: DailyChargeAssignment, snapshot_id: str, at: datetime) -> None:

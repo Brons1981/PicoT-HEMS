@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0-dev.250
+
+- Beoordeelt vermindering van netladen ook bij een hogere actuele SOC wanneer de gemeten PV niet boven CENTRAL ligt.
+- Vermindert uitsluitend via de bestaande planning, met behoud van het laaddoel en controle van de overige hoofdopdrachten.
+- Een gewijzigde SOC kan dezelfde PV-metingen opnieuw relevant maken; identieke herhaalde metingen starten geen nieuwe prijszoektocht.
+
+Na installatie: controleer versie dev.250 en of netladen bij voldoende verwachte energie wordt verminderd.
+
 ## 2.0.0-dev.249
 
 - Bewaart de oorspronkelijke SOC-prognose bij het plan, zodat de lijn na een herstart terugkomt bij hetzelfde behouden plan.

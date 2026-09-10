@@ -22,6 +22,7 @@ class DailyChargeRevisionReason(StrEnum):
     TARGET_UNREACHABLE = "existing_route_cannot_reach_target"
     PV_LOWER = "pv_at_or_below_lower_with_execution_impact"
     PV_UPPER = "pv_above_central_with_execution_impact"
+    GRID_REDUCTION = "current_soc_allows_grid_reduction"
     LOAD = "additional_load_with_execution_impact"
     RESERVE = "projected_reserve_shortfall"
 

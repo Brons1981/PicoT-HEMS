@@ -3217,3 +3217,45 @@ its timestamp remain visible across a restart. Energy Devices 0.2.0 is unchanged
 Alex vraagt expliciet om de release van de SOC-weergavefix. Runtimeversie, manifest, versiecontract en changelog bijgewerkt naar dev.249. Patch lokaal geverifieerd met 74 tests, Ruff en mypy (70 modules), inclusief herstel van 118 SOC-punten uit de aangeleverde diagnose. Publicatie via PR na drie groene CI-workflows. Livecontrole na installatie nog vereist. Energy Devices blijft 0.2.0.
 
 Release CI correction: v2 reported 623 passing tests and one stale diagnostic-file-list assertion in test_v2_live_web_server_start. Added the intentional SOC projection cache to that expected list; production behavior unchanged. Rerun all CI on the corrected PR head before merge.
+
+
+### 2026-09-10 — SOC-aware reduction of unnecessary grid charging (IMPLEMENTED)
+
+Version: dev.249; branch fix/soc-aware-grid-reduction; local baseline 423550f
+(release dev.249 tree). User explicitly authorized the diagnosed grid-charge fix.
+
+Diagnosis from September 10 18:01 archive: at 09:44 local the forecast revision
+produced a 534 Wh main-goal shortfall and a 12:15–12:45 charge segment. At its
+start actual SOC was 83%, original projected SOC about 59%. PV remained below
+the frozen CENTRAL reference, so the removable-grid assessment never ran.
+The 05:25 fallback was separate: unavailable Zendure SOC, recovered at 05:26.
+No modification to that fallback or vendor dispatch is included.
+
+Owner: existing canonical main-route monitoring and candidate admission, under
+ADR-037.12. Above-CENTRAL is no longer required to assess removable grid energy.
+The existing physical trial, candidate evaluation and store reduction validation
+remain authoritative. New SOC-based revision reason records the distinction.
+Assessment identity includes scope SOC/capacity as well as closed PV evidence,
+so changed SOC can reopen assessment without repeated identical-poll searches.
+The saved PV reference, completion evidence, market bindings, minimum reserve,
+PV basis and frozen pipeline are unchanged. Missing PV comparison coverage still
+retains the route conservatively; no forecast or actual data is invented.
+
+Regression evidence: the new below-CENTRAL high-SOC tests failed on the prior
+implementation because no reduction trigger existed. After the fix, below-LOWER,
+within-bounds and CENTRAL equality all allow proven grid reduction; an initially
+insufficient SOC retains its route, then increased SOC with the same PV evidence
+allows reduction. Tests also check a projected 100% and no fabricated completion.
+
+Fresh verification: 53 tests passed across daily PV comparison/optimisation,
+main-route optimisation/active pipeline, market bindings and SOC history recovery
+(27.59 s). Ruff passed for all changed Python files; mypy passed for 70 v2 modules;
+git diff --check passed. Status IMPLEMENTED, not CI_VERIFIED or LIVE_VERIFIED.
+No full replay of the September 10 physical counterfactual was performed; actual
+unnecessary imported kWh remains unproven. No version bump, push or release.
+Next: separately authorized release, then observe grid reduction on live input.
+
+
+### 2026-09-10 — Release dev.250 voorbereid
+
+Alex heeft publicatie expliciet gevraagd. Versie, manifest, versiecontract en changelog bijgewerkt. SOC-fix 3ecf5a5: 53 gerichte tests, Ruff en mypy (70 modules) geslaagd. Publicatie via PR na drie groene CI-workflows. Nog geen livevalidatie; Energy Devices blijft 0.2.0.

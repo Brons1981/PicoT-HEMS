@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 from test_daily_main_active_pipeline import setup
 from test_daily_main_charge_selection import snapshot_for_main
 from test_daily_main_charge_windows import inputs
@@ -137,7 +138,7 @@ def test_surplus_without_removable_grid_is_assessed_once(tmp_path, monkeypatch):
     state = store.load_daily_pv_comparison(owner.assignment_id)
     assert result.evaluation.daily_pv_comparison.evidence_id in state.assessed_evidence_ids
     monkeypatch.setattr(IndependentDailyReferenceAdapter, "pv_surplus_trigger", forbidden)
-    repeated = pipeline.run(planning_input=recover(observed(source, soc=0.76, minutes=65)))
+    repeated = pipeline.run(planning_input=recover(observed(source, soc=0.66, minutes=65)))
     assert repeated.execution_plan_set.plans[0].plan_id == first.execution_plan_set.plans[0].plan_id
 
 
@@ -234,3 +235,45 @@ def test_poll_signature_sees_corrected_actual_sources_and_future_range(tmp_path,
         ),
     )
     assert _planning_input_signature(bundle(corrected_future)) != original
+
+
+@pytest.mark.parametrize("measured_pv_wh", [400, 900, 1000])
+def test_actual_soc_can_reduce_grid_below_central(tmp_path, monkeypatch, measured_pv_wh):
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    source = source_with_later_cheap_window()
+    first = pipeline.run(planning_input=recover(source))
+    observation = observed(source, soc=0.90)
+    observation = replace(observation, pv_energy_timeline=replace(
+        observation.pv_energy_timeline,
+        intervals=tuple(actual(i, measured_pv_wh) if n < 2 else i
+                        for n, i in enumerate(observation.pv_energy_timeline.intervals)),
+    ))
+    result = pipeline.run(planning_input=recover(observation))
+    assert result.evaluation.daily_pv_comparison.boundary != "above_central"
+    assert result.evaluation.daily_pv_surplus_trigger is not None
+    assert result.evaluation.daily_pv_surplus_trigger.soc_based
+    assert store.load_daily_assignments()[0].revision_reason is (
+        DailyChargeRevisionReason.GRID_REDUCTION)
+    assert grid_wh(result.execution_plan_set.plans[0], observation.captured_at) < grid_wh(
+        first.execution_plan_set.plans[0], observation.captured_at)
+    assert store.load_daily_assignments()[0].completed_at is None
+
+
+def test_changed_soc_reopens_assessment_with_same_pv_and_preserves_goal(tmp_path, monkeypatch):
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    source = source_with_later_cheap_window()
+    first = pipeline.run(planning_input=recover(source))
+    low = observed(source, soc=0.66)
+    retained = pipeline.run(planning_input=recover(low))
+    assert retained.evaluation.daily_pv_surplus_trigger is None
+    assert retained.execution_plan_set.plans[0].plan_id == first.execution_plan_set.plans[0].plan_id
+    higher = observed(source, soc=0.90, minutes=65)
+    reduced = pipeline.run(planning_input=recover(higher))
+    assert reduced.evaluation.daily_pv_surplus_trigger is not None
+    assert grid_wh(reduced.execution_plan_set.plans[0], higher.captured_at) < grid_wh(
+        first.execution_plan_set.plans[0], higher.captured_at)
+    owner = store.load_daily_assignments()[0]
+    assert owner.completed_at is None
+    path = next(p for p in reduced.candidate_set.energy_paths
+                if p.path_id == reduced.evaluation.winning_energy_path_id)
+    assert any(s.battery_soc >= 1.0 for s in path.projected_states)

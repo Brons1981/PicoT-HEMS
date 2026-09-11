@@ -3389,3 +3389,18 @@ Alex heeft de release expliciet aangevraagd. Versie, manifest, versiecontract
 en changelog bijgewerkt. Oorspronkelijke handel opgenomen in de ongearceerde
 referentie; uitsluitend latere afwijkingen gearceerd. Publicatie via PR na drie
 groene CI-workflows. Geen installatie of herstart van Home Assistant.
+
+### 2026-09-11 — SOC-lijn doorgetrokken en werkelijke SOC paars (IMPLEMENTED)
+
+Alex vraagt de onderbroken SOC-lijn aan te passen en staat paars toe voor de
+werkelijke SOC. Geplande SOC wordt doorgetrokken met behoud van de moduskleuren;
+werkelijke SOC krijgt vast paars (#c084fc). Beide legenda-items volgen de
+weergave. Alleen CSS is gewijzigd; geen meet-/prognosepunten, tijdgrenzen,
+interpolatie of planaanpassing. Ontbrekende echte metingen blijven onderbroken.
+ADR-037.13 bijgewerkt. Nog geen commit, publicatie of nieuwe release.
+
+### 2026-09-11 — Release dev.254 voorbereid
+
+Alex heeft de release expliciet aangevraagd. Versie, manifest, versiecontract
+en changelog bijgewerkt. Geplande SOC doorgetrokken, werkelijke SOC paars.
+Publicatie via PR na drie groene CI-workflows. Geen HA-installatie of herstart.

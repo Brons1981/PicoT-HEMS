@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0-dev.254
+
+- Toont de geplande SOC als doorgetrokken lijn met behoud van de moduskleuren.
+- Geeft de werkelijke SOC een vaste paarse kleur, inclusief legenda. Ontbrekende metingen blijven zichtbaar als onderbreking.
+- Alleen weergave gewijzigd; SOC-gegevens, planning en aansturing blijven ongewijzigd.
+
+Na installatie: controleer dev.254 en de SOC-lijnen in de prijsgrafiek.
+
 ## 2.0.0-dev.253
 
 - Neemt de oorspronkelijke marktroute mee in de ongearceerde planreferentie. De eerste handel geldt niet meer ten onrechte als een latere optimalisatie.

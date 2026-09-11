@@ -814,6 +814,11 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.canonical-charge { background: #df5c57; }
     .price-swatch.canonical-trade { background: #aab2bd; }
     .price-swatch.canonical-support { background: #3994e6; }
+    .price-swatch.optimized {
+      background: repeating-linear-gradient(135deg, #b9c3cf 0 2px, #253341 2px 6px);
+    }
+    .price-swatch.soc-actual { background: #70ef9a; height: 3px; }
+    .price-swatch.soc-projected { background: none; border-top: 2px dashed #c1ccd9; }
     .planner-window-summary {
       display: flex;
       flex-wrap: wrap;
@@ -885,6 +890,8 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .planner-window.canonical-support { fill: #3994e6; }
     .price-chart .planner-window.energy-device-placement { fill: #b96cff; }
     .price-chart .soc-line { fill: none; stroke-width: 3; }
+    .price-chart .soc-line:not(.soc-actual) { stroke-dasharray: 5 4; }
+    .price-chart .soc-line.soc-actual { stroke: #70ef9a; stroke-width: 3; }
     .price-chart .soc-line.canonical-nom { stroke: #35a862; }
     .price-chart .soc-line.canonical-charge { stroke: #df5c57; }
     .price-chart .soc-line.canonical-trade { stroke: #aab2bd; }
@@ -1063,6 +1070,14 @@ DASHBOARD_HTML = """<!doctype html>
       <div id="financial-results" aria-live="polite">
         Nog geen volledige financiële meetperiode beschikbaar.
       </div>
+      <h2>Terugblik netladen</h2>
+      <p class="muted">
+        Minder netladen met de werkelijk gemeten zon en huisvraag. Batterij-export,
+        dagdoel binnen het hoofdlaadvenster en eindvoorraad blijven behouden.
+        Dit is een modelmatige terugblik met voorkennis, geen vooraf uitvoerbaar
+        optimaal plan. Een positief kostenverschil is voordeliger.
+      </p>
+      <div id="grid-charge-review" aria-live="polite">Meetgegevens verzamelen…</div>
     </section>
     <section
       id="tab-strategy" class="tab-panel" data-tab-panel="strategy" hidden
@@ -1352,7 +1367,8 @@ DASHBOARD_HTML = """<!doctype html>
       timeline,
       capturedAt,
       plannerWindows = [],
-      socTimeline = []
+      socTimeline = [],
+      actualSoc = {}
     ) {
       const container = element("price-timeline");
       container.replaceChildren();
@@ -1395,6 +1411,9 @@ DASHBOARD_HTML = """<!doctype html>
         ["canonical-charge", "Net import / snel laden"],
         ["canonical-trade", "MEP handel / terugleveren"],
         ["canonical-support", "Slim huishoudelijk ontladen"],
+        ["optimized", "Geoptimaliseerd plandeel"],
+        ["soc-actual", "Werkelijke SOC"],
+        ["soc-projected", "Geplande SOC (oorspronkelijke prognose)"],
         ["energy-device-placement", "Geplaatst energie-apparaat"]
       ]) {
         const item = document.createElement("span");
@@ -1462,6 +1481,26 @@ DASHBOARD_HTML = """<!doctype html>
           "Prijsverloop voor 48 uur met gemarkeerde PicoT-prijsvensters"
         )
       });
+      const defs = createSvgElement("defs", {});
+      const optimizedKinds = ["canonical-nom", "canonical-charge", "canonical-trade"];
+      for (const [kind, color] of [
+        ["canonical-nom", "#35a862"],
+        ["canonical-charge", "#df5c57"],
+        ["canonical-trade", "#aab2bd"]
+      ]) {
+        const pattern = createSvgElement("pattern", {
+          id: `price-hatch-${kind}`, width: 6, height: 6,
+          patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)"
+        });
+        pattern.appendChild(createSvgElement("rect", {
+          width: 6, height: 6, fill: color, "fill-opacity": 0.18
+        }));
+        pattern.appendChild(createSvgElement("line", {
+          x1: 0, y1: 0, x2: 0, y2: 6, stroke: color, "stroke-width": 2
+        }));
+        defs.appendChild(pattern);
+      }
+      svg.appendChild(defs);
 
       svg.appendChild(
         createSvgElement("rect", {
@@ -1503,7 +1542,7 @@ DASHBOARD_HTML = """<!doctype html>
           `${100 - index * 25}%`,
           {
             x: width - margin.right + 8,
-            y: margin.top + (plotHeight * index) / 4 + 4,
+            y: socYPosition(100 - index * 25) + 4,
             "text-anchor": "start"
           },
           "axis-label"
@@ -1602,6 +1641,18 @@ DASHBOARD_HTML = """<!doctype html>
         bar.addEventListener("focus", showDetail);
         bar.addEventListener("click", showDetail);
         svg.appendChild(bar);
+        // Hatch only the exact overlap, including partial price quarters.
+        for (const window of selectedWindows.filter(w => optimizedKinds.includes(w.kind))) {
+          const a = Math.max(pointStart, new Date(window.starts_at).getTime());
+          const b = Math.min(pointEnd, new Date(window.ends_at).getTime());
+          svg.appendChild(createSvgElement("rect", {
+            class: `optimized-price-part ${window.kind}`,
+            x: xPosition(a), y: Math.min(valueY, zeroY),
+            width: xPosition(b) - xPosition(a), height: Math.max(1, Math.abs(zeroY - valueY)),
+            fill: `url(#price-hatch-${window.kind})`, "pointer-events": "none",
+            opacity: isPast ? 0.45 : 1
+          }));
+        }
       }
 
       for (const window of plannerWindows) {
@@ -1650,6 +1701,39 @@ DASHBOARD_HTML = """<!doctype html>
           cy: socYPosition(Number(actual.soc_percent)),
           r: 5
         }));
+      }
+
+      const measured = Array.isArray(actualSoc.points) ? [...actualSoc.points] : [];
+      const observedEnd = Math.min(nowMs, new Date(actualSoc.ends_at).getTime(), endsAtMs);
+      if (measured.length && Number.isFinite(observedEnd) &&
+          observedEnd > new Date(measured[measured.length - 1].at).getTime()) {
+        measured.push({...measured[measured.length - 1], at: new Date(observedEnd).toISOString()});
+      }
+      for (let index = 1; index < measured.length; index += 1) {
+        const a = measured[index - 1], b = measured[index];
+        const startAt = new Date(a.at).getTime(), endAt = new Date(b.at).getTime();
+        if (a.soc_percent === null || a.soc_percent === undefined ||
+            !Number.isFinite(Number(a.soc_percent)) || a.soc_percent < 0 || a.soc_percent > 100 ||
+            !Number.isFinite(startAt) || !Number.isFinite(endAt) || endAt <= startAt ||
+            endAt < startsAtMs || startAt > observedEnd) continue;
+        const x1 = xPosition(Math.max(startsAtMs, startAt));
+        const x2 = xPosition(Math.min(observedEnd, endAt));
+        if (x2 < x1) continue;
+        const y1 = socYPosition(Number(a.soc_percent));
+        const validNext = b.soc_percent !== null && b.soc_percent !== undefined &&
+          Number.isFinite(Number(b.soc_percent)) && b.soc_percent >= 0 && b.soc_percent <= 100;
+        const y2 = validNext ? socYPosition(Number(b.soc_percent)) : y1;
+        svg.appendChild(createSvgElement("path", {
+          class: "soc-line soc-actual", d: `M ${x1} ${y1} H ${x2}` +
+            (endAt <= observedEnd && validNext ? ` V ${y2}` : "")
+        }));
+      }
+      if (actualSoc.ends_at) {
+        const freshness = document.createElement("p");
+        freshness.className = "muted";
+        freshness.textContent = "Werkelijke SOC: meetgegevens tot " +
+          `${formatTimestamp(actualSoc.ends_at)}.`;
+        container.appendChild(freshness);
       }
 
       if (
@@ -3865,6 +3949,82 @@ DASHBOARD_HTML = """<!doctype html>
       return panel;
     }
 
+    function renderGridChargeReview(review) {
+      const container = element("grid-charge-review");
+      container.replaceChildren();
+      const days = Array.isArray(review.days) ? review.days : [];
+      const completed = days.filter(d => d.finalized && d.status === "available");
+      const summary = document.createElement("p");
+      const avoidable = completed.filter(d => d.avoidable_grid_charge_kwh > 0.1);
+      summary.textContent = completed.length
+        ? `${avoidable.length} van ${completed.length} volledig beoordeelde dagen: ` +
+          `meer dan 0,1 kWh netladen vermijdbaar in deze terugblik.`
+        : "Nog geen volledig beoordeelde dagen. De lopende dag telt niet mee in het patroon.";
+      container.appendChild(summary);
+      const reasons = {
+        history_unavailable: "Meetgeschiedenis tijdelijk niet beschikbaar",
+        missing_measured_series: "Een benodigde meetreeks ontbreekt",
+        main_window_evidence_missing: "Het bijbehorende hoofdlaadvenster ontbreekt",
+        configured_maximum_below_daily_target: "Ingesteld maximum ligt onder 100%",
+        measurement_start_missing: "Een beginmeting ontbreekt",
+        household_measurement_gap: "Onderbreking in de huisverbruikmetingen",
+        household_measurement_tail_missing: "Laatste huisverbruikmeting ontbreekt",
+        measurement_unavailable: "Onderbreking of ongeldige meting",
+        invalid_soc: "Ongeldige SOC-meting",
+        price_coverage_incomplete: "Niet alle prijzen beschikbaar",
+        flow_soc_mismatch: "Energiemetingen en SOC sluiten onvoldoende op elkaar aan",
+        power_balance_mismatch: "De gemeten energiestromen sluiten onvoldoende op elkaar aan",
+        reference_replay_not_feasible:
+          "Dagdoel, export of eindvoorraad nog niet aantoonbaar haalbaar",
+        settings_changed_during_day: "Batterij-instellingen veranderden tijdens de dag",
+        review_resource_limit: "Te veel meetpunten voor deze terugblik"
+      };
+      if (!days.length) {
+        const empty = document.createElement("p");
+        empty.textContent = "Meetgegevens verzamelen; automatische verversing elke vijf minuten.";
+        container.appendChild(empty);
+        return;
+      }
+      const scroll = document.createElement("div");
+      scroll.style.overflowX = "auto";
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const row = document.createElement("tr");
+      for (const label of ["Dag", "Status", "Net naar accu", "Vermijdbaar*",
+        "Piek SOC zonder netladen", "Kostenverschil*", "PV afwijking t.o.v. plan"]) {
+        const th = document.createElement("th"); th.textContent = label; row.appendChild(th);
+      }
+      head.appendChild(row); table.appendChild(head);
+      const body = document.createElement("tbody");
+      const kwh = value => value === null || value === undefined ? "—"
+        : `${formatDutchNumber(value)} kWh`;
+      for (const day of [...days].reverse()) {
+        const tr = document.createElement("tr");
+        const ok = day.status === "available";
+        const status = ok ? (day.finalized ? "Volledig" : "Voorlopig")
+          : (reasons[day.reason] ?? "Onvoldoende gegevens");
+        const values = [day.day, status, kwh(day.measured_grid_charge_kwh),
+          ok ? kwh(day.avoidable_grid_charge_kwh) : "—",
+          day.pv_only_peak_soc_percent == null ? "—"
+            : `${formatDutchNumber(day.pv_only_peak_soc_percent)}%`,
+          ok ? formatCurrency(day.cost_difference_eur) : "—",
+          kwh(day.pv_comparison?.difference_kwh)];
+        for (const value of values) {
+          const td = document.createElement("td"); td.textContent = value; tr.appendChild(td);
+        }
+        body.appendChild(tr);
+      }
+      table.appendChild(body); scroll.appendChild(table); container.appendChild(scroll);
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.textContent = "* Modelschatting: netladen op de oorspronkelijke momenten stapsgewijs " +
+        "verminderd, extra PV via NOM benut. Geen globaal minimum. Kostenverschil inclusief " +
+        "huisimport, teruglevering, verliezen en slijtage; eindvoorraad blijft behouden. " +
+        "PV-afwijking gebruikt de vastgelegde (LOWER + CENTRAL) / 2 " +
+        "over dezelfde gesloten intervallen.";
+      container.appendChild(note);
+    }
+
     function renderFinancialResults(financial) {
       const container = element("financial-results");
       container.replaceChildren();
@@ -4304,6 +4464,7 @@ DASHBOARD_HTML = """<!doctype html>
         view.storage_mode_transition_history ?? []
       );
       renderFinancialResults(view.financial_results ?? {});
+      renderGridChargeReview(view.grid_charge_review ?? {});
       renderUserRules(view.user_rules ?? {});
       renderEnergyDevices(
         view.energy_device_catalog ?? {},
@@ -4323,7 +4484,8 @@ DASHBOARD_HTML = """<!doctype html>
         },
         view.captured_at,
         selectedExecutionPlanWindows(view),
-        view.planning_status?.soc_timeline ?? []
+        view.planning_status?.soc_timeline ?? [],
+        view.grid_charge_review?.actual_soc ?? {}
       );
       renderPipeline(pipeline);
       renderPipelineHealth(view.pipeline_health);
@@ -4456,6 +4618,7 @@ class WebViewStore:
         self._fast_grid_power_source: dict[str, object] | None = None
         self._retired_comparison_history: dict[str, object] | None = None
         self._financial_results: dict[str, object] | None = None
+        self._grid_charge_review: dict[str, object] | None = None
         self._user_rules: dict[str, object] | None = None
         self._energy_device_catalog: dict[str, object] | None = None
         self._energy_device_placements: dict[str, object] | None = None
@@ -4503,6 +4666,8 @@ class WebViewStore:
             view["retired_comparison_history"] = dict(self._retired_comparison_history)
         if self._financial_results is not None:
             view["financial_results"] = dict(self._financial_results)
+        if self._grid_charge_review is not None:
+            view["grid_charge_review"] = dict(self._grid_charge_review)
         if self._user_rules is not None:
             view["user_rules"] = dict(self._user_rules)
         if self._energy_device_catalog is not None:
@@ -4669,6 +4834,16 @@ class WebViewStore:
             latest: object = json.loads(self._latest_json)
             if isinstance(latest, dict):
                 self._replace_latest_locked(latest)
+
+    def publish_grid_charge_review(self, review: dict[str, object]) -> None:
+        """Overlay passive observations without touching canonical projection identities."""
+        copied = json.loads(json.dumps(review, allow_nan=False))
+        with self._condition:
+            self._grid_charge_review = copied
+            if self._latest_json is not None:
+                latest = json.loads(self._latest_json)
+                if isinstance(latest, dict):
+                    self._replace_latest_locked(latest)
 
     def publish_financial_results(
         self,

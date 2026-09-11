@@ -214,3 +214,10 @@ The execution boundary refuses stale historically completed main segments until
 reconciliation. Manual override is unchanged. Market capacity and final simulation
 must use the same tariff/household boundaries; never relax volume validity to hide
 an interval mismatch. See the development log for implementation/test status.
+
+## 2026-09-11 — Passive grid-charge review and actual SOC
+
+See `docs/architecture/ADR-037.13-passive-grid-charge-review.md`. This optional
+observer estimates retrospective grid reduction without planning authority.
+It must never feed MEP or replace the original canonical SOC projection.
+Runtime/UI additions are locally implemented; no new release or live validation.

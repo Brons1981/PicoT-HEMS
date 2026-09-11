@@ -26,6 +26,7 @@ from picot.v2.contracts import (
 )
 from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
+from picot.v2.price_plan_reference import PricePlanReference
 from picot.v2.projection import Projection
 from picot.v2.soc_projection_cache import SOCProjectionCache
 from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
@@ -1368,7 +1369,8 @@ DASHBOARD_HTML = """<!doctype html>
       capturedAt,
       plannerWindows = [],
       socTimeline = [],
-      actualSoc = {}
+      actualSoc = {},
+      originalReference = {}
     ) {
       const container = element("price-timeline");
       container.replaceChildren();
@@ -1424,6 +1426,12 @@ DASHBOARD_HTML = """<!doctype html>
         legend.appendChild(item);
       }
       container.appendChild(legend);
+      const referenceNote = document.createElement("p");
+      referenceNote.className = "muted";
+      referenceNote.textContent = originalReference.status === "available"
+        ? "Arcering: afwijkende delen ten opzichte van het eerste vastgelegde dagplan."
+        : "Oorspronkelijk plan niet beschikbaar; verschillen worden niet gearceerd.";
+      container.appendChild(referenceNote);
 
       if (plannerWindows.length) {
         const summary = document.createElement("div");
@@ -1482,11 +1490,12 @@ DASHBOARD_HTML = """<!doctype html>
         )
       });
       const defs = createSvgElement("defs", {});
-      const optimizedKinds = ["canonical-nom", "canonical-charge", "canonical-trade"];
       for (const [kind, color] of [
         ["canonical-nom", "#35a862"],
         ["canonical-charge", "#df5c57"],
-        ["canonical-trade", "#aab2bd"]
+        ["canonical-trade", "#aab2bd"],
+        ["canonical-support", "#35a862"],
+        ["normal", "#aab2bd"]
       ]) {
         const pattern = createSvgElement("pattern", {
           id: `price-hatch-${kind}`, width: 6, height: 6,
@@ -1632,6 +1641,8 @@ DASHBOARD_HTML = """<!doctype html>
               formatTimestamp(point.ends_at),
             formatPrice(value),
             `Confidence ${formatConfidence(point.confidence)}`,
+            ...(selectedWindows.some(w => w.optimized)
+              ? ["Aangepast ten opzichte van het oorspronkelijke plan"] : []),
             ...(selectedBy.length
               ? [`Gekozen door ${selectedBy.join(" en ")}`]
               : [])
@@ -1642,7 +1653,7 @@ DASHBOARD_HTML = """<!doctype html>
         bar.addEventListener("click", showDetail);
         svg.appendChild(bar);
         // Hatch only the exact overlap, including partial price quarters.
-        for (const window of selectedWindows.filter(w => optimizedKinds.includes(w.kind))) {
+        for (const window of selectedWindows.filter(w => w.optimized === true)) {
           const a = Math.max(pointStart, new Date(window.starts_at).getTime());
           const b = Math.min(pointEnd, new Date(window.ends_at).getTime());
           svg.appendChild(createSvgElement("rect", {
@@ -3652,6 +3663,26 @@ DASHBOARD_HTML = """<!doctype html>
       }[primitive] ?? "normal";
     }
 
+    function pricePlanParts(segment, plan, reference) {
+      const start = Date.parse(segment.starts_at), end = Date.parse(segment.ends_at);
+      const originals = (reference?.plans ?? [])
+        .filter(p => p.execution_scope_id === plan.execution_scope_id)
+        .flatMap(p => p.segments ?? [])
+        .filter(s => Date.parse(s.starts_at) < end && Date.parse(s.ends_at) > start);
+      const cuts = [...new Set([start, end, ...originals.flatMap(s => [
+        Math.max(start, Date.parse(s.starts_at)), Math.min(end, Date.parse(s.ends_at))
+      ])])].sort((a, b) => a - b);
+      return cuts.slice(0, -1).map((a, i) => {
+        const b = cuts[i + 1];
+        const baseline = originals.filter(s => Date.parse(s.starts_at) <= a &&
+          Date.parse(s.ends_at) >= b);
+        const same = s => ["primitive", "requested_power_w", "charge_source_policy"]
+          .every(k => (s[k] ?? null) === (segment[k] ?? null));
+        return {starts_at: new Date(a).toISOString(), ends_at: new Date(b).toISOString(),
+          optimized: baseline.length > 0 && !baseline.some(same)};
+      });
+    }
+
     function selectedExecutionPlanWindows(view) {
       const windows = [];
       const plans = view.planning_status?.execution_plans ?? [];
@@ -3664,12 +3695,14 @@ DASHBOARD_HTML = """<!doctype html>
             balance_discharge_only: "Slim huishoudelijk ontladen",
             standby: "Stand-by",
           };
-          windows.push({
-            starts_at: segment.starts_at,
-            ends_at: segment.ends_at,
+          windows.push(...pricePlanParts(segment, plan, view.original_price_plan).map(part => ({
+            ...part,
+            starts_at: part.starts_at,
+            ends_at: part.ends_at,
             kind: primitivePlanKind(segment.primitive),
-            label: labels[segment.primitive] ?? displayValue(segment.primitive),
-          });
+            label: (labels[segment.primitive] ?? displayValue(segment.primitive)) +
+              (part.optimized ? " (aangepast)" : ""),
+          })));
         }
       }
       for (const placement of view.energy_device_placements?.placements ?? []) {
@@ -3981,17 +4014,28 @@ DASHBOARD_HTML = """<!doctype html>
       };
       if (!days.length) {
         const empty = document.createElement("p");
-        empty.textContent = "Meetgegevens verzamelen; automatische verversing elke vijf minuten.";
+        empty.textContent = "Kostenverschil nog niet beschikbaar. Meetgegevens verzamelen; " +
+          "automatische verversing elke vijf minuten.";
         container.appendChild(empty);
         return;
       }
+      const latest = [...days].reverse().find(d => d.status === "available");
+      const cost = document.createElement("p");
+      cost.className = "grid-review-cost";
+      cost.textContent = latest
+        ? `Kostenverschil bij minder netladen (${latest.delivery_date ?? latest.day}): ` +
+          `${formatCurrency(latest.cost_difference_eur)} — ` +
+          (latest.finalized ? "volledige dag" : "voorlopige terugblik")
+        : "Kostenverschil nog niet beschikbaar: " +
+          (reasons[days.at(-1)?.reason] ?? "onvoldoende meet- of prijsgegevens") + ".";
+      container.appendChild(cost);
       const scroll = document.createElement("div");
       scroll.style.overflowX = "auto";
       const table = document.createElement("table");
       const head = document.createElement("thead");
       const row = document.createElement("tr");
       for (const label of ["Dag", "Status", "Net naar accu", "Vermijdbaar*",
-        "Piek SOC zonder netladen", "Kostenverschil*", "PV afwijking t.o.v. plan"]) {
+        "Kostenverschil (€)*", "Piek SOC zonder netladen", "PV afwijking t.o.v. plan"]) {
         const th = document.createElement("th"); th.textContent = label; row.appendChild(th);
       }
       head.appendChild(row); table.appendChild(head);
@@ -4005,9 +4049,9 @@ DASHBOARD_HTML = """<!doctype html>
           : (reasons[day.reason] ?? "Onvoldoende gegevens");
         const values = [day.day, status, kwh(day.measured_grid_charge_kwh),
           ok ? kwh(day.avoidable_grid_charge_kwh) : "—",
+          ok ? formatCurrency(day.cost_difference_eur) : "—",
           day.pv_only_peak_soc_percent == null ? "—"
             : `${formatDutchNumber(day.pv_only_peak_soc_percent)}%`,
-          ok ? formatCurrency(day.cost_difference_eur) : "—",
           kwh(day.pv_comparison?.difference_kwh)];
         for (const value of values) {
           const td = document.createElement("td"); td.textContent = value; tr.appendChild(td);
@@ -4485,7 +4529,8 @@ DASHBOARD_HTML = """<!doctype html>
         view.captured_at,
         selectedExecutionPlanWindows(view),
         view.planning_status?.soc_timeline ?? [],
-        view.grid_charge_review?.actual_soc ?? {}
+        view.grid_charge_review?.actual_soc ?? {},
+        view.original_price_plan ?? {}
       );
       renderPipeline(pipeline);
       renderPipelineHealth(view.pipeline_health);
@@ -4610,8 +4655,12 @@ DASHBOARD_HTML = """<!doctype html>
 class WebViewStore:
     """Thread-safe in-memory store for the latest serialized web view."""
 
-    def __init__(self, *, soc_cache: SOCProjectionCache | None = None) -> None:
+    def __init__(
+        self, *, soc_cache: SOCProjectionCache | None = None,
+        price_reference: PricePlanReference | None = None,
+    ) -> None:
         self._soc_cache = soc_cache
+        self._price_reference = price_reference
         self._lock = Lock()
         self._condition = Condition(self._lock)
         self._latest_json: str | None = None
@@ -4744,6 +4793,8 @@ class WebViewStore:
                 view = {**view, "planning_status": {
                     **status, "soc_projection_cache_status": self._soc_cache.status,
                 }}
+            if self._price_reference is not None:
+                view = {**view, "original_price_plan": self._price_reference.read()}
             self._replace_latest_locked(view)
 
     def publish_fast_grid_power_source(

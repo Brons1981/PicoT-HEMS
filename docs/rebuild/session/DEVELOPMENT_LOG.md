@@ -3316,3 +3316,41 @@ passieve netlaadnacalculatie en prijsgrafiekwijzigingen uit ADR-037.13; MEP blij
 ongewijzigd. Basis is dev.250 (10cf87c), zonder wijzigingen op origin/main tijdens
 de voorbereiding. Publicatie via PR en samenvoegen na drie groene CI-workflows.
 Home Assistant wordt niet vanuit deze sessie geïnstalleerd of herstart.
+
+### 2026-09-11 — Correctie arcering en vindbaarheid kostenverschil (IMPLEMENTED)
+
+Na release dev.251 (PR #626, main e30d331) verduidelijkt Alex dat arcering alleen
+latere afwijkingen van het oorspronkelijke plan moet aangeven. De eerdere
+interpretatie in deze log en ADR-037.13 was onjuist en is hiermee vervangen.
+Alex kon tevens het kostenverschil niet terugvinden.
+
+UI vergelijkt huidige segmenten met de bestaande eerste vastgelegde dagroute,
+hersteld uit daily_assignments/daily_execution_plans of daily_main_history.
+De afzonderlijke PricePlanReference leest alleen, controleert bronidentiteiten,
+begrenst invoer op 32 MB en hergebruikt ongewijzigde bestanden. Geen nieuwe
+persistente gegevens, MEP-code of commitmentwrites. Primitives, laadbronbeleid en
+gevraagd vermogen bepalen de zichtbare afwijking; identiteits-/indelingswijzigingen
+alleen niet. Arcering volgt exact de afwijkende overlap en werkt ook voor
+verminderd laden dat door slim ontladen wordt vervangen. Onbekende referentie
+wordt gemeld en geeft geen verzonnen arcering. Canonieke plannen en SOC blijven
+intact. De referentie is de eerste geregistreerde route per leveringsdag, niet
+het laatst bekeken plan in de browser.
+
+Financieel > Terugblik netladen toont de bestaande kostennacalculatie expliciet
+boven de tabel met datum en voorlopig/volledig. Ontbreekt voldoende bewijs,
+dan staat de reden erbij. De kostenkolom is naar links verplaatst. Geen nieuwe
+financiële berekening of claim over de opbrengst van een specifieke optimalisatie.
+
+Bewijs: regressie op dev.251 faalt omdat een ongewijzigd segment toch gearceerd
+wordt. Gecorrigeerd: 80 gerichte tests geslaagd (3,40 s), inclusief SVG, HTTP,
+UI, referentieherstart/identiteit/immutabiliteit en architectuurchecks. Ruff alle
+v2-modules en gewijzigde tests geslaagd; mypy 73 modules geslaagd; diff-check
+schoon. Geen echte browser-/livecontrole. Nog geen commit, publicatie of nieuwe
+release; rollback is beperkt tot observerreferentie/UI/runtime-compositie.
+
+### 2026-09-11 — Release dev.252 voorbereid
+
+Alex heeft de herstelrelease expliciet aangevraagd. Versie, manifest, versiecontract
+en changelog bijgewerkt. Correctie arcering en vindbaarheid kostenverschil;
+MEP en aansturing ongewijzigd. Publicatie via PR na drie groene CI-workflows.
+Geen installatie of herstart van Home Assistant vanuit deze sessie.

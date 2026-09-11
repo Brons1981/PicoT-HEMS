@@ -111,6 +111,7 @@ from picot.v2.power_history import (
     PowerSeriesSpec,
     rebase_power_history,
 )
+from picot.v2.price_plan_reference import PricePlanReference
 from picot.v2.projection import Card, Projection, project
 from picot.v2.pv_actual_history import HomeAssistantPVHistoryReader
 from picot.v2.pv_attenuation_aggregation import (
@@ -2503,7 +2504,7 @@ def main() -> None:
     adaptive_household_policy = _adaptive_household_policy(options)
     web_view_store = WebViewStore(soc_cache=SOCProjectionCache(
         SOC_PROJECTION_CACHE_PATH, history_path=PLANNING_INCIDENT_HISTORY_PATH,
-    ))
+    ), price_reference=PricePlanReference(ACTIVE_PLAN_COMMITMENT_PATH))
     energy_device_placement_store = EnergyDevicePlacementStore(
         ENERGY_DEVICE_PLACEMENTS_PATH
     )

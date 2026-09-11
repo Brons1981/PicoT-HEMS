@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.252
+
+- Corrigeert arcering: alleen afwijkende delen ten opzichte van het eerste vastgelegde dagplan worden gearceerd. Ongewijzigde delen blijven zonder arcering, ook bij een nieuwe planrevisie.
+- Herstelt de oorspronkelijke referentie uit de bestaande planhistorie na herstart. Ontbrekende referentie wordt expliciet gemeld.
+- Toont het kostenverschil bij minder netladen boven de terugbliktabel onder Financieel, met datum en status of de reden waarom nog geen bedrag beschikbaar is.
+- MEP, financiële rekenregels en aansturing blijven ongewijzigd.
+
+Na installatie: controleer dev.252, de arcering bij aangepaste plandelen en Financieel > Terugblik netladen.
+
 ## 2.0.0-dev.251
 
 - Voegt een passieve dagelijkse terugblik op netladen toe: modelmatig vermijdbare kWh, kostenverschil en afwijking van de vastgelegde PV-verwachting. De berekening behoudt batterij-export, het hoofdlaaddoel en de eindvoorraad; onvolledige meetdagen tellen niet mee in de trend.

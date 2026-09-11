@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.251
+
+- Voegt een passieve dagelijkse terugblik op netladen toe: modelmatig vermijdbare kWh, kostenverschil en afwijking van de vastgelegde PV-verwachting. De berekening behoudt batterij-export, het hoofdlaaddoel en de eindvoorraad; onvolledige meetdagen tellen niet mee in de trend.
+- Toont de werkelijke SOC als groene traplijn naast de gestreepte oorspronkelijke prognose in de prijsgrafiek. Ontbrekende metingen blijven zichtbaar als onderbreking.
+- Arceert de prijsbalken precies binnen gekozen NOM-, netlaad- en handelssegmenten, inclusief gedeeltelijke kwartieren.
+- Bewaart de terugblik over herstarts en voegt de gegevens toe aan de diagnose-download. MEP, evaluatie en aansturing blijven ongewijzigd.
+
+Na installatie: controleer dev.251, de twee SOC-lijnen en arcering. Onder Financieel verschijnt de terugblik; de lopende dag is voorlopig. Dit is een modelschatting met voorkennis en geen automatisch gewijzigd laadbeleid. Browser- en livecontrole volgen na installatie.
+
 ## 2.0.0-dev.250
 
 - Beoordeelt vermindering van netladen ook bij een hogere actuele SOC wanneer de gemeten PV niet boven CENTRAL ligt.

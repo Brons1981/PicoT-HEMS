@@ -148,6 +148,7 @@ def test_main_starts_one_web_server_before_pipeline_loop(
         "picot_v2_active_plan_commitments.json",
         "picot_v2_active_plan_commitment_incidents.jsonl",
         "picot_v2_financial_results.json",
+        "picot_v2_grid_charge_review.json",
         "picot_v2_user_rules.json",
         "picot_v2_energy_device_placements.json",
     ]

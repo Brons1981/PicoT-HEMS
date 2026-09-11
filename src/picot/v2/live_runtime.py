@@ -53,6 +53,7 @@ from picot.v2.energy_device_cards import (
 )
 from picot.v2.fast_grid_power_observation import FastGridPowerObserver
 from picot.v2.financial_result_ledger import FinancialResultLedger
+from picot.v2.grid_charge_review_runtime import GridChargeReviewObserver
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
 from picot.v2.household_objective_input import attach_household_objectives
@@ -183,6 +184,7 @@ PLANNING_INCIDENT_HISTORY_PATH = Path(
 )
 SOC_PROJECTION_CACHE_PATH = Path("/data/picot_v2_soc_projection.json")
 FINANCIAL_RESULT_STATE_PATH = Path("/data/picot_v2_financial_results.json")
+GRID_CHARGE_REVIEW_PATH = Path("/data/picot_v2_grid_charge_review.json")
 MARKET_DAILY_LATEST_PATH = Path(
     "/data/picot_v2_market_daily_latest.json"
 )
@@ -2627,6 +2629,7 @@ def main() -> None:
             ACTIVE_PLAN_COMMITMENT_PATH,
             ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
             FINANCIAL_RESULT_STATE_PATH,
+            GRID_CHARGE_REVIEW_PATH,
             USER_RULES_PATH,
             ENERGY_DEVICE_PLACEMENTS_PATH,
         ),
@@ -2740,6 +2743,20 @@ def main() -> None:
     if not pv_power_entity:
         raise ValueError("pv_power_entity must be explicit")
     dashboard_power_history_specs = _dashboard_power_history_specs(options)
+    grid_charge_review = GridChargeReviewObserver(
+        path=GRID_CHARGE_REVIEW_PATH,
+        reader=HomeAssistantPowerHistoryReader(token),
+        specs=dashboard_power_history_specs,
+        soc_entity_id=str(options.get("zendure_soc_entity", "")).strip(),
+        attach_household=lambda history: _attach_household_power_history(
+            history, household_load_history.load()
+        ),
+        publish=web_view_store.publish_grid_charge_review,
+        charge_efficiency=market_daily_conversion_model.charge_efficiency,
+        discharge_efficiency=market_daily_conversion_model.discharge_efficiency,
+        wear_eur_per_kwh=market_daily_trading_policy.wear_eur_per_export_kwh,
+        timezone=str(options.get("pv_local_timezone", "Europe/Amsterdam")),
+    )
 
     pv_installation_scope_id = str(
         options.get("pv_installation_scope_id", "pv-installation-home")
@@ -3012,6 +3029,23 @@ def main() -> None:
         web_view_store.publish_planning_input_sources(
             _planning_input_sources(bundle)
         )
+        if grid_charge_review.due(bundle.snapshot.captured_at):
+            try:
+                assignments = active_plan_commitment_store.load_daily_assignments()
+                bases = tuple(
+                    state.basis for assignment in assignments
+                    if (state := active_plan_commitment_store.load_daily_pv_comparison(
+                        assignment.assignment_id
+                    )).basis is not None
+                )
+                grid_charge_review.submit(
+                    bundle.snapshot,
+                    tuple(point for evidence in bundle.evidence for point in evidence.price_points),
+                    assignments, bases,
+                )
+            except Exception as exc:
+                print(json.dumps({"event": "picot_v2_grid_charge_review_error",
+                                  "error": type(exc).__name__}), flush=True)
 
     def refresh_unchanged(bundle: PlanningInputBundle) -> None:
         power_history, _ = read_power_history(bundle)

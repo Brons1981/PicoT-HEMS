@@ -3259,3 +3259,60 @@ Next: separately authorized release, then observe grid reduction on live input.
 ### 2026-09-10 — Release dev.250 voorbereid
 
 Alex heeft publicatie expliciet gevraagd. Versie, manifest, versiecontract en changelog bijgewerkt. SOC-fix 3ecf5a5: 53 gerichte tests, Ruff en mypy (70 modules) geslaagd. Publicatie via PR na drie groene CI-workflows. Nog geen livevalidatie; Energy Devices blijft 0.2.0.
+
+### 2026-09-11 — Passieve netlaadnacalculatie en werkelijke SOC (IMPLEMENTED)
+
+Gebruiker vroeg de dagelijkse terugblik toe te voegen zonder MEP-code te wijzigen,
+plus werkelijke SOC en gearceerde prijsbalken voor de geoptimaliseerde plandelen.
+Branch `feature/retrospective-grid-and-actual-soc`, basis `10cf87c` (dev.250).
+Werkboomwijzigingen; nog geen nieuwe commit, push, PR, release of livewijziging.
+
+Nieuwe grens beschreven in ADR-037.13. Twee zelfstandige observatiemodules rekenen
+dezelfde gemeten dag na met minder netladen op de oorspronkelijke tijdstippen,
+extra PV-opvang via NOM, behoud van hoofdvensterdoel, batterij-export en eindvoorraad.
+Deze beperkte modelproef is uitdrukkelijk geen wereldwijd optimaal of direct
+uitvoerbaar nieuw plan. Zowel vermijdbare kWh als kostenverschil wordt getoond;
+gemiste exportopbrengst kan minder netladen financieel ongunstig maken.
+
+Ruwe SOC/vermogen met unavailable-markeringen, complete tariefdekking,
+SOC/energiebalanscontrole, vermogensgrenzen, conversieverliezen en slijtage blijven
+expliciet. De vastgelegde PV-basis wordt vergeleken over dezelfde gesloten
+intervallen. Onvolledige dagen leveren geen besparingsclaim en tellen niet mee
+in de trend. Dagafsluiting volgt lokale middernacht, met herlees van gisteren.
+Resultaten (90 dagen) en tarieven/instellingen (3 dagen) overleven herstart in
+`picot_v2_grid_charge_review.json`, ook toegevoegd aan diagnose-download.
+
+Eén daemonworker elke vijf minuten, geen wachtrij en geen wachtende plannerpoll.
+Test met 95.047 metingen, waaronder secondewaarden over 24 uur, rekende in 1,93 s.
+De berekening gebruikt maximaal zeven tussenproeven in plaats van 101 volledige
+dagreplays. Modelresultaten hebben geen verbinding naar MEP-input of de bestaande
+financiële voorraadadministratie. Geen Candidate/Evaluation/PlanBuilder/store/
+execution/adapters gewijzigd; uitsluitend runtime-compositie en passieve UI erbij.
+
+Prijsgrafiek: oorspronkelijke canonieke SOC blijft als gestreepte prognose;
+werkelijke SOC is een afzonderlijke groene traplijn met bronbewijs en expliciete
+onderbrekingen, nooit doorgetrokken voorbij de laatste uitlezing. Arcering volgt
+precies gekozen NOM/netlaad/handelssegmenten, ook gedeeltelijke en negatieve
+prijskwartieren. Het is geen vergelijking met een oude planversie.
+
+Lokale verificatie: 115 tests geslaagd in 7,73 s, inclusief 18 nieuwe/gerichte
+review- en SVG-rendercontroles, bestaande web/HTTP/historie/cache/runtime,
+architectuur en hoofdroute/pipeline-regressies. Ruff geslaagd; mypy geslaagd voor
+72 v2-modules; JavaScript-syntax en git diff --check geslaagd. Browserdownload
+time-out: geen echte browser-/visuele controle of livebewijs geclaimd.
+De aangeleverde 11-septemberdiagnose bevat onvoldoende ruwe reeksen voor een
+volledige fysieke dagreplay; die is niet als bewezen gepresenteerd.
+
+Rollback: alleen deze observer/compositie/UI-wijziging; nieuwe gegevensfile is
+optioneel, bestaande bestanden en dev.250-versie blijven intact. Volgende stap
+is review/publicatie wanneer gevraagd, daarna de eerste complete meetdagen en
+grafiek in HA controleren. Geen automatische aanpassing van laadbeleid.
+
+### 2026-09-11 — Release dev.251 voorbereid
+
+Alex heeft de release expliciet aangevraagd. Runtimeversie, add-onmanifest,
+versiecontract en changelog bijgewerkt naar 2.0.0-dev.251. De release bevat de
+passieve netlaadnacalculatie en prijsgrafiekwijzigingen uit ADR-037.13; MEP blijft
+ongewijzigd. Basis is dev.250 (10cf87c), zonder wijzigingen op origin/main tijdens
+de voorbereiding. Publicatie via PR en samenvoegen na drie groene CI-workflows.
+Home Assistant wordt niet vanuit deze sessie geïnstalleerd of herstart.

@@ -3354,3 +3354,38 @@ Alex heeft de herstelrelease expliciet aangevraagd. Versie, manifest, versiecont
 en changelog bijgewerkt. Correctie arcering en vindbaarheid kostenverschil;
 MEP en aansturing ongewijzigd. Publicatie via PR na drie groene CI-workflows.
 Geen installatie of herstart van Home Assistant vanuit deze sessie.
+
+### 2026-09-11 — Oorspronkelijke marktroute hoort bij ongearceerd plan (IMPLEMENTED)
+
+Alex meldt met screenshot dat dev.252 nog niet de bedoelde arcering geeft.
+De handel voor morgen was als aangepast gemarkeerd. Expliciet bevestigd:
+het volledige oorspronkelijke plan, inclusief handel, blijft ongearceerd;
+alleen latere bijsturing krijgt arcering.
+
+Eerste verkeerde grens: UI-referentie gebruikte alleen de eerste hoofdlaadroute.
+Marktroute wordt apart gebonden en ontbrak daardoor. De read-only referentielezer
+voegt nu de oorspronkelijke marktsegmenten toe via hun bestaande oorspronkelijke
+binding. Alleen die segmenten worden overgenomen, nooit eventuele latere
+laadaanpassingen uit het gedeelde plan. Ze vervangen de oorspronkelijke
+huisondersteuning op dezelfde tijdstukken; zo blijft ook vermindering van handel
+als afwijking zichtbaar. Missende of ongeldige oorspronkelijke marktlineage
+geeft onbekend in plaats van foutieve optimalisatiearcering. Geen MEP, commitment,
+financiële berekening, runtime-compositie of aansturing gewijzigd.
+
+Drie regressies faalden op dev.252: oorspronkelijke handel ontbrak zowel bij
+initiële als bij behouden binding, en ontbrekende oorsprong bleef onterecht
+beschikbaar. Na correctie slagen ze. De werkelijke JS-vensterprojectie bewijst:
+ongewijzigde handel niet aangepast; latere inkorting en netladen wel aangepast.
+Aanvullende integratie leest het echte opgeslagen hoofd-/marktplan uit de
+bestaande store-test en controleert herstart, bronidentiteit en bytegewijs geen
+schrijfacties. Bestaande UI/HTTP/SOC/marktbinding/architectuur-regressies geslaagd.
+
+Status: lokale correctie, nog geen commit, publicatie, nieuwe release of
+livevalidatie. Rollback: alleen price_plan_reference, legenda en tests/documentatie.
+
+### 2026-09-11 — Release dev.253 voorbereid
+
+Alex heeft de release expliciet aangevraagd. Versie, manifest, versiecontract
+en changelog bijgewerkt. Oorspronkelijke handel opgenomen in de ongearceerde
+referentie; uitsluitend latere afwijkingen gearceerd. Publicatie via PR na drie
+groene CI-workflows. Geen installatie of herstart van Home Assistant.

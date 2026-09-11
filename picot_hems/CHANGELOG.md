@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0-dev.253
+
+- Neemt de oorspronkelijke marktroute mee in de ongearceerde planreferentie. De eerste handel geldt niet meer ten onrechte als een latere optimalisatie.
+- Herstelt de oorspronkelijke handelssegmenten via hun bewaarde bronverwijzingen, ook na planrevisies en herstart. Latere laadwijzigingen worden niet in de oorspronkelijke referentie overgenomen.
+- Alleen latere afwijkingen van het volledige oorspronkelijke plan krijgen arcering. MEP en aansturing blijven ongewijzigd.
+
+Na installatie: controleer dev.253 en of oorspronkelijke handel ongearceerd is.
+
 ## 2.0.0-dev.252
 
 - Corrigeert arcering: alleen afwijkende delen ten opzichte van het eerste vastgelegde dagplan worden gearceerd. Ongewijzigde delen blijven zonder arcering, ook bij een nieuwe planrevisie.

@@ -1429,7 +1429,8 @@ DASHBOARD_HTML = """<!doctype html>
       const referenceNote = document.createElement("p");
       referenceNote.className = "muted";
       referenceNote.textContent = originalReference.status === "available"
-        ? "Arcering: afwijkende delen ten opzichte van het eerste vastgelegde dagplan."
+        ? "Arcering: latere aanpassingen ten opzichte van het oorspronkelijke plan, " +
+          "inclusief handel."
         : "Oorspronkelijk plan niet beschikbaar; verschillen worden niet gearceerd.";
       container.appendChild(referenceNote);
 

@@ -818,8 +818,8 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.optimized {
       background: repeating-linear-gradient(135deg, #b9c3cf 0 2px, #253341 2px 6px);
     }
-    .price-swatch.soc-actual { background: #70ef9a; height: 3px; }
-    .price-swatch.soc-projected { background: none; border-top: 2px dashed #c1ccd9; }
+    .price-swatch.soc-actual { background: #c084fc; height: 3px; }
+    .price-swatch.soc-projected { background: #c1ccd9; height: 3px; }
     .planner-window-summary {
       display: flex;
       flex-wrap: wrap;
@@ -891,14 +891,12 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .planner-window.canonical-support { fill: #3994e6; }
     .price-chart .planner-window.energy-device-placement { fill: #b96cff; }
     .price-chart .soc-line { fill: none; stroke-width: 3; }
-    .price-chart .soc-line:not(.soc-actual) { stroke-dasharray: 5 4; }
-    .price-chart .soc-line.soc-actual { stroke: #70ef9a; stroke-width: 3; }
+    .price-chart .soc-line.soc-actual { stroke: #c084fc; stroke-width: 3; }
     .price-chart .soc-line.canonical-nom { stroke: #35a862; }
     .price-chart .soc-line.canonical-charge { stroke: #df5c57; }
     .price-chart .soc-line.canonical-trade { stroke: #aab2bd; }
     .price-chart .soc-line.canonical-support {
       stroke: #3994e6;
-      stroke-dasharray: 7 4;
     }
     .price-chart .soc-point { fill: #eef4fb; stroke: #17202a; stroke-width: 2; }
     .price-chart .now-line {

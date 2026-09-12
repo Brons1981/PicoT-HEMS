@@ -221,3 +221,11 @@ See `docs/architecture/ADR-037.13-passive-grid-charge-review.md`. This optional
 observer estimates retrospective grid reduction without planning authority.
 It must never feed MEP or replace the original canonical SOC projection.
 Runtime/UI additions are locally implemented; no new release or live validation.
+
+## 2026-09-12 — Pre-stable en begrensde proef verbruiksprognose
+
+Lees `docs/architecture/ADR-037.14-clock-quarter-load-forecast.md` en
+`docs/development_log/2026-09-12-clock-quarter-trial.md`.
+Vaste terugvalbasis: dev.254 / `21314d87be70442d9643d75ee74e7beb3be97e89`.
+Slechter gedrag: direct terug. Niet slechter: hoogstens één kleine optimalisatie;
+bij daarna ongewenst gedrag terug naar pre-stable en opnieuw ontwerpen.

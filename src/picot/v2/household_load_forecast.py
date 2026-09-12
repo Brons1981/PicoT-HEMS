@@ -14,7 +14,7 @@ from picot.v2.contracts import (
 )
 
 INTERVAL_DURATION = timedelta(minutes=15)
-HISTORICAL_METHOD_VERSION = "weighted-rolling-24h-periods:v1"
+HISTORICAL_METHOD_VERSION = "weighted-clock-quarter-24h-periods:v2"
 MINIMUM_HISTORICAL_PERIODS = 2
 MAXIMUM_HISTORICAL_PERIODS = 7
 MAXIMUM_LOOKBACK_DAYS = 14
@@ -88,7 +88,13 @@ def build_historical_household_load_forecast(
     cursor = starts_at
 
     while cursor < horizon_end:
-        ends_at = min(cursor + INTERVAL_DURATION, horizon_end)
+        # Sample the full clock quarter; only the requested overlap contributes
+        # energy. Poll timing must not shift the historical sampling windows.
+        quarter_start = cursor.replace(
+            minute=(cursor.minute // 15) * 15, second=0, microsecond=0,
+        )
+        quarter_end = quarter_start + INTERVAL_DURATION
+        ends_at = min(quarter_end, horizon_end)
         historical_periods: list[
             tuple[float, datetime, datetime]
         ] = []
@@ -96,8 +102,8 @@ def build_historical_household_load_forecast(
         for days_ago in range(1, MAXIMUM_LOOKBACK_DAYS + 1):
             period = _historical_window_mean(
                 ordered_observations,
-                starts_at=cursor - timedelta(days=days_ago),
-                ends_at=ends_at - timedelta(days=days_ago),
+                starts_at=quarter_start - timedelta(days=days_ago),
+                ends_at=quarter_end - timedelta(days=days_ago),
             )
             if period is not None:
                 historical_periods.append(period)

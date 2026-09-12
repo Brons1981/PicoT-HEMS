@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.255
+
+- Gebruikt vaste klokkwartieren voor historische huisvraag, zodat alleen een verschoven polltijd de toekomstige verbruiksverwachting niet verandert.
+- Rekent gedeeltelijke begin- en eindkwartieren evenredig mee. Dagdoel, reserve, prijsselectie en actuele invoer blijven van kracht.
+- Begrensde observatieproef: dev.254 blijft de vaste pre-stable terugvalbasis. Bij slechter gedrag direct terug; maximaal één kleine optimalisatie als het gedrag niet slechter is. Daarna bij onvoldoende resultaat terug en opnieuw ontwerpen.
+
 ## 2.0.0-dev.254
 
 - Toont de geplande SOC als doorgetrokken lijn met behoud van de moduskleuren.

@@ -305,3 +305,32 @@ def test_planning_fallback_notification_is_deduplicated_and_recovers() -> None:
     assert "2026-08-17T22:00:00+02:00" in calls[0]["message"]
     assert "UTC 2026-08-17T20:00:00+00:00" in calls[0]["message"]
     assert "hersteld" in calls[1]["title"]
+
+
+@pytest.mark.parametrize("failure", (ConnectionError("HA restarting"), None))
+def test_unpublished_fallback_does_not_create_recovery_notice(failure) -> None:
+    notifier = PlanningFallbackNotifier()
+    fallback = _missing_forecast_fallback_run()
+    normal = CanonicalPipeline().run(planning_input=_snapshot())
+    now = datetime(2026, 8, 17, 20, 0, tzinfo=UTC)
+    calls = []
+
+    def unavailable(request, timeout):
+        if failure is not None:
+            raise failure
+        return type("Unavailable", (), {"status": 503})()
+
+    def available(request, timeout):
+        calls.append(json.loads(request.data.decode("utf-8")))
+        return _Response()
+
+    with pytest.raises((ConnectionError, RuntimeError)):
+        notifier.update("token", run=fallback, now=now, opener=unavailable)
+    notifier.update("token", run=normal, now=now, opener=available)
+    assert calls == []
+    # A subsequent real fault still gets its warning and recovery notice.
+    notifier.update("token", run=fallback, now=now, opener=available)
+    notifier.update("token", run=normal, now=now, opener=available)
+    assert len(calls) == 2
+    assert "aandacht vereist" in calls[0]["title"]
+    assert "hersteld" in calls[1]["title"]

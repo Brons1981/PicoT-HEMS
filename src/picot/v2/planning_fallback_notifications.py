@@ -48,7 +48,6 @@ class PlanningFallbackNotifier:
             )
             if fingerprint == self._active_fingerprint:
                 return
-            self._active_fingerprint = fingerprint
             current_mode = run.primitive_boundary.planned_vendor_mode or "niet beschikbaar"
             self._publish(
                 token,
@@ -65,11 +64,11 @@ class PlanningFallbackNotifier:
                 ),
                 opener=opener,
             )
+            self._active_fingerprint = fingerprint
             return
 
         if self._active_fingerprint is None:
             return
-        self._active_fingerprint = None
         self._publish(
             token,
             title="PicoT planning hersteld",
@@ -80,6 +79,7 @@ class PlanningFallbackNotifier:
             ),
             opener=opener,
         )
+        self._active_fingerprint = None
 
     @staticmethod
     def _publish(

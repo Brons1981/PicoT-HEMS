@@ -3411,3 +3411,50 @@ Alex heeft voortgang naar CI en release bevestigd. Zie ADR-037.14 en
 `docs/development_log/2026-09-12-clock-quarter-trial.md` voor bewijs en stopregel.
 Dev.254 / 21314d87be70442d9643d75ee74e7beb3be97e89 blijft vaste terugvalbasis.
 Release uitsluitend na groene CI; geen HA-installatie of herstart.
+
+### 2026-09-12 — Losse herstelmelding bij HA-onbereikbaarheid (lokaal voorbereid)
+
+Alex vraagt dit voor de volgende release. Notifier registreerde een actieve
+melding voordat HA de publicatie accepteerde. Bij een verbindingsfout of HTTP 503
+bleef daardoor een ongepubliceerde storing actief en volgde later een losse
+herstelmelding. Fingerprint wordt nu pas na geslaagde publicatie gezet of gewist.
+Dit is geen algemene herkenning van HA-herstarts: na een succesvol gepubliceerde
+storing blijft herstel gemeld. Screenshot alleen bewijst de exacte livefout niet.
+
+Rechtstreekse assertions slagen voor verbindingsfout, HTTP 503, uitblijven van
+los herstel, deduplicatie en een latere echte storing met herstel. Pytestgevallen
+toegevoegd; volledige CI volgt vóór de volgende release. Geen release, geen
+MEP-wijziging. Dev.254 blijft vaste pre-stable basis; dev.255 is de live observatie.
+
+### 2026-09-12 — Verstreken SOC-prognose bewaren (lokaal voorbereid)
+
+Alex meldt dat de prognose vóór Nu verdwijnt en bevestigt de correctie.
+Eerste verkeerde grens: WebViewStore vervangt een niet-lege soc_timeline volledig,
+ook bij plan_retained. Dev.254 wijzigde alleen lijnstijl/kleur. ADR-030 en de
+verduidelijking in ADR-037.13 begrenzen de correctie tot Projection/UI.
+
+Afzonderlijke soc_display_timeline behoudt verstreken prognosepunten en vervangt
+toekomstige punten vanuit de actuele canonieke prognose. Bronidentiteit per punt,
+48 uur/4096 punten begrenzing en optionele historie in bestaande SOC-cache.
+Herstart, nieuwe planidentiteit, oude cacheversie en ongeldige displaydata worden
+opgevangen. Fallback toont geen oude toekomst. Canonieke soc_timeline en gekozen
+plan blijven intact; eerdere startmetingen worden niet als prognose opgestapeld.
+Legenda verduidelijkt historie + actuele verwachting.
+
+Bewijs: 14 SOC-cache/weergavegevallen rechtstreeks uitgevoerd, 3 bestaande
+SVG/arceringsgevallen en 7 architectuurgevallen eveneens geslaagd. De nieuwe
+regressie faalt op de oorspronkelijke WebViewStore wegens ontbrekende bewaarde
+weergavereeks. JavaScript syntaxcontrole en git diff --check geslaagd.
+Pytest, Ruff en mypy ontbreken lokaal; normale suites/lint/typecontrole moeten
+nog vóór een release in CI slagen. Geen browser- of livevalidatie geclaimd.
+Geen release/commit/push. De eerdere lokale meldingscorrectie blijft behouden.
+Dev.254 blijft pre-stable. Rollback van deze slice: alleen SOC-cache/UI/tests en
+bijbehorende documentatie; MEP en de klokkwartierproef zijn niet gewijzigd.
+
+### 2026-09-12 — Release dev.256 voorbereid
+
+Alex vraagt de release. Versie, manifest, versiecontract en changelog bijgewerkt.
+Bundelt de bevestigde SOC-weergavecorrectie en de eerder afgesproken correctie
+voor ongepubliceerde HA-storingsmeldingen. Publicatie via PR en samenvoegen pas
+na drie groene CI-workflows. Geen installatie/herstart van Home Assistant.
+Dev.254 blijft pre-stable; MEP en de klokkwartierproef zijn niet gewijzigd.

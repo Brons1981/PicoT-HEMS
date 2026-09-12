@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.256
+
+- Bewaart verstreken SOC-prognosepunten naast de werkelijke SOC; alleen de toekomstige verwachting wordt vervangen. Prognosehistorie blijft bewaard na herstart.
+- Verduidelijkt de legenda: SOC-prognose (historie + actuele verwachting).
+- Voorkomt een losse herstelmelding wanneer Home Assistant de voorafgaande storingsmelding niet heeft ontvangen, bijvoorbeeld tijdens een herstart.
+- MEP en de klokkwartierproef blijven ongewijzigd. Dev.254 blijft de vaste pre-stable terugvalbasis.
+
+Na installatie: controleer dev.256 en of verstreken prognosepunten bij updates blijven staan.
+
 ## 2.0.0-dev.255
 
 - Gebruikt vaste klokkwartieren voor historische huisvraag, zodat alleen een verschoven polltijd de toekomstige verbruiksverwachting niet verandert.

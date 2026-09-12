@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from math import isfinite
 from pathlib import Path
 from typing import Any
@@ -67,12 +67,17 @@ class SOCProjectionCache:
         self.status = "empty"
         self._projection: dict[str, Any] | None = None
         self._history_checked = False
+        self.display_history = SOCDisplayHistory()
         try:
             with path.open("rb") as source:
                 raw = source.read(MAX_CACHE_BYTES + 1)
             if len(raw) > MAX_CACHE_BYTES:
                 raise ValueError("SOC cache too large")
             self._projection = _validate(json.loads(raw))
+            try:
+                self.display_history.load(self._projection.pop("display_history", None))
+            except (ValueError, TypeError, KeyError):
+                pass
             self.status = "loaded"
         except FileNotFoundError:
             pass
@@ -91,6 +96,13 @@ class SOCProjectionCache:
             if value == self._projection:
                 return
             self._projection = value
+            self._save()
+        except (OSError, ValueError, TypeError):
+            self.status = "cache_unavailable"
+
+    def _save(self) -> None:
+        if self._projection is not None:
+            value = {**self._projection, "display_history": self.display_history.value}
             encoded = json.dumps(value, separators=(",", ":"), allow_nan=False)
             if len(encoded.encode()) > MAX_CACHE_BYTES:
                 raise ValueError("SOC cache too large")
@@ -99,8 +111,16 @@ class SOCProjectionCache:
             temporary.write_text(encoded, encoding="utf-8")
             temporary.replace(self.path)
             self.status = "saved"
-        except (OSError, ValueError, TypeError):
-            self.status = "cache_unavailable"
+
+    def display(self, status: dict[str, Any]) -> dict[str, Any]:
+        before = self.display_history.value
+        result = self.display_history.apply(status)
+        if self.display_history.value["points"] != before["points"]:
+            try:
+                self._save()
+            except (OSError, ValueError, TypeError):
+                self.status = "cache_unavailable"
+        return result
 
     def restore(self, status: dict[str, Any]) -> dict[str, Any] | None:
         plan = status.get("chosen_plan") or {}
@@ -206,3 +226,67 @@ def _historical_projection(poll: Any, identity: dict[str, Any]) -> dict[str, Any
         })
     return _validate({"schema_version": 1, "identity": identity,
                       "captured_at": poll["captured_at_utc"], "soc_timeline": points})
+
+
+class SOCDisplayHistory:
+    """Rolling display points only; canonical curves retain their own identity."""
+
+    def __init__(self) -> None:
+        self.value: dict[str, Any] = {"updated_at": None, "points": []}
+
+    def load(self, value: Any) -> None:
+        if value is None:
+            return
+        updated = _time(value["updated_at"])
+        points = value["points"]
+        if not isinstance(points, list) or len(points) > MAX_POINTS:
+            raise ValueError("invalid display history")
+        previous = None
+        for point in points:
+            at = _time(point["at"])
+            soc = point["soc_percent"]
+            if (previous is not None and at <= previous
+                    or isinstance(soc, bool) or not isinstance(soc, (int, float))
+                    or not isfinite(soc) or not 0 <= soc <= 100
+                    or not isinstance(point.get("primitive"), str)
+                    or not isinstance(point.get("source_identity"), dict)):
+                raise ValueError("invalid display point")
+            previous = at
+        self.value = {"updated_at": updated.isoformat(), "points": points}
+
+    def apply(self, status: dict[str, Any]) -> dict[str, Any]:
+        try:
+            now = _time(status.get("captured_at"))
+            if self.value["updated_at"] and now < _time(self.value["updated_at"]):
+                return status
+            cutoff = now - timedelta(hours=48)
+            old = self.value["points"]
+            # Freeze only timestamps that have elapsed. Historical measurements
+            # used as fresh start anchors are not historical forecast samples.
+            past = [p for i, p in enumerate(old)
+                    if cutoff <= _time(p["at"]) < now
+                    and (p["primitive"] != "actual" or i == 0)]
+            timeline = status.get("soc_timeline") or []
+            active = (status.get("decision") or {}).get("status") in {
+                "winner_selected", "plan_retained",
+            }
+            if active and timeline:
+                plan = status.get("chosen_plan") or {}
+                identity = {key: plan.get(key) for key in IDENTITY_KEYS}
+                sourced = [{**p, "source_identity": identity,
+                            "source_captured_at": status.get("soc_projection_captured_at")}
+                           for p in timeline]
+                if self.value["updated_at"] is None:
+                    # Migration: an exact restored canonical curve already
+                    # contains trustworthy older forecast points.
+                    past = [p for p in sourced if cutoff <= _time(p["at"]) < now]
+                future = [p for p in sourced if _time(p["at"]) >= now]
+            else:
+                # Keep history, but never show a stale future during fallback.
+                future = []
+            points = (past + future)[-MAX_POINTS:]
+            value = {"updated_at": now.isoformat(), "points": points}
+            self.load(value)
+            return {**status, "soc_display_timeline": points}
+        except (ValueError, TypeError, KeyError):
+            return status

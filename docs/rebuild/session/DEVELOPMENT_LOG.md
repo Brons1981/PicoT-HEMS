@@ -3458,3 +3458,32 @@ Bundelt de bevestigde SOC-weergavecorrectie en de eerder afgesproken correctie
 voor ongepubliceerde HA-storingsmeldingen. Publicatie via PR en samenvoegen pas
 na drie groene CI-workflows. Geen installatie/herstart van Home Assistant.
 Dev.254 blijft pre-stable; MEP en de klokkwartierproef zijn niet gewijzigd.
+
+### 2026-09-12 — SOC-lijngeometrie na dev.256 (lokaal voorbereid)
+
+Alex meldt opnieuw meebewegen en vraagt een fix. Reproductie: dezelfde verstreken
+12:05 toont 53,33% en na refresh 45%, doordat SVG een oud punt met de nieuwe
+actuele startmeting verbindt. De vorige tests controleerden losse punten en
+misten daarmee een fout in het getekende lijnverloop.
+
+Display knipt de bestaande lijn op het nieuwe publicatietijdstip en bewaart het
+snijpunt met bronidentiteit. Nieuwe prognose begint een afzonderlijke streek;
+geen verbinding naar een afwijkend start-SOC, ook niet over fallbackgaten.
+Eerdere ankers blijven nu als start van hun eigen verstreken prognosesectie
+bewaard. Canonieke SOC, MEP, planning, aansturing en gemeten SOC ongewijzigd.
+48 uur/4096 punten blijven begrensd; cachelimiet verhoogd naar 8 MB voor de extra
+bronvermelde snijpunten. Dichte-cachetest controleert opslaan en herladen.
+
+Verificatie: 16 SOC-cache/weergavegevallen rechtstreeks geslaagd. Nieuwe test
+voor werkelijk getekende waarden faalt op dev.256; slaagt bij opeenvolgende
+updates, herstart en een nieuwe plan-ID. Twee echte SVG-rendergevallen toetsen
+de onderbreking bij gelijke tijd/verschillend SOC. JavaScript-syntax en diff-check
+slagen. Pytest/Ruff/mypy zijn lokaal niet beschikbaar; CI blijft vereist vóór
+release. Geen release/commit/push of livebewijs. Dev.254 blijft pre-stable.
+
+### 2026-09-12 — Release dev.257 voorbereid
+
+Alex vraagt de release van de correctie voor vaste SOC-lijngeometrie. Versie,
+manifest, versiecontract en changelog bijgewerkt. Publicatie via PR, samenvoegen
+pas na drie groene CI-workflows. Geen installatie/herstart van Home Assistant.
+Dev.254 blijft pre-stable; MEP en aansturing zijn niet gewijzigd.

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.257
+
+- Zet het verstreken SOC-lijnverloop vast op het tijdstip van een nieuwe prognose. Een gewijzigd start-SOC trekt de historische lijn niet meer mee.
+- Begint de nieuwe verwachting afzonderlijk en tekent geen verbinding over een periode zonder prognose.
+- Bewaart de lijnsecties en bronverwijzingen na herstart; vergroot de begrensde cache voor de extra snijpunten.
+- Alleen SOC-weergave gewijzigd. MEP en aansturing blijven ongewijzigd; dev.254 blijft de vaste pre-stable terugvalbasis.
+
+Na installatie: controleer dev.257 en vergelijk hetzelfde verstreken tijdstip vóór en na een nieuwe prognose.
+
 ## 2.0.0-dev.256
 
 - Bewaart verstreken SOC-prognosepunten naast de werkelijke SOC; alleen de toekomstige verwachting wordt vervangen. Prognosehistorie blijft bewaard na herstart.

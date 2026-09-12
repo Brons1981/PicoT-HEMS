@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.258
+
+- Houdt aanhoudende extra huisbelasting tijdelijk bij in de prognose voor alle laadkandidaten.
+- Beschermt lopend netladen tegen korte onderbrekingen zolang de belasting aanhoudt; vrijgave bij verdwenen belasting, werkelijk 100% SOC of het bestaande blokeinde.
+- Kleine SOC-tekorten mogen alleen wachten wanneer tijdig herstel tot werkelijk 100% aantoonbaar haalbaar blijft. Reserve en dagdoel blijven verplicht.
+- Diagnose bevat de belastingbescherming. Vaste klokkwartieren blijven behouden; dev.254 blijft pre-stable en terugvalbasis.
+
+Na installatie: observeer langdurige belasting, vrijgave na afloop en werkelijk afvinken van het dagdoel.
+
 ## 2.0.0-dev.257
 
 - Zet het verstreken SOC-lijnverloop vast op het tijdstip van een nieuwe prognose. Een gewijzigd start-SOC trekt de historische lijn niet meer mee.

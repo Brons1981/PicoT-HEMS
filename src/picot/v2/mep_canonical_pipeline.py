@@ -1330,6 +1330,9 @@ def _build_daily_main_run(
             snapshot=snapshot, conversion_model=conversion,
         ) if context.active_main_plan_ids else ()
         input_shortfalls = triggers
+        triggers = tuple(t for t in triggers if adapter.main_repair_required(
+            snapshot=snapshot, trigger=t, conversion_model=conversion,
+        ))
         if triggers:
             owners = {a.assignment_id: a for a in context.assignments}
             optimisation_trigger = min(triggers, key=lambda t: (
@@ -1360,7 +1363,11 @@ def _build_daily_main_run(
                 )
                 pv_comparison = replace(
                     pv_comparison, evidence_id="grid-review:" + sha256(
-                        repr((pv_comparison.evidence_id, storage_basis)).encode()
+                        repr((pv_comparison.evidence_id, storage_basis,
+                              (snapshot.household_load_guard.active,
+                               snapshot.household_load_guard.quality,
+                               snapshot.household_load_guard.extra_power_w)
+                              if snapshot.household_load_guard is not None else None)).encode()
                     ).hexdigest(),
                 )
                 if pv_comparison.status != "complete" or (
@@ -1407,6 +1414,13 @@ def _build_daily_main_run(
                         outcome="no_admissible_grid_reduction",
                     )
                     reason = windows.reason or "pv_comparison_retains_main_route"
+                elif (
+                    windows.reason == "ongoing_load_requires_committed_grid_continuity" and retained
+                ):
+                    # No replacement was admitted. Keep the already admitted
+                    # charging action until its own end, with the shortfall
+                    # still visible; NOM fallback would defeat this protection.
+                    reason = windows.reason
                 else:
                     raise ValueError(windows.reason or "daily_main_no_feasible_window")
             else:

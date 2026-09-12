@@ -229,3 +229,12 @@ Lees `docs/architecture/ADR-037.14-clock-quarter-load-forecast.md` en
 Vaste terugvalbasis: dev.254 / `21314d87be70442d9643d75ee74e7beb3be97e89`.
 Slechter gedrag: direct terug. Niet slechter: hoogstens één kleine optimalisatie;
 bij daarna ongewenst gedrag terug naar pre-stable en opnieuw ontwerpen.
+
+## 2026-09-12 — Bescherming bij lopende huisbelasting
+
+Lees `docs/architecture/ADR-037.15-ongoing-household-load-protection.md` en
+`docs/development_log/2026-09-12-load-protection-implementation.md`.
+Extra huisvraag wordt tijdelijk meegenomen; lopend netladen wordt beschermd.
+De kleine-tekortmarge vereist een strikt haalbare herstelproef binnen het bestaande
+hoofdvenster. Werkelijk 100% blijft verplicht. Implementatie lokaal, nog geen release.
+Dev.254 blijft de vaste terugvalbasis; werkdag/weekendweging is buiten scope.

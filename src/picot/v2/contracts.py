@@ -32,6 +32,7 @@ from picot.v2.plan_commitment_store import ActivePlanCommitment
 from picot.v2.power_history import PowerHistorySnapshot
 
 if TYPE_CHECKING:
+    from picot.v2.household_load_guard import HouseholdLoadGuardAssessment
     from picot.v2.storage_mode_provenance import StorageModeControlProvenance
     from picot.v2.zendure_mode_capabilities import ZendureModeCapabilityEvidence
 
@@ -743,6 +744,7 @@ class PlanningInputSnapshot:
     # Complete published price evidence, including elapsed reference windows.
     # Executable opportunities continue to use the future-only price_points.
     published_price_points: tuple[PriceForecastPoint, ...] = ()
+    household_load_guard: HouseholdLoadGuardAssessment | None = None
 
     def __post_init__(self) -> None:
         if self.daily_charge_context is not None and (

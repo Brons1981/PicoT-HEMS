@@ -105,6 +105,10 @@ def _poll_snapshot(
             else None
         ),
         "household_load_forecast": asdict(household) if household is not None else None,
+        "household_load_guard": (
+            asdict(bundle.snapshot.household_load_guard)
+            if bundle.snapshot.household_load_guard is not None else None
+        ),
         "candidate_set": asdict(run.candidate_set),
         "outcomes": asdict(run.outcomes),
         "evaluation": asdict(run.evaluation),

@@ -394,6 +394,81 @@ class IndependentDailyReferenceAdapter:
             t.assignment_id,
         )))
 
+    def main_repair_required(
+        self, *, snapshot: PlanningInputSnapshot, trigger: DailyMainShortfallTrigger,
+        conversion_model: StorageConversionModel,
+    ) -> bool:
+        """Defer a small discrepancy only with a strictly feasible recovery witness.
+
+        This does not complete a goal or select a recovery plan. The next poll
+        assesses again; candidate discovery retains its exact target and reserve.
+        """
+        if trigger.target_wh - trigger.projected_main_peak_wh > trigger.target_wh * 0.005:
+            return True
+        guard = snapshot.household_load_guard
+        if guard is not None and guard.quality == "unknown":
+            return True
+        context = snapshot.daily_charge_context
+        assert context is not None
+        owner = next(a for a in context.assignments if a.assignment_id == trigger.assignment_id)
+        deadline = max(s.ends_at for s in owner.main_segments)
+        recovery_start = snapshot.captured_at + timedelta(minutes=15)
+        if recovery_start >= deadline:
+            return True
+        plan = next(p for p in context.main_plans if p.plan_id == trigger.active_plan_id)
+        inputs = self._inputs(
+            snapshot, horizon_end=plan.valid_until, maximum_duration=timedelta(hours=36),
+            extra_boundaries=(recovery_start, deadline),
+        )
+        schedule, _ = self._retained_main_schedule(
+            snapshot=snapshot, assignment=owner, inputs=inputs, supplied=None,
+        )
+        assert schedule is not None
+        trial = replace(schedule, schedule_id=f"small-shortfall-recovery:{snapshot.snapshot_id}",
+                        intervals=tuple(
+            replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT)
+            if recovery_start <= i.starts_at and i.ends_at <= deadline
+            and any(s.starts_at <= i.starts_at and i.ends_at <= s.ends_at
+                    for s in owner.main_segments) else i
+            for i in schedule.intervals
+        ))
+        projection = IndependentDailyIntentSimulator().simulate_planning_basis(
+            snapshot_id=snapshot.snapshot_id, household=inputs.household,
+            pv_scenarios=inputs.pv_scenarios, storage_state=inputs.storage,
+            conversion_model=conversion_model, intent_schedule=trial,
+            minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+            target_storage_energy_wh=inputs.target_storage_energy_wh,
+            maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+        )
+        reserve_ok = all(min(i.storage_energy_at_start_wh, i.storage_energy_at_end_wh)
+                         + 1e-6 >= inputs.minimum_storage_energy_wh
+                         for i in projection.intervals)
+        reached = any(
+            s.starts_at <= at <= s.ends_at and energy + 1e-6 >= trigger.target_wh
+            for s in owner.main_segments for i in projection.intervals
+            for at, energy in ((i.starts_at, i.storage_energy_at_start_wh),
+                               (i.ends_at, i.storage_energy_at_end_wh))
+        )
+        return not (reserve_ok and reached)
+
+    @staticmethod
+    def _protected_grid_end(
+        snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
+    ) -> datetime | None:
+        guard = snapshot.household_load_guard
+        context = snapshot.daily_charge_context
+        if guard is None or context is None or not (guard.active or guard.quality == "unknown"):
+            return None
+        if any(s.execution_scope_id == assignment.execution_scope_id and s.current_soc >= 1.0
+               for s in snapshot.current_storage_states):
+            return None
+        return next((s.ends_at for p in context.main_plans
+                     if p.plan_id in context.active_main_plan_ids for s in p.segments
+                     if s.main_assignment_id == assignment.assignment_id
+                     and s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                     and s.starts_at <= snapshot.captured_at < s.ends_at), None)
+
     def pv_surplus_trigger(
         self, *, snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
         comparison: DailyPVComparison, conversion_model: StorageConversionModel,
@@ -403,6 +478,13 @@ class IndependentDailyReferenceAdapter:
             comparison.status != "complete"
             or assignment.completed_at is not None or assignment.route_plan_id is None
         ):
+            return None
+        if self._protected_grid_end(snapshot, assignment) is not None:
+            return None
+        if snapshot.household_load_guard is not None and (
+            snapshot.household_load_guard.quality == "unknown"
+        ) and not any(s.execution_scope_id == assignment.execution_scope_id and s.current_soc >= 1.0
+                      for s in snapshot.current_storage_states):
             return None
         context = snapshot.daily_charge_context
         if context is None or context.status != "ready":
@@ -575,6 +657,16 @@ class IndependentDailyReferenceAdapter:
             if not feasible:
                 return replace(result, windows=(), status="unreachable",
                                reason="pv_comparison_has_no_admissible_grid_reduction")
+        protected_end = self._protected_grid_end(snapshot, assignment)
+        if protected_end is not None:
+            feasible = tuple(w for w in feasible if all(
+                i.intent is DailyStorageIntent.GRID_REQUIREMENT
+                for i in w.schedule.intervals
+                if i.starts_at < protected_end and i.ends_at > snapshot.captured_at
+            ))
+            if not feasible:
+                return replace(result, windows=(), status="unreachable",
+                               reason="ongoing_load_requires_committed_grid_continuity")
         feasible = tuple(attached for w in feasible
                          if (attached := attach_supplemental_goals(w, snapshot)) is not None)
         return replace(result, windows=feasible) if feasible else replace(
@@ -1270,6 +1362,11 @@ class IndependentDailyReferenceAdapter:
             captured_at=snapshot.captured_at,
             horizon_end=reference_horizon_end,
             extra_boundaries=extra_boundaries
+            + ((snapshot.household_load_guard.assessed_at + timedelta(minutes=15),)
+               if snapshot.household_load_guard is not None
+               and snapshot.household_load_guard.active
+               and snapshot.household_load_guard.extra_power_w > 0
+               and snapshot.household_load_guard.quality != "unknown" else ())
             + tuple(
                 boundary
                 for plan in (

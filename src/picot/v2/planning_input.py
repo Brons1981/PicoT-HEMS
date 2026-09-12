@@ -33,6 +33,10 @@ from picot.v2.household_load_forecast import (
     build_historical_household_load_forecast,
     derive_household_load_power_w,
 )
+from picot.v2.household_load_guard import (
+    apply_household_load_guard,
+    assess_household_load_guard,
+)
 from picot.v2.storage_capability_snapshot import (
     build_storage_capability_snapshot_set,
 )
@@ -1014,6 +1018,24 @@ def assemble_planning_input(
             )
         )
 
+    # A separate recent baseline identifies ongoing demand; historical weights
+    # and the future clock-quarter forecast remain unchanged.
+    guard_observations = eligible_household_load_observations + (
+        (household_load_observation,) if household_load_observation is not None else ()
+    )
+    guard_baseline = build_historical_household_load_forecast(
+        run_id=run_id, snapshot_id=snapshot_id,
+        starts_at=capture - timedelta(hours=1), horizon_end=capture,
+        observations=eligible_household_load_observations,
+    ) if eligible_household_load_observations else None
+    household_load_guard = assess_household_load_guard(
+        observations=guard_observations, baseline=guard_baseline, assessed_at=capture,
+    )
+    if household_load_forecast is not None:
+        household_load_forecast = apply_household_load_guard(
+            household_load_forecast, household_load_guard,
+        )
+
     snapshot = PlanningInputSnapshot(
         run_id=run_id,
         snapshot_id=snapshot_id,
@@ -1028,6 +1050,7 @@ def assemble_planning_input(
         current_storage_states=current_storage_states,
         pv_energy_timeline=pv_energy_timeline,
         household_load_forecast=household_load_forecast,
+        household_load_guard=household_load_guard,
         storage_mode_capability_evidence=storage_mode_capability_evidence,
         bms_calibration_evidence=bms_calibration_evidence,
         capability_snapshot_set=(

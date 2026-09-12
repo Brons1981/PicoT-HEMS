@@ -317,7 +317,7 @@ def test_planning_input_reuses_fallback_and_preserves_sources(
 
 
 @pytest.mark.parametrize("offset_minutes", (1, 7, 14, 15, 22))
-def test_history_clock_quarters_preserve_common_future_energy(offset_minutes):
+def test_history_clock_quarters_preserve_common_future_energy(offset_minutes: int) -> None:
     # A varying historical load exposes poll-dependent sampling windows.
     observations = tuple(
         HouseholdLoadObservation(
@@ -338,7 +338,7 @@ def test_history_clock_quarters_preserve_common_future_energy(offset_minutes):
     assert result is not None
     assert result.intervals[0].starts_at == start
     assert result.intervals[-1].ends_at == end
-    for left, right in zip(result.intervals, result.intervals[1:]):
+    for left, right in zip(result.intervals, result.intervals[1:], strict=False):
         assert left.ends_at == right.starts_at
         assert left.ends_at.minute % 15 == 0
         assert left.ends_at.second == 0

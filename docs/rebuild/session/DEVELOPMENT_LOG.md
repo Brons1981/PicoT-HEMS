@@ -3404,3 +3404,10 @@ ADR-037.13 bijgewerkt. Nog geen commit, publicatie of nieuwe release.
 Alex heeft de release expliciet aangevraagd. Versie, manifest, versiecontract
 en changelog bijgewerkt. Geplande SOC doorgetrokken, werkelijke SOC paars.
 Publicatie via PR na drie groene CI-workflows. Geen HA-installatie of herstart.
+
+### 2026-09-12 — Dev.255 vaste klokkwartieren en pre-stable basis
+
+Alex heeft voortgang naar CI en release bevestigd. Zie ADR-037.14 en
+`docs/development_log/2026-09-12-clock-quarter-trial.md` voor bewijs en stopregel.
+Dev.254 / 21314d87be70442d9643d75ee74e7beb3be97e89 blijft vaste terugvalbasis.
+Release uitsluitend na groene CI; geen HA-installatie of herstart.

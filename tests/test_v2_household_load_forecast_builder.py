@@ -157,7 +157,7 @@ def test_historical_forecast_requires_two_periods_and_weights_recency() -> None:
         "..2026-08-13T10:10:00+00:00"
     )
     assert interval.method_version == (
-        "weighted-rolling-24h-periods:v1"
+        "weighted-clock-quarter-24h-periods:v2"
     )
 
 
@@ -314,3 +314,35 @@ def test_planning_input_reuses_fallback_and_preserves_sources(
     )
     assert pipeline_run.execution_record.status == "no_due_segment"
     assert pipeline_run.primitive_boundary.status == "not_emitted"
+
+
+@pytest.mark.parametrize("offset_minutes", (1, 7, 14, 15, 22))
+def test_history_clock_quarters_preserve_common_future_energy(offset_minutes: int) -> None:
+    # A varying historical load exposes poll-dependent sampling windows.
+    observations = tuple(
+        HouseholdLoadObservation(
+            power_w=600.0 if minute < 15 else 1200.0,
+            sampled_at=BASE - timedelta(days=day) + timedelta(minutes=minute),
+            evidence_ids=(f"history-{day}-{minute}",),
+            method_version="complete-power-balance:v1",
+        )
+        for day in (1, 2)
+        for minute in range(30)
+    )
+    start = BASE + timedelta(minutes=offset_minutes, seconds=12)
+    end = BASE + timedelta(minutes=27, seconds=30)
+    result = household_load_forecast.build_historical_household_load_forecast(
+        run_id="clock-quarter-test", snapshot_id="clock-quarter-test",
+        starts_at=start, horizon_end=end, observations=observations,
+    )
+    assert result is not None
+    assert result.intervals[0].starts_at == start
+    assert result.intervals[-1].ends_at == end
+    for left, right in zip(result.intervals, result.intervals[1:], strict=False):
+        assert left.ends_at == right.starts_at
+        assert left.ends_at.minute % 15 == 0
+        assert left.ends_at.second == 0
+    boundary = BASE + timedelta(minutes=15)
+    expected = (max(0, (boundary - start).total_seconds()) * 600.0
+                + (end - max(start, boundary)).total_seconds() * 1200.0) / 3600
+    assert sum(i.expected_energy_wh for i in result.intervals) == pytest.approx(expected)

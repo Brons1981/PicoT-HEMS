@@ -156,7 +156,7 @@ def test_planning_input_prefers_history_and_preserves_fallback() -> None:
     )
     assert all(
         interval.method_version
-        == "weighted-rolling-24h-periods:v1"
+        == "weighted-clock-quarter-24h-periods:v2"
         for interval in historical_forecast.intervals
     )
 

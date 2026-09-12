@@ -28,7 +28,7 @@ from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.price_plan_reference import PricePlanReference
 from picot.v2.projection import Projection
-from picot.v2.soc_projection_cache import SOCProjectionCache
+from picot.v2.soc_projection_cache import SOCDisplayHistory, SOCProjectionCache
 from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
 
 POWER_HISTORY_DISPLAY_INTERVAL = timedelta(minutes=5)
@@ -1413,7 +1413,7 @@ DASHBOARD_HTML = """<!doctype html>
         ["canonical-support", "Slim huishoudelijk ontladen"],
         ["optimized", "Geoptimaliseerd plandeel"],
         ["soc-actual", "Werkelijke SOC"],
-        ["soc-projected", "Geplande SOC (oorspronkelijke prognose)"],
+        ["soc-projected", "SOC-prognose (historie + actuele verwachting)"],
         ["energy-device-placement", "Geplaatst energie-apparaat"]
       ]) {
         const item = document.createElement("span");
@@ -4527,7 +4527,7 @@ DASHBOARD_HTML = """<!doctype html>
         },
         view.captured_at,
         selectedExecutionPlanWindows(view),
-        view.planning_status?.soc_timeline ?? [],
+        view.planning_status?.soc_display_timeline ?? view.planning_status?.soc_timeline ?? [],
         view.grid_charge_review?.actual_soc ?? {},
         view.original_price_plan ?? {}
       );
@@ -4659,6 +4659,7 @@ class WebViewStore:
         price_reference: PricePlanReference | None = None,
     ) -> None:
         self._soc_cache = soc_cache
+        self._soc_display = SOCDisplayHistory()
         self._price_reference = price_reference
         self._lock = Lock()
         self._condition = Condition(self._lock)
@@ -4792,6 +4793,14 @@ class WebViewStore:
                 view = {**view, "planning_status": {
                     **status, "soc_projection_cache_status": self._soc_cache.status,
                 }}
+            status = view.get("planning_status")
+            if isinstance(status, dict):
+                displayed = (self._soc_cache.display(status) if self._soc_cache is not None
+                             else self._soc_display.apply(status))
+                if self._soc_cache is not None:
+                    displayed = {**displayed,
+                                 "soc_projection_cache_status": self._soc_cache.status}
+                view = {**view, "planning_status": displayed}
             if self._price_reference is not None:
                 view = {**view, "original_price_plan": self._price_reference.read()}
             self._replace_latest_locked(view)

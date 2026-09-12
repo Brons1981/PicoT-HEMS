@@ -128,3 +128,111 @@ def test_equivalent_timezones_match_the_same_plan(tmp_path):
     current = retained()
     current["chosen_plan"]["valid_until"] = "2026-09-11T00:00:00+02:00"
     assert SOCProjectionCache(path).restore(current)["soc_timeline"] == projection()["soc_timeline"]
+
+
+def test_new_forecast_preserves_elapsed_points_and_replaces_only_future(tmp_path):
+    first = projection()
+    first['soc_timeline'].insert(1, {
+        'at': '2026-09-09T19:00:00+00:00', 'soc_percent': 60,
+        'primitive': 'support_household',
+    })
+    path = tmp_path / 'soc.json'
+    web = WebViewStore(soc_cache=SOCProjectionCache(path))
+    web.publish({'planning_status': first})
+    current = retained()
+    current['soc_timeline'] = [
+        {'at': current['captured_at'], 'soc_percent': 55, 'primitive': 'actual'},
+        {'at': '2026-09-10T12:00:00+00:00', 'soc_percent': 90,
+         'primitive': 'balance_bidirectional'},
+    ]
+    current['soc_projection_captured_at'] = current['captured_at']
+    original = deepcopy(current)
+    web.publish({'planning_status': current})
+    shown = json.loads(web.latest_json())['planning_status']
+    assert current == original
+    assert shown['soc_timeline'] == current['soc_timeline']
+    display = shown['soc_display_timeline']
+    assert [(p['at'], p['soc_percent']) for p in display] == [
+        ('2026-09-09T17:59:00+00:00', 79),
+        ('2026-09-09T19:00:00+00:00', 60),
+        ('2026-09-09T19:18:00+00:00', 55),
+        ('2026-09-10T12:00:00+00:00', 90),
+    ]
+    # A different plan replaces the future without erasing the elapsed record.
+    revised = deepcopy(current)
+    revised['chosen_plan']['plan_id'] = 'plan-2'
+    revised['decision']['status'] = 'winner_selected'
+    revised['soc_timeline'][-1]['soc_percent'] = 95
+    web = WebViewStore(soc_cache=SOCProjectionCache(path))
+    web.publish({'planning_status': revised})
+    shown = json.loads(web.latest_json())['planning_status']
+    assert shown['soc_display_timeline'][1] == display[1]
+    assert shown['soc_display_timeline'][1]['source_identity']['plan_id'] == 'plan-1'
+    assert shown['soc_display_timeline'][-1]['source_identity']['plan_id'] == 'plan-2'
+    assert shown['soc_display_timeline'][-1]['soc_percent'] == 95
+    assert shown['chosen_plan'] == revised['chosen_plan']
+
+
+def test_fallback_keeps_history_but_never_the_old_future(tmp_path):
+    web = WebViewStore(soc_cache=SOCProjectionCache(tmp_path / 'soc.json'))
+    web.publish({'planning_status': projection()})
+    status = retained()
+    status['decision']['status'] = 'fallback_active'
+    web.publish({'planning_status': status})
+    display = json.loads(web.latest_json())['planning_status']['soc_display_timeline']
+    assert [p['at'] for p in display] == ['2026-09-09T17:59:00+00:00']
+
+
+def test_display_history_is_bounded_and_corruption_does_not_break_canonical_cache(tmp_path):
+    path = tmp_path / 'soc.json'
+    web = WebViewStore(soc_cache=SOCProjectionCache(path))
+    web.publish({'planning_status': projection()})
+    raw = json.loads(path.read_text())
+    raw['display_history'] = {'updated_at': 'broken', 'points': []}
+    path.write_text(json.dumps(raw))
+    cache = SOCProjectionCache(path)
+    assert cache.restore(retained())['soc_timeline'] == projection()['soc_timeline']
+    web = WebViewStore(soc_cache=cache)
+    status = retained()
+    status['captured_at'] = '2026-09-13T12:00:00+00:00'
+    status['decision']['status'] = 'fallback_active'
+    web.publish({'planning_status': status})
+    assert json.loads(web.latest_json())['planning_status']['soc_display_timeline'] == []
+
+
+def test_old_cache_migrates_elapsed_forecast_on_restart(tmp_path):
+    path = tmp_path / 'soc.json'
+    SOCProjectionCache(path).remember(projection())
+    raw = json.loads(path.read_text())
+    raw.pop('display_history')
+    path.write_text(json.dumps(raw))
+    web = WebViewStore(soc_cache=SOCProjectionCache(path))
+    web.publish({'planning_status': retained()})
+    shown = json.loads(web.latest_json())['planning_status']
+    assert [(p['at'], p['soc_percent']) for p in shown['soc_display_timeline']] == [
+        (p['at'], p['soc_percent']) for p in projection()['soc_timeline']
+    ]
+
+
+def test_repeated_updates_freeze_forecast_not_previous_measured_start(tmp_path):
+    web = WebViewStore(soc_cache=SOCProjectionCache(tmp_path / 'soc.json'))
+    first = projection()
+    first['soc_timeline'].insert(1, {
+        'at': '2026-09-09T19:00:00+00:00', 'soc_percent': 60,
+        'primitive': 'support_household',
+    })
+    web.publish({'planning_status': first})
+    for minute in ['18', '19', '20']:
+        current = retained()
+        current['captured_at'] = f'2026-09-09T19:{minute}:00+00:00'
+        current['soc_projection_captured_at'] = current['captured_at']
+        current['soc_timeline'] = [
+            {'at': current['captured_at'], 'soc_percent': 55, 'primitive': 'actual'},
+            first['soc_timeline'][-1],
+        ]
+        web.publish({'planning_status': current})
+    shown = json.loads(web.latest_json())['planning_status']['soc_display_timeline']
+    assert [p['at'] for p in shown] == [
+        '2026-09-09T17:59:00+00:00', '2026-09-09T19:00:00+00:00',
+        '2026-09-09T19:20:00+00:00', '2026-09-10T12:00:00+00:00',
+    ]

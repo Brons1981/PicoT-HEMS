@@ -47,7 +47,11 @@ def test_persistent_curve_survives_restart_without_changing_current_plan(tmp_pat
     assert shown["soc_projection_captured_at"] == projection()["captured_at"]
     assert shown["soc_projection_retained"] is True
     assert current["soc_timeline"] == []
-    assert path.read_bytes() == original
+    saved = json.loads(path.read_bytes())
+    previous = json.loads(original)
+    saved.pop("display_history")
+    previous.pop("display_history")
+    assert saved == previous
 
 
 @pytest.mark.parametrize("changed", ["plan_id", "candidate_id", "energy_path_id", "valid_until"])
@@ -152,12 +156,15 @@ def test_new_forecast_preserves_elapsed_points_and_replaces_only_future(tmp_path
     assert current == original
     assert shown['soc_timeline'] == current['soc_timeline']
     display = shown['soc_display_timeline']
-    assert [(p['at'], p['soc_percent']) for p in display] == [
+    assert [(p['at'], p['soc_percent']) for p in display[:2]] == [
         ('2026-09-09T17:59:00+00:00', 79),
         ('2026-09-09T19:00:00+00:00', 60),
+    ]
+    assert [(p['at'], p['soc_percent']) for p in display[-2:]] == [
         ('2026-09-09T19:18:00+00:00', 55),
         ('2026-09-10T12:00:00+00:00', 90),
     ]
+    assert display[-2]['break_before'] is True
     # A different plan replaces the future without erasing the elapsed record.
     revised = deepcopy(current)
     revised['chosen_plan']['plan_id'] = 'plan-2'
@@ -180,7 +187,9 @@ def test_fallback_keeps_history_but_never_the_old_future(tmp_path):
     status['decision']['status'] = 'fallback_active'
     web.publish({'planning_status': status})
     display = json.loads(web.latest_json())['planning_status']['soc_display_timeline']
-    assert [p['at'] for p in display] == ['2026-09-09T17:59:00+00:00']
+    assert [p['at'] for p in display] == [
+        '2026-09-09T17:59:00+00:00', status['captured_at'],
+    ]
 
 
 def test_display_history_is_bounded_and_corruption_does_not_break_canonical_cache(tmp_path):
@@ -209,30 +218,98 @@ def test_old_cache_migrates_elapsed_forecast_on_restart(tmp_path):
     web = WebViewStore(soc_cache=SOCProjectionCache(path))
     web.publish({'planning_status': retained()})
     shown = json.loads(web.latest_json())['planning_status']
-    assert [(p['at'], p['soc_percent']) for p in shown['soc_display_timeline']] == [
-        (p['at'], p['soc_percent']) for p in projection()['soc_timeline']
+    assert shown['soc_display_timeline'][0]['soc_percent'] == 79
+    assert shown['soc_display_timeline'][-1]['soc_percent'] == 100
+    assert shown['soc_timeline'] == projection()['soc_timeline']
+
+
+def _status_at(minute, soc, end_soc=60):
+    status = projection()
+    at = f"2026-09-09T18:{minute:02d}:00+00:00"
+    status.update(captured_at=at, soc_projection_captured_at=at)
+    status['soc_timeline'] = [
+        {'at': at, 'soc_percent': soc, 'primitive': 'actual'},
+        {'at': '2026-09-09T18:15:00+00:00', 'soc_percent': end_soc,
+         'primitive': 'balance_bidirectional'},
     ]
+    return status
 
 
-def test_repeated_updates_freeze_forecast_not_previous_measured_start(tmp_path):
-    web = WebViewStore(soc_cache=SOCProjectionCache(tmp_path / 'soc.json'))
-    first = projection()
-    first['soc_timeline'].insert(1, {
-        'at': '2026-09-09T19:00:00+00:00', 'soc_percent': 60,
-        'primitive': 'support_household',
-    })
-    web.publish({'planning_status': first})
-    for minute in ['18', '19', '20']:
-        current = retained()
-        current['captured_at'] = f'2026-09-09T19:{minute}:00+00:00'
-        current['soc_projection_captured_at'] = current['captured_at']
-        current['soc_timeline'] = [
-            {'at': current['captured_at'], 'soc_percent': 55, 'primitive': 'actual'},
-            first['soc_timeline'][-1],
-        ]
-        web.publish({'planning_status': current})
+def _drawn_soc(points, minute):
+    from datetime import datetime
+
+    at = datetime.fromisoformat(f"2026-09-09T18:{minute:02d}:00+00:00")
+    for left, right in zip(points, points[1:]):
+        start, end = datetime.fromisoformat(left['at']), datetime.fromisoformat(right['at'])
+        if not right.get('break_before') and start <= at < end:
+            return left['soc_percent'] + (right['soc_percent'] - left['soc_percent']) * (
+                (at - start).total_seconds() / (end - start).total_seconds()
+            )
+    return None
+
+
+def test_elapsed_line_geometry_survives_updates_and_restart(tmp_path):
+    path = tmp_path / 'soc.json'
+    web = WebViewStore(soc_cache=SOCProjectionCache(path))
+    web.publish({'planning_status': _status_at(0, 50)})
+    initial = json.loads(web.latest_json())['planning_status']['soc_display_timeline']
+    original = deepcopy(initial)
+    current = _status_at(10, 40, 50)
+    web.publish({'planning_status': current})
+    shown = json.loads(web.latest_json())['planning_status']
+    assert abs(_drawn_soc(shown['soc_display_timeline'], 5) - (50 + 10 / 3)) < 1e-10
+    assert _drawn_soc(shown['soc_display_timeline'], 11) == 42
+    assert shown['soc_timeline'] == current['soc_timeline']
+    assert initial == original
+    # The previous current-SOC anchor is now the start of an elapsed forecast
+    # stroke; dropping it would reshape that stroke on the next refresh.
+    web = WebViewStore(soc_cache=SOCProjectionCache(path))
+    current = _status_at(12, 35, 45)
+    current['chosen_plan']['plan_id'] = 'new-plan'
+    web.publish({'planning_status': current})
     shown = json.loads(web.latest_json())['planning_status']['soc_display_timeline']
-    assert [p['at'] for p in shown] == [
-        '2026-09-09T17:59:00+00:00', '2026-09-09T19:00:00+00:00',
-        '2026-09-09T19:20:00+00:00', '2026-09-10T12:00:00+00:00',
-    ]
+    assert abs(_drawn_soc(shown, 5) - _drawn_soc(initial, 5)) < 1e-10
+    assert _drawn_soc(shown, 11) == 42
+    assert abs(_drawn_soc(shown, 13) - (35 + 10 / 3)) < 1e-10
+
+
+def test_fallback_gap_is_not_connected_to_a_new_forecast(tmp_path):
+    web = WebViewStore(soc_cache=SOCProjectionCache(tmp_path / 'soc.json'))
+    web.publish({'planning_status': _status_at(0, 50)})
+    fallback = _status_at(10, 40)
+    fallback.update(decision={'status': 'fallback_active'}, soc_timeline=[])
+    web.publish({'planning_status': fallback})
+    shown = json.loads(web.latest_json())['planning_status']['soc_display_timeline']
+    assert abs(_drawn_soc(shown, 5) - (50 + 10 / 3)) < 1e-10
+    assert _drawn_soc(shown, 11) is None
+    web.publish({'planning_status': _status_at(12, 35, 45)})
+    shown = json.loads(web.latest_json())['planning_status']['soc_display_timeline']
+    assert _drawn_soc(shown, 11) is None
+    assert abs(_drawn_soc(shown, 13) - (35 + 10 / 3)) < 1e-10
+
+
+def test_bounded_dense_display_history_survives_save_and_restart(tmp_path):
+    from datetime import datetime, timedelta
+
+    from picot.v2.soc_projection_cache import MAX_POINTS
+
+    path = tmp_path / 'soc.json'
+    cache = SOCProjectionCache(path)
+    cache.remember(projection())
+    start = datetime.fromisoformat('2026-09-09T17:59:00+00:00')
+    identity = {key: value + '-provenance-' * 8
+                for key, value in projection()['chosen_plan'].items()}
+    points = [{
+        'at': (start + timedelta(seconds=15 * i)).isoformat(),
+        'soc_percent': 50, 'primitive': 'balance_bidirectional',
+        'source_identity': identity, 'source_captured_at': start.isoformat(),
+    } for i in range(MAX_POINTS)]
+    cache.display_history.load({'updated_at': start.isoformat(), 'points': points})
+    status = retained()
+    status['captured_at'] = points[-2]['at']
+    status['decision']['status'] = 'fallback_active'
+    cache.display(status)
+    assert cache.status == 'saved'
+    restored = SOCProjectionCache(path)
+    assert restored.display_history.value == cache.display_history.value
+    assert len(restored.display_history.value['points']) <= MAX_POINTS

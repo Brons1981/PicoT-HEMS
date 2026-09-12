@@ -8,7 +8,8 @@ from math import isfinite
 from pathlib import Path
 from typing import Any
 
-MAX_CACHE_BYTES = 1_000_000
+# Display cut points can contain two source-labelled endpoints per update.
+MAX_CACHE_BYTES = 8_000_000
 MAX_HISTORY_BYTES = 32_000_000
 MAX_POINTS = 4096
 IDENTITY_KEYS = ("plan_id", "candidate_id", "energy_path_id", "valid_from", "valid_until")
@@ -245,7 +246,8 @@ class SOCDisplayHistory:
         for point in points:
             at = _time(point["at"])
             soc = point["soc_percent"]
-            if (previous is not None and at <= previous
+            if (previous is not None and (at < previous or (
+                    at == previous and point.get("break_before") is not True))
                     or isinstance(soc, bool) or not isinstance(soc, (int, float))
                     or not isfinite(soc) or not 0 <= soc <= 100
                     or not isinstance(point.get("primitive"), str)
@@ -261,11 +263,6 @@ class SOCDisplayHistory:
                 return status
             cutoff = now - timedelta(hours=48)
             old = self.value["points"]
-            # Freeze only timestamps that have elapsed. Historical measurements
-            # used as fresh start anchors are not historical forecast samples.
-            past = [p for i, p in enumerate(old)
-                    if cutoff <= _time(p["at"]) < now
-                    and (p["primitive"] != "actual" or i == 0)]
             timeline = status.get("soc_timeline") or []
             active = (status.get("decision") or {}).get("status") in {
                 "winner_selected", "plan_retained",
@@ -277,16 +274,44 @@ class SOCDisplayHistory:
                             "source_captured_at": status.get("soc_projection_captured_at")}
                            for p in timeline]
                 if self.value["updated_at"] is None:
-                    # Migration: an exact restored canonical curve already
-                    # contains trustworthy older forecast points.
-                    past = [p for p in sourced if cutoff <= _time(p["at"]) < now]
+                    old = sourced
                 future = [p for p in sourced if _time(p["at"]) >= now]
+                start = _display_boundary(sourced, now)
+                if start is not None and (not future or _time(future[0]["at"]) > now):
+                    future.insert(0, start)
             else:
                 # Keep history, but never show a stale future during fallback.
                 future = []
+            past = [p for p in old if cutoff <= _time(p["at"]) < now]
+            boundary = _display_boundary(old, now)
+            if boundary is not None and past:
+                past.append(boundary)
+            if past and future:
+                # The new forecast starts its own stroke. Connecting to its
+                # measured anchor would change the already elapsed old stroke.
+                future[0] = {**future[0], "break_before": True}
             points = (past + future)[-MAX_POINTS:]
             value = {"updated_at": now.isoformat(), "points": points}
             self.load(value)
             return {**status, "soc_display_timeline": points}
         except (ValueError, TypeError, KeyError):
             return status
+
+
+def _display_boundary(points: list[dict[str, Any]], at: datetime) -> dict[str, Any] | None:
+    """Clip the existing SVG polyline, never simulate a new energy state."""
+    for index, point in enumerate(points):
+        right = _time(point["at"])
+        if right == at:
+            return dict(point)
+        if right > at:
+            if index == 0 or point.get("break_before") is True:
+                return None
+            previous = points[index - 1]
+            left = _time(previous["at"])
+            fraction = (at - left).total_seconds() / (right - left).total_seconds()
+            return {**point, "at": at.isoformat(), "soc_percent": (
+                previous["soc_percent"]
+                + fraction * (point["soc_percent"] - previous["soc_percent"])
+            ), "display_interpolated": True}
+    return None

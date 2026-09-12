@@ -1695,6 +1695,7 @@ DASHBOARD_HTML = """<!doctype html>
       for (let index = 1; index < visibleSoc.length; index += 1) {
         const previous = visibleSoc[index - 1];
         const current = visibleSoc[index];
+        if (current.break_before === true) continue;
         svg.appendChild(createSvgElement("line", {
           class: `soc-line ${primitivePlanKind(current.primitive)}`,
           x1: xPosition(new Date(previous.at).getTime()),

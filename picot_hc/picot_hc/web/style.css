@@ -9,3 +9,5 @@
 .temperature-settings button:disabled{opacity:.6;cursor:wait}
 .temperature-settings input:focus-visible,.temperature-settings button:focus-visible{outline:3px solid #ad8bd4;outline-offset:2px}
 .save-status{font-size:12px;min-height:2.5em;margin:8px 0 0}
+
+.weather-heading{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.weather-icon{font-size:44px;color:#7550a0}.weather-temperature{font-size:30px;font-weight:650}.weather-facts{display:flex;flex-wrap:wrap;gap:12px 24px;color:#655d70;font-size:14px}.weather-panel h3{font-size:16px}.forecast-days{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(155px,1fr);gap:12px;overflow-x:auto;padding-bottom:8px}.forecast-day{background:#f7f5fa;border-radius:10px;padding:14px;font-size:13px;line-height:1.8}.forecast-day strong{display:block;margin-bottom:8px}.weather-panel>p{font-size:13px}

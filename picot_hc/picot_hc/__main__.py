@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.error import HTTPError
 
+from .weather import DEFAULT_ENTITY, WeatherReader, forecast_view
 from .core import Store, fetch_states, snapshot, validate, number
 
 
@@ -25,6 +26,8 @@ class Runtime:
         for zone in self.config['zones']:
             zone.update(saved_settings.get(zone['id'], {}))
         validate(self.config)
+        previous = store.latest() or {}
+        self.weather = WeatherReader(self.config.get('weather_entity', DEFAULT_ENTITY), previous.get('weather'))
         self.connection = 'starting'
         self.error = None
         self.stop = threading.Event()
@@ -59,7 +62,10 @@ class Runtime:
     def collect(self):
         try:
             states = fetch_states(self.url, self.token)
-            self.store.save(snapshot(self.config, states, time.time()), self.config['retention_days'])
+            now = time.time()
+            data = snapshot(self.config, states, now)
+            data['weather'] = self.weather.collect(states, now, self.url, self.token)
+            self.store.save(data, self.config['retention_days'])
             self.connection, self.error = 'connected', None
         except HTTPError as exc:
             self.connection, self.error = 'disconnected', 'HA antwoordt met HTTP ' + str(exc.code)
@@ -84,6 +90,12 @@ class Runtime:
             zones = {z['id']: z for z in self.config['zones']}
             for zone in data['zones']:
                 zone['settings'] = copy.deepcopy(zones.get(zone['id'], zone['settings']))
+        if 'weather' not in data:
+            from .weather import weather_now
+            data['weather'] = weather_now(self.weather.entity, {}, time.time())
+        weather = data['weather']
+        weather['forecast'] = forecast_view(weather.get('forecast'), time.time(),
+            'HA-verbinding niet actueel.' if self.connection != 'connected' or age is None or age > self.config['stale_seconds'] else None)
         data['csrf_token'] = self.csrf_token
         data.update(connection=self.connection, error=self.error, age_seconds=age,
                     stale=age is None or age > self.config['stale_seconds'])

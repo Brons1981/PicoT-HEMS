@@ -62,5 +62,6 @@
       "humidity_target": 50,
       "humidity_max": 60
     }
-  ]
+  ],
+  "weather_entity": "weather.buienradar"
 }

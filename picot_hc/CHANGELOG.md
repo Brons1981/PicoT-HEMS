@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-dev.10
+
+- Bronvrij comfortschema beneden met begin/einde, harde ondergrens en flexibele band.
+- Plannerinvoer met comfortdeadlines; vaste doelen voor boven en badkamer.
+- Handmatige brontemperatuur als gedwongen bron met status, zones en eindmoment.
+- Directe dev.9-schemasturing vervalt; financiële planning volgt later.
+- Bestaande schema’s worden gearchiveerd en uitgeschakeld naar vensters omgezet.
+
 ## 0.1.0-dev.9
 
 - Bewerkbaar weekschema beneden, standaard uit, met gekozen cv of airco.

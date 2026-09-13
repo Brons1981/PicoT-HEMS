@@ -9,7 +9,7 @@ function graphs(){if(current)chart('prices',[current.prices],'prices',['#8053ac'
 const zoneCards = new Map();
 function temperatureForm(zone) {
   const form = el('form', undefined, 'temperature-settings');
-  const title = el('h3', 'Temperatuur instellen');
+  const title = el('h3', zone.id==='beneden'?'Basis buiten tijdvensters':'Vaste temperatuur instellen');
   const fields = el('div', undefined, 'temperature-fields');
   const inputs = {};
   for (const [key, label] of [['minimum', 'Minimum'], ['target', 'Gewenst'], ['maximum', 'Maximum']]) {
@@ -218,44 +218,56 @@ const weekdays=['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag',
 let scheduleForm=null;
 function renderSchedule(data){
   if(!data)return;
-  const paused=data.override||data.fault;
-  $('regulation-badge').textContent=data.settings.enabled?(paused?'HC-schema gepauzeerd':'HC-schema ingeschakeld'):'Handmatige bronbediening';
-  $('schedule-status').textContent=data.reason+(data.override?.until?' Hervatten: '+fmt(data.override.until)+'.':'');
-  $('schedule-next').textContent=(data.current?'Schemadoel: '+data.current.temperature+' °C. ':'')+(data.next?'Volgend moment: '+fmt(data.next.at)+' · '+data.next.temperature+' °C.':'Nog geen schemamomenten ingesteld.');
+  $('regulation-badge').textContent='Comfortbasis · bronbediening handmatig';
+  $('schedule-status').textContent=data.reason+(data.migration?' '+data.migration:'');
+  const active=data.current;
+  $('schedule-next').textContent=(active?'Nu: '+active.target+' °C · '+(active.hard?'harde ondergrens':'band '+active.minimum+'–'+active.maximum+' °C')+'. ':'')+(data.next?'Volgend venster: '+fmt(data.next.starts_at)+' · '+data.next.target+' °C'+(data.next.hard?' moet bij aanvang bereikt zijn.':'.'):'Geen volgend venster ingesteld.');
+  $('planner-status').textContent=data.comfort.planner_reason;
+  const holds=$('forced-sources');holds.replaceChildren();
+  if(data.legacy_pause)holds.append(el('p','Eerdere handmatige pauze bewaard: '+data.legacy_pause.reason));
+  for(const hold of data.overrides){
+    const name=current.sources?.find(s=>s.id===hold.source)?.name||hold.source;
+    holds.append(el('p',name+' · '+(hold.forced_source?(hold.active?'Gedwongen bron: ':'Bronverzoek: ')+hold.temperature+' °C':'Handmatige stand: '+(modeNames[hold.value]||hold.value))+' · '+(commandNames[hold.status]||({'observed':'Waargenomen in HA','unrecorded':'Opdracht niet geregistreerd'}[hold.status])||hold.status)+(hold.until?' · tot '+fmt(hold.until):' · tot HC hervatten')));
+  }
+  for(const zone of Object.values(data.comfort.zones))for(const error of zone.errors)holds.append(el('p',error));
   if(!scheduleForm){
     const form=el('form',undefined,'schedule-form'), fields=el('fieldset');
     const enabled=el('input');enabled.type='checkbox';enabled.name='enabled';
-    const enabledLabel=el('label','Schema inschakelen');enabledLabel.prepend(enabled);
-    const source=el('select');source.name='source';source.setAttribute('aria-label','Warmtebron schema');
-    for(const [id,name] of [['cv','Cv (beneden en boven)'],['beneden','Airco beneden']]){const option=el('option',name);option.value=id;source.append(option);}
-    const sourceLabel=el('label','Warmtebron');sourceLabel.append(source);
+    const enabledLabel=el('label','Tijdvensters gebruiken');enabledLabel.prepend(enabled);
     const age=el('input');age.type='number';age.min=30;age.max=86400;age.step=1;age.required=true;age.name='sensor_max_age_seconds';
     const ageLabel=el('label','Maximale meetleeftijd beneden (seconden)');ageLabel.append(age);
     const rows=el('div',undefined,'schedule-rows');
-    const add=el('button','Moment toevoegen');add.type='button';
-    const door=el('details'), summary=el('summary','Achterdeur · alleen voor airco beneden');door.append(summary);
+    const add=el('button','Venster toevoegen');add.type='button';
+    const door=el('details'), summary=el('summary','Voorwaarden voor de toekomstige planner');door.append(summary,ageLabel);
     const delays={};
-    for(const [key,label] of [['door_open_seconds','Pauzeren na open (seconden)'],['door_close_seconds','Hervatten na dicht (seconden)']]){
+    for(const [key,label] of [['door_open_seconds','Achterdeur open: blokkeer airco na (seconden)'],['door_close_seconds','Achterdeur dicht: airco weer beschikbaar na (seconden)']]){
       const wrapper=el('label',label), input=el('input');input.type='number';input.min=0;input.max=1800;input.step=1;input.required=true;input.name=key;wrapper.append(input);door.append(wrapper);delays[key]=input;
     }
-    door.append(el('p','Onbekende deurstatus blokkeert verwarmen met de airco.','sub'));
-    const save=el('button','Schema opslaan');save.type='submit';
+    const save=el('button','Comfortschema opslaan');save.type='submit';
     const resume=el('button','HC hervatten');resume.type='button';
     const status=el('p','', 'schedule-save-status');status.setAttribute('role','status');
-    fields.append(enabledLabel,sourceLabel,rows,add,ageLabel,door,save,resume);form.append(fields,status);$('schedule-editor').append(form);
+    fields.append(enabledLabel,rows,add,door,save,resume);form.append(fields,status);$('schedule-editor').append(form);
     form.dirty=false;form.busy=false;form.revision=0;
     const mark=()=>{form.dirty=true;status.textContent='Nog niet opgeslagen';};
     form.addEventListener('input',mark);form.addEventListener('change',mark);
-    const addRow=(entry={day:0,time:'',temperature:''})=>{
-      const row=el('div',undefined,'schedule-row'), day=el('select'), clock=el('input'), temp=el('input'), remove=el('button','Verwijderen');
-      day.setAttribute('aria-label','Weekdag');day.name='day';
+    const addRow=(entry={day:0,start:'',end:'',target:'',minimum:'',maximum:'',hard:false})=>{
+      const row=el('div',undefined,'schedule-row comfort-window'), day=el('select');day.name='day';
       weekdays.forEach((name,index)=>{const option=el('option',name);option.value=index;day.append(option);});day.value=entry.day;
-      clock.type='time';clock.required=true;clock.value=entry.time;clock.name='time';clock.setAttribute('aria-label','Tijd');
-      temp.type='number';temp.min=5;temp.max=35;temp.step='any';temp.required=true;temp.value=entry.temperature;temp.placeholder='°C';temp.name='temperature';temp.setAttribute('aria-label','Schematemperatuur');
-      remove.type='button';remove.addEventListener('click',()=>{row.remove();mark();});
-      row.append(day,clock,temp,remove);rows.append(row);
+      const wrap=(label,input)=>{const wrapper=el('label',label);wrapper.append(input);row.append(wrapper);};
+      wrap('Weekdag',day);
+      const start=el('input');start.type='time';start.required=true;start.name='start';start.value=entry.start;wrap('Vanaf',start);
+      const end=el('input');end.type='text';end.required=true;end.name='end';end.value=entry.end;end.placeholder='24:00';end.pattern='([01][0-9]|2[0-3]):[0-5][0-9]|24:00';wrap('Tot',end);
+      const temps={};
+      for(const [key,label] of [['target','Gewenst (°C)'],['minimum','Minimum (°C)'],['maximum','Maximum (°C)']]){
+        const input=el('input');input.type='number';input.min=5;input.max=35;input.step='any';input.required=true;input.name=key;input.value=entry[key];temps[key]=input;wrap(label,input);
+      }
+      const hard=el('input');hard.type='checkbox';hard.name='hard';hard.checked=entry.hard;wrap('Gewenst is harde ondergrens',hard);
+      const sync=()=>{temps.minimum.disabled=hard.checked;if(hard.checked)temps.minimum.value=temps.target.value;};
+      hard.addEventListener('change',sync);temps.target.addEventListener('input',sync);sync();
+      const remove=el('button','Verwijderen');remove.type='button';remove.addEventListener('click',()=>{row.remove();mark();});
+      row.append(remove);rows.append(row);
     };
-    add.addEventListener('click',()=>{if(rows.children.length<56){addRow();mark();}});
+    add.addEventListener('click',()=>{if(rows.children.length<112){addRow();mark();}});
     const post=async(path,payload)=>{
       if(form.busy)return;
       form.busy=true;fields.disabled=true;status.textContent='Opslaan…';
@@ -264,22 +276,25 @@ function renderSchedule(data){
         if(response.status===403)throw Error('Sessie verlopen. Herlaad het dashboard.');
         const result=await response.json();if(!response.ok)throw Error(result.error||'Opslaan mislukt.');
         if(path==='api/schedule'){form.dirty=false;form.revision=result.schedule.revision;}
-        current.schedule=result.schedule;status.textContent=path==='api/resume'?'HC hervat zodra de uitvoeringsvoorwaarden kloppen.':'Schema opgeslagen.';
+        current.schedule=result.schedule;status.textContent=path==='api/resume'?'Handmatige bronkeuzes vrijgegeven.':'Comfortschema opgeslagen.';
       }catch(error){status.textContent=error.message||'Geen antwoord; controleer de actuele status.';}
       finally{form.busy=false;fields.disabled=false;renderSchedule(current.schedule);}
     };
     form.addEventListener('submit',event=>{
       event.preventDefault();
-      const entries=[...rows.children].map(row=>({day:Number(row.querySelector('[name=day]').value),time:row.querySelector('[name=time]').value,temperature:Number(row.querySelector('[name=temperature]').value)}));
-      post('api/schedule',{revision:form.revision,settings:{enabled:enabled.checked,source:source.value,entries,sensor_max_age_seconds:Number(age.value),door_open_seconds:Number(delays.door_open_seconds.value),door_close_seconds:Number(delays.door_close_seconds.value)}});
+      const windows=[...rows.children].map(row=>{
+        const get=name=>row.querySelector('[name='+name+']');
+        return {day:Number(get('day').value),start:get('start').value,end:get('end').value,target:Number(get('target').value),minimum:Number(get('minimum').value),maximum:Number(get('maximum').value),hard:get('hard').checked};
+      });
+      post('api/schedule',{revision:form.revision,settings:{enabled:enabled.checked,windows,sensor_max_age_seconds:Number(age.value),door_open_seconds:Number(delays.door_open_seconds.value),door_close_seconds:Number(delays.door_close_seconds.value)}});
     });
     resume.addEventListener('click',()=>post('api/resume',{}));
     form.sync=d=>{
       if(!form.dirty&&!form.busy&&d.revision>=form.revision){
-        enabled.checked=d.settings.enabled;source.value=d.settings.source;age.value=d.settings.sensor_max_age_seconds;rows.replaceChildren();d.settings.entries.forEach(addRow);
+        enabled.checked=d.settings.enabled;age.value=d.settings.sensor_max_age_seconds;rows.replaceChildren();d.settings.windows.forEach(addRow);
         for(const [key,input]of Object.entries(delays))input.value=d.settings[key];form.revision=d.revision;
       }
-      resume.disabled=form.busy||!d.settings.enabled;
+      resume.disabled=form.busy||(!d.overrides.length&&!d.legacy_pause);
     };
     scheduleForm=form;
   }

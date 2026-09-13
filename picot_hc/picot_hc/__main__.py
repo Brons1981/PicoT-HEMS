@@ -38,7 +38,7 @@ class Runtime:
             zone.update(saved_settings.get(zone['id'], {}))
         validate(self.config)
         self.control = Control(self.config, store, url, token)
-        self.schedule = Schedule(self.control, store)
+        self.schedule = Schedule(self.control, store, self.config)
         previous = store.latest() or {}
         self.weather = WeatherReader(self.config.get('weather_entity', DEFAULT_ENTITY), previous.get('weather'))
         self.connection = 'starting'
@@ -70,6 +70,7 @@ class Runtime:
                 raise ValueError('Minimum moet kleiner dan of gelijk aan gewenst en maximum zijn.') from None
             self.store.save_settings(zone['id'], values)
             self.config = config
+            self.schedule.config = config
             self.settings_revision += 1
             return {'settings': zone, 'settings_revision': self.settings_revision}
 
@@ -124,7 +125,7 @@ class Runtime:
         data['commands'] = self.control.records()[:20]
         with self.control.lock:
             data['schedule'] = self.schedule.view(time.time())
-        data['control_mode'] = 'schedule' if data['schedule']['settings']['enabled'] else 'manual'
+        data['control_mode'] = 'comfort_input'
         data['csrf_token'] = self.csrf_token
         data.update(connection=self.connection, error=self.error, age_seconds=age,
                     stale=age is None or age > self.config['stale_seconds'])
@@ -153,7 +154,7 @@ def handler(runtime, ingress):
                 if self.headers.get_content_type() != 'application/json':
                     raise ValueError('Ongeldig verzoekformaat.')
                 length = int(self.headers.get('Content-Length', '0'))
-                if not 0 < length <= 4096:
+                if not 0 < length <= (32768 if path == '/api/schedule' else 4096):
                     raise ValueError('Ongeldige verzoekgrootte.')
                 payload = json.loads(self.rfile.read(length))
                 with runtime.control.lock:

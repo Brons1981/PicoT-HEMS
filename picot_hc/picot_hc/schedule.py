@@ -1,94 +1,149 @@
-"""Opt-in weekly downstairs setpoints; manual changes always take precedence."""
+"""Comfort requirements for a future cost planner; never a device scheduler."""
 import copy
 import json
 import math
 import re
 import time
-import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .control import PENDING, numeric
-from .core import observation, timestamp
 
 TZ = ZoneInfo('Europe/Amsterdam')
 DOOR = 'binary_sensor.1_3_woonkamer_deur_raam_sensor_achterdeur_contact'
+WEEK = 7 * 1440
+
+
+def minutes(value, *, end=False):
+    if end and value == '24:00':
+        return 1440
+    if not isinstance(value, str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', value):
+        raise ValueError('Gebruik HH:MM; alleen een eindtijd mag 24:00 zijn.')
+    hour, minute = map(int, value.split(':'))
+    return hour * 60 + minute
 
 
 def validate_settings(value):
-    keys = {'enabled', 'source', 'entries', 'door_open_seconds', 'door_close_seconds', 'sensor_max_age_seconds'}
+    keys = {'enabled', 'windows', 'door_open_seconds', 'door_close_seconds', 'sensor_max_age_seconds'}
     if not isinstance(value, dict) or set(value) != keys or type(value['enabled']) is not bool:
-        raise ValueError('Ongeldige schema-instellingen.')
-    if value['source'] not in ('cv', 'beneden'):
-        raise ValueError('Kies cv of airco beneden.')
+        raise ValueError('Ongeldige comfortinstellingen; het schema heeft geen bronkeuze.')
     for key in ('door_open_seconds', 'door_close_seconds'):
         if type(value[key]) is not int or not 0 <= value[key] <= 1800:
             raise ValueError('Deurvertraging moet tussen 0 en 1800 seconden liggen.')
     if type(value['sensor_max_age_seconds']) is not int or not 30 <= value['sensor_max_age_seconds'] <= 86400:
         raise ValueError('Maximale meetleeftijd moet tussen 30 en 86400 seconden liggen.')
-    entries = value['entries']
-    if not isinstance(entries, list) or len(entries) > 56 or (value['enabled'] and not entries):
-        raise ValueError('Voeg 1 tot 56 schemamomenten toe voordat je het schema inschakelt.')
-    seen = set()
-    for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != {'day', 'time', 'temperature'}:
-            raise ValueError('Geef per moment dag, tijd en temperatuur op.')
-        if type(entry['day']) is not int or not 0 <= entry['day'] <= 6:
-            raise ValueError('Ongeldige weekdag.')
-        if not isinstance(entry['time'], str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', entry['time']):
-            raise ValueError('Gebruik een tijd als 07:30.')
-        temp = entry['temperature']
-        if type(temp) not in (int, float) or not math.isfinite(temp) or not 5 <= temp <= 35:
-            raise ValueError('Gebruik een temperatuur tussen 5 en 35 °C; apparaat- en comfortgrenzen gelden ook.')
-        key = (entry['day'], entry['time'])
-        if key in seen:
-            raise ValueError('Twee momenten op dezelfde dag en tijd zijn niet toegestaan.')
-        seen.add(key)
+    windows = value['windows']
+    if not isinstance(windows, list) or len(windows) > 112 or (value['enabled'] and not windows):
+        raise ValueError('Voeg 1 tot 112 tijdvensters toe voordat je het comfortschema gebruikt.')
+    spans = []
+    for window in windows:
+        if not isinstance(window, dict) or set(window) != {'day', 'start', 'end', 'target', 'minimum', 'maximum', 'hard'}:
+            raise ValueError('Geef dag, begin/einde, gewenste temperatuur, band en harde grens op.')
+        if type(window['day']) is not int or not 0 <= window['day'] <= 6 or type(window['hard']) is not bool:
+            raise ValueError('Ongeldige weekdag of harde grens.')
+        start, end = minutes(window['start']), minutes(window['end'], end=True)
+        if start == end:
+            raise ValueError('Begin en einde zijn gelijk; gebruik 00:00–24:00 voor een hele dag.')
+        if end < start:
+            end += 1440
+        low, target, high = [window[k] for k in ('minimum', 'target', 'maximum')]
+        if any(type(v) not in (int, float) or not math.isfinite(v) for v in (low, target, high)):
+            raise ValueError('Temperaturen moeten eindige getallen zijn.')
+        if not 5 <= low <= target <= high <= 35:
+            raise ValueError('Gebruik 5 ≤ minimum ≤ gewenst ≤ maximum ≤ 35 °C.')
+        if window['hard'] and low != target:
+            raise ValueError('Bij een harde grens is de gewenste temperatuur ook het minimum.')
+        begin, finish = window['day'] * 1440 + start, window['day'] * 1440 + end
+        spans.append((begin, min(finish, WEEK)))
+        if finish > WEEK:
+            spans.append((0, finish-WEEK))
+    spans.sort()
+    if any(b[0] < a[1] for a, b in zip(spans, spans[1:])):
+        raise ValueError('Tijdvensters overlappen, mogelijk over middernacht of de weekgrens.')
     result = copy.deepcopy(value)
-    result['entries'].sort(key=lambda e: (e['day'], e['time']))
+    result['windows'].sort(key=lambda w: (w['day'], w['start']))
     return result
 
 
-def moments(settings, now):
-    """Local weekly wall times. Skip missing spring times; autumn fold runs once."""
+def wall_time(day, minute, *, end=False):
+    wall = datetime.combine(day, datetime.min.time()) + timedelta(minutes=minute)
+    # Use the same first autumn occurrence for adjacent boundaries; move spring gaps forward.
+    for _ in range(181):
+        instant = wall.replace(tzinfo=TZ, fold=0).timestamp()
+        if datetime.fromtimestamp(instant, TZ).replace(tzinfo=None) == wall:
+            return instant
+        wall += timedelta(minutes=1)
+    raise ValueError('Lokale tijd kan niet worden omgezet.')
+
+
+def occurrences(settings, now):
     date = datetime.fromtimestamp(now, TZ).date()
     result = []
-    for offset in range(-8, 9):
+    for offset in range(-1, 9):
         day = date + timedelta(days=offset)
-        for entry in settings['entries']:
-            if day.weekday() != entry['day']:
+        for window in settings['windows']:
+            if day.weekday() != window['day']:
                 continue
-            wall = datetime.fromisoformat(str(day) + 'T' + entry['time'])
-            instant = wall.replace(tzinfo=TZ, fold=0).timestamp()
-            if datetime.fromtimestamp(instant, TZ).replace(tzinfo=None) != wall:
-                continue
-            result.append(dict(entry, at=instant))
-    result.sort(key=lambda e: e['at'])
-    previous = [e for e in result if e['at'] <= now]
-    following = [e for e in result if e['at'] > now]
-    return (previous[-1] if previous else None, following[0] if following else None)
+            start, end = minutes(window['start']), minutes(window['end'], end=True)
+            if end < start:
+                end += 1440
+            begin, finish = wall_time(day, start), wall_time(day, end, end=True)
+            if begin < finish:
+                result.append(dict(window, starts_at=begin, ends_at=finish, required_at=begin,
+                                   zone='beneden', kind='window'))
+    return sorted(result, key=lambda w: (w['starts_at'], w['ends_at']))
+
+
+def next_boundary(settings, now):
+    if not settings['enabled']:
+        return None
+    boundaries = [w[k] for w in occurrences(settings, now) for k in ('starts_at', 'ends_at') if w[k] > now]
+    return min(boundaries) if boundaries else None
+
+
+def migrate_settings(old):
+    """Preserve dev.9's weekly temperatures, archive source choice, require review."""
+    result = dict(enabled=False, windows=[], door_open_seconds=old.get('door_open_seconds', 60),
+                  door_close_seconds=old.get('door_close_seconds', 120),
+                  sensor_max_age_seconds=old.get('sensor_max_age_seconds', 900))
+    entries = sorted(old.get('entries', []), key=lambda e: (e['day'], e['time']))
+    for index, entry in enumerate(entries):
+        start = entry['day'] * 1440 + minutes(entry['time'])
+        following = entries[(index+1) % len(entries)]
+        finish = following['day'] * 1440 + minutes(following['time'])
+        if finish <= start:
+            finish += WEEK
+        while start < finish:
+            end = min(finish, (start // 1440 + 1)*1440)
+            day, minute = divmod(start, 1440)
+            last = end - day*1440
+            result['windows'].append(dict(day=day % 7, start=f'{minute//60:02}:{minute%60:02}',
+                end=f'{last//60:02}:{last%60:02}', target=entry['temperature'], minimum=entry['temperature'],
+                maximum=entry['temperature'], hard=True))
+            start = end
+    return validate_settings(result)
 
 
 class Schedule:
-    # All methods run under Control.lock, shared with reads, writes and observation.
-    def __init__(self, control, store):
-        self.control, self.store = control, store
+    # Runtime serializes this state with Control.lock. No method dispatches services.
+    def __init__(self, control, store, config):
+        self.control, self.store, self.config = control, store, config
         with store.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS hc_schedule (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
             row = db.execute('SELECT payload FROM hc_schedule WHERE id=1').fetchone()
-        self.data = json.loads(row[0]) if row else dict(
-            settings=dict(enabled=False, source='cv', entries=[], door_open_seconds=60, door_close_seconds=120, sensor_max_age_seconds=900),
-            revision=0, baseline={}, override=None, action=None, fault=None, door=None)
+        old = json.loads(row[0]) if row else None
+        if old and old.get('format') != 2:
+            self.data = dict(format=2, settings=migrate_settings(old['settings']), revision=old['revision']+1,
+                baseline=old.get('baseline', {}), overrides={}, door=old.get('door'), legacy_pause=old.get('override'),
+                migration='Bestaande schakelmomenten zijn omgezet naar comfortvensters. Controleer grenzen en schakel het comfortschema opnieuw in.')
+            with store.connect() as db:
+                db.execute('CREATE TABLE IF NOT EXISTS hc_schedule_archive (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
+                db.execute('INSERT OR IGNORE INTO hc_schedule_archive VALUES (1, ?)', (json.dumps(old),))
+                db.execute('INSERT OR REPLACE INTO hc_schedule VALUES (1, ?)', (json.dumps(self.data),))
+        else:
+            self.data = old or dict(format=2, settings=migrate_settings({}), revision=0,
+                                   baseline={}, overrides={}, door=None, legacy_pause=None, migration=None)
         self.ready = False
-        self.reason = 'Wachten op actuele HA-gegevens.'
-        if self.data['settings']['enabled']:
-            # Never replay an unfinished action or assume what happened while HC was down.
-            action = self.data['action']
-            command = next((c for c in control.records() if action and c['id'] == action['id']), None)
-            if action and (not command or command['status'] not in ('confirmed', 'already_set')):
-                self.data['fault'] = 'HC is herstart. Controleer de bron en kies HC hervatten.'
-            elif not self.data['override']:
-                self.pause('HC herstart; regeling tijdelijk gepauzeerd.', time.time())
         self.control.observer = self.observe
         self.control.intent_observer = self.intent
 
@@ -97,28 +152,14 @@ class Schedule:
             db.execute('INSERT OR REPLACE INTO hc_schedule VALUES (1, ?)',
                        (json.dumps(self.data, allow_nan=False),))
 
-    def pause(self, reason, now):
-        _, following = moments(self.data['settings'], now)
-        self.data['override'] = dict(reason=reason, since=now, until=following['at'] if following else None)
-        self.save()  # Must succeed before a manual command is allowed to dispatch.
-
     def update(self, payload, now):
         if not isinstance(payload, dict) or set(payload) != {'revision', 'settings'}:
-            raise ValueError('Ongeldig schemaverzoek.')
+            raise ValueError('Ongeldig comfortverzoek.')
         if type(payload['revision']) is not int or payload['revision'] != self.data['revision']:
             raise ValueError('Het schema is elders gewijzigd. Herlaad het dashboard.')
         settings = validate_settings(payload['settings'])
-        if self.data['settings']['enabled'] and settings['source'] != self.data['settings']['source']:
-            raise ValueError('Schakel het schema eerst uit voordat je een andere bron kiest.')
         previous = copy.deepcopy(self.data)
-        self.data['settings'] = settings
-        self.data['revision'] += 1
-        self.data['action'] = None
-        if not settings['enabled']:
-            self.data.update(override=None, fault=None)
-        elif self.data['override']:
-            _, following = moments(settings, now)
-            self.data['override']['until'] = following['at'] if following else None
+        self.data.update(settings=settings, revision=self.data['revision']+1, migration=None)
         try:
             self.save()
         except Exception:
@@ -128,7 +169,7 @@ class Schedule:
 
     def resume(self, now):
         previous = copy.deepcopy(self.data)
-        self.data.update(override=None, fault=None, action=None, recovered_at=now)
+        self.data.update(overrides={}, legacy_pause=None)
         try:
             self.save()
         except Exception:
@@ -136,48 +177,53 @@ class Schedule:
             raise
         return self.view(now)
 
+    def hold(self, source, field, value, now, reason, *, command=None, mode=None):
+        binding = self.control.bindings[source]
+        zones = ['beneden', 'boven'] if source == 'cv' else [source]
+        until = next_boundary(self.data['settings'], now) if 'beneden' in zones else None
+        self.data['overrides'][binding['entity_id']] = dict(source=source, entity_id=binding['entity_id'],
+            zones=zones, field=field, value=value, temperature=value if field == 'temperature' else None,
+            mode=mode, forced_source=field == 'temperature', since=now, until=until,
+            command_id=command, reason=reason)
+        self.save()
+
     def intent(self, command):
-        if command.get('origin') != 'schedule' and self.data['settings']['enabled']:
-            watched = {self.control.bindings[s]['entity_id'] for s in ('cv', 'beneden') if s in self.control.bindings}
-            if command['entity_id'] in watched:
-                self.pause('Handmatige bediening vanuit HC.', command['created'])
+        if command.get('origin', 'manual') == 'manual':
+            self.hold(command['source'], command['field'], command['value'], command['created'],
+                      'Handmatige broninstelling vanuit HC.', command=command['id'], mode=command['before']['mode'])
 
     def observe(self, states, started, now):
         records = self.control.records()
-        if self.data['settings']['enabled'] and now < self.data.get('last_observed', now) - 5:
-            self.data['fault'] = 'De klok is teruggezet. Controleer de tijd en kies HC hervatten.'
-        self.data['last_observed'] = now
-        changed = []
-        for source in ('cv', 'beneden'):
-            if source not in self.control.bindings:
-                continue
-            entity = self.control.bindings[source]['entity_id']
+        for source, binding in self.control.bindings.items():
+            entity = binding['entity_id']
             item = states.get(entity, {})
             if item.get('state') in (None, 'unknown', 'unavailable'):
                 continue
             attrs = item.get('attributes') or {}
             current = dict(mode=item['state'], temperature=numeric(attrs.get('temperature')), preset=attrs.get('preset_mode'))
             previous = self.data['baseline'].get(entity)
-            if previous and self.data['settings']['enabled']:
+            changes = []
+            if previous:
                 for field, value in current.items():
                     if value is None or previous.get(field) is None or value == previous[field]:
                         continue
-                    # The latest command may echo its old or desired values while settling.
                     own = next((c for c in records if c['entity_id'] == entity and c.get('sent')
                                 and c['sent'] <= now <= c['deadline'] and c['status'] != 'failed'
-                                and (c['field'] == field or c['field'] == 'heating' or field == 'preset')), None)
+                                and (c['field'] == field or (field == 'mode' and c['field'] == 'state')
+                                     or c['field'] == 'heating' or field == 'preset')), None)
                     expected = False
                     if own:
                         desired = ('heat' if field == 'mode' else own['value']) if own['field'] == 'heating' else own['value']
-                        before = own.get('before', {}).get(field)
                         settling = own['status'] in PENDING
                         expected = ((settling or own.get('finished') == now) if field == 'preset' else
-                                    value == desired or (settling and value == before))
+                                    value == desired or (settling and value == own.get('before', {}).get(field)))
                     if not expected:
-                        changed.append(source)
+                        changes.append(field)
+            if changes:
+                # An explicit off/mode/preset remains a hold; a setpoint change forces its source.
+                field = 'temperature' if 'temperature' in changes and current['mode'] != 'off' else changes[0]
+                self.hold(source, field, current[field], now, 'Handmatige wijziging via thermostaat of HA.', mode=current['mode'])
             self.data['baseline'][entity] = current
-        if changed:
-            self.pause('Handmatige wijziging via thermostaat of HA (' + ', '.join(sorted(set(changed))) + ').', now)
         door_value = states.get(DOOR, {}).get('state')
         if door_value not in ('on', 'off'):
             door_value = 'unknown'
@@ -185,122 +231,55 @@ class Schedule:
         if not self.ready or not old or old['value'] != door_value or now < old['since']:
             self.data['door'] = dict(value=door_value, since=now)
         self.ready = True
-        self.save()
-
-    def desired(self, now):
-        settings = self.data['settings']
-        previous, following = moments(settings, now)
-        override = self.data['override']
-        if override and override['until'] is not None and now >= override['until']:
-            self.data['override'] = None
-            self.data['action'] = None
-            self.save()
-        return previous, following
-
-    def gate(self, now, config, *, stopping=False):
-        settings = self.data['settings']
-        self.desired(now)
-        if not settings['enabled']:
-            return 'Schema staat uit.'
-        if self.data['override']:
-            return self.data['override']['reason']
-        if self.data['fault']:
-            return self.data['fault']
-        bad = next((c for c in self.control.records() if c['source'] in ('cv', 'beneden')
-                    and c['created'] > self.data.get('recovered_at', 0)
-                    and c['status'] in ('failed', 'timed_out', 'interrupted')), None)
-        if bad:
-            return 'Een eerdere opdracht is niet bevestigd. Controleer de bron en kies HC hervatten.'
-        if not self.ready or not self.control.connected or now - (self.control.received or 0) > config['stale_seconds']:
-            return 'Wachten op actuele HA-gegevens.'
-        if stopping:
-            return None  # Stopping an HC-owned airco must not require a temperature reading.
-        other = 'beneden' if settings['source'] == 'cv' else 'cv'
-        other_entity = self.control.bindings.get(other, {}).get('entity_id')
-        if self.control.states.get(other_entity, {}).get('state') not in ('off', 'fan_only'):
-            return 'Zet de andere warmtebron beneden eerst uit; HC schakelt deze niet zelf om.'
-        zone = next(z for z in config['zones'] if z['id'] == 'beneden')
-        sample = observation(zone.get('temperature', ''), self.control.states, now, True, '°C')
-        if sample['quality'] != 'available':
-            return 'Wachten op een gekoppelde, bruikbare temperatuursensor beneden.'
-        sensor = self.control.states.get(zone.get('temperature'), {})
-        try:
-            reported = timestamp(sensor.get('last_reported') or sensor.get('last_updated'))
-        except (ValueError, TypeError):
-            return 'Temperatuursensor heeft geen bruikbare meettijd.'
-        if not 0 <= now - reported <= settings['sensor_max_age_seconds']:
-            return 'Temperatuurmeting beneden is verouderd; geen nieuwe schemaopdracht.'
-        if zone.get('minimum') is None or zone.get('maximum') is None:
-            return 'Stel eerst minimum en maximum voor beneden in.'
-        return None
-
-    def target(self, now):
-        previous, _ = moments(self.data['settings'], now)
-        if not previous:
-            return None
-        settings = self.data['settings']
-        door = self.data['door'] or dict(value='unknown', since=now)
-        blocked = settings['source'] == 'beneden' and (
-            door['value'] == 'unknown' or
-            (door['value'] == 'on' and now-door['since'] >= settings['door_open_seconds']) or
-            (door['value'] == 'off' and now-door['since'] < settings['door_close_seconds']))
-        return dict(slot=previous['at'], source=settings['source'], field='mode' if blocked else 'heating',
-                    value='off' if blocked else previous['temperature'])
+        self.tick(self.config, now)
 
     def tick(self, config, now=None):
+        self.config = config
         now = time.time() if now is None else now
-        self.desired(now)
-        target = self.target(now)
-        stopping = bool(target and target['field'] == 'mode' and self.data['action'])
-        self.reason = self.gate(now, config, stopping=stopping)
-        if self.reason:
-            return
-        if not target:
-            self.reason = 'Geen schemamoment beschikbaar.'
-            return
-        pending = [c for c in self.control.records() if c['source'] in ('cv', 'beneden') and c['status'] in PENDING]
-        stop_preempts = target['field'] == 'mode' and not any(c['field'] == 'mode' and c['value'] == 'off' for c in pending)
-        if pending and not stop_preempts:
-            self.reason = 'Wachten op terugmelding; geen nieuwe schemaopdracht.'
-            return
-        action = self.data['action']
-        if action and action['target'] == target:
-            command = next((c for c in self.control.records() if c['id'] == action['id']), None)
-            if not command or command['status'] not in ('confirmed', 'already_set'):
-                self.data['fault'] = 'Schemaopdracht niet bevestigd. Controleer de bron en kies HC hervatten.'
-                self.save()
-            self.reason = self.data['fault'] or ('Achterdeur blokkeert airco beneden.' if target['field'] == 'mode' else 'Schema-instelling bevestigd.')
-            return
-        zone = next(z for z in config['zones'] if z['id'] == 'beneden')
-        if target['field'] == 'heating' and not zone['minimum'] <= target['value'] <= zone['maximum']:
-            self.reason = 'Schemadoel ligt buiten de comfortgrenzen beneden.'
-            return
-        if target['field'] == 'mode' and not action:
-            self.reason = 'Achterdeur nog niet bevestigd dicht; geen verwarming gestart.'
-            return
-        action = dict(id=str(uuid.uuid4()), target=target)
-        self.data['action'] = action
-        self.save()  # Never dispatch an unrecorded action, even on process termination.
-        def guard():
-            fresh = time.time()
-            reason = self.gate(fresh, config, stopping=stopping)
-            if reason or self.target(fresh) != target:
-                raise ValueError(reason or 'Schemamoment is gewijzigd; geen opdracht verstuurd.')
-        try:
-            command = self.control.submit(dict(request_id=action['id'], source=target['source'],
-                field=target['field'], value=target['value']), config['stale_seconds'], origin='schedule', guard=guard)
-            self.reason = 'Achterdeur blokkeert airco beneden.' if target['field'] == 'mode' else 'Schemadoel verstuurd; wachten op terugmelding.'
-            if command['status'] == 'failed':
-                raise ValueError(command['error'])
-        except ValueError as exc:
-            self.data['fault'] = str(exc) + ' Controleer en kies HC hervatten.'
-            self.save()
-            self.reason = self.data['fault']
+        self.data['overrides'] = {k:v for k,v in self.data['overrides'].items() if v['until'] is None or now < v['until']}
+        if self.data.get('legacy_pause') and self.data['legacy_pause'].get('until') is not None and now >= self.data['legacy_pause']['until']:
+            self.data['legacy_pause'] = None
+        self.save()
 
     def view(self, now):
-        previous, following = moments(self.data['settings'], now)
-        return dict(settings=copy.deepcopy(self.data['settings']), revision=self.data['revision'],
-                    override=copy.deepcopy(self.data['override']), fault=self.data['fault'],
-                    reason=('Schema staat uit.' if not self.data['settings']['enabled'] else
-                            self.data['override']['reason'] if self.data['override'] else self.data['fault'] or self.reason),
-                    current=previous, next=following, door=copy.deepcopy(self.data['door']))
+        settings = self.data['settings']
+        windows = occurrences(settings, now) if settings['enabled'] else []
+        active = next((w for w in windows if w['starts_at'] <= now < w['ends_at']), None)
+        following = next((w for w in windows if w['starts_at'] > now), None)
+        horizon = [w for w in windows if w['ends_at'] > now and w['starts_at'] < now + 48*3600]
+        records = {c['id']:c for c in self.control.records()}
+        overrides = []
+        for value in self.data['overrides'].values():
+            if value['until'] is not None and now >= value['until']:
+                continue
+            command = records.get(value['command_id'])
+            status = command['status'] if command else ('unrecorded' if value['command_id'] else 'observed')
+            overrides.append(dict(value, status=status, confirmed=status in ('observed','confirmed','already_set'),
+                                  active=status not in ('failed','superseded','unrecorded')))
+        zones = {}
+        for zone in self.config['zones']:
+            fixed = dict(zone=zone['id'], kind='fixed' if zone['id'] != 'beneden' else 'fallback',
+                         target=zone.get('target'), minimum=zone.get('minimum') if zone.get('minimum') is not None else zone.get('target'),
+                         maximum=zone.get('maximum') if zone.get('maximum') is not None else zone.get('target'),
+                         hard=False, required_at=None)
+            request = active if zone['id'] == 'beneden' and active else fixed if fixed['target'] is not None else None
+            errors = []
+            if request:
+                if zone.get('minimum') is not None and request['minimum'] is not None and request['minimum'] < zone['minimum']:
+                    errors.append('Vensterminimum ligt onder de algemene comfortgrens.')
+                if zone.get('maximum') is not None and request['maximum'] is not None and request['maximum'] > zone['maximum']:
+                    errors.append('Venstermaximum ligt boven de algemene comfortgrens.')
+            zones[zone['id']] = dict(request=request, bounds={k:zone.get(k) for k in ('minimum','maximum')}, errors=errors,
+                source_constraints=[v for v in overrides if zone['id'] in v['zones']],
+                humidity={k:zone.get('humidity_'+k) for k in ('min','target','max')} if zone['id']=='boven' else None)
+        return dict(settings=copy.deepcopy(settings), revision=self.data['revision'], current=active, next=following,
+            next_boundary=next_boundary(settings, now), overrides=overrides, legacy_pause=copy.deepcopy(self.data.get('legacy_pause')),
+            migration=self.data.get('migration'), door=copy.deepcopy(self.data['door']),
+            reason='Comfortschema als plannerinvoer beschikbaar.' if settings['enabled'] else 'Tijdvensters staan uit; vaste basiswaarden blijven beschikbaar.',
+            comfort=dict(zones=zones, horizon=horizon,
+                         deadlines=[w for w in horizon if w['hard'] and w['starts_at'] > now],
+                         source_policy='lowest_total_cost_within_comfort', selected_sources=None,
+                         priority=['manual_source_constraints', 'comfort_constraints', 'total_cost'],
+                         cost_factors=['energy_prices', 'efficiency', 'heat_loss', 'reheat_energy'],
+                         planner_status='not_implemented',
+                         planner_reason='Financiële bronkeuze en voorverwarmen volgen met het woningmodel; het comfortschema stuurt geen apparaten aan.'))

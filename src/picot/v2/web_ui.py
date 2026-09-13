@@ -1739,11 +1739,16 @@ DASHBOARD_HTML = """<!doctype html>
             (endAt <= observedEnd && validNext ? ` V ${y2}` : "")
         }));
       }
-      if (actualSoc.ends_at) {
+      if (actualSoc.ends_at || actualSoc.status === "unavailable") {
         const freshness = document.createElement("p");
         freshness.className = "muted";
-        freshness.textContent = "Werkelijke SOC: meetgegevens tot " +
-          `${formatTimestamp(actualSoc.ends_at)}.`;
+        freshness.textContent = actualSoc.ends_at
+          ? "Werkelijke SOC: meetgegevens tot " + `${formatTimestamp(actualSoc.ends_at)}.`
+          : "Werkelijke SOC: historie tijdelijk niet beschikbaar.";
+        if (actualSoc.status === "stale") {
+          freshness.textContent +=
+            " Historie tijdelijk niet beschikbaar; laatste gegevens behouden.";
+        }
         container.appendChild(freshness);
       }
 

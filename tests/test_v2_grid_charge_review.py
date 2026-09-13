@@ -414,3 +414,86 @@ def test_background_worker_never_queues_overlapping_or_same_period_work(tmp_path
     assert observer.lock.locked() is False
     assert observer.due(snapshot.captured_at) is False
     assert observer.due(snapshot.captured_at + timedelta(minutes=6)) is True
+
+
+def test_soc_history_failure_retains_coverage_across_restart_and_recovers(tmp_path, monkeypatch):
+    from test_financial_result_ledger import _snapshot
+
+    recorded = []
+
+    class Reader:
+        fail = False
+
+        def read(self, *, ends_at, **kwargs):
+            if self.fail:
+                return PowerHistorySnapshot(
+                    START, ends_at, "unavailable", "history_unavailable", ()
+                )
+            return replace(history(), ends_at=ends_at)
+
+    reader = Reader()
+
+    def observer(source="sensor.soc"):
+        return GridChargeReviewObserver(
+            path=tmp_path / "review.json", reader=reader, specs=(),
+            soc_entity_id=source, attach_household=lambda h: h,
+            publish=recorded.append, charge_efficiency=1,
+            discharge_efficiency=1, wear_eur_per_kwh=0,
+        )
+
+    snapshot = replace(_snapshot(), captured_at=START + timedelta(hours=3))
+    observer().refresh(snapshot, prices(), (), ())
+    original = recorded[-1]["actual_soc"]
+    assert original["status"] == "available"
+    reader.fail = True
+    later = replace(snapshot, captured_at=snapshot.captured_at + timedelta(minutes=6))
+    restarted = observer()
+    restarted.refresh(later, prices(), (), ())
+    stale = recorded[-1]["actual_soc"]
+    assert stale["status"] == "stale"
+    assert stale["reason"] == "history_unavailable"
+    assert stale["ends_at"] == original["ends_at"]
+    assert stale["points"] == original["points"]
+    assert stale["last_attempt_at"] == later.captured_at.isoformat()
+    assert observer("sensor.other")._retained_actual_soc(later.captured_at, "error")["points"] == []
+    next_day = later.captured_at + timedelta(days=1)
+    assert restarted._retained_actual_soc(next_day, "error")["points"] == []
+    # An exception in the passive background worker must retain the same evidence too.
+    import picot.v2.grid_charge_review_runtime as runtime
+
+    class ImmediateThread:
+        def __init__(self, *, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    failed_worker = observer()
+    monkeypatch.setattr(runtime, "Thread", ImmediateThread)
+    monkeypatch.setattr(
+        failed_worker, "refresh", lambda *args: (_ for _ in ()).throw(OSError())
+    )
+    failed_worker.submit(later, (), (), ())
+    assert recorded[-1]["actual_soc"]["status"] == "stale"
+    assert recorded[-1]["actual_soc"]["ends_at"] == original["ends_at"]
+    assert recorded[-1]["actual_soc"]["points"] == original["points"]
+    assert not failed_worker.lock.locked()
+    reader.fail = False
+    restarted.refresh(later, prices(), (), ())
+    recovered = recorded[-1]["actual_soc"]
+    assert recovered["status"] == "available"
+    assert recovered["ends_at"] == later.captured_at.isoformat()
+    assert "reason" not in recovered
+
+
+def test_soc_history_failure_without_cache_has_no_false_measurement_time(tmp_path):
+    observer = GridChargeReviewObserver(
+        path=tmp_path / "review.json", reader=None, specs=(),
+        soc_entity_id="sensor.soc", attach_household=lambda h: h,
+        publish=lambda v: None, charge_efficiency=1,
+        discharge_efficiency=1, wear_eur_per_kwh=0,
+    )
+    result = observer._retained_actual_soc(START, "history_unavailable")
+    assert result["status"] == "unavailable"
+    assert result["points"] == []
+    assert "ends_at" not in result

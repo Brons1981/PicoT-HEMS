@@ -55,6 +55,7 @@ class GridChargeReviewObserver:
                 else ()
             ),
         )
+        self.soc_entity_id = soc_entity_id
         self.timezone = ZoneInfo(timezone)
         self.charge_efficiency = charge_efficiency
         self.discharge_efficiency = discharge_efficiency
@@ -108,7 +109,9 @@ class GridChargeReviewObserver:
                         "status": "unavailable",
                         "reason": type(exc).__name__,
                         "days": list(self.state["days"].values()),
-                        "actual_soc": {"status": "unavailable", "points": []},
+                        "actual_soc": self._retained_actual_soc(
+                            snapshot.captured_at, type(exc).__name__
+                        ),
                     }
                 )
             finally:
@@ -193,6 +196,16 @@ class GridChargeReviewObserver:
             history = self.attach_household(rebase_power_history(history, starts_at=start))
             if day == today:
                 actual = actual_soc_view(history)
+                if actual["status"] == "available":
+                    self.state["actual_soc_cache"] = {
+                        "day": today.isoformat(),
+                        "source_entity_id": self.soc_entity_id,
+                        "view": actual,
+                    }
+                else:
+                    actual = self._retained_actual_soc(
+                        now, history.error or "soc_history_unavailable"
+                    )
             ctx = inputs[key]
             known_prices = tuple(
                 PriceForecastPoint(
@@ -268,6 +281,31 @@ class GridChargeReviewObserver:
                 "actual_soc": actual,
             }
         )
+
+    def _retained_actual_soc(self, now: datetime, reason: str) -> dict[str, Any]:
+        """Retain only this day's same-source evidence, never advance its coverage."""
+        cache = self.state.get("actual_soc_cache", {})
+        view = cache.get("view", {}) if isinstance(cache, dict) else {}
+        if (
+            isinstance(cache, dict)
+            and cache.get("day") == now.astimezone(self.timezone).date().isoformat()
+            and cache.get("source_entity_id") == self.soc_entity_id
+            and isinstance(view, dict)
+            and view.get("points")
+            and view.get("ends_at")
+        ):
+            return {
+                **view,
+                "status": "stale",
+                "reason": reason,
+                "last_attempt_at": now.isoformat(),
+            }
+        return {
+            "status": "unavailable",
+            "points": [],
+            "reason": reason,
+            "last_attempt_at": now.isoformat(),
+        }
 
     @staticmethod
     def _pv_comparison(

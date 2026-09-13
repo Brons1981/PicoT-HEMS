@@ -205,3 +205,33 @@ def test_old_store_without_generic_pointer_still_restores_exact_daily_plan(tmp_p
     payload.pop("execution_plans")
     path.write_text(json.dumps(payload))
     assert store.load_active_daily_main_plan(original.execution_scope_id) == original
+
+
+def test_retained_market_roundoff_preserves_allocation_and_lineage(tmp_path, monkeypatch):
+    store, _, _, args = prepared(tmp_path, monkeypatch)
+    amount = 476.5969541523558
+    args['binding'] = replace(args['binding'], expected_export_wh=amount,
+                              segment_export_wh=(amount,))
+    args['admission'] = replace(args['admission'], expected_export_wh=amount)
+    store.bind_market_plan(**args)
+    original = args['plan']
+    retained = replace(original, plan_id='retained:' + original.plan_id)
+    payload = store._load_payload()
+    store._preserve_market_bindings(payload, retained)
+    result = MarketPlanBinding(**{
+        **payload['market_plan_bindings'][args['binding'].assignment_id],
+    })
+    assert result.elapsed_planned_export_wh == 0
+    assert result.expected_export_wh == amount
+    assert result.original_plan_id == original.plan_id
+    assert result.original_segment_ids == args['binding'].segment_ids
+    assert result.segment_ids == args['binding'].segment_ids
+    assert result.plan_id == retained.plan_id
+    assert sum(result.segment_export_wh) > amount  # Reproduces the original negative remainder.
+
+
+def test_market_binding_still_rejects_material_negative_elapsed():
+    with pytest.raises(ValueError, match='complete original lineage'):
+        MarketPlanBinding('assignment', 'scope', 'plan', 'snapshot', ('segment',),
+                          100.0, (100.001,), elapsed_planned_export_wh=-0.001,
+                          original_plan_id='original', original_segment_ids=('original-segment',))

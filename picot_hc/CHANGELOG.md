@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-dev.8
+
+- Cv-temperatuurbediening hersteld wanneer climate.huiskamer geen stapgrootte meldt.
+- Gebruik in dat geval de door de gebruiker bevestigde stap van 0,5 °C.
+
 ## 0.1.0-dev.7
 
 - Bedieningsknoppen werken ook bij lokale HA-toegang via HTTP zonder randomUUID.

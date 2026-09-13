@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.7** — zelfstandige meting en handmatige bronbediening voor Home Assistant.
+Versie **0.1.0-dev.8** — zelfstandige meting en handmatige bronbediening voor Home Assistant.
 
 ## Wat deze versie doet
 
@@ -115,3 +115,9 @@ entiteitenlijst. Bij bestaande configuraties worden lege meetvelden voor
 Zelf ingevulde entiteiten blijven behouden. Lege velden gebruiken hier dus de
 bevestigde standaardmeters. Op het dashboard verschijnen vermogen en cumulatieve
 energie; verkeerde eenheden of ontbrekende sensoren blijven herkenbaar.
+
+Voor `climate.huiskamer` is een stap van 0,5 °C door de gebruiker bevestigd.
+HC gebruikt deze alleen wanneer HA geen `target_temp_step` doorgeeft en de
+eenheid °C is. Een expliciete HA-stap heeft voorrang; andere entiteiten krijgen
+geen impliciete stap. Temperatuur instellen blijft beschikbaar in heat/auto;
+Uit schakelt de cv uit en activeert geen verwarming via een temperatuurwijziging.

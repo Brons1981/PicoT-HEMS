@@ -115,6 +115,34 @@ class ControlTests(unittest.TestCase):
         self.ctl.observe(self.states,time.time(),time.time())
         self.assertEqual(self.ctl.records()[0]['status'],'confirmed')
 
+    def test_confirmed_cv_step_when_ha_omits_it(self):
+        entity = self.config['cv']
+        self.states[entity]['attributes'] = {
+            'hvac_modes': ['off', 'heat', 'auto'], 'min_temp': 5, 'max_temp': 30,
+            'temperature': 6, 'current_temperature': 23.5, 'supported_features': 401}
+        self.apply = True
+        for mode, value in [('heat', 19.5), ('auto', 20.5)]:
+            self.states[entity]['state'] = mode
+            command = self.submit(self.payload('cv', 'temperature', value))
+            self.ctl.observe(self.states, time.time(), time.time())
+            self.assertEqual(self.ctl.records()[0]['status'], 'confirmed')
+            self.assertEqual(self.calls[-1], ('/api/services/climate/set_temperature',
+                             {'entity_id': entity, 'temperature': value}))
+        for value in [4.5, 30.5, 20.25]:
+            with self.assertRaises(ValueError):
+                self.submit(self.payload('cv', 'temperature', value))
+        self.assertEqual(len(self.calls), 2)
+        # Explicit HA metadata takes precedence, including invalid metadata.
+        for step in [1, 0]:
+            self.states[entity]['attributes']['target_temp_step'] = step
+            with self.assertRaises(ValueError):
+                self.submit(self.payload('cv', 'temperature', 21.5))
+        other = self.config['zones'][0]['device']
+        del self.states[other]['attributes']['target_temp_step']
+        self.ctl.observe(self.states, time.time(), time.time())
+        self.assertFalse(next(s for s in self.ctl.sources(time.time(), 120)
+                              if s['entity_id'] == other)['temperature_supported'])
+
     def test_switch_on_and_already_set_are_distinct(self):
         entity=self.config['zones'][2]['device']
         c=self.submit(self.payload('badkamer','state','off'))

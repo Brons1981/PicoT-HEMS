@@ -63,5 +63,6 @@
       "humidity_max": 60
     }
   ],
-  "weather_entity": "weather.buienradar"
+  "weather_entity": "weather.buienradar",
+  "confirmed_price_entity": "sensor.nordpool_kwh_nl_eur_3_095_0"
 }

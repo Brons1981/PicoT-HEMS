@@ -17,7 +17,7 @@ const http = require('node:http');
     if(req.method === 'GET' && req.url === '/api/states') res.end(JSON.stringify([weatherState]));
     else if(req.method === 'POST' && req.url === '/api/services/weather/get_forecasts?return_response') {
       req.resume();
-      res.end(JSON.stringify({service_response:{'weather.buienradar':{forecast:[1,2,3,4,5].map(days=>({datetime:new Date(Date.now()+days*86400000).toISOString(),condition:'rainy',temperature:18,templow:11,precipitation:0,wind_speed:12}))}}}));
+      res.end(JSON.stringify({service_response:{'weather.buienradar':{forecast:[1,2,3,4,5].map(days=>({datetime:new Date(Date.now()+days*86400000).toISOString(),condition:'rainy',temperature:18,templow:11,precipitation:days===2?0.04:days===3?0.001:0,wind_speed:12}))}}}));
     } else {res.statusCode=404;res.end('{}');}
   });
   await new Promise(resolve=>fakeHA.listen(19098,'127.0.0.1',resolve));
@@ -38,6 +38,11 @@ const http = require('node:http');
     assert.match(await page.locator('#weather-current').textContent(), /Bewolkt/);
     assert.match(await page.locator('#weather-current').textContent(), /20,7 °C/);
     assert.match(await page.locator('.forecast-day').first().textContent(), /Neerslag 0 mm/);
+    assert.match(await page.locator('.forecast-day').first().textContent(), /bron voorspelt regen/);
+    assert.match(await page.locator('.forecast-day').nth(1).textContent(), /Neerslag 0,04 mm/);
+    assert.match(await page.locator('.forecast-day').nth(2).textContent(), /Neerslag <0,01 mm/);
+    assert.match(await page.locator('#price-description').textContent(), /Bevestigd elektriciteitstarief/);
+    assert.doesNotMatch(await page.locator('#warnings').textContent(), /Tariefbasis nog niet bevestigd/);
     await form.locator('[name=minimum]').fill('16');
     await form.locator('[name=target]').fill('19.5');
     await form.locator('[name=maximum]').fill('22');

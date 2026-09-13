@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-dev.4
+
+- Huidige Nordpool-prijsbron als werkelijk tarief bevestigd door gebruiker.
+- Kleine positieve neerslaghoeveelheden worden niet meer als 0 getoond.
+- Toelichting wanneer de bron zelf regen én 0 neerslag doorgeeft.
+
 ## 0.1.0-dev.3
 
 - Weerkaart via weather.buienradar met actuele metingen en dagverwachting.

@@ -45,3 +45,10 @@ tijdzones, eenheden, ontbrekende waarden en weigeren van redirects met HA-token.
 De browsercontrole is uitgebreid met actuele weergegevens en vijf forecastdagen
 via een gesimuleerde HA-server. CI-build en browserresultaat volgen bij de PR;
 echte HA-forecast en Ingress-weergave van dev.3 moeten na update worden bevestigd.
+
+## Tarief en neerslag — 0.1.0-dev.4
+
+22 Python-tests geslaagd; JavaScript-syntaxis gecontroleerd. Browsercontrole
+uitgebreid met bronbevestiging, 0 mm met regen, 0,04 mm en <0,01 mm.
+CI-browser/build en live update afzonderlijk controleren. De ruwe forecast
+van de gemelde 0 mm is niet beschikbaar in deze sessie.

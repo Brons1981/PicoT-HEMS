@@ -97,6 +97,11 @@ function weatherLabel(condition) { return weatherNames[condition] || ['—', con
 function forecastNumber(number, unit) {
   return typeof number === 'number' && unit ? number.toLocaleString('nl-NL', {maximumFractionDigits:1}) + ' ' + unit : 'Niet beschikbaar';
 }
+function precipitationLabel(amount, unit) {
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0 || !unit) return 'Niet beschikbaar';
+  if (amount > 0 && amount < 0.01) return '<0,01 ' + unit;
+  return amount.toLocaleString('nl-NL', {maximumFractionDigits: 2}) + ' ' + unit;
+}
 function renderWeather(weather, stale) {
   const box = $('weather-current'); box.replaceChildren();
   const forecast = $('weather-forecast'); forecast.replaceChildren();
@@ -123,8 +128,9 @@ function renderWeather(weather, stale) {
     day.append(el('strong', date), el('div', glyph + ' ' + description),
       el('div', 'Max ' + forecastNumber(row.temperature, f.temperature_unit)),
       el('div', 'Min ' + forecastNumber(row.templow, f.temperature_unit)),
-      el('div', 'Neerslag ' + forecastNumber(row.precipitation, f.precipitation_unit)),
+      el('div', 'Neerslag ' + precipitationLabel(row.precipitation, f.precipitation_unit)),
       el('div', 'Wind ' + forecastNumber(row.wind_speed, f.wind_speed_unit)));
+    if (row.precipitation === 0 && ['rainy','pouring','lightning-rainy','snowy-rainy'].includes(row.condition)) day.append(el('p', 'De bron voorspelt regen, maar geeft een neerslagsom van 0 op.', 'sub'));
     if(row.precipitation_probability !== null) day.append(el('div', 'Neerslagkans ' + forecastNumber(row.precipitation_probability, '%')));
     forecast.append(day);
   }
@@ -132,5 +138,5 @@ function renderWeather(weather, stale) {
     (f.stale ? 'Verouderde verwachting. ' : '') + (f.error ? f.error + ' ' : '') +
     (f.received ? 'Ontvangen: ' + fmt(f.received) : '');
 }
-async function refresh(){try{const [a,b]=await Promise.all([fetch('api/snapshot'),fetch('api/history')]);if(!a.ok||!b.ok)throw Error();const received=await a.json();if(current&&current.csrf_token!==received.csrf_token)settingsRevision=0;current=received;hist=await b.json();const d=current;document.body.classList.toggle('stale',d.stale||d.connection!=='connected');$('connection').textContent=d.connection==='connected'&&!d.stale?'HA verbonden — alleen lezen':'HA nog niet verbonden of gegevens verouderd';$('updated').textContent=d.collected?'Laatste ontvangst: '+fmt(d.collected):'Nog geen metingen ontvangen';$('error').textContent=d.error||'';if(d.settings_revision>=settingsRevision){settingsRevision=d.settings_revision;renderZones(d.zones);}renderWeather(d.weather,d.stale||d.connection!=='connected');$('warnings').textContent=d.warnings.join(' ');$('price-table').replaceChildren();for(const p of d.prices){const tr=el('tr');tr.append(el('td',fmt(p.start)),el('td',fmt(p.end)),el('td',p.value.toFixed(4)));$('price-table').append(tr);}$('shared').replaceChildren();for(const [name,s]of [['Buiten',d.outdoor],['Aanwezigheid',d.presence],['Cv-thermostaat',d.cv],['Cv-status (betekenis nog controleren)',d.cv_status],['Gas totaal, inclusief tapwater',d.gas],['CO₂ beneden',d.co2]])$('shared').append(el('div',name+': '+value(s)));$('shared').append(el('div','Gastarief: € '+d.gas_price.toLocaleString('nl-NL',{maximumFractionDigits:5})+'/m³ · geldig t/m '+d.gas_valid_until));$('history-note').textContent='Registratie sinds HC draait. Dit is meetgeschiedenis, geen voorspelling.';graphs();}catch(e){$('connection').textContent='Dashboard kan HC niet bereiken';document.body.classList.add('stale');}finally{setTimeout(refresh,15000);}}
+async function refresh(){try{const [a,b]=await Promise.all([fetch('api/snapshot'),fetch('api/history')]);if(!a.ok||!b.ok)throw Error();const received=await a.json();if(current&&current.csrf_token!==received.csrf_token)settingsRevision=0;current=received;hist=await b.json();const d=current;document.body.classList.toggle('stale',d.stale||d.connection!=='connected');$('connection').textContent=d.connection==='connected'&&!d.stale?'HA verbonden — alleen lezen':'HA nog niet verbonden of gegevens verouderd';$('updated').textContent=d.collected?'Laatste ontvangst: '+fmt(d.collected):'Nog geen metingen ontvangen';$('error').textContent=d.error||'';if(d.settings_revision>=settingsRevision){settingsRevision=d.settings_revision;renderZones(d.zones);}renderWeather(d.weather,d.stale||d.connection!=='connected');$('price-description').textContent=(d.price_basis_confirmed?'Bevestigd elektriciteitstarief':'Bronprijzen')+' in €/kWh · Europe/Amsterdam';$('warnings').textContent=d.warnings.join(' ');$('price-table').replaceChildren();for(const p of d.prices){const tr=el('tr');tr.append(el('td',fmt(p.start)),el('td',fmt(p.end)),el('td',p.value.toFixed(4)));$('price-table').append(tr);}$('shared').replaceChildren();for(const [name,s]of [['Buiten',d.outdoor],['Aanwezigheid',d.presence],['Cv-thermostaat',d.cv],['Cv-status (betekenis nog controleren)',d.cv_status],['Gas totaal, inclusief tapwater',d.gas],['CO₂ beneden',d.co2]])$('shared').append(el('div',name+': '+value(s)));$('shared').append(el('div','Gastarief: € '+d.gas_price.toLocaleString('nl-NL',{maximumFractionDigits:5})+'/m³ · geldig t/m '+d.gas_valid_until));$('history-note').textContent='Registratie sinds HC draait. Dit is meetgeschiedenis, geen voorspelling.';graphs();}catch(e){$('connection').textContent='Dashboard kan HC niet bereiken';document.body.classList.add('stale');}finally{setTimeout(refresh,15000);}}
 window.addEventListener('resize',graphs);refresh();

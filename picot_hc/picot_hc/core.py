@@ -84,6 +84,15 @@ def observation(entity, states, now, numeric=False, unit=None):
     return result
 
 
+# Alex confirmed this configured tariff source on 2026-09-13.
+CONFIRMED_PRICE_ENTITY = 'sensor.nordpool_kwh_nl_eur_3_095_0'
+
+
+def tariff_confirmed(config):
+    return bool(config.get('price_basis_confirmed', False) or
+                config['price_entity'] == config.get('confirmed_price_entity', CONFIRMED_PRICE_ENTITY))
+
+
 def prices(item, config, now):
     """Explicit interval data only: never infer intervals from array length."""
     if not item or item.get('state') in ('unknown', 'unavailable'):
@@ -121,7 +130,7 @@ def prices(item, config, now):
         errors.append('Geen prijzen met expliciete start- en eindtijd ontvangen.')
     elif not any(p['start'] <= now < p['end'] for p in ordered):
         errors.append('Prijs voor het huidige tijdvak ontbreekt.')
-    if not config['price_basis_confirmed']:
+    if not tariff_confirmed(config):
         errors.append('Tariefbasis nog niet bevestigd; bedragen worden alleen als bronprijzen getoond.')
     return ordered, errors
 
@@ -146,7 +155,7 @@ def snapshot(config, states, now):
                 gas=observation(config['gas'], states, now, True, 'm³'),
                 co2=observation(config['co2'], states, now, True, 'ppm'),
                 gas_price=config['gas_price'], gas_valid_until=config['gas_valid_until'],
-                prices=points, warnings=warnings)
+                prices=points, warnings=warnings, price_basis_confirmed=tariff_confirmed(config))
 
 
 class Store:

@@ -1,2 +1,2 @@
 """PicoT HC: standalone climate observation."""
-__version__ = "0.1.0-dev.4"
+__version__ = "0.1.0-dev.5"

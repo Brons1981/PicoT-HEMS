@@ -218,4 +218,23 @@ class HC(unittest.TestCase):
         self.config['price_basis_confirmed'] = True
         self.assertTrue(tariff_confirmed(self.config))
 
+    def test_upstairs_meters_fill_old_blanks_and_preserve_custom_binding(self):
+        zone = self.config['zones'][1]
+        zone.update(power='', energy='')
+        rt = Runtime(self.config, Store(Path(self.tmp.name) / 'hc.sqlite3'), '', '')
+        effective = rt.config['zones'][1]
+        self.assertEqual(effective['power'], 'sensor.shellyplugsg3_d0cf13c907e0_vermogen')
+        self.assertEqual(effective['energy'], 'sensor.shellyplugsg3_d0cf13c907e0_energie')
+        states = {effective['power']: self.state('350', 'W'),
+                  effective['energy']: self.state('12.34', 'kWh')}
+        samples = snapshot(rt.config, states, NOW)['zones'][1]['samples']
+        self.assertEqual(samples['power']['value'], 350)
+        self.assertEqual(samples['energy']['value'], 12.34)
+        zone['power'] = 'sensor.custom_power'
+        rt = Runtime(self.config, rt.store, '', '')
+        self.assertEqual(rt.config['zones'][1]['power'], 'sensor.custom_power')
+        zone.update(device='climate.other', power='', energy='')
+        rt = Runtime(self.config, rt.store, '', '')
+        self.assertEqual(rt.config['zones'][1]['power'], '')
+
 if __name__=='__main__':unittest.main()

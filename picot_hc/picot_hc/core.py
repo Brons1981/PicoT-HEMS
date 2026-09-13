@@ -154,6 +154,7 @@ class Store:
         self.path = str(path)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS samples (time REAL PRIMARY KEY, payload TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS zone_settings (id TEXT PRIMARY KEY, payload TEXT NOT NULL)')
             db.execute('PRAGMA user_version=1')
 
     @contextmanager
@@ -181,3 +182,12 @@ class Store:
             rows = db.execute('SELECT payload FROM samples WHERE time >= ? ORDER BY time', (since,)).fetchall()
         # Small response: graph inputs only, no full HA state inventory.
         return [dict(time=d['collected'], zones=[dict(id=z['id'], samples={k:z['samples'][k] for k in ('temperature','humidity','power')}) for z in d['zones']]) for d in map(lambda r:json.loads(r[0]), rows)]
+
+    def settings(self):
+        with self.connect() as db:
+            return {key: json.loads(payload) for key, payload in db.execute('SELECT id, payload FROM zone_settings')}
+
+    def save_settings(self, zone_id, values):
+        with self.connect() as db:
+            db.execute('INSERT OR REPLACE INTO zone_settings VALUES (?, ?)',
+                       (zone_id, json.dumps(values, allow_nan=False)))

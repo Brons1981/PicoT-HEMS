@@ -34,3 +34,9 @@ jobs:
         run: >-
           docker run --rm --entrypoint python picot-hc:test -c
           "import picot_hc.__main__; from pathlib import Path; assert Path('/app/picot_hc/web/index.html').is_file()"
+      - name: Install browser test tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/hc-browser" playwright@1.62.1
+          node "$RUNNER_TEMP/hc-browser/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Dashboard interaction test
+        run: NODE_PATH="$RUNNER_TEMP/hc-browser/node_modules" node picot_hc/tests/dashboard.cjs

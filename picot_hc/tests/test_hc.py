@@ -92,7 +92,7 @@ class HC(unittest.TestCase):
         self.assertIn(b'Home Climate',urlopen(dashboard+'/').read())
         self.assertEqual(len(json.load(urlopen(dashboard+'/api/history'))),1)
         with self.assertRaises(HTTPError) as cm:urlopen(Request(dashboard+'/api/snapshot',data=b'{}'))
-        self.assertEqual(cm.exception.code,501)
+        self.assertEqual(cm.exception.code,404)
 
     def test_ingress_rejects_direct_request(self):
         rt=Runtime(self.config,Store(Path(self.tmp.name)/'hc.sqlite3'),'','')
@@ -129,5 +129,82 @@ class HC(unittest.TestCase):
         c=json.loads((ROOT/'config.json').read_text())['options']
         validate(c)
         self.assertEqual(len(snapshot(c,{},NOW)['zones']),3)
+
+
+    def settings_runtime(self):
+        store = Store(Path(self.tmp.name) / 'hc.sqlite3')
+        store.save(snapshot(self.config, {}, NOW), 90)
+        runtime = Runtime(self.config, store, '', '')
+        return runtime, self.server(handler(runtime, False))
+
+    def post_settings(self, url, runtime, values, zone='beneden', token=True):
+        headers = {'Content-Type': 'application/json'}
+        if token:
+            headers['X-HC-CSRF'] = runtime.csrf_token
+        return urlopen(Request(url + '/api/settings',
+            data=json.dumps({'zone_id': zone, 'values': values}).encode(), headers=headers))
+
+    def test_dashboard_settings_persist_without_ha_or_new_measurement(self):
+        rt, url = self.settings_runtime()
+        values = dict(minimum=16, target=19.5, maximum=22)
+        result = json.load(self.post_settings(url, rt, values))
+        self.assertEqual(result['settings']['target'], 19.5)
+        current = json.load(urlopen(url + '/api/snapshot'))
+        self.assertEqual(current['zones'][0]['settings']['target'], 19.5)
+        self.assertEqual(current['collected'], NOW)
+        self.assertEqual(current['settings_revision'], 1)
+        reopened = Runtime(self.config, Store(rt.store.path), '', '')
+        self.assertEqual(reopened.current()['zones'][0]['settings']['target'], 19.5)
+        self.assertEqual(reopened.config['zones'][1], self.config['zones'][1])
+        self.assertNotEqual(self.config['zones'][0].get('target'), 19.5)
+
+    def test_settings_invalid_requests_do_not_change_saved_values(self):
+        rt, url = self.settings_runtime()
+        valid = dict(minimum=16, target=20, maximum=23)
+        self.post_settings(url, rt, valid).close()
+        for values in [dict(minimum=22, target=20, maximum=23),
+                       dict(minimum=None, target=True, maximum=None),
+                       dict(minimum=None, target=float('nan'), maximum=None),
+                       dict(minimum=None, target='21', maximum=None),
+                       dict(target=20), dict(valid, device='switch.other')]:
+            with self.subTest(values=values), self.assertRaises(HTTPError) as cm:
+                self.post_settings(url, rt, values)
+            self.assertEqual(cm.exception.code, 400)
+        with self.assertRaises(HTTPError) as cm:
+            self.post_settings(url, rt, valid, zone='unknown')
+        self.assertEqual(cm.exception.code, 400)
+        self.assertEqual(rt.store.settings()['beneden'], valid)
+
+    def test_settings_clear_values_and_preserve_other_zones(self):
+        rt, url = self.settings_runtime()
+        self.post_settings(url, rt, dict(minimum=15, target=18, maximum=22), zone='boven').close()
+        empty = dict(minimum=None, target=None, maximum=None)
+        self.post_settings(url, rt, empty).close()
+        reopened = Runtime(self.config, Store(rt.store.path), '', '')
+        self.assertIsNone(reopened.config['zones'][0]['target'])
+        self.assertEqual(reopened.config['zones'][1]['target'], 18)
+
+    def test_settings_require_csrf_and_ingress(self):
+        rt, url = self.settings_runtime()
+        values = dict(minimum=16, target=20, maximum=23)
+        with self.assertRaises(HTTPError) as cm:
+            self.post_settings(url, rt, values, token=False)
+        self.assertEqual(cm.exception.code, 403)
+        ingress = self.server(handler(rt, True))
+        with self.assertRaises(HTTPError) as cm:
+            self.post_settings(ingress, rt, values)
+        self.assertEqual(cm.exception.code, 403)
+        self.assertEqual(rt.store.settings(), {})
+
+    def test_settings_storage_failure_leaves_memory_and_database_unchanged(self):
+        rt, url = self.settings_runtime()
+        before = copy.deepcopy(rt.config)
+        with rt.store.connect() as db:
+            db.execute("CREATE TRIGGER block_settings BEFORE INSERT ON zone_settings BEGIN SELECT RAISE(ABORT, 'blocked'); END")
+        with self.assertRaises(HTTPError) as cm:
+            self.post_settings(url, rt, dict(minimum=16, target=20, maximum=23))
+        self.assertEqual(cm.exception.code, 503)
+        self.assertEqual(rt.config, before)
+        self.assertEqual(rt.store.settings(), {})
 
 if __name__=='__main__':unittest.main()

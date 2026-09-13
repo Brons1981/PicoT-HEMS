@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-dev.2
+
+- Minimum, gewenste temperatuur en maximum per zone instellen en opslaan op het dashboard.
+- Waarden blijven bewaard na herstart; geen HA-verbinding of nieuwe meting nodig.
+- Invoervalidatie en behoud van onopgeslagen invoer tijdens verversen.
+- Nog steeds observatie: instellingen sturen geen apparaten aan.
+
 ## 0.1.0-dev.1
 
 - Zelfstandige observatie-app voor beneden, boven en badkamer.

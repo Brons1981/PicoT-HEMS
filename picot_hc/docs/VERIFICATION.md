@@ -26,3 +26,14 @@
 ## Eerste controle op HA
 
 Installeer na merge vanuit de bestaande PicoT HEMS-repository, controleer dat de drie zones verschijnen en de bekende vermogens-/energiebronnen aansluiten. Ontbrekende Ecowitt-metingen moeten als niet gekoppeld verschijnen. Controleer de eigen prijsgrafiek tegen de Nordpool-bron, inclusief eenheden en belastingen, en herstart HC om behoud van meetgeschiedenis te bevestigen. Pas daarna de observatiebasis als live getest beschouwen.
+
+## Dashboardinstellingen — 0.1.0-dev.2
+
+- 16 lokale Python-tests geslaagd, inclusief opslaan via HTTP, direct uitlezen
+  zonder nieuwe HA-meting, herstart, lege waarden, zonescheiding en ongeldige invoer.
+- Opslagfout met echte SQLite-trigger: foutmelding, bestaande waarden behouden.
+- POST vereist Ingress-toegang en een apart CSRF-token; HA-client blijft GET-only.
+- JavaScript-syntaxis gecontroleerd. De CI-browsercontrole gebruikt een echte HC-server
+  voor opslaan, herladen, conceptinvoer bij verversen, ongeldige grenzen en mobiele breedte.
+- Lokale Chromium-download loopt vast; de browsercontrole wordt in CI uitgevoerd.
+- Live update en Ingress-interactie van dev.2 zijn nog niet bevestigd.

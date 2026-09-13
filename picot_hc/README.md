@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.1** — zelfstandige observatiebasis voor Home Assistant.
+Versie **0.1.0-dev.2** — zelfstandige observatiebasis voor Home Assistant.
 
 ## Wat deze versie doet
 
@@ -8,7 +8,7 @@ Versie **0.1.0-dev.1** — zelfstandige observatiebasis voor Home Assistant.
 - Registreert drie zones, aanwezigheid, buitenmeting, cv, gas en CO₂ in een eigen SQLite-database.
 - Toont een lokaal dashboard, expliciete prijsintervallen en 24 uur temperatuurgeschiedenis.
 - Laat ontbrekende entiteiten en eenheidsproblemen zien. Houdt laatst ontvangen gegevens zichtbaar bij verbindingsverlies, gemarkeerd als verouderd.
-- Biedt configureerbare entiteiten en comfortgrenzen via de HA-appconfiguratie.
+- Biedt temperatuurinstellingen per zone op het dashboard; entiteiten en vochtgrenzen blijven in de HA-appconfiguratie.
 
 Er is geen afhankelijkheid van PicoT HEMS. Deze versie stuurt geen apparaten aan. Schema-editor, badkamerknop, woningmodel, kostenvergelijking en automatische prijsoptimalisatie volgen volgens `docs/PicoT_HC_basis.md`.
 
@@ -26,7 +26,9 @@ Gegevens staan in `/data/hc.sqlite3` binnen de app. Ze blijven behouden bij hers
 
 ## Configuratie
 
-De configuratie staat in de HA-appopties. Herstart HC na wijzigingen. `options.example.json` is een zelfstandig voorbeeld voor lokaal testen.
+Minimum, gewenste temperatuur en maximum staan per zone op het dashboard. Klik op Opslaan; herstarten is niet nodig. HC bewaart deze waarden in zijn eigen database. Per zone gelden de appopties als beginwaarden totdat je op het dashboard opslaat. Daarna hebben de dashboardwaarden voorrang, ook na herstart of update. Een leeg veld wordt opgeslagen als niet ingesteld.
+
+Entiteiten en overige configuratie staan in de HA-appopties. Herstart HC na wijzigingen daaraan. `options.example.json` is een zelfstandig voorbeeld voor lokaal testen.
 
 - `zones`: drie zones met apparaat, temperatuur, vocht, vermogen en energie-entiteiten. Een lege sensornaam betekent nog niet gekoppeld.
 - `minimum`, `target`, `maximum`: optionele temperatuurgrenzen per zone; nog geen numerieke defaults. Minimum ≤ doel ≤ maximum. Deze versie toont/bewaart ze, maar regelt er nog niet op.

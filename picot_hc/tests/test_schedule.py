@@ -1,16 +1,21 @@
+"""Comfort contract, persistence and manual precedence; fake HA is a real HTTP server."""
 import copy
 import json
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
-from picot_hc.__main__ import handler
+import sqlite3
 from datetime import datetime
 from unittest.mock import patch
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from test_control import ControlFixture
-from picot_hc.__main__ import Runtime
-from picot_hc.schedule import DOOR, TZ, moments, validate_settings
+from picot_hc.__main__ import Runtime, handler
+from picot_hc.schedule import TZ, occurrences, validate_settings
 
 NOW = datetime(2026, 9, 14, 8, tzinfo=TZ).timestamp()
+
+
+def window(day=0, start='18:00', end='22:00', target=20, minimum=20, maximum=20, hard=True):
+    return dict(day=day, start=start, end=end, target=target, minimum=minimum, maximum=maximum, hard=hard)
 
 
 class ScheduleTests(ControlFixture):
@@ -18,17 +23,14 @@ class ScheduleTests(ControlFixture):
         super().setUp()
         self.scheduler = self.runtime.schedule
         self.config = self.runtime.config
-        self.config['zones'][0].update(temperature='sensor.downstairs', minimum=16, maximum=24)
-        self.states['sensor.downstairs'] = dict(entity_id='sensor.downstairs', state='19', attributes={'unit_of_measurement':'°C'})
-        self.states[DOOR] = dict(entity_id=DOOR, state='off', attributes={})
-        self.settings = dict(enabled=True, source='cv', entries=[
-            dict(day=day, time=clock, temperature=temp)
-            for day in range(7) for clock, temp in [('06:00', 21.5), ('22:00', 16)]],
-            door_open_seconds=60, door_close_seconds=120, sensor_max_age_seconds=900)
+        self.config['zones'][0].update(minimum=16, target=18, maximum=22)
+        self.config['zones'][1].update(minimum=16, target=18, maximum=20)
+        self.config['zones'][2].update(minimum=16, target=21, maximum=24)
+        self.settings = dict(enabled=True, windows=[window()], door_open_seconds=60,
+                             door_close_seconds=120, sensor_max_age_seconds=900)
         self.apply = True
 
     def observe(self, at=NOW):
-        self.states['sensor.downstairs']['last_reported'] = datetime.fromtimestamp(at, TZ).isoformat()
         with patch('time.time', return_value=at):
             self.ctl.observe(self.states, at, at)
 
@@ -36,228 +38,202 @@ class ScheduleTests(ControlFixture):
         self.observe()
         self.scheduler.update(dict(revision=0, settings=self.settings), NOW)
 
-    def tick(self, at=NOW):
-        with patch('time.time', return_value=at):
+    def test_hard_deadline_and_flexible_night_are_source_independent(self):
+        self.settings['windows'].append(window(start='22:00', end='06:00', target=17, minimum=17, maximum=18, hard=False))
+        self.enable()
+        view = self.scheduler.view(NOW)
+        self.assertNotIn('source', view['settings'])
+        self.assertIsNone(view['comfort']['selected_sources'])
+        deadline = view['comfort']['deadlines'][0]
+        self.assertEqual(deadline['required_at'], datetime(2026, 9, 14, 18, tzinfo=TZ).timestamp())
+        self.assertEqual(deadline['minimum'], 20)
+        night = datetime(2026, 9, 14, 23, tzinfo=TZ).timestamp()
+        request = self.scheduler.view(night)['comfort']['zones']['beneden']['request']
+        self.assertEqual((request['target'], request['minimum'], request['maximum'], request['hard']), (17,17,18,False))
+
+    def test_no_dispatch_on_enable_tick_transition_restart_or_resume(self):
+        self.enable()
+        for at in [NOW, NOW+1, NOW+36000, NOW+72000]:
             self.scheduler.tick(self.config, at)
-
-    def test_default_off_and_temperature_gate(self):
-        self.observe(); self.tick()
+        self.scheduler.resume(NOW)
+        other = Runtime(self.config, self.store, self.url, 'fake-secret')
+        other.collect()
         self.assertEqual(self.calls, [])
-        self.scheduler.update(dict(revision=0, settings=self.settings), NOW)
-        self.config['zones'][0]['temperature'] = ''
-        self.tick()
-        self.assertEqual(self.calls, [])
-        self.assertIn('temperatuursensor', self.scheduler.reason)
+        self.assertEqual(other.current()['schedule']['comfort']['planner_status'], 'not_implemented')
 
-    def test_schedule_combined_command_feedback_no_repeat(self):
-        self.enable(); self.tick()
-        self.assertEqual(self.calls, [('/api/services/climate/set_temperature',
-            dict(entity_id=self.config['cv'], temperature=21.5, hvac_mode='heat'))])
-        self.tick(NOW+1)
-        self.assertEqual(len(self.calls), 1)
-        self.observe(NOW+2); self.tick(NOW+2)
-        self.assertIsNone(self.scheduler.data['override'])
-        self.assertEqual(self.ctl.records()[0]['status'], 'confirmed')
-        self.assertEqual(len(self.calls), 1)
+    def test_fixed_values_above_and_bathroom_and_humidity(self):
+        self.enable()
+        for at in [NOW, NOW+36000, NOW+86400]:
+            zones = self.scheduler.view(at)['comfort']['zones']
+            self.assertEqual(zones['boven']['request']['target'], 18)
+            self.assertEqual(zones['badkamer']['request']['target'], 21)
+            self.assertEqual(zones['boven']['request']['kind'], 'fixed')
+            self.assertEqual(zones['boven']['request']['minimum'], 16)
+            self.assertEqual(zones['boven']['request']['maximum'], 20)
+            self.assertEqual(zones['boven']['humidity'], dict(min=40,target=50,max=60))
+        # Editing a comfort target never forces an appliance.
+        self.runtime.update_settings(dict(zone_id='boven', values=dict(minimum=16,target=19,maximum=20)))
+        self.assertEqual(self.scheduler.view(NOW)['comfort']['zones']['boven']['request']['target'], 19)
+        self.assertEqual(self.scheduler.view(NOW)['overrides'], [])
 
-    def test_manual_change_and_resume_at_next_slot(self):
-        self.enable(); self.tick(); self.observe(NOW+1)
-        self.states[self.config['cv']]['attributes']['temperature'] = 19
-        self.observe(NOW+10); self.tick(NOW+11)
-        override = self.scheduler.view(NOW+11)['override']
-        self.assertIsNotNone(override)
-        next_time = datetime(2026, 9, 14, 22, tzinfo=TZ).timestamp()
-        self.assertEqual(override['until'], next_time)
-        self.assertEqual(len(self.calls), 1)
-        self.observe(next_time); self.tick(next_time)
-        self.assertIsNone(self.scheduler.data['override'])
-        self.assertEqual(self.calls[-1][1]['temperature'], 16)
+    def test_gap_uses_configured_fallback_without_inventing_temperature(self):
+        self.enable()
+        self.assertEqual(self.scheduler.view(NOW)['comfort']['zones']['beneden']['request']['target'], 18)
+        self.config['zones'][0]['target'] = None
+        self.assertIsNone(self.scheduler.view(NOW)['comfort']['zones']['beneden']['request'])
 
-    def test_manual_return_to_previous_value_is_detected_after_confirmation(self):
-        self.enable(); self.tick(); self.observe(NOW+1)
-        self.states[self.config['cv']]['attributes']['temperature'] = 20
-        self.observe(NOW+2)
-        self.assertIsNotNone(self.scheduler.data['override'])
+    def test_weekend_full_day_and_end_exclusive(self):
+        self.settings['windows'] = [window(day=5,start='00:00',end='24:00'), window(day=6,start='00:00',end='24:00')]
+        self.enable()
+        for day in [19,20]:
+            at = datetime(2026,9,day,12,tzinfo=TZ).timestamp()
+            self.assertEqual(self.scheduler.view(at)['current']['target'], 20)
+        monday = datetime(2026,9,21,0,tzinfo=TZ).timestamp()
+        self.assertIsNone(self.scheduler.view(monday)['current'])
 
-    def test_delayed_own_feedback_does_not_pause(self):
-        self.apply = False
-        self.enable(); self.tick()
-        self.observe(NOW+50); self.tick(NOW+50)
-        self.assertIsNone(self.scheduler.data['override'])
-        self.assertEqual(len(self.calls), 1)
+    def test_manual_temperature_forces_shared_cv_until_boundary(self):
+        self.enable()
         self.states[self.config['cv']]['state'] = 'heat'
-        self.observe(NOW+60)
-        self.states[self.config['cv']]['attributes']['temperature'] = 21.5
-        self.observe(NOW+90)
-        self.assertIsNone(self.scheduler.data['override'])
-        self.assertEqual(self.ctl.records()[0]['status'], 'confirmed')
-
-    def test_mode_and_preset_override_but_activity_does_not(self):
-        self.enable(); self.tick(); self.observe(NOW+1)
-        self.states[self.config['cv']]['attributes']['hvac_action'] = 'heating'
-        self.observe(NOW+2)
-        self.assertIsNone(self.scheduler.data['override'])
-        self.states[self.config['cv']]['state'] = 'off'
-        self.observe(NOW+3)
-        self.assertIsNotNone(self.scheduler.data['override'])
-        self.scheduler.resume(NOW+4); self.tick(NOW+4); self.observe(NOW+5)
-        self.states[self.config['cv']]['attributes']['preset_mode'] = 'manual'
-        self.observe(NOW+6)
-        self.states[self.config['cv']]['attributes']['preset_mode'] = 'clock_program_1'
-        self.observe(NOW+7)
-        self.assertIsNotNone(self.scheduler.data['override'])
-
-    def test_hc_manual_command_pauses_before_next_poll(self):
-        self.enable(); self.tick(); self.observe(NOW+1)
+        self.observe(NOW+1)
         with patch('time.time', return_value=NOW+2):
-            self.submit(self.payload('cv', 'temperature', 19.5))
-        self.assertIn('vanuit HC', self.scheduler.data['override']['reason'])
-        self.observe(NOW+3); self.tick(NOW+3)
-        self.assertEqual(len(self.calls), 2)
-        self.scheduler.resume(NOW+4); self.tick(NOW+4)
-        self.assertEqual(len(self.calls), 3)
-        self.assertEqual(self.calls[-1][1]['temperature'], 21.5)
+            command = self.submit(self.payload('cv','temperature',19.5))
+        hold = self.scheduler.view(NOW+2)['overrides'][0]
+        self.assertTrue(hold['forced_source'])
+        self.assertFalse(hold['confirmed'])
+        self.assertEqual(hold['temperature'],19.5)
+        self.observe(NOW+3)
+        view = self.scheduler.view(NOW+3)
+        hold = view['overrides'][0]
+        self.assertTrue(hold['confirmed'])
+        self.assertEqual(hold['command_id'],command['id'])
+        self.assertEqual(hold['zones'],['beneden','boven'])
+        self.assertEqual(len(view['comfort']['zones']['boven']['source_constraints']),1)
+        self.assertEqual(self.scheduler.view(hold['until'])['overrides'], [])
+        self.assertEqual(len(self.calls),1)
 
-    def test_fresh_pre_dispatch_read_detects_manual_change(self):
+    def test_external_temperature_change_forces_source_without_rewriting_comfort(self):
+        self.states[self.config['cv']]['state'] = 'heat'
         self.enable()
-        self.states[self.config['cv']]['attributes']['temperature'] = 19
-        # The cached observation still says 20. Submit must notice the new HA value.
-        self.tick(NOW+1)
-        self.assertEqual(self.calls, [])
-        self.assertIsNotNone(self.scheduler.data['override'])
-
-    def test_timeout_blocks_new_slot_until_explicit_resume(self):
-        self.apply = False
-        self.enable(); self.tick(); self.observe(NOW+301)
-        next_time = datetime(2026, 9, 14, 22, tzinfo=TZ).timestamp()
-        self.observe(next_time); self.tick(next_time)
-        self.assertEqual(len(self.calls), 1)
-        self.assertIn('hervatten', self.scheduler.reason)
-        self.scheduler.resume(next_time+1); self.tick(next_time+1)
-        self.assertEqual(len(self.calls), 2)
-
-    def test_restart_retains_settings_pause_and_no_replay(self):
-        self.enable(); self.tick(); self.observe(NOW+1)
-        self.scheduler.pause('Handmatig', NOW+2)
-        with patch('time.time', return_value=NOW+3):
-            other = Runtime(self.config, self.store, self.url, 'fake-secret')
-        self.assertEqual(other.schedule.data['settings'], self.settings)
-        self.assertEqual(other.schedule.data['override']['reason'], 'Handmatig')
-        self.assertEqual(len(self.calls), 1)
-
-    def test_airco_door_delays_and_unknown_do_not_mean_closed(self):
-        self.settings['source'] = 'beneden'
-        self.enable(); self.tick()
-        self.assertEqual(self.calls, [])
-        self.observe(NOW+121); self.tick(NOW+121); self.observe(NOW+122)
-        self.assertEqual(self.calls[-1][1]['hvac_mode'], 'heat')
-        self.states[DOOR]['state'] = 'on'
-        self.observe(NOW+130); self.tick(NOW+131)
-        self.assertEqual(len(self.calls), 1)
-        self.observe(NOW+191); self.tick(NOW+191); self.observe(NOW+192)
-        self.assertEqual(self.calls[-1][1]['hvac_mode'], 'off')
-        self.states[DOOR]['state'] = 'unknown'
-        self.observe(NOW+200); self.tick(NOW+200)
-        self.assertEqual(len(self.calls), 2)
-        self.states[DOOR]['state'] = 'off'
-        self.observe(NOW+210); self.tick(NOW+220)
-        self.assertEqual(len(self.calls), 2)
-        self.observe(NOW+331); self.tick(NOW+331)
-        self.assertEqual(len(self.calls), 3)
-        self.assertEqual(self.calls[-1][1]['hvac_mode'], 'heat')
-        self.assertIsNone(self.scheduler.data['override'])
-
-    def test_door_stop_preempts_unconfirmed_heating(self):
-        self.settings['source'] = 'beneden'
-        self.apply = False
-        self.enable()
-        self.observe(NOW+121); self.tick(NOW+121)
-        self.states[DOOR]['state'] = 'on'
-        self.states['sensor.downstairs']['state'] = 'unavailable'
-        self.observe(NOW+130)
-        self.observe(NOW+191); self.tick(NOW+191)
-        self.assertEqual(len(self.calls), 2)
-        self.assertEqual(self.calls[-1][1]['hvac_mode'], 'off')
-        self.assertEqual(self.ctl.records()[1]['status'], 'superseded')
-        self.tick(NOW+192)
-        self.assertEqual(len(self.calls), 2)
-
-    def test_bad_limits_and_unavailable_never_start(self):
-        self.enable()
-        self.config['zones'][0]['maximum'] = 20
-        self.tick(); self.assertEqual(self.calls, [])
-        self.config['zones'][0]['maximum'] = 24
-        self.states['sensor.downstairs']['state'] = 'unavailable'
-        self.observe(NOW+1); self.tick(NOW+1)
+        self.states[self.config['cv']]['attributes']['temperature'] = 19.5
+        self.observe(NOW+1)
+        view = self.scheduler.view(NOW+1)
+        self.assertTrue(view['overrides'][0]['forced_source'])
+        self.assertEqual(view['overrides'][0]['status'],'observed')
+        self.assertEqual(view['comfort']['zones']['beneden']['request']['target'],18)
         self.assertEqual(self.calls, [])
 
-    def test_stale_temperature_blocks_dispatch(self):
+    def test_fixed_zone_manual_choice_survives_below_boundary_and_restart(self):
+        entity=self.config['zones'][1]['device']
+        self.states[entity]['state']='heat'
         self.enable()
-        self.states['sensor.downstairs']['last_reported'] = datetime.fromtimestamp(NOW-901, TZ).isoformat()
-        with patch('time.time', return_value=NOW):
-            self.ctl.observe(self.states, NOW, NOW)
-        self.tick()
-        self.assertEqual(self.calls, [])
-        self.assertIn('verouderd', self.scheduler.reason)
+        with patch('time.time', return_value=NOW+1):
+            self.submit(self.payload('boven','temperature',19.5))
+        self.observe(NOW+2)
+        self.assertIsNone(self.scheduler.view(NOW+2)['overrides'][0]['until'])
+        other=Runtime(self.config,self.store,self.url,'fake-secret')
+        self.assertEqual(other.schedule.view(NOW+86400)['overrides'][0]['source'],'boven')
+        other.schedule.resume(NOW+86401)
+        self.assertEqual(other.schedule.view(NOW+86401)['overrides'],[])
+        self.assertEqual(len(self.calls),1)
 
-    def test_other_source_and_backwards_clock_block_new_heating(self):
+    def test_own_delayed_feedback_does_not_extend_override(self):
+        self.states[self.config['cv']]['state']='heat'
+        self.apply=False
         self.enable()
-        self.states[self.config['zones'][0]['device']]['state'] = 'heat'
-        # An already-active other source is not silently switched off.
-        self.scheduler.data['baseline'] = {}
-        self.observe(NOW+1); self.tick(NOW+1)
-        self.assertEqual(self.calls, [])
-        self.assertIn('andere warmtebron', self.scheduler.reason)
-        self.observe(NOW-10)
-        self.assertIn('klok', self.scheduler.data['fault'])
+        with patch('time.time', return_value=NOW+1):
+            self.submit(self.payload('cv','temperature',19.5))
+        original=copy.deepcopy(self.scheduler.view(NOW+1)['overrides'][0])
+        self.observe(NOW+100)
+        self.states[self.config['cv']]['attributes']['temperature']=19.5
+        self.observe(NOW+200)
+        hold=self.scheduler.view(NOW+200)['overrides'][0]
+        self.assertEqual(hold['since'],original['since'])
+        self.assertEqual(hold['until'],original['until'])
+        self.assertEqual(hold['status'],'confirmed')
 
-    def test_storage_failure_prevents_schedule_dispatch(self):
+    def test_failed_command_is_not_a_confirmed_forced_source(self):
+        self.states[self.config['cv']]['state']='heat'
+        self.enable();self.status=400
+        with patch('time.time', return_value=NOW+1):
+            self.submit(self.payload('cv','temperature',19.5))
+        hold=self.scheduler.view(NOW+1)['overrides'][0]
+        self.assertFalse(hold['active']);self.assertFalse(hold['confirmed'])
+        self.assertEqual(hold['status'],'failed')
+
+    def test_mode_off_is_a_hold_not_forced_heating(self):
+        self.states[self.config['cv']]['state']='heat'
         self.enable()
+        self.states[self.config['cv']]['state']='off';self.observe(NOW+1)
+        hold=self.scheduler.view(NOW+1)['overrides'][0]
+        self.assertFalse(hold['forced_source'])
+        self.assertEqual(hold['value'],'off')
+
+    def test_legacy_migration_archives_settings_and_never_replays(self):
+        legacy=dict(settings=dict(enabled=True,source='cv',entries=[dict(day=0,time='06:00',temperature=20)]),
+                    revision=3,baseline={},override=None,action=dict(id='old-command'),fault=None,door=None)
         with self.store.connect() as db:
-            db.execute("CREATE TRIGGER fail_schedule BEFORE INSERT ON hc_schedule BEGIN SELECT RAISE(FAIL, 'disk'); END")
-        with self.assertRaises(Exception):
-            self.tick()
-        self.assertEqual(self.calls, [])
+            db.execute('INSERT OR REPLACE INTO hc_schedule VALUES (1, ?)',(json.dumps(legacy),))
+        other=Runtime(self.config,self.store,self.url,'fake-secret')
+        migrated=other.schedule.view(NOW)
+        self.assertFalse(migrated['settings']['enabled'])
+        self.assertNotIn('source',migrated['settings'])
+        self.assertTrue(migrated['migration'])
+        settings=copy.deepcopy(migrated['settings']);settings['enabled']=True
+        self.assertEqual(sum(w['ends_at']-w['starts_at'] for w in occurrences(settings,NOW)
+                             if NOW <= w['starts_at'] < NOW+7*86400),7*86400)
+        with self.store.connect() as db:
+            self.assertEqual(json.loads(db.execute('SELECT payload FROM hc_schedule_archive').fetchone()[0]),legacy)
+        again=Runtime(self.config,self.store,self.url,'fake-secret')
+        self.assertEqual(again.schedule.data['revision'],4)
+        self.assertEqual(self.calls,[])
 
-    def test_schedule_and_resume_http_require_csrf_and_ingress(self):
-        url = self.server(handler(self.runtime, False))
-        payload = json.dumps(dict(revision=0, settings=self.settings)).encode()
-        for path, body in [('/api/schedule', payload), ('/api/resume', b'{}')]:
-            with self.assertRaises(HTTPError) as error:
-                urlopen(Request(url+path, data=body, headers={'Content-Type':'application/json'}))
-            self.assertEqual(error.exception.code, 403)
-        headers = {'Content-Type':'application/json', 'X-HC-CSRF':self.runtime.csrf_token}
-        result = json.load(urlopen(Request(url+'/api/schedule', data=payload, headers=headers)))
-        self.assertTrue(result['schedule']['settings']['enabled'])
-        self.assertEqual(self.calls, [])
-        self.scheduler.pause('Test', NOW)
-        result = json.load(urlopen(Request(url+'/api/resume', data=b'{}', headers=headers)))
-        self.assertIsNone(result['schedule']['override'])
-        self.assertEqual(self.calls, [])  # The collector owns execution, never the HTTP handler.
-        ingress = self.server(handler(self.runtime, True))
-        for path, body in [('/api/schedule', payload), ('/api/resume', b'{}')]:
-            with self.assertRaises(HTTPError) as error:
-                urlopen(Request(ingress+path, data=body, headers=headers))
-            self.assertEqual(error.exception.code, 403)
-
-    def test_week_boundary_dst_and_validation(self):
-        settings = copy.deepcopy(self.settings)
-        settings['entries'] = [dict(day=0, time='06:00', temperature=20)]
-        previous, following = moments(settings, NOW)
-        self.assertEqual(datetime.fromtimestamp(previous['at'], TZ).hour, 6)
-        self.assertEqual(datetime.fromtimestamp(following['at'], TZ).day, 21)
-        settings['entries'] = [dict(day=6, time='02:30', temperature=20)]
-        spring = datetime(2026, 3, 29, 4, tzinfo=TZ).timestamp()
-        previous, following = moments(settings, spring)
-        self.assertEqual(datetime.fromtimestamp(previous['at'], TZ).day, 22)
-        self.assertEqual(datetime.fromtimestamp(following['at'], TZ).day, 5)
-        autumn = datetime(2026, 10, 25, 2, 45, tzinfo=TZ, fold=1).timestamp()
-        previous, following = moments(settings, autumn)
-        self.assertEqual(datetime.fromtimestamp(previous['at'], TZ).fold, 0)
-        self.assertEqual(datetime.fromtimestamp(following['at'], TZ).day, 1)
-        for bad in [dict(day=7,time='06:00',temperature=20), dict(day=1,time='24:00',temperature=20),
-                    dict(day=1,time='06:00',temperature=float('nan'))]:
-            settings['entries'] = [bad]
-            with self.assertRaises(ValueError): validate_settings(settings)
+    def test_overlap_week_wrap_invalid_ranges_and_stale_revision(self):
+        for windows in [[window(),window(start='19:00',end='23:00')],
+                        [window(day=6,start='22:00',end='06:00'),window(day=0,start='05:00',end='07:00')],
+                        [window(start='18:00',end='18:00')], [window(minimum=19)],
+                        [window(target=float('nan'))], [window(day=True)], [window(start='24:00')]]:
+            bad=dict(self.settings,windows=windows)
+            with self.assertRaises(ValueError): validate_settings(bad)
         with self.assertRaises(ValueError):
-            self.scheduler.update(dict(revision=99, settings=self.settings), NOW)
+            validate_settings(dict(self.settings,source='cv'))
+        with self.assertRaises(ValueError):
+            self.scheduler.update(dict(revision=99,settings=self.settings),NOW)
+
+    def test_dst_duration_and_adjacent_boundaries(self):
+        settings=dict(self.settings,windows=[window(day=5,start='22:00',end='06:00')])
+        for date,hours in [(datetime(2026,3,28,23,tzinfo=TZ),7),(datetime(2026,10,24,23,tzinfo=TZ),9)]:
+            now=date.timestamp()
+            w=next(w for w in occurrences(settings,now) if w['starts_at'] <= now < w['ends_at'])
+            self.assertEqual(w['ends_at']-w['starts_at'],hours*3600)
+        settings['windows']=[window(day=6,start='00:00',end='02:30'),window(day=6,start='02:30',end='04:00')]
+        now=datetime(2026,10,25,0,tzinfo=TZ).timestamp()
+        windows=[w for w in occurrences(settings,now) if now <= w['starts_at'] < now+86400]
+        self.assertEqual(windows[0]['ends_at'],windows[1]['starts_at'])
+
+    def test_storage_failure_rolls_back_edit_and_blocks_manual_write(self):
+        self.enable()
+        before=copy.deepcopy(self.scheduler.data)
+        with self.store.connect() as db:
+            db.execute("CREATE TRIGGER fail_schedule BEFORE INSERT ON hc_schedule BEGIN SELECT RAISE(FAIL,'disk'); END")
+        with self.assertRaises(sqlite3.Error):
+            self.scheduler.update(dict(revision=1,settings=dict(self.settings,enabled=False)),NOW)
+        self.assertEqual(self.scheduler.data,before)
+        with self.assertRaises(sqlite3.Error): self.submit()
+        self.assertEqual(self.calls,[])
+
+    def test_api_csrf_ingress_and_no_service_on_save_or_resume(self):
+        url=self.server(handler(self.runtime,False))
+        raw=json.dumps(dict(revision=0,settings=self.settings)).encode()
+        for path,body in [('/api/schedule',raw),('/api/resume',b'{}')]:
+            with self.assertRaises(HTTPError) as error:
+                urlopen(Request(url+path,data=body,headers={'Content-Type':'application/json'}))
+            self.assertEqual(error.exception.code,403)
+        headers={'Content-Type':'application/json','X-HC-CSRF':self.runtime.csrf_token}
+        saved=json.load(urlopen(Request(url+'/api/schedule',data=raw,headers=headers)))
+        self.assertTrue(saved['schedule']['settings']['enabled'])
+        json.load(urlopen(Request(url+'/api/resume',data=b'{}',headers=headers)))
+        self.assertEqual(self.calls,[])
+        ingress=self.server(handler(self.runtime,True))
+        with self.assertRaises(HTTPError) as error:
+            urlopen(Request(ingress+'/api/schedule',data=raw,headers=headers))
+        self.assertEqual(error.exception.code,403)

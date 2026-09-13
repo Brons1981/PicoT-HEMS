@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.9** — zelfstandige meting, bronbediening en opt-in basisschema beneden voor Home Assistant.
+Versie **0.1.0-dev.10** — zelfstandige meting, comfortvensters en handmatige bronbediening voor Home Assistant.
 
 ## Wat deze versie doet
 
@@ -10,7 +10,7 @@ Versie **0.1.0-dev.9** — zelfstandige meting, bronbediening en opt-in basissch
 - Laat ontbrekende entiteiten en eenheidsproblemen zien. Houdt laatst ontvangen gegevens zichtbaar bij verbindingsverlies, gemarkeerd als verouderd.
 - Biedt temperatuurinstellingen per zone op het dashboard; entiteiten en vochtgrenzen blijven in de HA-appconfiguratie.
 
-Er is geen afhankelijkheid van PicoT HEMS. De bronbediening is handmatig; het basisschema beneden voert opdrachten uit nadat je dit inschakelt. Tijdelijk badkamervenster, woningmodel, kostenvergelijking en automatische prijsoptimalisatie volgen volgens `docs/PicoT_HC_basis.md`.
+Er is geen afhankelijkheid van PicoT HEMS. De bronbediening is handmatig. Het comfortschema levert bronvrije eisen aan de toekomstige planner en voert zelf geen opdrachten uit. Tijdelijk badkamervenster, woningmodel, kostenvergelijking en automatische prijsoptimalisatie volgen volgens `docs/PicoT_HC_basis.md`.
 
 ## Installeren vanuit de PicoT HEMS-repository
 
@@ -39,7 +39,7 @@ Technische bron: [Home Assistant REST API](https://developers.home-assistant.io/
 Onder Bronbediening staan cv, beide airco’s en badkamerverwarming. Kies een
 apparaatmodus en klik Modus toepassen, of stel afzonderlijk de apparaattemperatuur
 in. Uit blijft beschikbaar terwijl een eerdere opdracht wacht. Auto is de eigen
-apparaatmodus, niet de HC-planner. Het basisschema gebruikt minimum en maximum van de zonekaart beneden. Badkamer Aan is gewone handmatige bediening: zelf weer uitschakelen;
+apparaatmodus, niet de HC-planner. Comfortvensters staan los van apparaatinstellingen. Badkamer Aan is gewone handmatige bediening: zelf weer uitschakelen;
 het tijdelijke verwarmvenster is nog niet gebouwd.
 
 HC haalt vlak vóór een opdracht de actuele HA-status op en toetst mogelijkheden.
@@ -55,31 +55,34 @@ timeout of herstart. Het dashboard toont de laatste twintig opdrachten.
 Na een herstart krijgt een lopende opdracht de status onderbroken; controleer de
 werkelijke apparaatstand voordat je een nieuwe opdracht geeft.
 
-## Basisschema beneden
+## Comfortschema beneden
 
-Voeg op het dashboard weekdagen, tijden en temperaturen toe. Kies cv of airco
-beneden en sla op. Het schema start leeg en uit; inschakelen is een expliciete
-keuze. Je kunt het al voorbereiden terwijl de Ecowitt-sensoren nog ontbreken.
-Actieve uitvoering wacht op de gekoppelde benedenmeting en ingestelde minimum-
-en maximumtemperatuur. Maximale meetleeftijd staat op 900 seconden en is instelbaar.
-HC gebruikt `last_reported`, of `last_updated` als HA geen rapportagetijd geeft.
+Voeg weekdagen, begin-/eindtijden, gewenste temperaturen en toegestane banden toe
+op het dashboard. **Gewenst is harde ondergrens** betekent dat deze temperatuur
+bij aanvang al bereikt moet zijn en vervolgens behouden blijft. Het maximum
+blijft de bovengrens. Zonder vinkje kan de toekomstige planner binnen de band
+optimaliseren, bijvoorbeeld 18 °C aanhouden in een nachtvenster met voorkeur 17 °C.
 
-De gekozen bron krijgt Verwarmen plus het schemadoel. De andere bron moet uit
-staan (ventilator mag blijven draaien); HC voert geen automatische bronwissel uit.
-Bij een wijziging via thermostaat, HA of HC pauzeert het schema tot het volgende
-schemamoment. Met **HC hervatten** neem je eerder de regeling terug. De status
-vermeldt de reden, het schemadoel en het volgende moment.
+Vensters hebben geen bronkeuze. HC moet later de financieel beste bron of
+combinatie bepalen met prijzen, verliezen, efficiëntie en opwarmtijd. De
+financiële planner is nog niet geïmplementeerd; de interface toont dit expliciet.
+De directe apparaatsturing uit dev.9 is vervangen door deze comfortbasis.
 
-Voor airco beneden gelden de achterdeurvertragingen: standaard 60 seconden open
-voor pauzeren en 120 seconden dicht voor hervatten, beide instelbaar. Onbekend
-betekent niet dicht. Uitschakelen van het schema laat de bestaande apparaatstand
-staan; gebruik Bronbediening als je het apparaat ook uit wilt zetten.
+Eindtijd vóór de begintijd betekent volgende dag. 00:00–24:00 is een hele dag;
+overlap wordt geweigerd. Buiten vensters gelden de algemene comfortinstellingen
+beneden, indien ingevuld. Boven en badkamer gebruiken een vaste gewenste
+waarde; boven behoudt de vochtband. Dit zijn comfortwensen, geen gedwongen bronnen.
 
-Een fout of timeout wordt niet automatisch herhaald. Controleer de bron en kies
-HC hervatten. Na herstart wordt geen opdracht opnieuw afgespeeld. Een bestaande
-handmatige pauze blijft bestaan; anders wacht HC op het volgende schemamoment.
-Een onderbroken opdracht vereist expliciet hervatten. Zie
-[HC-ADR-013](docs/HC-ADR-013-downstairs-schedule.md) voor uitvoeringsgrenzen.
+Een handmatig ingestelde **brontemperatuur** is wél een gedwongen bron. De cv-keuze
+geldt voor beneden én boven. Voor bronnen die beneden bedienen geldt de volgende
+actieve venstergrens of HC hervatten; voor andere bronnen en zonder actief schema
+blijft de keuze tot HC hervatten. Het dashboard onderscheidt aanvraag, bevestiging
+en fout. Een handmatige Uit/modus is een te respecteren stand, geen automatische
+verwarmvraag. HC hervatten geeft alle handmatige keuzes vrij zonder iets te schakelen.
+
+Bij een update vanaf dev.9 wordt het oude schema gearchiveerd en omgezet naar
+vensters, uitgeschakeld ter controle. De oude bronkeuze verdwijnt uit het schema;
+apparaatstanden blijven staan. Zie [HC-ADR-014](docs/HC-ADR-014-comfort-requirements.md).
 
 ## Configuratie
 
@@ -100,7 +103,7 @@ Entiteiten en overige configuratie staan in de HA-appopties. Herstart HC na wijz
 
 ## Meetkwaliteit en grenzen
 
-Een geslaagde HA-uitlezing bewijst alleen dat HA bereikbaar is. Bron-`last_updated` en ontvangsttijd worden afzonderlijk opgeslagen. Een ongewijzigde sensor kan een oude `last_updated` hebben zonder defect te zijn; deze versie stelt nog geen sensor-specifieke rapportagekwaliteit vast. Voor het basisschema geldt daarom de instelbare maximale meetleeftijd; stel deze passend bij de echte sensorrapportage in. Handmatige bronbediening gebruikt een verse HA-uitlezing, die geen onafhankelijke fysieke meting garandeert.
+Een geslaagde HA-uitlezing bewijst alleen dat HA bereikbaar is. Bron-`last_updated` en ontvangsttijd worden afzonderlijk opgeslagen. Een ongewijzigde sensor kan een oude `last_updated` hebben zonder defect te zijn; deze versie stelt nog geen sensor-specifieke rapportagekwaliteit vast. De maximale meetleeftijd is vastgelegd als voorwaarde voor de toekomstige planner; deze moet passen bij de echte sensorrapportage. Handmatige bronbediening gebruikt een verse HA-uitlezing, die geen onafhankelijke fysieke meting garandeert.
 
 Statussen unknown/unavailable blijven onbekend, ook voor aanwezigheid. Verkeerde numerieke eenheden worden geweigerd. De cv-status wordt zonder interpretatie getoond. Gas omvat ook tapwater. Midea-energieattributen worden nog niet gebruikt als betrouwbare energiemeter. Geen COP, gas-toewijzing of besparing wordt afgeleid.
 
@@ -119,7 +122,7 @@ Open lokaal `http://127.0.0.1:8099`. Zonder HA-token toont de app ontbrekende ge
 
 ## Vervolg
 
-Bronbediening is door de gebruiker live bevestigd. Volgende controles: Ecowitt koppelen, basisschema/override/deurregeling live beproeven; daarna aanwezigheid en advies-/prijsplanning. De oorspronkelijke ADR’s zijn opgenomen onder `docs/`.
+Bronbediening is door de gebruiker live bevestigd. Volgende controles: comfortvensters invullen, vaste doelen controleren, Ecowitt koppelen en gedwongen bronkeuzes live beproeven; daarna woningmodel, aanwezigheid en financiële planning/uitvoering. De oorspronkelijke ADR’s zijn opgenomen onder `docs/`.
 
 Gebruikte interfaces: [HA REST API](https://developers.home-assistant.io/docs/api/rest/), [appconfiguratie](https://developers.home-assistant.io/docs/apps/configuration/), [appcommunicatie](https://developers.home-assistant.io/docs/apps/communication/).
 

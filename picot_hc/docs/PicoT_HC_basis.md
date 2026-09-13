@@ -6,6 +6,8 @@ Deze versie vervangt de startnotitie en verwerkt de verdere afspraken in dit ges
 
 Actuele implementatie: dev.8-bronbediening en terugkoppeling zijn door de gebruiker
 live bevestigd. Dev.9 voegt het opt-in basisschema toe volgens HC-ADR-013.
+Dev.10 corrigeert dit naar bronvrije comfortvensters volgens HC-ADR-014;
+het schema levert comfortvraag en deadlines, geen directe bronopdrachten.
 De historische oplevervolgorde hieronder blijft richtinggevend voor prijsoptimalisatie.
 
 ## Korte ADR’s

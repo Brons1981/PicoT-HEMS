@@ -102,3 +102,20 @@ activeren, gesimuleerde externe wijziging, hervatten, uitzetten en mobiel.
 JavaScript-syntaxis en diff gecontroleerd. Container en browser draaien in CI.
 Geen echte apparaten aangestuurd. HA-polling ziet geen niet-gerapporteerde acties;
 last_reported/last_updated en gecombineerde opdracht blijven live te verifiëren.
+
+## Comfortbasis — 0.1.0-dev.10
+
+52 tests in de volledige lokale suite geslaagd. De 16 nieuwe comfortcontroles
+vervangen de supersedeerde directe-schemasturingtests; de bestaande 36 bron-,
+meting-, instelling- en weertests blijven behouden. Getest: harde deadline,
+flexibele band, vaste doelen/vocht boven, weekend, gaten, overlap/weekgrens/DST,
+geen serviceverzending door vensters, gedeelde gedwongen cv, handmatige andere
+zone, eigen vertraagde feedback, foutstatus, verlopen/hervatten/herstart, migratie
+met archief, opslagfout en CSRF/Ingress. JavaScript-syntaxis en diff gecontroleerd.
+
+Browsercontrole gebruikt een echte HC-server en gesimuleerd HA: bronvrije
+venstereditor, harde/flexibele invoer, bewaren/herladen, conceptbehoud, geen
+automatische bronopdrachten, fysieke/HA-wijziging en HC-opdracht als gedwongen
+bron, vrijgeven zonder nieuwe opdracht en mobiele breedte. Container/browser
+worden in CI gecontroleerd. Financiële optimalisatie is expliciet nog niet
+geïmplementeerd; hiervoor wordt alleen de gevraagde comfortbasis geleverd.

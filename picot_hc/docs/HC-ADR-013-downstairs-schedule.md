@@ -1,6 +1,9 @@
 # HC-ADR-013 — Basisschema beneden en handmatige pauze
 
-Status: eerste schema-uitvoering, door gebruiker gevraagd na bevestigde live
+Status: directe schemasturing en vaste bronkeuze vervangen door HC-ADR-014.
+Hieronder staat het historische dev.9-ontwerp.
+
+Oorspronkelijk: eerste schema-uitvoering, door gebruiker gevraagd na bevestigde live
 bronbediening en terugkoppeling van dev.8. Prijs- en aanwezigheidsregeling volgen.
 
 ## Contract

@@ -53,3 +53,6 @@ verzonden apparaatinstelling niet terug. Opdrachtdata blijven in een aparte tabe
 
 Interfacebronnen: [HA Climate](https://www.home-assistant.io/integrations/climate/)
 en [HA Switch](https://www.home-assistant.io/integrations/switch/).
+
+Dev.9: HC-ADR-013 implementeert het opt-in basisschema en de handmatige pauze.
+De handmatige route hierboven blijft het gedrag wanneer dat schema uit staat.

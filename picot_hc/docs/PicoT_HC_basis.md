@@ -4,6 +4,10 @@
 
 Deze versie vervangt de startnotitie en verwerkt de verdere afspraken in dit gesprek. De ADR-reeks is onafhankelijk van PicoT HEMS. De besluiten hieronder zijn in het gesprek bevestigd. De observatiebasis is gebouwd en lokaal getest. Bediening en planning zijn ontwerp en nog niet geïmplementeerd. Live HA-validatie staat open.
 
+Actuele implementatie: dev.8-bronbediening en terugkoppeling zijn door de gebruiker
+live bevestigd. Dev.9 voegt het opt-in basisschema toe volgens HC-ADR-013.
+De historische oplevervolgorde hieronder blijft richtinggevend voor prijsoptimalisatie.
+
 ## Korte ADR’s
 
 ### HC-ADR-001 — Volledig binnenklimaat

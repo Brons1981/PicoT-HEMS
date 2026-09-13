@@ -1,7 +1,7 @@
 // Real HC server and browser with a simulated HA API; no real devices.
 const {chromium} = require('playwright');
 const {spawn} = require('node:child_process');
-const {mkdtempSync, rmSync} = require('node:fs');
+const {mkdtempSync, rmSync, readFileSync, writeFileSync} = require('node:fs');
 const {tmpdir} = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -17,8 +17,13 @@ const http = require('node:http');
   const cv=deviceStates.find(s=>s.entity_id==='climate.huiskamer');
   delete cv.attributes.target_temp_step;
   Object.assign(cv.attributes,{min_temp:5,supported_features:401,hvac_modes:['off','heat','auto']});
+  deviceStates.push({entity_id:'sensor.downstairs',state:'19',attributes:{unit_of_measurement:'°C'},last_reported:new Date().toISOString()});
+  const options=JSON.parse(readFileSync(path.join(root,'options.example.json'),'utf8'));
+  options.zones[0].temperature='sensor.downstairs';options.poll_seconds=10;options.stale_seconds=30;
+  const configPath=path.join(data,'options.json');writeFileSync(configPath,JSON.stringify(options));
   const fakeHA = http.createServer((req,res) => {
     res.setHeader('Content-Type','application/json');
+    deviceStates.find(s=>s.entity_id==='sensor.downstairs').last_reported=new Date().toISOString();
     if(req.method === 'GET' && req.url === '/api/states') res.end(JSON.stringify([weatherState,...deviceStates]));
     else if(req.method === 'GET' && req.url === '/api/config') res.end(JSON.stringify({unit_system:{temperature:'°C'}}));
     else if(req.method === 'POST' && ['/api/services/climate/set_hvac_mode','/api/services/climate/set_temperature','/api/services/switch/turn_on','/api/services/switch/turn_off'].includes(req.url)) {
@@ -26,8 +31,8 @@ const http = require('node:http');
         const payload=JSON.parse(body);deviceCalls.push({path:req.url,payload});
         const device=deviceStates.find(s=>s.entity_id===payload.entity_id);
         if(payload.hvac_mode)device.state=payload.hvac_mode;
-        else if(payload.temperature!=null)device.attributes.temperature=payload.temperature;
-        else device.state=req.url.endsWith('turn_on')?'on':'off';
+        if(payload.temperature!=null)device.attributes.temperature=payload.temperature;
+        if(req.url.includes('/services/switch/'))device.state=req.url.endsWith('turn_on')?'on':'off';
         device.last_updated=new Date().toISOString();res.end('[]');
       });
     }
@@ -37,21 +42,22 @@ const http = require('node:http');
     } else {res.statusCode=404;res.end('{}');}
   });
   await new Promise(resolve=>fakeHA.listen(19098,'127.0.0.1',resolve));
-  const server = spawn('python3', ['-m', 'picot_hc', '--config', 'options.example.json', '--data', data, '--port', '19099'], {cwd: root, env:{...process.env, HC_HA_API:'http://127.0.0.1:19098/api', HC_HA_TOKEN:'browser-test-token'}});
+  const server = spawn('python3', ['-m', 'picot_hc', '--config', configPath, '--data', data, '--port', '19099'], {cwd: root, env:{...process.env, HC_HA_API:'http://127.0.0.1:19098/api', HC_HA_TOKEN:'browser-test-token'}});
   let browser;
   try {
     browser = await chromium.launch({headless: true});
     const page = await browser.newPage({viewport: {width: 1280, height: 1000}});
     // Local HA over HTTP has getRandomValues, but no randomUUID.
     await page.addInitScript(()=>Object.defineProperty(crypto,'randomUUID',{value:undefined,configurable:true}));
+    page.setDefaultTimeout(30000);
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     for(let i=0;i<50;i++) {
       try { await page.goto('http://127.0.0.1:19099'); break; }
       catch(error) { if(i===49) throw error; await new Promise(resolve=>setTimeout(resolve,100)); }
     }
-    const form = page.locator('form').first();
+    const form = page.locator('form.temperature-settings').first();
     await form.waitFor();
-    assert.equal(await page.locator('form').count(), 3);
+    assert.equal(await page.locator('form.temperature-settings').count(), 3);
     await page.waitForFunction(()=>document.querySelectorAll('.forecast-day').length===5);
     assert.match(await page.locator('#weather-current').textContent(), /Bewolkt/);
     assert.match(await page.locator('#weather-current').textContent(), /20,7 °C/);
@@ -112,6 +118,41 @@ const http = require('node:http');
     await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd · 19.5 °C'));
     assert.equal(deviceCalls.length,5);
     assert.deepEqual(deviceCalls[4],{path:'/api/services/climate/set_temperature',payload:{entity_id:'climate.huiskamer',temperature:19.5}});
+    const schedule=page.locator('.schedule-form');
+    for(let day=0;day<7;day++){
+      await schedule.getByRole('button',{name:'Moment toevoegen'}).click();
+      const row=schedule.locator('.schedule-row').last();
+      await row.locator('[name=day]').selectOption(String(day));
+      await row.locator('[name=time]').fill('00:00');
+      await row.locator('[name=temperature]').fill('20.5');
+    }
+    await page.evaluate(()=>refresh());
+    assert.equal(await schedule.locator('.schedule-row').count(),7,'Refresh retains unsaved schedule');
+    await schedule.getByRole('button',{name:'Schema opslaan'}).click();
+    await page.waitForFunction(()=>document.querySelector('.schedule-save-status').textContent==='Schema opgeslagen.');
+    await page.reload();
+    await page.waitForFunction(()=>document.querySelectorAll('.schedule-row').length===7);
+    assert.equal(deviceCalls.length,5,'Saving a disabled schedule must not dispatch');
+    await schedule.locator('[name=enabled]').check();
+    await schedule.getByRole('button',{name:'Schema opslaan'}).click();
+    await page.waitForFunction(()=>current?.commands?.[0]?.origin==='schedule' && current.commands[0].status==='confirmed');
+    assert.equal(deviceCalls.length,6);
+    assert.deepEqual(deviceCalls[5],{path:'/api/services/climate/set_temperature',payload:{entity_id:'climate.huiskamer',temperature:20.5,hvac_mode:'heat'}});
+    const scheduledId=await page.evaluate(()=>current.commands[0].id);
+    // Simulate a physical/HA thermostat adjustment, without going through HC.
+    cv.attributes.temperature=18.5;cv.last_updated=new Date().toISOString();
+    await page.waitForFunction(()=>document.querySelector('#schedule-status').textContent.includes('Handmatige wijziging'),null,{timeout:45000});
+    assert.equal(deviceCalls.length,6,'Manual override must not be overwritten');
+    await schedule.getByRole('button',{name:'HC hervatten'}).click();
+    await page.waitForFunction(id=>current?.commands?.[0]?.id!==id && current?.commands?.[0]?.origin==='schedule' && current.commands[0].status==='confirmed',scheduledId);
+    assert.equal(deviceCalls.length,7);
+    assert.equal(cv.attributes.temperature,20.5);
+    await schedule.locator('[name=enabled]').uncheck();
+    await schedule.getByRole('button',{name:'Schema opslaan'}).click();
+    await page.waitForFunction(()=>document.querySelector('.schedule-save-status').textContent==='Schema opgeslagen.');
+    await page.reload();
+    await page.waitForFunction(()=>document.querySelector('#schedule-status').textContent==='Schema staat uit.');
+    assert.equal(deviceCalls.length,7);
     await page.setViewportSize({width:390,height:844});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     assert.deepEqual(errors, []);

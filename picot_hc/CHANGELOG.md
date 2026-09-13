@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-dev.5
+
+- Shelly-vermogensmeter en energiemeter gekoppeld aan airco boven.
+- Lege velden in bestaande configuratie worden voor deze airco automatisch aangevuld.
+
 ## 0.1.0-dev.4
 
 - Huidige Nordpool-prijsbron als werkelijk tarief bevestigd door gebruiker.

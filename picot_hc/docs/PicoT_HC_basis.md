@@ -127,7 +127,8 @@ Bron: door Alex ingevulde Excel en screenshots uit dit gesprek. Dit is de bekend
 | Vermogen beneden | `sensor.kwh_meter_airco_vermogen` | HomeWizard, W |
 | Energie beneden | `sensor.kwh_meter_airco_energie_import` | Cumulatieve kWh controleren |
 | Airco boven | `climate.19791209313101_climate` | Midea; onder meer heat en dry gemeld |
-| Energie/vermogen boven | Midea-attributen | Bruikbaarheid/eenheden tijdens bedrijf controleren; aparte meter nog niet beschikbaar |
+| Vermogen boven | `sensor.shellyplugsg3_d0cf13c907e0_vermogen` | Shelly, W; gecorrigeerde entiteitenlijst |
+| Energie boven | `sensor.shellyplugsg3_d0cf13c907e0_energie` | Shelly, kWh; cumulatieve meterstand |
 | Cv-thermostaat | `climate.huiskamer` | Remeha; actuele attributen nog nodig |
 | Cv-status | `binary_sensor.huiskamer_status` | Vertraagd; exacte betekenis nog vaststellen |
 | Badkamer schakelen | `switch.1_5_3_badkamer_verwarming_badkamer` | Elektrische verwarming |

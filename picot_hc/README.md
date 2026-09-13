@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.4** — zelfstandige observatiebasis voor Home Assistant.
+Versie **0.1.0-dev.5** — zelfstandige observatiebasis voor Home Assistant.
 
 ## Wat deze versie doet
 
@@ -77,3 +77,13 @@ HA-installatie vanuit de bestaande repository en bronattributen testen; Ecowitt 
 Gebruikte interfaces: [HA REST API](https://developers.home-assistant.io/docs/api/rest/), [appconfiguratie](https://developers.home-assistant.io/docs/apps/configuration/), [appcommunicatie](https://developers.home-assistant.io/docs/apps/communication/).
 
 HC staat als eigen map `picot_hc/` naast `picot_hems/` en `picot_energy_devices/`. Alleen de distributierepository wordt gedeeld. HC heeft een eigen container, versie, configuratie, Ingress-paneel en database; HEMS hoeft niet te draaien.
+
+### Airco boven: Shelly-meter
+
+De zone boven gebruikt `sensor.shellyplugsg3_d0cf13c907e0_vermogen` (W) en
+`sensor.shellyplugsg3_d0cf13c907e0_energie` (kWh), volgens de gecorrigeerde
+entiteitenlijst. Bij bestaande configuraties worden lege meetvelden voor
+`boven` met apparaat `climate.19791209313101_climate` automatisch aangevuld.
+Zelf ingevulde entiteiten blijven behouden. Lege velden gebruiken hier dus de
+bevestigde standaardmeters. Op het dashboard verschijnen vermogen en cumulatieve
+energie; verkeerde eenheden of ontbrekende sensoren blijven herkenbaar.

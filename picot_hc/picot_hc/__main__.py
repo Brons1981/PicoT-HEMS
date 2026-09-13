@@ -24,6 +24,15 @@ class Runtime:
         self.config = copy.deepcopy(config)
         saved_settings = store.settings()
         for zone in self.config['zones']:
+            # Existing Supervisor options retain blank meter fields after updates.
+            # Only supply defaults for Alex's confirmed upstairs air conditioner.
+            if zone['id'] == 'boven' and zone.get('device') == 'climate.19791209313101_climate':
+                for key, entity in {
+                    'power': 'sensor.shellyplugsg3_d0cf13c907e0_vermogen',
+                    'energy': 'sensor.shellyplugsg3_d0cf13c907e0_energie',
+                }.items():
+                    if not zone.get(key):
+                        zone[key] = entity
             zone.update(saved_settings.get(zone['id'], {}))
         validate(self.config)
         previous = store.latest() or {}

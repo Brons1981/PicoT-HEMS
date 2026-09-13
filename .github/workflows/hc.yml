@@ -1,0 +1,36 @@
+name: PicoT HC
+
+on:
+  pull_request:
+    paths: ["picot_hc/**", ".github/workflows/hc.yml"]
+  push:
+    branches: [main]
+    paths: ["picot_hc/**", ".github/workflows/hc.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: HC tests
+        working-directory: picot_hc
+        run: python -m unittest discover -s tests -v
+      - name: Dashboard syntax
+        run: node --check picot_hc/picot_hc/web/app.js
+      - name: Build independent app container
+        run: docker build --tag picot-hc:test picot_hc
+      - name: Verify container package and assets
+        run: >-
+          docker run --rm --entrypoint python picot-hc:test -c
+          "import picot_hc.__main__; from pathlib import Path; assert Path('/app/picot_hc/web/index.html').is_file()"

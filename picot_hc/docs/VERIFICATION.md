@@ -56,3 +56,19 @@ van de gemelde 0 mm is niet beschikbaar in deze sessie.
 Definitieve dev.4-weergave: neerslaghoeveelheid en bijbehorende toelichting zijn
 verwijderd. Bestaande browsercontrole aangepast om afwezigheid van deze regels
 en behoud van het weertype te controleren.
+
+## Bronbediening — 0.1.0-dev.6
+
+35 Python-tests geslaagd. Twaalf nieuwe controles gebruiken een echte lokale
+HTTP-server en SQLite voor opdrachtpayloads, onafhankelijke terugmelding, oude
+uitlezingen, idempotentie, grenzen/stappen/eenheid, afwijzingen, dubbel verzoek,
+timeout, herstart, opslagfouten, uit-preëmptie en toegangscontrole. Een mislukte
+opslagtransactie verstuurt geen opdracht en behoudt een eerdere lopende opdracht.
+JavaScript-syntaxis en git diff --check slagen. Lokale Ruff/Mypy-executables zijn
+niet beschikbaar; de bestaande repositorycontroles draaien in GitHub.
+
+De CI-browsercontrole is uitgebreid met modus wijzigen, temperatuur instellen,
+uitzetten, onafhankelijke bevestiging en geen replay bij herladen, via een
+gesimuleerde HA-server. De CI-containerbuild en browsertest moeten op de PR slagen.
+Geen echte HA-services of apparaten aangestuurd vanuit deze ontwikkelsessie.
+De geïnstalleerde broncapaciteiten en fysieke terugmelding zijn nog niet live getest.

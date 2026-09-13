@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.5** — zelfstandige observatiebasis voor Home Assistant.
+Versie **0.1.0-dev.6** — zelfstandige meting en handmatige bronbediening voor Home Assistant.
 
 ## Wat deze versie doet
 
@@ -10,7 +10,7 @@ Versie **0.1.0-dev.5** — zelfstandige observatiebasis voor Home Assistant.
 - Laat ontbrekende entiteiten en eenheidsproblemen zien. Houdt laatst ontvangen gegevens zichtbaar bij verbindingsverlies, gemarkeerd als verouderd.
 - Biedt temperatuurinstellingen per zone op het dashboard; entiteiten en vochtgrenzen blijven in de HA-appconfiguratie.
 
-Er is geen afhankelijkheid van PicoT HEMS. Deze versie stuurt geen apparaten aan. Schema-editor, badkamerknop, woningmodel, kostenvergelijking en automatische prijsoptimalisatie volgen volgens `docs/PicoT_HC_basis.md`.
+Er is geen afhankelijkheid van PicoT HEMS. Deze versie bedient apparaten uitsluitend na een expliciete klik bij Bronbediening. Schema-editor, tijdelijk badkamervenster, woningmodel, kostenvergelijking en automatische prijsoptimalisatie volgen volgens `docs/PicoT_HC_basis.md`.
 
 ## Installeren vanuit de PicoT HEMS-repository
 
@@ -34,6 +34,34 @@ HC vraagt de dagelijkse verwachting elke 30 minuten via HA op; na een fout volgt
 
 Technische bron: [Home Assistant REST API](https://developers.home-assistant.io/docs/api/rest/), `weather.get_forecasts` met `type: daily` en `return_response`. Dit is een POST om gegevens op te vragen, geen opdracht aan een klimaatapparaat.
 
+## Handmatige bronbediening
+
+Onder Bronbediening staan cv, beide airco’s en badkamerverwarming. Kies een
+apparaatmodus en klik Modus toepassen, of stel afzonderlijk de apparaattemperatuur
+in. Uit blijft beschikbaar terwijl een eerdere opdracht wacht. Auto is de eigen
+apparaatmodus, niet de HC-planner. De comfortgrenzen op de zonekaarten sturen nog
+niets aan. Badkamer Aan is gewone handmatige bediening: zelf weer uitschakelen;
+het tijdelijke verwarmvenster is nog niet gebouwd.
+
+HC haalt vlak vóór een opdracht de actuele HA-status op en toetst mogelijkheden.
+Temperatuurbediening vereist Celsius, een enkel setpoint, gemelde grenzen en
+stapgrootte; ontbrekende gegevens blokkeren die knop. Beschikbare modi komen uit HA.
+Een HTTP-antwoord betekent alleen dat HA de opdracht heeft aangenomen. HC wacht
+op een nieuwe uitlezing die de gevraagde instelling toont. Activiteit en gemeten
+vermogen blijven apart; een bevestigde instelling bewijst niet dat er warmte is.
+
+Opdrachten blijven bewaard, ook na herstart. Geen automatische herhaling bij fout,
+timeout of herstart. Het dashboard toont de laatste twintig opdrachten.
+`command_timeout_seconds` bepaalt de wachttijd (30–900, standaard 300 seconden).
+Na een herstart krijgt een lopende opdracht de status onderbroken; controleer de
+werkelijke apparaatstand voordat je een nieuwe opdracht geeft.
+
+Het basisschema beneden, automatische overrides via thermostaat/HA, HC hervatten
+en deurvertragingen zijn vastgelegd in [HC-ADR-012](docs/HC-ADR-012-source-control.md).
+Ze worden in de volgende zoneregelingsstap gekoppeld en zijn nu niet actief.
+Handmatige bediening via thermostaat/HA wordt door deze versie niet teruggedraaid:
+er draait immers geen automatische HC-regeling.
+
 ## Configuratie
 
 Minimum, gewenste temperatuur en maximum staan per zone op het dashboard. Klik op Opslaan; herstarten is niet nodig. HC bewaart deze waarden in zijn eigen database. Per zone gelden de appopties als beginwaarden totdat je op het dashboard opslaat. Daarna hebben de dashboardwaarden voorrang, ook na herstart of update. Een leeg veld wordt opgeslagen als niet ingesteld.
@@ -42,7 +70,7 @@ Entiteiten en overige configuratie staan in de HA-appopties. Herstart HC na wijz
 
 - `zones`: drie zones met apparaat, temperatuur, vocht, vermogen en energie-entiteiten. Een lege sensornaam betekent nog niet gekoppeld.
 - `minimum`, `target`, `maximum`: optionele temperatuurgrenzen per zone; nog geen numerieke defaults. Minimum ≤ doel ≤ maximum. Deze versie toont/bewaart ze, maar regelt er nog niet op.
-- `humidity_min`, `humidity_target`, `humidity_max`: aanvankelijk 40, 50 en 60. In deze versie alleen instellingen, geen ontvochtigingsopdrachten. Automatische vochtregeling is eerst voorzien voor boven.
+- `humidity_min`, `humidity_target`, `humidity_max`: aanvankelijk 40, 50 en 60. Deze grenzen activeren geen automatische ontvochtiging; de apparaatmodus dry kan handmatig worden beproefd. Automatische vochtregeling is eerst voorzien voor boven.
 - `presence`: voorlopig iPhone-tracker, later te vervangen door het juiste `person`-ID. UniFi is niet toegevoegd.
 - `price_entity` en `price_attributes`: standaard de aangeleverde Nordpool-entiteit en `raw_today`, `raw_tomorrow`. Elke rij moet `start`, `end` met tijdzone en numerieke `value` hebben. Numerieke lijsten zonder tijdstippen worden niet geïnterpreteerd.
 - Prijzen ondersteunen EUR/kWh en EUR/MWh (ook met €-symbool). Negatieve prijzen zijn toegestaan. Geen invulling van ontbrekende tijdvakken, geen eigen belastingen toegevoegd.
@@ -53,7 +81,7 @@ Entiteiten en overige configuratie staan in de HA-appopties. Herstart HC na wijz
 
 ## Meetkwaliteit en grenzen
 
-Een geslaagde HA-uitlezing bewijst alleen dat HA bereikbaar is. Bron-`last_updated` en ontvangsttijd worden afzonderlijk opgeslagen. Een ongewijzigde sensor kan een oude `last_updated` hebben zonder defect te zijn; deze versie stelt nog geen sensor-specifieke rapportagekwaliteit vast. Vóór sturing moeten die verwachtingen per sensor worden geconfigureerd.
+Een geslaagde HA-uitlezing bewijst alleen dat HA bereikbaar is. Bron-`last_updated` en ontvangsttijd worden afzonderlijk opgeslagen. Een ongewijzigde sensor kan een oude `last_updated` hebben zonder defect te zijn; deze versie stelt nog geen sensor-specifieke rapportagekwaliteit vast. Vóór automatische regeling moeten die verwachtingen per sensor worden geconfigureerd. Handmatige bronbediening gebruikt een verse HA-uitlezing, die geen onafhankelijke fysieke meting garandeert.
 
 Statussen unknown/unavailable blijven onbekend, ook voor aanwezigheid. Verkeerde numerieke eenheden worden geweigerd. De cv-status wordt zonder interpretatie getoond. Gas omvat ook tapwater. Midea-energieattributen worden nog niet gebruikt als betrouwbare energiemeter. Geen COP, gas-toewijzing of besparing wordt afgeleid.
 
@@ -72,7 +100,7 @@ Open lokaal `http://127.0.0.1:8099`. Zonder HA-token toont de app ontbrekende ge
 
 ## Vervolg
 
-HA-installatie vanuit de bestaande repository en bronattributen testen; Ecowitt koppelen; daarna bronbediening en metingen, adviesplanner en uiteindelijk automatische regeling per zone. De oorspronkelijke ADR’s zijn opgenomen onder `docs/`.
+HA-installatie vanuit de bestaande repository en bronattributen testen; Ecowitt koppelen; bronbediening live controleren; daarna basisschema, override, deurregeling en adviesplanner en uiteindelijk automatische regeling per zone. De oorspronkelijke ADR’s zijn opgenomen onder `docs/`.
 
 Gebruikte interfaces: [HA REST API](https://developers.home-assistant.io/docs/api/rest/), [appconfiguratie](https://developers.home-assistant.io/docs/apps/configuration/), [appcommunicatie](https://developers.home-assistant.io/docs/apps/communication/).
 

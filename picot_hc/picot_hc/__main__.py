@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.error import HTTPError
 
+from .control import Control
 from .weather import DEFAULT_ENTITY, WeatherReader, forecast_view
 from .core import Store, fetch_states, snapshot, validate, number
 
@@ -35,11 +36,13 @@ class Runtime:
                         zone[key] = entity
             zone.update(saved_settings.get(zone['id'], {}))
         validate(self.config)
+        self.control = Control(self.config, store, url, token)
         previous = store.latest() or {}
         self.weather = WeatherReader(self.config.get('weather_entity', DEFAULT_ENTITY), previous.get('weather'))
         self.connection = 'starting'
         self.error = None
         self.stop = threading.Event()
+        self.poll_now = threading.Event()
 
     def update_settings(self, payload):
         keys = {'minimum', 'target', 'maximum'}
@@ -70,22 +73,27 @@ class Runtime:
 
     def collect(self):
         try:
+            started = time.time()
             states = fetch_states(self.url, self.token)
             now = time.time()
+            self.control.observe(states, started, now)
             data = snapshot(self.config, states, now)
             data['weather'] = self.weather.collect(states, now, self.url, self.token)
             self.store.save(data, self.config['retention_days'])
             self.connection, self.error = 'connected', None
         except HTTPError as exc:
+            self.control.connected = False
             self.connection, self.error = 'disconnected', 'HA antwoordt met HTTP ' + str(exc.code)
         except Exception as exc:
+            self.control.connected = False
             # No URLs, tokens or remote exception bodies in logs or responses.
             self.connection, self.error = 'disconnected', 'Ophalen of opslaan mislukt (' + type(exc).__name__ + ')'
 
     def run(self):
         while not self.stop.is_set():
             self.collect()
-            self.stop.wait(self.config['poll_seconds'])
+            self.poll_now.wait(self.config['poll_seconds'])
+            self.poll_now.clear()
 
     def current(self):
         data = self.store.latest()
@@ -105,6 +113,9 @@ class Runtime:
         weather = data['weather']
         weather['forecast'] = forecast_view(weather.get('forecast'), time.time(),
             'HA-verbinding niet actueel.' if self.connection != 'connected' or age is None or age > self.config['stale_seconds'] else None)
+        data['sources'] = self.control.sources(time.time(), self.config['stale_seconds'])
+        data['commands'] = self.control.records()[:20]
+        data['control_mode'] = 'manual'
         data['csrf_token'] = self.csrf_token
         data.update(connection=self.connection, error=self.error, age_seconds=age,
                     stale=age is None or age > self.config['stale_seconds'])
@@ -122,7 +133,8 @@ def handler(runtime, ingress):
             if ingress and self.client_address[0] != '172.30.32.2':
                 self.send_error(403)
                 return
-            if urlsplit(self.path).path != '/api/settings':
+            path = urlsplit(self.path).path
+            if path not in ('/api/settings', '/api/commands'):
                 self.send_error(404)
                 return
             if not secrets.compare_digest(self.headers.get('X-HC-CSRF', ''), runtime.csrf_token):
@@ -135,7 +147,10 @@ def handler(runtime, ingress):
                 if not 0 < length <= 4096:
                     raise ValueError('Ongeldige verzoekgrootte.')
                 payload = json.loads(self.rfile.read(length))
-                result = runtime.update_settings(payload)
+                result = (runtime.update_settings(payload) if path == '/api/settings' else
+                          {'command': runtime.control.submit(payload, runtime.config['stale_seconds'])})
+                if path == '/api/commands':
+                    runtime.poll_now.set()
                 self.send_json(200, result)
             except (ValueError, TypeError, UnicodeError) as exc:
                 self.send_json(400, {'error': str(exc)})
@@ -200,6 +215,7 @@ def main():
         server.serve_forever()
     finally:
         rt.stop.set()
+        rt.poll_now.set()
         server.server_close()
 
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-dev.4
+
+- Huidige Nordpool-prijsbron als werkelijk tarief bevestigd door gebruiker.
+- Neerslaghoeveelheid uit de dagverwachting verwijderd op verzoek; weertype en neerslagkans blijven zichtbaar.
+
 ## 0.1.0-dev.3
 
 - Weerkaart via weather.buienradar met actuele metingen en dagverwachting.

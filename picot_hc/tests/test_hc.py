@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError
 
-from picot_hc.core import Store, snapshot, validate, prices, fetch_states, observation
+from picot_hc.core import Store, snapshot, validate, prices, fetch_states, observation, tariff_confirmed
 from picot_hc.__main__ import Runtime, handler
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +43,7 @@ class HC(unittest.TestCase):
         with self.assertRaises(ValueError):validate(self.config)
 
     def test_prices_explicit_quarters_negative_unit_conversion_and_gaps(self):
+        self.config['confirmed_price_entity'] = ''
         s=self.state('10','EUR/MWh')
         s['attributes']['raw_today']=[{'start':'2026-09-13T10:00:00+02:00','end':'2026-09-13T10:15:00+02:00','value':-20},{'start':'2026-09-13T10:30:00+02:00','end':'2026-09-13T10:45:00+02:00','value':150}]
         rows,warnings=prices(s,self.config,NOW)
@@ -206,5 +207,15 @@ class HC(unittest.TestCase):
         self.assertEqual(cm.exception.code, 503)
         self.assertEqual(rt.config, before)
         self.assertEqual(rt.store.settings(), {})
+
+    def test_price_confirmation_is_source_bound_and_migrates_old_options(self):
+        self.config.pop('confirmed_price_entity', None)
+        self.config['price_basis_confirmed'] = False
+        self.assertTrue(tariff_confirmed(self.config))
+        self.assertTrue(snapshot(self.config, {}, NOW)['price_basis_confirmed'])
+        self.config['price_entity'] = 'sensor.other_tariff'
+        self.assertFalse(tariff_confirmed(self.config))
+        self.config['price_basis_confirmed'] = True
+        self.assertTrue(tariff_confirmed(self.config))
 
 if __name__=='__main__':unittest.main()

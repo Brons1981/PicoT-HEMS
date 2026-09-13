@@ -1,6 +1,6 @@
 {
   "name": "PicoT Home Climate",
-  "version": "0.1.0-dev.3",
+  "version": "0.1.0-dev.4",
   "slug": "picot_hc",
   "description": "Zelfstandige klimaatobservatie met eigen prijsgrafiek",
   "arch": [
@@ -73,7 +73,8 @@
         "humidity_max": 60
       }
     ],
-    "weather_entity": "weather.buienradar"
+    "weather_entity": "weather.buienradar",
+    "confirmed_price_entity": "sensor.nordpool_kwh_nl_eur_3_095_0"
   },
   "schema": {
     "outdoor": "str",
@@ -109,7 +110,8 @@
         "humidity_max": "float(0,100)"
       }
     ],
-    "weather_entity": "str?"
+    "weather_entity": "str?",
+    "confirmed_price_entity": "str?"
   },
   "url": "https://github.com/Brons1981/PicoT-HEMS/tree/main/picot_hc"
 }

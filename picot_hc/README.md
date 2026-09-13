@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.3** — zelfstandige observatiebasis voor Home Assistant.
+Versie **0.1.0-dev.4** — zelfstandige observatiebasis voor Home Assistant.
 
 ## Wat deze versie doet
 
@@ -26,7 +26,7 @@ Gegevens staan in `/data/hc.sqlite3` binnen de app. Ze blijven behouden bij hers
 
 ## Weer en verwachting
 
-De weerkaart gebruikt standaard `weather.buienradar`, ook bij een update van bestaande HC-opties. Je ziet actuele toestand, temperatuur, gevoelstemperatuur, luchtvochtigheid, wind, windstoten en luchtdruk voor zover beschikbaar. De dagverwachting toont maximum/minimum, neerslag en wind met de eenheden van de bron. Ontbrekende waarden worden geen nul.
+De weerkaart gebruikt standaard `weather.buienradar`, ook bij een update van bestaande HC-opties. Je ziet actuele toestand, temperatuur, gevoelstemperatuur, luchtvochtigheid, wind, windstoten en luchtdruk voor zover beschikbaar. De dagverwachting toont weertype, maximum/minimum, wind en beschikbare neerslagkans. De neerslaghoeveelheid in mm wordt niet getoond. Ontbrekende waarden worden geen nul.
 
 HC vraagt de dagelijkse verwachting elke 30 minuten via HA op; na een fout volgt na 5 minuten een nieuwe poging. De laatste verwachting blijft bewaard, met een foutmelding/verouderd-markering. Na twee uur zonder succesvolle ontvangst is deze eveneens verouderd. De bronpublicatietijd van een forecast is niet beschikbaar: ontvangsttijd bewijst geen recente modelupdate. Dagen in het verleden worden niet getoond.
 
@@ -46,7 +46,8 @@ Entiteiten en overige configuratie staan in de HA-appopties. Herstart HC na wijz
 - `presence`: voorlopig iPhone-tracker, later te vervangen door het juiste `person`-ID. UniFi is niet toegevoegd.
 - `price_entity` en `price_attributes`: standaard de aangeleverde Nordpool-entiteit en `raw_today`, `raw_tomorrow`. Elke rij moet `start`, `end` met tijdzone en numerieke `value` hebben. Numerieke lijsten zonder tijdstippen worden niet geïnterpreteerd.
 - Prijzen ondersteunen EUR/kWh en EUR/MWh (ook met €-symbool). Negatieve prijzen zijn toegestaan. Geen invulling van ontbrekende tijdvakken, geen eigen belastingen toegevoegd.
-- `price_basis_confirmed`: laat false totdat de betekenis van de bronprijzen, inclusief belastingen/opslagen, gecontroleerd is. De grafiek toont tot die tijd expliciet bronprijzen.
+- `confirmed_price_entity`: de door Alex bevestigde werkelijke prijsbron is `sensor.nordpool_kwh_nl_eur_3_095_0`. Deze bevestiging geldt ook bij bestaande opties zonder dit veld. De bedragen worden ongewijzigd gebruikt, zonder extra belasting of opslag. Bij een andere prijsentiteit geldt deze bevestiging niet.
+- `price_basis_confirmed`: handmatige bevestiging voor een andere gecontroleerde prijsbron. Om een bevestiging in te trekken: maak `confirmed_price_entity` leeg en zet deze vlag op false.
 - `gas_price`: 1.41197 €/m³; `gas_valid_until`: 2027-06-14, volgens gebruiker. Er is nog geen kostenplanner die dit tarief toepast.
 - `poll_seconds`: 10–300, standaard 30. `stale_seconds`: standaard 120 en minstens tweemaal pollinterval. `retention_days`: 1–365, standaard 90.
 

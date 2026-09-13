@@ -72,3 +72,11 @@ uitzetten, onafhankelijke bevestiging en geen replay bij herladen, via een
 gesimuleerde HA-server. De CI-containerbuild en browsertest moeten op de PR slagen.
 Geen echte HA-services of apparaten aangestuurd vanuit deze ontwikkelsessie.
 De geïnstalleerde broncapaciteiten en fysieke terugmelding zijn nog niet live getest.
+
+## Lokale HTTP-bediening — 0.1.0-dev.7
+
+35 Python-tests geslaagd; JavaScript-syntaxis en diff gecontroleerd. De
+browsercontrole schakelt randomUUID uit en controleert echte modus-,
+temperatuur- en uitopdrachten met terugmelding via gesimuleerd HA. Een
+voorbereidingsfout moet zichtbaar zijn, zonder verzending of vastgelopen knop.
+Browser- en containercontrole draaien in CI; live HA-controle volgt na update.

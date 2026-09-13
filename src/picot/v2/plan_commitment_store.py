@@ -1504,13 +1504,17 @@ class ActivePlanCommitmentStore:
                 cursor = segment.ends_at
             if not retained or cursor != parts[-1].ends_at:
                 raise ValueError("pending market window cannot be removed or relocated")
+            elapsed_export_wh = old.expected_export_wh - sum(energy)
+            # Match the binding energy-balance tolerance; do not hide real over-allocation.
+            if -1e-6 <= elapsed_export_wh < 0:
+                elapsed_export_wh = 0.0
             bound = replace(
                 old,
                 plan_id=plan.plan_id,
                 snapshot_id=plan.snapshot_id,
                 segment_ids=tuple(s.segment_id for s in retained),
                 segment_export_wh=tuple(energy),
-                elapsed_planned_export_wh=old.expected_export_wh - sum(energy),
+                elapsed_planned_export_wh=elapsed_export_wh,
                 original_plan_id=old.original_plan_id or old.plan_id,
                 original_segment_ids=old.original_segment_ids or old.segment_ids,
             )

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.259
+
+- Voorkomt afwijzing van behouden marktroutes door een negatieve afrondingsrest; echte ongeldige energietoewijzingen blijven afgewezen.
+- Behoudt de laatste werkelijke SOC-historie bij een tijdelijke ophaalfout, met zichtbare verouderingsmelding en ongewijzigd meeteindpunt.
+- Begrensde PicoT-sensorattributen voor Home Assistant Recorder; volledige details blijven in dashboard en diagnostiek.
+- Planningsregels ongewijzigd. Dev.254 blijft de afgesproken pre-stable terugvalbasis.
+
 ## 2.0.0-dev.258
 
 - Houdt aanhoudende extra huisbelasting tijdelijk bij in de prognose voor alle laadkandidaten.

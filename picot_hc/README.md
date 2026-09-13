@@ -1,10 +1,10 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.2** — zelfstandige observatiebasis voor Home Assistant.
+Versie **0.1.0-dev.3** — zelfstandige observatiebasis voor Home Assistant.
 
 ## Wat deze versie doet
 
-- Leest HA-statussen iedere 30 seconden met uitsluitend GET-verzoeken.
+- Leest HA-statussen iedere 30 seconden. De dagverwachting wordt afzonderlijk opgevraagd via de vaste uitleesactie weather.get_forecasts.
 - Registreert drie zones, aanwezigheid, buitenmeting, cv, gas en CO₂ in een eigen SQLite-database.
 - Toont een lokaal dashboard, expliciete prijsintervallen en 24 uur temperatuurgeschiedenis.
 - Laat ontbrekende entiteiten en eenheidsproblemen zien. Houdt laatst ontvangen gegevens zichtbaar bij verbindingsverlies, gemarkeerd als verouderd.
@@ -23,6 +23,16 @@ Deze installatievorm is voorbereid; Docker-build, Supervisor-installatie en live
 5. Start de app en open de webinterface via HA. De interface gebruikt Ingress; er is geen externe poort gepubliceerd. De HA-verbinding gebruikt het Supervisor-token intern.
 
 Gegevens staan in `/data/hc.sqlite3` binnen de app. Ze blijven behouden bij herstart/update. Verwijderen van de app kan de gegevens verwijderen. Gebruik een HA-back-up inclusief deze app; back-upmodus is cold.
+
+## Weer en verwachting
+
+De weerkaart gebruikt standaard `weather.buienradar`, ook bij een update van bestaande HC-opties. Je ziet actuele toestand, temperatuur, gevoelstemperatuur, luchtvochtigheid, wind, windstoten en luchtdruk voor zover beschikbaar. De dagverwachting toont maximum/minimum, neerslag en wind met de eenheden van de bron. Ontbrekende waarden worden geen nul.
+
+HC vraagt de dagelijkse verwachting elke 30 minuten via HA op; na een fout volgt na 5 minuten een nieuwe poging. De laatste verwachting blijft bewaard, met een foutmelding/verouderd-markering. Na twee uur zonder succesvolle ontvangst is deze eveneens verouderd. De bronpublicatietijd van een forecast is niet beschikbaar: ontvangsttijd bewijst geen recente modelupdate. Dagen in het verleden worden niet getoond.
+
+`weather_entity` is aanpasbaar in de appopties; leeg schakelt het ophalen uit. De eigen buitentemperatuursensor blijft apart. Weermetingen en verwachtingen worden opgeslagen, maar sturen nog geen apparaten aan en vervangen geen ontbrekende buitensensor. De latere planner moet dagverwachtingen expliciet onderscheiden van uurgegevens.
+
+Technische bron: [Home Assistant REST API](https://developers.home-assistant.io/docs/api/rest/), `weather.get_forecasts` met `type: daily` en `return_response`. Dit is een POST om gegevens op te vragen, geen opdracht aan een klimaatapparaat.
 
 ## Configuratie
 

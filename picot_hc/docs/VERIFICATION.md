@@ -37,3 +37,11 @@ Installeer na merge vanuit de bestaande PicoT HEMS-repository, controleer dat de
   voor opslaan, herladen, conceptinvoer bij verversen, ongeldige grenzen en mobiele breedte.
 - Lokale Chromium-download loopt vast; de browsercontrole wordt in CI uitgevoerd.
 - Live update en Ingress-interactie van dev.2 zijn nog niet bevestigd.
+
+## Weer — 0.1.0-dev.3
+
+21 Python-tests omvatten echte HTTP-forecastresponse, cache/herstart, foutisolatie,
+tijdzones, eenheden, ontbrekende waarden en weigeren van redirects met HA-token.
+De browsercontrole is uitgebreid met actuele weergegevens en vijf forecastdagen
+via een gesimuleerde HA-server. CI-build en browserresultaat volgen bij de PR;
+echte HA-forecast en Ingress-weergave van dev.3 moeten na update worden bevestigd.

@@ -5,10 +5,23 @@ const {mkdtempSync, rmSync} = require('node:fs');
 const {tmpdir} = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 (async () => {
   const data = mkdtempSync(path.join(tmpdir(), 'hc-browser-'));
   const root = path.resolve(__dirname, '..');
-  const server = spawn('python3', ['-m', 'picot_hc', '--config', 'options.example.json', '--data', data, '--port', '19099'], {cwd: root});
+  const weatherState = {entity_id:'weather.buienradar',state:'cloudy',last_updated:new Date().toISOString(),
+    attributes:{temperature:20.7,apparent_temperature:20.7,temperature_unit:'°C',humidity:81,
+      pressure:1021.3,pressure_unit:'hPa',wind_speed:9.72,wind_gust_speed:18,wind_speed_unit:'km/h',precipitation_unit:'mm'}};
+  const fakeHA = http.createServer((req,res) => {
+    res.setHeader('Content-Type','application/json');
+    if(req.method === 'GET' && req.url === '/api/states') res.end(JSON.stringify([weatherState]));
+    else if(req.method === 'POST' && req.url === '/api/services/weather/get_forecasts?return_response') {
+      req.resume();
+      res.end(JSON.stringify({service_response:{'weather.buienradar':{forecast:[1,2,3,4,5].map(days=>({datetime:new Date(Date.now()+days*86400000).toISOString(),condition:'rainy',temperature:18,templow:11,precipitation:0,wind_speed:12}))}}}));
+    } else {res.statusCode=404;res.end('{}');}
+  });
+  await new Promise(resolve=>fakeHA.listen(19098,'127.0.0.1',resolve));
+  const server = spawn('python3', ['-m', 'picot_hc', '--config', 'options.example.json', '--data', data, '--port', '19099'], {cwd: root, env:{...process.env, HC_HA_API:'http://127.0.0.1:19098/api', HC_HA_TOKEN:'browser-test-token'}});
   let browser;
   try {
     browser = await chromium.launch({headless: true});
@@ -21,6 +34,10 @@ const assert = require('node:assert/strict');
     const form = page.locator('form').first();
     await form.waitFor();
     assert.equal(await page.locator('form').count(), 3);
+    await page.waitForFunction(()=>document.querySelectorAll('.forecast-day').length===5);
+    assert.match(await page.locator('#weather-current').textContent(), /Bewolkt/);
+    assert.match(await page.locator('#weather-current').textContent(), /20,7 °C/);
+    assert.match(await page.locator('.forecast-day').first().textContent(), /Neerslag 0 mm/);
     await form.locator('[name=minimum]').fill('16');
     await form.locator('[name=target]').fill('19.5');
     await form.locator('[name=maximum]').fill('22');
@@ -44,6 +61,7 @@ const assert = require('node:assert/strict');
     if(browser) await browser.close();
     server.kill();
     await new Promise(resolve => server.exitCode !== null ? resolve() : server.once('exit',resolve));
+    await new Promise(resolve=>fakeHA.close(resolve));
     rmSync(data, {recursive:true,force:true});
   }
 })().catch(error => {console.error(error);process.exitCode=1;});

@@ -85,5 +85,52 @@ function renderZones(zones) {
     parts.form.sync(z.settings);
   }
 }
-async function refresh(){try{const [a,b]=await Promise.all([fetch('api/snapshot'),fetch('api/history')]);if(!a.ok||!b.ok)throw Error();const received=await a.json();if(current&&current.csrf_token!==received.csrf_token)settingsRevision=0;current=received;hist=await b.json();const d=current;document.body.classList.toggle('stale',d.stale||d.connection!=='connected');$('connection').textContent=d.connection==='connected'&&!d.stale?'HA verbonden — alleen lezen':'HA nog niet verbonden of gegevens verouderd';$('updated').textContent=d.collected?'Laatste ontvangst: '+fmt(d.collected):'Nog geen metingen ontvangen';$('error').textContent=d.error||'';if(d.settings_revision>=settingsRevision){settingsRevision=d.settings_revision;renderZones(d.zones);}$('warnings').textContent=d.warnings.join(' ');$('price-table').replaceChildren();for(const p of d.prices){const tr=el('tr');tr.append(el('td',fmt(p.start)),el('td',fmt(p.end)),el('td',p.value.toFixed(4)));$('price-table').append(tr);}$('shared').replaceChildren();for(const [name,s]of [['Buiten',d.outdoor],['Aanwezigheid',d.presence],['Cv-thermostaat',d.cv],['Cv-status (betekenis nog controleren)',d.cv_status],['Gas totaal, inclusief tapwater',d.gas],['CO₂ beneden',d.co2]])$('shared').append(el('div',name+': '+value(s)));$('shared').append(el('div','Gastarief: € '+d.gas_price.toLocaleString('nl-NL',{maximumFractionDigits:5})+'/m³ · geldig t/m '+d.gas_valid_until));$('history-note').textContent='Registratie sinds HC draait. Dit is meetgeschiedenis, geen voorspelling.';graphs();}catch(e){$('connection').textContent='Dashboard kan HC niet bereiken';document.body.classList.add('stale');}finally{setTimeout(refresh,15000);}}
+const weatherNames = {
+  cloudy: ['☁', 'Bewolkt'], sunny: ['☀', 'Zonnig'], partlycloudy: ['⛅', 'Halfbewolkt'],
+  rainy: ['🌧', 'Regen'], pouring: ['🌧', 'Zware regen'], snowy: ['❄', 'Sneeuw'],
+  'snowy-rainy': ['🌨', 'Natte sneeuw'], fog: ['🌫', 'Mist'], hail: ['🌨', 'Hagel'],
+  lightning: ['ϟ', 'Onweer'], 'lightning-rainy': ['⛈', 'Onweer met regen'],
+  windy: ['≋', 'Wind'], 'windy-variant': ['≋', 'Bewolkt en winderig'],
+  'clear-night': ['☾', 'Heldere nacht'], exceptional: ['!', 'Uitzonderlijk weer']
+};
+function weatherLabel(condition) { return weatherNames[condition] || ['—', condition || 'Onbekend']; }
+function forecastNumber(number, unit) {
+  return typeof number === 'number' && unit ? number.toLocaleString('nl-NL', {maximumFractionDigits:1}) + ' ' + unit : 'Niet beschikbaar';
+}
+function renderWeather(weather, stale) {
+  const box = $('weather-current'); box.replaceChildren();
+  const forecast = $('weather-forecast'); forecast.replaceChildren();
+  if (!weather) { $('weather-status').textContent = 'Nog geen weergegevens ontvangen.'; return; }
+  const condition = weather.condition;
+  const [symbol, name] = weatherLabel(condition.quality === 'available' ? condition.value : null);
+  const heading = el('div', undefined, 'weather-heading');
+  const icon = el('span', symbol, 'weather-icon'); icon.setAttribute('aria-hidden', 'true');
+  heading.append(icon, el('strong', condition.quality === 'available' ? name : value(condition)),
+    el('span', value(weather.metrics.temperature), 'weather-temperature'));
+  box.append(heading);
+  const facts = el('div', undefined, 'weather-facts');
+  for (const [key, label] of [['apparent_temperature', 'Gevoel'], ['humidity', 'Luchtvochtigheid'], ['wind_speed', 'Wind'], ['wind_gust_speed', 'Windstoten'], ['pressure', 'Luchtdruk']]) {
+    if (weather.metrics[key]) facts.append(el('span', label + ': ' + value(weather.metrics[key])));
+  }
+  box.append(facts);
+  $('weather-status').textContent = (stale ? 'Weergegevens niet actueel. ' : '') +
+    (condition.source_updated ? 'Bron bijgewerkt: ' + fmt(Date.parse(condition.source_updated)/1000) : 'Nog geen brontijd ontvangen.');
+  const f = weather.forecast;
+  if (f) for (const row of f.rows) {
+    const day = el('article', undefined, 'forecast-day');
+    const date = new Intl.DateTimeFormat('nl-NL', {timeZone:'Europe/Amsterdam', weekday:'short', day:'numeric', month:'short'}).format(new Date(row.time*1000));
+    const [glyph, description] = weatherLabel(row.condition);
+    day.append(el('strong', date), el('div', glyph + ' ' + description),
+      el('div', 'Max ' + forecastNumber(row.temperature, f.temperature_unit)),
+      el('div', 'Min ' + forecastNumber(row.templow, f.temperature_unit)),
+      el('div', 'Neerslag ' + forecastNumber(row.precipitation, f.precipitation_unit)),
+      el('div', 'Wind ' + forecastNumber(row.wind_speed, f.wind_speed_unit)));
+    if(row.precipitation_probability !== null) day.append(el('div', 'Neerslagkans ' + forecastNumber(row.precipitation_probability, '%')));
+    forecast.append(day);
+  }
+  $('forecast-status').textContent = !f || !f.rows.length ? (f?.error || 'Nog geen dagverwachting beschikbaar.') :
+    (f.stale ? 'Verouderde verwachting. ' : '') + (f.error ? f.error + ' ' : '') +
+    (f.received ? 'Ontvangen: ' + fmt(f.received) : '');
+}
+async function refresh(){try{const [a,b]=await Promise.all([fetch('api/snapshot'),fetch('api/history')]);if(!a.ok||!b.ok)throw Error();const received=await a.json();if(current&&current.csrf_token!==received.csrf_token)settingsRevision=0;current=received;hist=await b.json();const d=current;document.body.classList.toggle('stale',d.stale||d.connection!=='connected');$('connection').textContent=d.connection==='connected'&&!d.stale?'HA verbonden — alleen lezen':'HA nog niet verbonden of gegevens verouderd';$('updated').textContent=d.collected?'Laatste ontvangst: '+fmt(d.collected):'Nog geen metingen ontvangen';$('error').textContent=d.error||'';if(d.settings_revision>=settingsRevision){settingsRevision=d.settings_revision;renderZones(d.zones);}renderWeather(d.weather,d.stale||d.connection!=='connected');$('warnings').textContent=d.warnings.join(' ');$('price-table').replaceChildren();for(const p of d.prices){const tr=el('tr');tr.append(el('td',fmt(p.start)),el('td',fmt(p.end)),el('td',p.value.toFixed(4)));$('price-table').append(tr);}$('shared').replaceChildren();for(const [name,s]of [['Buiten',d.outdoor],['Aanwezigheid',d.presence],['Cv-thermostaat',d.cv],['Cv-status (betekenis nog controleren)',d.cv_status],['Gas totaal, inclusief tapwater',d.gas],['CO₂ beneden',d.co2]])$('shared').append(el('div',name+': '+value(s)));$('shared').append(el('div','Gastarief: € '+d.gas_price.toLocaleString('nl-NL',{maximumFractionDigits:5})+'/m³ · geldig t/m '+d.gas_valid_until));$('history-note').textContent='Registratie sinds HC draait. Dit is meetgeschiedenis, geen voorspelling.';graphs();}catch(e){$('connection').textContent='Dashboard kan HC niet bereiken';document.body.classList.add('stale');}finally{setTimeout(refresh,15000);}}
 window.addEventListener('resize',graphs);refresh();

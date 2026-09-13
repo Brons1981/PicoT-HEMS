@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-dev.3
+
+- Weerkaart via weather.buienradar met actuele metingen en dagverwachting.
+- Verwachting bewaren met ontvangsttijd, eenheden en fout-/verouderingsmelding.
+- Weer blijft informatie; automatische klimaatreacties volgen later.
+
 ## 0.1.0-dev.2
 
 - Minimum, gewenste temperatuur en maximum per zone instellen en opslaan op het dashboard.

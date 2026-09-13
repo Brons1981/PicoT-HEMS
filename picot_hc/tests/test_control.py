@@ -14,7 +14,7 @@ from picot_hc.__main__ import Runtime, handler
 from picot_hc.core import Store
 
 
-class ControlTests(unittest.TestCase):
+class ControlFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.config = json.loads((Path(__file__).parents[1] / 'options.example.json').read_text())
@@ -38,8 +38,9 @@ class ControlTests(unittest.TestCase):
                 if outer.apply:
                     state = outer.states[data['entity_id']]
                     if 'hvac_mode' in data: state['state'] = data['hvac_mode']
-                    elif 'temperature' in data: state['attributes']['temperature'] = data['temperature']
-                    else: state['state'] = 'on' if self.path.endswith('turn_on') else 'off'
+                    if 'temperature' in data: state['attributes']['temperature'] = data['temperature']
+                    if self.path.startswith('/api/services/switch/'):
+                        state['state'] = 'on' if self.path.endswith('turn_on') else 'off'
                 if outer.drop:
                     self.connection.shutdown(socket.SHUT_RDWR); self.connection.close(); return
                 self.send_response(outer.status); self.end_headers(); self.wfile.write(b'[]')
@@ -60,6 +61,8 @@ class ControlTests(unittest.TestCase):
     def submit(self, payload=None):
         return self.ctl.submit(payload or self.payload(), 120)
 
+
+class ControlTests(ControlFixture):
     def test_ack_is_not_feedback_and_old_read_cannot_confirm(self):
         p = self.payload(); command = self.submit(p)
         self.assertEqual(command['status'], 'awaiting_feedback')
@@ -151,7 +154,7 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(self.calls,[('/api/services/switch/turn_on',{'entity_id':entity})])
 
     def test_missing_source_unsupported_mode_and_failed_read_never_write(self):
-        for p in [self.payload(source='arbitrary'),self.payload(value='cool'),self.payload(field='service',value='turn_on')]:
+        for p in [self.payload(source='arbitrary'),self.payload(value='cool'),self.payload(field='service',value='turn_on'),self.payload(field='heating',value=20)]:
             with self.assertRaises(ValueError): self.submit(p)
         self.states[self.config['zones'][0]['device']]['state']='unavailable'
         with self.assertRaises(ValueError): self.submit()

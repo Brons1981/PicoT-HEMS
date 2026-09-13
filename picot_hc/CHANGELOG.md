@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-dev.9
+
+- Bewerkbaar weekschema beneden, standaard uit, met gekozen cv of airco.
+- Handmatige wijziging pauzeert tot volgend schemamoment of HC hervatten.
+- Actuele meting, comfortgrenzen, broncapaciteiten en achterdeur bewaken uitvoering.
+- Geen herhaling van onzekere opdrachten; schema en pauze blijven bewaard.
+
 ## 0.1.0-dev.8
 
 - Cv-temperatuurbediening hersteld wanneer climate.huiskamer geen stapgrootte meldt.

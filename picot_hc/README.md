@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.8** — zelfstandige meting en handmatige bronbediening voor Home Assistant.
+Versie **0.1.0-dev.9** — zelfstandige meting, bronbediening en opt-in basisschema beneden voor Home Assistant.
 
 ## Wat deze versie doet
 
@@ -10,7 +10,7 @@ Versie **0.1.0-dev.8** — zelfstandige meting en handmatige bronbediening voor 
 - Laat ontbrekende entiteiten en eenheidsproblemen zien. Houdt laatst ontvangen gegevens zichtbaar bij verbindingsverlies, gemarkeerd als verouderd.
 - Biedt temperatuurinstellingen per zone op het dashboard; entiteiten en vochtgrenzen blijven in de HA-appconfiguratie.
 
-Er is geen afhankelijkheid van PicoT HEMS. Deze versie bedient apparaten uitsluitend na een expliciete klik bij Bronbediening. Schema-editor, tijdelijk badkamervenster, woningmodel, kostenvergelijking en automatische prijsoptimalisatie volgen volgens `docs/PicoT_HC_basis.md`.
+Er is geen afhankelijkheid van PicoT HEMS. De bronbediening is handmatig; het basisschema beneden voert opdrachten uit nadat je dit inschakelt. Tijdelijk badkamervenster, woningmodel, kostenvergelijking en automatische prijsoptimalisatie volgen volgens `docs/PicoT_HC_basis.md`.
 
 ## Installeren vanuit de PicoT HEMS-repository
 
@@ -39,8 +39,7 @@ Technische bron: [Home Assistant REST API](https://developers.home-assistant.io/
 Onder Bronbediening staan cv, beide airco’s en badkamerverwarming. Kies een
 apparaatmodus en klik Modus toepassen, of stel afzonderlijk de apparaattemperatuur
 in. Uit blijft beschikbaar terwijl een eerdere opdracht wacht. Auto is de eigen
-apparaatmodus, niet de HC-planner. De comfortgrenzen op de zonekaarten sturen nog
-niets aan. Badkamer Aan is gewone handmatige bediening: zelf weer uitschakelen;
+apparaatmodus, niet de HC-planner. Het basisschema gebruikt minimum en maximum van de zonekaart beneden. Badkamer Aan is gewone handmatige bediening: zelf weer uitschakelen;
 het tijdelijke verwarmvenster is nog niet gebouwd.
 
 HC haalt vlak vóór een opdracht de actuele HA-status op en toetst mogelijkheden.
@@ -56,11 +55,31 @@ timeout of herstart. Het dashboard toont de laatste twintig opdrachten.
 Na een herstart krijgt een lopende opdracht de status onderbroken; controleer de
 werkelijke apparaatstand voordat je een nieuwe opdracht geeft.
 
-Het basisschema beneden, automatische overrides via thermostaat/HA, HC hervatten
-en deurvertragingen zijn vastgelegd in [HC-ADR-012](docs/HC-ADR-012-source-control.md).
-Ze worden in de volgende zoneregelingsstap gekoppeld en zijn nu niet actief.
-Handmatige bediening via thermostaat/HA wordt door deze versie niet teruggedraaid:
-er draait immers geen automatische HC-regeling.
+## Basisschema beneden
+
+Voeg op het dashboard weekdagen, tijden en temperaturen toe. Kies cv of airco
+beneden en sla op. Het schema start leeg en uit; inschakelen is een expliciete
+keuze. Je kunt het al voorbereiden terwijl de Ecowitt-sensoren nog ontbreken.
+Actieve uitvoering wacht op de gekoppelde benedenmeting en ingestelde minimum-
+en maximumtemperatuur. Maximale meetleeftijd staat op 900 seconden en is instelbaar.
+HC gebruikt `last_reported`, of `last_updated` als HA geen rapportagetijd geeft.
+
+De gekozen bron krijgt Verwarmen plus het schemadoel. De andere bron moet uit
+staan (ventilator mag blijven draaien); HC voert geen automatische bronwissel uit.
+Bij een wijziging via thermostaat, HA of HC pauzeert het schema tot het volgende
+schemamoment. Met **HC hervatten** neem je eerder de regeling terug. De status
+vermeldt de reden, het schemadoel en het volgende moment.
+
+Voor airco beneden gelden de achterdeurvertragingen: standaard 60 seconden open
+voor pauzeren en 120 seconden dicht voor hervatten, beide instelbaar. Onbekend
+betekent niet dicht. Uitschakelen van het schema laat de bestaande apparaatstand
+staan; gebruik Bronbediening als je het apparaat ook uit wilt zetten.
+
+Een fout of timeout wordt niet automatisch herhaald. Controleer de bron en kies
+HC hervatten. Na herstart wordt geen opdracht opnieuw afgespeeld. Een bestaande
+handmatige pauze blijft bestaan; anders wacht HC op het volgende schemamoment.
+Een onderbroken opdracht vereist expliciet hervatten. Zie
+[HC-ADR-013](docs/HC-ADR-013-downstairs-schedule.md) voor uitvoeringsgrenzen.
 
 ## Configuratie
 
@@ -81,7 +100,7 @@ Entiteiten en overige configuratie staan in de HA-appopties. Herstart HC na wijz
 
 ## Meetkwaliteit en grenzen
 
-Een geslaagde HA-uitlezing bewijst alleen dat HA bereikbaar is. Bron-`last_updated` en ontvangsttijd worden afzonderlijk opgeslagen. Een ongewijzigde sensor kan een oude `last_updated` hebben zonder defect te zijn; deze versie stelt nog geen sensor-specifieke rapportagekwaliteit vast. Vóór automatische regeling moeten die verwachtingen per sensor worden geconfigureerd. Handmatige bronbediening gebruikt een verse HA-uitlezing, die geen onafhankelijke fysieke meting garandeert.
+Een geslaagde HA-uitlezing bewijst alleen dat HA bereikbaar is. Bron-`last_updated` en ontvangsttijd worden afzonderlijk opgeslagen. Een ongewijzigde sensor kan een oude `last_updated` hebben zonder defect te zijn; deze versie stelt nog geen sensor-specifieke rapportagekwaliteit vast. Voor het basisschema geldt daarom de instelbare maximale meetleeftijd; stel deze passend bij de echte sensorrapportage in. Handmatige bronbediening gebruikt een verse HA-uitlezing, die geen onafhankelijke fysieke meting garandeert.
 
 Statussen unknown/unavailable blijven onbekend, ook voor aanwezigheid. Verkeerde numerieke eenheden worden geweigerd. De cv-status wordt zonder interpretatie getoond. Gas omvat ook tapwater. Midea-energieattributen worden nog niet gebruikt als betrouwbare energiemeter. Geen COP, gas-toewijzing of besparing wordt afgeleid.
 
@@ -100,7 +119,7 @@ Open lokaal `http://127.0.0.1:8099`. Zonder HA-token toont de app ontbrekende ge
 
 ## Vervolg
 
-HA-installatie vanuit de bestaande repository en bronattributen testen; Ecowitt koppelen; bronbediening live controleren; daarna basisschema, override, deurregeling en adviesplanner en uiteindelijk automatische regeling per zone. De oorspronkelijke ADR’s zijn opgenomen onder `docs/`.
+Bronbediening is door de gebruiker live bevestigd. Volgende controles: Ecowitt koppelen, basisschema/override/deurregeling live beproeven; daarna aanwezigheid en advies-/prijsplanning. De oorspronkelijke ADR’s zijn opgenomen onder `docs/`.
 
 Gebruikte interfaces: [HA REST API](https://developers.home-assistant.io/docs/api/rest/), [appconfiguratie](https://developers.home-assistant.io/docs/apps/configuration/), [appcommunicatie](https://developers.home-assistant.io/docs/apps/communication/).
 

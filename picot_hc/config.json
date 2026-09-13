@@ -1,8 +1,8 @@
 {
   "name": "PicoT Home Climate",
-  "version": "0.1.0-dev.8",
+  "version": "0.1.0-dev.9",
   "slug": "picot_hc",
-  "description": "Klimaatmetingen, prijzen en handmatige bronbediening met terugmelding",
+  "description": "Klimaatmetingen, basisschema beneden en bronbediening met terugmelding",
   "arch": [
     "amd64",
     "aarch64"

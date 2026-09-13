@@ -53,6 +53,7 @@ class Control:
         self.lock = threading.RLock()
         self.states, self.received, self.unit = {}, None, None
         self.connected = False
+        self.observer = self.intent_observer = None
         with store.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, created REAL NOT NULL, payload TEXT NOT NULL)')
         for command in self.records():
@@ -97,11 +98,13 @@ class Control:
                 item = states.get(command['entity_id'], {})
                 if item.get('state') in (None, 'unknown', 'unavailable'):
                     continue
-                actual = item.get('attributes', {}).get('temperature') if command['field'] == 'temperature' else item['state']
+                actual = item.get('attributes', {}).get('temperature') if command['field'] in ('temperature', 'heating') else item['state']
                 command['reported'] = {'value': actual, 'received': received, 'source_updated': item.get('last_updated')}
-                if self.matches(actual, command['value']):
+                if self.matches(actual, command['value']) and (command['field'] != 'heating' or item['state'] == 'heat'):
                     command.update(status='confirmed', finished=received, error=None)
                 self.save(command)
+            if self.observer:
+                self.observer(states, started, received)
 
     @staticmethod
     def matches(actual, desired):
@@ -139,7 +142,7 @@ class Control:
                     reason=None if available else 'Geen actuele, bruikbare HA-terugmelding.'))
             return result
 
-    def submit(self, payload, stale_seconds):
+    def submit(self, payload, stale_seconds, *, origin='manual', guard=None):
         if not isinstance(payload, dict) or set(payload) != {'request_id', 'source', 'field', 'value'}:
             raise ValueError('Ongeldige bronopdracht.')
         request_id = payload['request_id']
@@ -163,7 +166,7 @@ class Control:
                 raise ValueError('HA niet bereikbaar; geen opdracht verstuurd.') from None
             self.observe(states, started, time.time())
             binding = self.bindings[payload['source']]
-            if payload['field'] == 'temperature':
+            if payload['field'] in ('temperature', 'heating'):
                 try:
                     self.unit = ha_request(self.url, self.token, '/config')['unit_system']['temperature']
                 except Exception:
@@ -178,17 +181,22 @@ class Control:
             elif field == 'mode' and binding['kind'] == 'climate' and isinstance(value, str) and value in source['modes']:
                 service = '/services/climate/set_hvac_mode'
                 data['hvac_mode'] = value
-            elif field == 'temperature' and binding['kind'] == 'climate':
+            elif (field == 'temperature' or (field == 'heating' and origin == 'schedule')) and binding['kind'] == 'climate':
                 if not source['temperature_supported'] or isinstance(value, bool) or not isinstance(value, (int, float)):
                     raise ValueError('Temperatuurgrenzen, stap of °C-eenheid niet bevestigd door HA.')
                 value = number(value)
                 steps = (value - source['minimum']) / source['step']
                 if not source['minimum'] <= value <= source['maximum'] or not math.isclose(steps, round(steps), abs_tol=0.00001):
                     raise ValueError('Temperatuur ligt buiten apparaatgrenzen of past niet bij de stapgrootte.')
-                if source['state'] not in ('heat', 'cool', 'auto'):
+                if field == 'heating' and 'heat' not in source['modes']:
+                    raise ValueError('Deze bron ondersteunt geen verwarmen.')
+                if field == 'temperature' and source['state'] not in ('heat', 'cool', 'auto'):
+
                     raise ValueError('Kies eerst een geschikte apparaatmodus voor een temperatuurdoel.')
                 service = '/services/climate/set_temperature'
                 data['temperature'] = value
+                if field == 'heating':
+                    data['hvac_mode'] = 'heat'
             else:
                 raise ValueError('Opdracht of modus wordt niet ondersteund.')
             pending = [c for c in self.records() if c['entity_id'] == binding['entity_id'] and c['status'] in PENDING]
@@ -197,12 +205,18 @@ class Control:
             now = time.time()
             for old in pending:
                 old.update(status='superseded', finished=now, error='Vervangen door expliciete uit-opdracht.')
-            actual = source['temperature'] if field == 'temperature' else source['state']
+            if guard:
+                guard()
+            actual = source['temperature'] if field in ('temperature', 'heating') else source['state']
             command = dict(id=request_id, source=payload['source'], entity_id=binding['entity_id'],
-                           field=field, value=value, created=now, sent=None, accepted=None,
+                           field=field, value=value, origin=origin, created=now, sent=None, accepted=None,
+                           before=dict(mode=source['state'], temperature=source['temperature'],
+                                       preset=(states[binding['entity_id']].get('attributes') or {}).get('preset_mode')),
                            deadline=now+self.timeout, finished=None, status='sending', error=None,
                            reported={'value':actual, 'received':self.received, 'source_updated':source['source_updated']})
-            if self.matches(actual, value) and not pending:
+            if self.intent_observer:
+                self.intent_observer(command)
+            if self.matches(actual, value) and not pending and (field != 'heating' or source['state'] == 'heat'):
                 command.update(status='already_set', finished=now)
                 self.save(command)
                 return command

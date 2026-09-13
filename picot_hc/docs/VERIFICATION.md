@@ -88,3 +88,17 @@ Regressie met gemelde HA-attributen faalde vóór de fix op ontbrekende stap.
 voorrang expliciete HA-stap en geen fallback voor andere entiteiten.
 JavaScript-syntaxis en diff slagen; CI controleert de container en browser
 met cv zonder target_temp_step. Live bevestiging volgt na update.
+
+## Basisschema — 0.1.0-dev.9
+
+54 lokale Python-tests geslaagd, met 18 nieuwe schemacontroles. Echte HTTP/SQLite
+voor dispatch en opslag; deterministische Nederlandse klok voor schema/overrides,
+weekgrens en DST. Getest: standaard uit, sensorblokkade/meetleeftijd, comfortgrenzen,
+andere bron, eigen vertraagde feedback, externe wijziging ook bij verse uitlezing
+vlak voor dispatch, HC-handbediening, hervatten/volgend moment, geen herhaalstorm,
+timeout/herstart, deurvertraging/unknown, teruggezette klok en CSRF/Ingress.
+Browsertest uitgebreid met echte editor, bewaren/herladen, concept behouden,
+activeren, gesimuleerde externe wijziging, hervatten, uitzetten en mobiel.
+JavaScript-syntaxis en diff gecontroleerd. Container en browser draaien in CI.
+Geen echte apparaten aangestuurd. HA-polling ziet geen niet-gerapporteerde acties;
+last_reported/last_updated en gecombineerde opdracht blijven live te verifiëren.

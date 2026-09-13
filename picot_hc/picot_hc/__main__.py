@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from urllib.error import HTTPError
 
 from .control import Control
+from .schedule import Schedule
 from .weather import DEFAULT_ENTITY, WeatherReader, forecast_view
 from .core import Store, fetch_states, snapshot, validate, number
 
@@ -37,6 +38,7 @@ class Runtime:
             zone.update(saved_settings.get(zone['id'], {}))
         validate(self.config)
         self.control = Control(self.config, store, url, token)
+        self.schedule = Schedule(self.control, store)
         previous = store.latest() or {}
         self.weather = WeatherReader(self.config.get('weather_entity', DEFAULT_ENTITY), previous.get('weather'))
         self.connection = 'starting'
@@ -72,6 +74,10 @@ class Runtime:
             return {'settings': zone, 'settings_revision': self.settings_revision}
 
     def collect(self):
+        with self.control.lock:
+            self._collect()
+
+    def _collect(self):
         try:
             started = time.time()
             states = fetch_states(self.url, self.token)
@@ -81,6 +87,7 @@ class Runtime:
             data['weather'] = self.weather.collect(states, now, self.url, self.token)
             self.store.save(data, self.config['retention_days'])
             self.connection, self.error = 'connected', None
+            self.schedule.tick(self.config)
         except HTTPError as exc:
             self.control.connected = False
             self.connection, self.error = 'disconnected', 'HA antwoordt met HTTP ' + str(exc.code)
@@ -115,7 +122,9 @@ class Runtime:
             'HA-verbinding niet actueel.' if self.connection != 'connected' or age is None or age > self.config['stale_seconds'] else None)
         data['sources'] = self.control.sources(time.time(), self.config['stale_seconds'])
         data['commands'] = self.control.records()[:20]
-        data['control_mode'] = 'manual'
+        with self.control.lock:
+            data['schedule'] = self.schedule.view(time.time())
+        data['control_mode'] = 'schedule' if data['schedule']['settings']['enabled'] else 'manual'
         data['csrf_token'] = self.csrf_token
         data.update(connection=self.connection, error=self.error, age_seconds=age,
                     stale=age is None or age > self.config['stale_seconds'])
@@ -134,7 +143,7 @@ def handler(runtime, ingress):
                 self.send_error(403)
                 return
             path = urlsplit(self.path).path
-            if path not in ('/api/settings', '/api/commands'):
+            if path not in ('/api/settings', '/api/commands', '/api/schedule', '/api/resume'):
                 self.send_error(404)
                 return
             if not secrets.compare_digest(self.headers.get('X-HC-CSRF', ''), runtime.csrf_token):
@@ -147,10 +156,24 @@ def handler(runtime, ingress):
                 if not 0 < length <= 4096:
                     raise ValueError('Ongeldige verzoekgrootte.')
                 payload = json.loads(self.rfile.read(length))
-                result = (runtime.update_settings(payload) if path == '/api/settings' else
-                          {'command': runtime.control.submit(payload, runtime.config['stale_seconds'])})
-                if path == '/api/commands':
-                    runtime.poll_now.set()
+                with runtime.control.lock:
+                    if path == '/api/settings':
+                        result = runtime.update_settings(payload)
+                    elif path == '/api/commands':
+                        result = {'command': runtime.control.submit(payload, runtime.config['stale_seconds'])}
+                    elif path == '/api/schedule':
+                        result = {'schedule': runtime.schedule.update(payload, time.time())}
+                    else:
+                        if payload != {}:
+                            raise ValueError('Ongeldig hervatverzoek.')
+                        started = time.time()
+                        try:
+                            states = fetch_states(runtime.url, runtime.token)
+                        except Exception:
+                            raise ValueError('HA niet bereikbaar; HC blijft gepauzeerd.') from None
+                        runtime.control.observe(states, started, time.time())
+                        result = {'schedule': runtime.schedule.resume(time.time())}
+                runtime.poll_now.set()
                 self.send_json(200, result)
             except (ValueError, TypeError, UnicodeError) as exc:
                 self.send_json(400, {'error': str(exc)})

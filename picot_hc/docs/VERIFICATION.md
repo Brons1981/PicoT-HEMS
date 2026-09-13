@@ -80,3 +80,11 @@ browsercontrole schakelt randomUUID uit en controleert echte modus-,
 temperatuur- en uitopdrachten met terugmelding via gesimuleerd HA. Een
 voorbereidingsfout moet zichtbaar zijn, zonder verzending of vastgelopen knop.
 Browser- en containercontrole draaien in CI; live HA-controle volgt na update.
+
+## Cv-temperatuur — 0.1.0-dev.8
+
+Regressie met gemelde HA-attributen faalde vóór de fix op ontbrekende stap.
+36 Python-tests slagen na de fix: heat/auto, 0,5 °C, terugmelding, grenzen,
+voorrang expliciete HA-stap en geen fallback voor andere entiteiten.
+JavaScript-syntaxis en diff slagen; CI controleert de container en browser
+met cv zonder target_temp_step. Live bevestiging volgt na update.

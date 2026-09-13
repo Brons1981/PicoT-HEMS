@@ -12,6 +12,8 @@ from .core import NoRedirect, fetch_states, number
 
 PENDING = {'sending', 'awaiting_feedback', 'uncertain'}
 MODES = {'off', 'heat', 'cool', 'heat_cool', 'auto', 'dry', 'fan_only'}
+# Confirmed by the owner; only used when this entity omits HA step metadata.
+CONFIRMED_CELSIUS_STEPS = {'climate.huiskamer': 0.5}
 
 
 def source_bindings(config):
@@ -122,6 +124,8 @@ class Control:
                 modes = attrs.get('hvac_modes', [])
                 modes = [m for m in modes if m in MODES] if isinstance(modes, list) else []
                 minimum, maximum, step = [numeric(attrs.get(k)) for k in ('min_temp', 'max_temp', 'target_temp_step')]
+                if attrs.get('target_temp_step') is None and self.unit == '°C':
+                    step = CONFIRMED_CELSIUS_STEPS.get(entity)
                 features = attrs.get('supported_features', 0)
                 temperature_ok = (isinstance(features, int) and bool(features & 1) and self.unit == '°C'
                                   and minimum is not None and maximum is not None and minimum <= maximum

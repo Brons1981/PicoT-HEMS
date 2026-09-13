@@ -49,6 +49,7 @@ const http = require('node:http');
     const page = await browser.newPage({viewport: {width: 1280, height: 1000}});
     // Local HA over HTTP has getRandomValues, but no randomUUID.
     await page.addInitScript(()=>Object.defineProperty(crypto,'randomUUID',{value:undefined,configurable:true}));
+    page.setDefaultTimeout(30000);
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     for(let i=0;i<50;i++) {
       try { await page.goto('http://127.0.0.1:19099'); break; }

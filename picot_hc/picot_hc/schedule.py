@@ -197,7 +197,7 @@ class Schedule:
             self.save()
         return previous, following
 
-    def gate(self, now, config):
+    def gate(self, now, config, *, stopping=False):
         settings = self.data['settings']
         self.desired(now)
         if not settings['enabled']:
@@ -213,6 +213,8 @@ class Schedule:
             return 'Een eerdere opdracht is niet bevestigd. Controleer de bron en kies HC hervatten.'
         if not self.ready or not self.control.connected or now - (self.control.received or 0) > config['stale_seconds']:
             return 'Wachten op actuele HA-gegevens.'
+        if stopping:
+            return None  # Stopping an HC-owned airco must not require a temperature reading.
         other = 'beneden' if settings['source'] == 'cv' else 'cv'
         other_entity = self.control.bindings.get(other, {}).get('entity_id')
         if self.control.states.get(other_entity, {}).get('state') not in ('off', 'fan_only'):
@@ -247,10 +249,12 @@ class Schedule:
 
     def tick(self, config, now=None):
         now = time.time() if now is None else now
-        self.reason = self.gate(now, config)
+        self.desired(now)
+        target = self.target(now)
+        stopping = bool(target and target['field'] == 'mode' and self.data['action'])
+        self.reason = self.gate(now, config, stopping=stopping)
         if self.reason:
             return
-        target = self.target(now)
         if not target:
             self.reason = 'Geen schemamoment beschikbaar.'
             return
@@ -279,7 +283,7 @@ class Schedule:
         self.save()  # Never dispatch an unrecorded action, even on process termination.
         def guard():
             fresh = time.time()
-            reason = self.gate(fresh, config)
+            reason = self.gate(fresh, config, stopping=stopping)
             if reason or self.target(fresh) != target:
                 raise ValueError(reason or 'Schemamoment is gewijzigd; geen opdracht verstuurd.')
         try:

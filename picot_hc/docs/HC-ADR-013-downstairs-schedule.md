@@ -31,7 +31,7 @@ bronbediening en terugkoppeling van dev.8. Prijs- en aanwezigheidsregeling volge
   Collector, handmatige opdrachten en schemawijzigingen delen dezelfde uitvoeringslock.
 - Achterdeur voor airco beneden: open-/sluitvertraging instelbaar (start 60/120 s).
   Langdurig open of onbekend blokkeert verwarmen; een door HC geregelde airco gaat
-  uit. Bij bevestigd gesloten hervat het actuele schemadoel na sluitvertraging.
+  uit, ook wanneer de temperatuurmeting inmiddels ontbreekt. Bij bevestigd gesloten hervat het actuele schemadoel na sluitvertraging.
   Handmatige pauze heeft voorrang. Cv-bovenregeling wordt hier niet toegevoegd.
 - Schema uit stopt verdere opdrachten en laat de apparaatstand staan. Bron wisselen
   vereist eerst uitschakelen/opslaan; zet de oude bron zelf uit.

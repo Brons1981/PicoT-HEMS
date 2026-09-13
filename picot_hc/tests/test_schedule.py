@@ -173,6 +173,7 @@ class ScheduleTests(ControlFixture):
         self.enable()
         self.observe(NOW+121); self.tick(NOW+121)
         self.states[DOOR]['state'] = 'on'
+        self.states['sensor.downstairs']['state'] = 'unavailable'
         self.observe(NOW+130)
         self.observe(NOW+191); self.tick(NOW+191)
         self.assertEqual(len(self.calls), 2)

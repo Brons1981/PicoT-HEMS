@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-dev.6
+
+- Handmatige bronbediening voor cv, beide airco’s en badkamerverwarming.
+- Duurzame opdrachtregistratie, HA-terugmeldingen, timeouts en foutstatussen.
+- Geen automatische herhaling; Uit kan een wachtende opdracht vervangen.
+- Schema, overrides, deurregeling en automatische prijsplanning blijven vervolgwerk.
+
 ## 0.1.0-dev.5
 
 - Shelly-vermogensmeter en energiemeter gekoppeld aan airco boven.

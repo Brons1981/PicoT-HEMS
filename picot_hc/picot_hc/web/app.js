@@ -131,5 +131,83 @@ function renderWeather(weather, stale) {
     (f.stale ? 'Verouderde verwachting. ' : '') + (f.error ? f.error + ' ' : '') +
     (f.received ? 'Ontvangen: ' + fmt(f.received) : '');
 }
-async function refresh(){try{const [a,b]=await Promise.all([fetch('api/snapshot'),fetch('api/history')]);if(!a.ok||!b.ok)throw Error();const received=await a.json();if(current&&current.csrf_token!==received.csrf_token)settingsRevision=0;current=received;hist=await b.json();const d=current;document.body.classList.toggle('stale',d.stale||d.connection!=='connected');$('connection').textContent=d.connection==='connected'&&!d.stale?'HA verbonden — alleen lezen':'HA nog niet verbonden of gegevens verouderd';$('updated').textContent=d.collected?'Laatste ontvangst: '+fmt(d.collected):'Nog geen metingen ontvangen';$('error').textContent=d.error||'';if(d.settings_revision>=settingsRevision){settingsRevision=d.settings_revision;renderZones(d.zones);}renderWeather(d.weather,d.stale||d.connection!=='connected');$('price-description').textContent=(d.price_basis_confirmed?'Bevestigd elektriciteitstarief':'Bronprijzen')+' in €/kWh · Europe/Amsterdam';$('warnings').textContent=d.warnings.join(' ');$('price-table').replaceChildren();for(const p of d.prices){const tr=el('tr');tr.append(el('td',fmt(p.start)),el('td',fmt(p.end)),el('td',p.value.toFixed(4)));$('price-table').append(tr);}$('shared').replaceChildren();for(const [name,s]of [['Buiten',d.outdoor],['Aanwezigheid',d.presence],['Cv-thermostaat',d.cv],['Cv-status (betekenis nog controleren)',d.cv_status],['Gas totaal, inclusief tapwater',d.gas],['CO₂ beneden',d.co2]])$('shared').append(el('div',name+': '+value(s)));$('shared').append(el('div','Gastarief: € '+d.gas_price.toLocaleString('nl-NL',{maximumFractionDigits:5})+'/m³ · geldig t/m '+d.gas_valid_until));$('history-note').textContent='Registratie sinds HC draait. Dit is meetgeschiedenis, geen voorspelling.';graphs();}catch(e){$('connection').textContent='Dashboard kan HC niet bereiken';document.body.classList.add('stale');}finally{setTimeout(refresh,15000);}}
+const controlCards = new Map();
+const modeNames = {off:'Uit',heat:'Verwarmen',cool:'Koelen',heat_cool:'Verwarmen/koelen',auto:'Automatisch (apparaat)',dry:'Ontvochtigen',fan_only:'Ventilator'};
+const commandNames = {sending:'Verzending gestart',awaiting_feedback:'Wachten op terugmelding',confirmed:'Instelling bevestigd',already_set:'Instelling stond al zo',uncertain:'Verzendresultaat onbekend',failed:'Opdracht afgewezen',timed_out:'Niet bevestigd binnen wachttijd',interrupted:'Bewaking onderbroken door herstart',superseded:'Vervangen door uit-opdracht'};
+function commandText(c) {
+  return (commandNames[c.status] || c.status) + ' · ' + (c.field==='temperature'?c.value+' °C':modeNames[c.value]||c.value) + (c.error?' · '+c.error:'');
+}
+function renderControls(sources, commands) {
+  for (const source of sources || []) {
+    let card = controlCards.get(source.id);
+    if (!card) {
+      const root=el('article',undefined,'source-control'), title=el('h3',source.name);
+      const reported=el('p'), reason=el('p',undefined,'sub'), status=el('p','', 'command-status');status.setAttribute('role','status');
+      const select=el('select');select.setAttribute('aria-label',source.name+' apparaatmodus');
+      const modeButton=el('button','Modus toepassen');modeButton.type='button';
+      const target=el('input');target.type='number';target.placeholder='Apparaatdoel';target.setAttribute('aria-label',source.name+' apparaattemperatuur');
+      const targetButton=el('button','Temperatuur toepassen');targetButton.type='button';
+      const off=el('button','Uit','off-button');off.type='button';
+      const row=el('div',undefined,'control-row');row.append(select,modeButton);
+      const targetRow=el('div',undefined,'control-row');targetRow.append(target,targetButton);
+      root.append(title,reported,row,targetRow,off,reason,status);$('source-controls').append(root);
+      card={root,reported,reason,status,select,modeButton,target,targetButton,off,row,targetRow,source,busy:false,dirty:false,retry:null};
+      const send=async(field,value)=>{
+        if(card.busy)return;
+        const signature=JSON.stringify({field,value});
+        if(!card.retry||card.retry.signature!==signature)card.retry={signature,id:crypto.randomUUID()};
+        card.lastRequest=card.retry.id;
+        card.busy=true;renderControls(current.sources,current.commands);status.textContent='Opdracht versturen…';
+        try {
+          const response=await fetch('api/commands',{method:'POST',headers:{'Content-Type':'application/json','X-HC-CSRF':current.csrf_token},body:JSON.stringify({request_id:card.retry.id,source:source.id,field,value})});
+          if(!response.ok){
+            if(response.status===403)throw Error('Sessie verlopen. Vernieuw het dashboard.');
+            const failure=await response.json();throw Error(failure.error||'Opdracht niet verstuurd.');
+          }
+          const result=await response.json();
+          status.textContent=commandText(result.command);card.retry=null;card.dirty=false;
+          current.commands=[result.command,...(current.commands||[]).filter(c=>c.id!==result.command.id)].slice(0,20);
+        } catch(error){status.textContent=error.message||'Geen antwoord. Controleer de opdrachtstatus vóór opnieuw proberen.';}
+        finally{card.busy=false;renderControls(current.sources,current.commands);}
+      };
+      select.addEventListener('change',()=>{card.retry=null;});
+      target.addEventListener('input',()=>{card.dirty=true;card.retry=null;});
+      modeButton.addEventListener('click',()=>send(card.source.kind==='switch'?'state':'mode',select.value));
+      off.addEventListener('click',()=>send(card.source.kind==='switch'?'state':'mode','off'));
+      targetButton.addEventListener('click',()=>{
+        if(target.value===''||!target.reportValidity()){status.textContent='Vul een geldige apparaattemperatuur in.';return;}
+        send('temperature',Number(target.value));
+      });
+      controlCards.set(source.id,card);
+    }
+    card.source=source;
+    const latest=(commands||[]).find(c=>c.id===card.lastRequest);
+    if(latest&&!card.busy)card.status.textContent=commandText(latest);
+    const modes=source.kind==='switch'?['off','on']:source.modes;
+    const wanted=JSON.stringify(modes);
+    if(card.select.dataset.modes!==wanted){
+      const selected=card.select.value;card.select.replaceChildren();
+      for(const mode of modes){const option=el('option',modeNames[mode]||(mode==='on'?'Aan':mode));option.value=mode;card.select.append(option);}
+      card.select.value=modes.includes(selected)?selected:modes.includes(source.state)?source.state:modes[0]||'';
+      card.select.dataset.modes=wanted;
+    }
+    const pending=(commands||[]).some(c=>c.entity_id===source.entity_id&&['sending','awaiting_feedback','uncertain'].includes(c.status));
+    card.reported.textContent='Gemeld: '+(modeNames[source.state]||source.state||'Onbekend')+(source.temperature!=null?' · doel '+source.temperature+(source.unit?' '+source.unit:''):'')+(source.action?' · activiteit '+source.action:'');
+    card.modeButton.disabled=card.busy||!source.available||pending||!modes.length;
+    card.select.disabled=card.busy||!source.available;
+    card.off.disabled=card.busy||!source.available||!modes.includes('off');
+    card.targetRow.hidden=source.kind!=='climate';
+    card.target.disabled=card.busy||!source.available||!source.temperature_supported;
+    card.targetButton.disabled=card.target.disabled||pending;
+    if(source.minimum!=null)card.target.min=source.minimum;
+    if(source.maximum!=null)card.target.max=source.maximum;
+    card.target.step=source.step||'any';
+    if(!card.dirty&&!pending&&document.activeElement!==card.target)card.target.value=source.temperature??'';
+    card.reason.textContent=source.reason||(pending?'Wachten op terugmelding; Uit blijft beschikbaar.':source.kind==='climate'&&!source.temperature_supported?'Temperatuurbediening wacht op HA-grenzen, stapgrootte en °C-eenheid.':'Handmatige bronbediening.');
+  }
+  const history=$('command-history');history.replaceChildren();
+  if(!commands?.length)history.append(el('p','Nog geen opdrachten vanuit HC.'));
+  for(const c of commands||[]){const name=(sources||[]).find(s=>s.id===c.source)?.name||c.source;history.append(el('p',fmt(c.created)+' · '+name+' · '+commandText(c)));}
+}
+async function refresh(){try{const [a,b]=await Promise.all([fetch('api/snapshot'),fetch('api/history')]);if(!a.ok||!b.ok)throw Error();const received=await a.json();if(current&&current.csrf_token!==received.csrf_token)settingsRevision=0;current=received;hist=await b.json();const d=current;document.body.classList.toggle('stale',d.stale||d.connection!=='connected');$('connection').textContent=d.connection==='connected'&&!d.stale?'HA verbonden — handmatige bediening beschikbaar':'HA nog niet verbonden of gegevens verouderd';$('updated').textContent=d.collected?'Laatste ontvangst: '+fmt(d.collected):'Nog geen metingen ontvangen';$('error').textContent=d.error||'';if(d.settings_revision>=settingsRevision){settingsRevision=d.settings_revision;renderZones(d.zones);}renderWeather(d.weather,d.stale||d.connection!=='connected');renderControls(d.sources,d.commands);$('price-description').textContent=(d.price_basis_confirmed?'Bevestigd elektriciteitstarief':'Bronprijzen')+' in €/kWh · Europe/Amsterdam';$('warnings').textContent=d.warnings.join(' ');$('price-table').replaceChildren();for(const p of d.prices){const tr=el('tr');tr.append(el('td',fmt(p.start)),el('td',fmt(p.end)),el('td',p.value.toFixed(4)));$('price-table').append(tr);}$('shared').replaceChildren();for(const [name,s]of [['Buiten',d.outdoor],['Aanwezigheid',d.presence],['Cv-thermostaat',d.cv],['Cv-status (betekenis nog controleren)',d.cv_status],['Gas totaal, inclusief tapwater',d.gas],['CO₂ beneden',d.co2]])$('shared').append(el('div',name+': '+value(s)));$('shared').append(el('div','Gastarief: € '+d.gas_price.toLocaleString('nl-NL',{maximumFractionDigits:5})+'/m³ · geldig t/m '+d.gas_valid_until));$('history-note').textContent='Registratie sinds HC draait. Dit is meetgeschiedenis, geen voorspelling.';graphs();}catch(e){$('connection').textContent='Dashboard kan HC niet bereiken';document.body.classList.add('stale');}finally{setTimeout(refresh,15000);}}
 window.addEventListener('resize',graphs);refresh();

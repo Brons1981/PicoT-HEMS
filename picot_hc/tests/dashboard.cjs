@@ -1,4 +1,4 @@
-// Real HC HTTP server and browser; HA is intentionally disconnected.
+// Real HC server and browser with a simulated HA API; no real devices.
 const {chromium} = require('playwright');
 const {spawn} = require('node:child_process');
 const {mkdtempSync, rmSync} = require('node:fs');
@@ -12,9 +12,22 @@ const http = require('node:http');
   const weatherState = {entity_id:'weather.buienradar',state:'cloudy',last_updated:new Date().toISOString(),
     attributes:{temperature:20.7,apparent_temperature:20.7,temperature_unit:'°C',humidity:81,
       pressure:1021.3,pressure_unit:'hPa',wind_speed:9.72,wind_gust_speed:18,wind_speed_unit:'km/h',precipitation_unit:'mm'}};
+  const deviceCalls=[];
+  const deviceStates=['climate.airco_woonkamer','climate.19791209313101_climate','climate.huiskamer','switch.1_5_3_badkamer_verwarming_badkamer'].map(entity_id=>({entity_id,state:'off',last_updated:new Date().toISOString(),attributes:{temperature:20,min_temp:16,max_temp:30,target_temp_step:0.5,supported_features:1,hvac_modes:['off','heat','dry'],hvac_action:'idle'}}));
   const fakeHA = http.createServer((req,res) => {
     res.setHeader('Content-Type','application/json');
-    if(req.method === 'GET' && req.url === '/api/states') res.end(JSON.stringify([weatherState]));
+    if(req.method === 'GET' && req.url === '/api/states') res.end(JSON.stringify([weatherState,...deviceStates]));
+    else if(req.method === 'GET' && req.url === '/api/config') res.end(JSON.stringify({unit_system:{temperature:'°C'}}));
+    else if(req.method === 'POST' && ['/api/services/climate/set_hvac_mode','/api/services/climate/set_temperature','/api/services/switch/turn_on','/api/services/switch/turn_off'].includes(req.url)) {
+      let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{
+        const payload=JSON.parse(body);deviceCalls.push({path:req.url,payload});
+        const device=deviceStates.find(s=>s.entity_id===payload.entity_id);
+        if(payload.hvac_mode)device.state=payload.hvac_mode;
+        else if(payload.temperature!=null)device.attributes.temperature=payload.temperature;
+        else device.state=req.url.endsWith('turn_on')?'on':'off';
+        device.last_updated=new Date().toISOString();res.end('[]');
+      });
+    }
     else if(req.method === 'POST' && req.url === '/api/services/weather/get_forecasts?return_response') {
       req.resume();
       res.end(JSON.stringify({service_response:{'weather.buienradar':{forecast:[1,2,3,4,5].map(days=>({datetime:new Date(Date.now()+days*86400000).toISOString(),condition:'rainy',temperature:18,templow:11,precipitation:days===2?0.04:days===3?0.001:0,wind_speed:12}))}}}));
@@ -56,6 +69,24 @@ const http = require('node:http');
     assert.match(await form.locator('.save-status').textContent(), /minimum/);
     await page.reload();
     await page.waitForFunction(() => document.querySelector('input[name=minimum]')?.value === '16');
+    assert.equal(deviceCalls.length,0,'Startup and settings changes must never dispatch');
+    const source=page.locator('.source-control').filter({has:page.getByRole('heading',{name:'Beneden',exact:true})});
+    await source.locator('select').selectOption('heat');
+    await source.getByRole('button',{name:'Modus toepassen',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd'));
+    assert.equal(deviceCalls.length,1);
+    assert.equal(deviceCalls[0].payload.hvac_mode,'heat');
+    await source.locator('input').fill('21.5');
+    await source.getByRole('button',{name:'Temperatuur toepassen',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd · 21.5 °C'));
+    assert.equal(deviceCalls.length,2);
+    assert.equal(deviceCalls[1].payload.temperature,21.5);
+    await source.getByRole('button',{name:'Uit',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd · Uit'));
+    assert.equal(deviceCalls.length,3);
+    await page.reload();
+    await page.locator('.source-control').first().waitFor();
+    assert.equal(deviceCalls.length,3,'Reload must not replay commands');
     await page.setViewportSize({width:390,height:844});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     assert.deepEqual(errors, []);

@@ -1,0 +1,4 @@
+*
+!picot_hc/
+!picot_hc/**
+**/__pycache__

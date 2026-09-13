@@ -1,0 +1,66 @@
+{
+  "poll_seconds": 30,
+  "stale_seconds": 120,
+  "retention_days": 90,
+  "outdoor": "",
+  "presence": "device_tracker.4_iphone_alex",
+  "cv": "climate.huiskamer",
+  "cv_status": "binary_sensor.huiskamer_status",
+  "gas": "sensor.gas_meter_gas",
+  "co2": "sensor.0_energie_co2_monitor_co2",
+  "gas_price": 1.41197,
+  "gas_valid_until": "2027-06-14",
+  "price_entity": "sensor.nordpool_kwh_nl_eur_3_095_0",
+  "price_attributes": [
+    "raw_today",
+    "raw_tomorrow"
+  ],
+  "price_basis_confirmed": false,
+  "zones": [
+    {
+      "id": "beneden",
+      "name": "Beneden",
+      "device": "climate.airco_woonkamer",
+      "temperature": "",
+      "humidity": "",
+      "power": "sensor.kwh_meter_airco_vermogen",
+      "energy": "sensor.kwh_meter_airco_energie_import",
+      "minimum": null,
+      "target": null,
+      "maximum": null,
+      "humidity_min": 40,
+      "humidity_target": 50,
+      "humidity_max": 60
+    },
+    {
+      "id": "boven",
+      "name": "Boven / slaapkamer",
+      "device": "climate.19791209313101_climate",
+      "temperature": "",
+      "humidity": "",
+      "power": "",
+      "energy": "",
+      "minimum": null,
+      "target": null,
+      "maximum": null,
+      "humidity_min": 40,
+      "humidity_target": 50,
+      "humidity_max": 60
+    },
+    {
+      "id": "badkamer",
+      "name": "Badkamer",
+      "device": "switch.1_5_3_badkamer_verwarming_badkamer",
+      "temperature": "",
+      "humidity": "",
+      "power": "sensor.1_5_3_badkamer_verwarming_badkamer_power",
+      "energy": "",
+      "minimum": null,
+      "target": null,
+      "maximum": null,
+      "humidity_min": 40,
+      "humidity_target": 50,
+      "humidity_max": 60
+    }
+  ]
+}

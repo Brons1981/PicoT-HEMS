@@ -1,0 +1,113 @@
+{
+  "name": "PicoT Home Climate",
+  "version": "0.1.0-dev.1",
+  "slug": "picot_hc",
+  "description": "Zelfstandige klimaatobservatie met eigen prijsgrafiek",
+  "arch": [
+    "amd64",
+    "aarch64"
+  ],
+  "startup": "application",
+  "boot": "auto",
+  "init": false,
+  "homeassistant_api": true,
+  "ingress": true,
+  "ingress_port": 8099,
+  "panel_icon": "mdi:home-thermometer",
+  "panel_title": "PicoT HC",
+  "panel_admin": true,
+  "backup": "cold",
+  "options": {
+    "poll_seconds": 30,
+    "stale_seconds": 120,
+    "retention_days": 90,
+    "outdoor": "",
+    "presence": "device_tracker.4_iphone_alex",
+    "cv": "climate.huiskamer",
+    "cv_status": "binary_sensor.huiskamer_status",
+    "gas": "sensor.gas_meter_gas",
+    "co2": "sensor.0_energie_co2_monitor_co2",
+    "gas_price": 1.41197,
+    "gas_valid_until": "2027-06-14",
+    "price_entity": "sensor.nordpool_kwh_nl_eur_3_095_0",
+    "price_attributes": [
+      "raw_today",
+      "raw_tomorrow"
+    ],
+    "price_basis_confirmed": false,
+    "zones": [
+      {
+        "id": "beneden",
+        "name": "Beneden",
+        "device": "climate.airco_woonkamer",
+        "temperature": "",
+        "humidity": "",
+        "power": "sensor.kwh_meter_airco_vermogen",
+        "energy": "sensor.kwh_meter_airco_energie_import",
+        "humidity_min": 40,
+        "humidity_target": 50,
+        "humidity_max": 60
+      },
+      {
+        "id": "boven",
+        "name": "Boven / slaapkamer",
+        "device": "climate.19791209313101_climate",
+        "temperature": "",
+        "humidity": "",
+        "power": "",
+        "energy": "",
+        "humidity_min": 40,
+        "humidity_target": 50,
+        "humidity_max": 60
+      },
+      {
+        "id": "badkamer",
+        "name": "Badkamer",
+        "device": "switch.1_5_3_badkamer_verwarming_badkamer",
+        "temperature": "",
+        "humidity": "",
+        "power": "sensor.1_5_3_badkamer_verwarming_badkamer_power",
+        "energy": "",
+        "humidity_min": 40,
+        "humidity_target": 50,
+        "humidity_max": 60
+      }
+    ]
+  },
+  "schema": {
+    "outdoor": "str",
+    "presence": "str",
+    "cv": "str",
+    "cv_status": "str",
+    "gas": "str",
+    "co2": "str",
+    "gas_valid_until": "str",
+    "price_entity": "str",
+    "poll_seconds": "int(10,300)",
+    "stale_seconds": "int(20,3600)",
+    "retention_days": "int(1,365)",
+    "gas_price": "float(0,)",
+    "price_attributes": [
+      "str"
+    ],
+    "price_basis_confirmed": "bool",
+    "zones": [
+      {
+        "id": "str",
+        "name": "str",
+        "device": "str",
+        "temperature": "str",
+        "humidity": "str",
+        "power": "str",
+        "energy": "str",
+        "minimum": "float?",
+        "target": "float?",
+        "maximum": "float?",
+        "humidity_min": "float(0,100)",
+        "humidity_target": "float(0,100)",
+        "humidity_max": "float(0,100)"
+      }
+    ]
+  },
+  "url": "https://github.com/Brons1981/PicoT-HEMS/tree/main/picot_hc"
+}

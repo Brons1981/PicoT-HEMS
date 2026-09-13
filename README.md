@@ -43,6 +43,11 @@ The add-on repository also contains **PicoT Energy Devices**, an independent
 read-only profile producer for user-selected Home Assistant power and energy
 sensors. PicoT remains fully functional when this optional add-on is absent.
 
+The same repository contains **[PicoT Home Climate](picot_hc/README.md)**,
+a standalone climate app with its own configuration, database, dashboard and
+electricity-price chart. Its first development version observes three zones;
+automatic climate control follows later. HC runs independently of PicoT HEMS.
+
 ## Core principles
 
 - Robust and verifiable before clever or extensive

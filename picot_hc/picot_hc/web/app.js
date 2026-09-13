@@ -97,11 +97,6 @@ function weatherLabel(condition) { return weatherNames[condition] || ['—', con
 function forecastNumber(number, unit) {
   return typeof number === 'number' && unit ? number.toLocaleString('nl-NL', {maximumFractionDigits:1}) + ' ' + unit : 'Niet beschikbaar';
 }
-function precipitationLabel(amount, unit) {
-  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0 || !unit) return 'Niet beschikbaar';
-  if (amount > 0 && amount < 0.01) return '<0,01 ' + unit;
-  return amount.toLocaleString('nl-NL', {maximumFractionDigits: 2}) + ' ' + unit;
-}
 function renderWeather(weather, stale) {
   const box = $('weather-current'); box.replaceChildren();
   const forecast = $('weather-forecast'); forecast.replaceChildren();
@@ -128,9 +123,7 @@ function renderWeather(weather, stale) {
     day.append(el('strong', date), el('div', glyph + ' ' + description),
       el('div', 'Max ' + forecastNumber(row.temperature, f.temperature_unit)),
       el('div', 'Min ' + forecastNumber(row.templow, f.temperature_unit)),
-      el('div', 'Neerslag ' + precipitationLabel(row.precipitation, f.precipitation_unit)),
       el('div', 'Wind ' + forecastNumber(row.wind_speed, f.wind_speed_unit)));
-    if (row.precipitation === 0 && ['rainy','pouring','lightning-rainy','snowy-rainy'].includes(row.condition)) day.append(el('p', 'De bron voorspelt regen, maar geeft een neerslagsom van 0 op.', 'sub'));
     if(row.precipitation_probability !== null) day.append(el('div', 'Neerslagkans ' + forecastNumber(row.precipitation_probability, '%')));
     forecast.append(day);
   }

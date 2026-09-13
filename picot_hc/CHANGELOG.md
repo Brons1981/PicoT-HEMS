@@ -3,8 +3,7 @@
 ## 0.1.0-dev.4
 
 - Huidige Nordpool-prijsbron als werkelijk tarief bevestigd door gebruiker.
-- Kleine positieve neerslaghoeveelheden worden niet meer als 0 getoond.
-- Toelichting wanneer de bron zelf regen én 0 neerslag doorgeeft.
+- Neerslaghoeveelheid uit de dagverwachting verwijderd op verzoek; weertype en neerslagkans blijven zichtbaar.
 
 ## 0.1.0-dev.3
 

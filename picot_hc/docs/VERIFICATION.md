@@ -52,3 +52,7 @@ echte HA-forecast en Ingress-weergave van dev.3 moeten na update worden bevestig
 uitgebreid met bronbevestiging, 0 mm met regen, 0,04 mm en <0,01 mm.
 CI-browser/build en live update afzonderlijk controleren. De ruwe forecast
 van de gemelde 0 mm is niet beschikbaar in deze sessie.
+
+Definitieve dev.4-weergave: neerslaghoeveelheid en bijbehorende toelichting zijn
+verwijderd. Bestaande browsercontrole aangepast om afwezigheid van deze regels
+en behoud van het weertype te controleren.

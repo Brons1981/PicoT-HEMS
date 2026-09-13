@@ -26,7 +26,7 @@ Gegevens staan in `/data/hc.sqlite3` binnen de app. Ze blijven behouden bij hers
 
 ## Weer en verwachting
 
-De weerkaart gebruikt standaard `weather.buienradar`, ook bij een update van bestaande HC-opties. Je ziet actuele toestand, temperatuur, gevoelstemperatuur, luchtvochtigheid, wind, windstoten en luchtdruk voor zover beschikbaar. De dagverwachting toont maximum/minimum, neerslag en wind met de eenheden van de bron. Ontbrekende waarden worden geen nul. Neerslag toont maximaal twee decimalen; positieve waarden kleiner dan 0,01 worden als <0,01 getoond. Geeft de bron zelf regen met 0 neerslag op, dan worden beide bronwaarden met toelichting weergegeven.
+De weerkaart gebruikt standaard `weather.buienradar`, ook bij een update van bestaande HC-opties. Je ziet actuele toestand, temperatuur, gevoelstemperatuur, luchtvochtigheid, wind, windstoten en luchtdruk voor zover beschikbaar. De dagverwachting toont weertype, maximum/minimum, wind en beschikbare neerslagkans. De neerslaghoeveelheid in mm wordt niet getoond. Ontbrekende waarden worden geen nul.
 
 HC vraagt de dagelijkse verwachting elke 30 minuten via HA op; na een fout volgt na 5 minuten een nieuwe poging. De laatste verwachting blijft bewaard, met een foutmelding/verouderd-markering. Na twee uur zonder succesvolle ontvangst is deze eveneens verouderd. De bronpublicatietijd van een forecast is niet beschikbaar: ontvangsttijd bewijst geen recente modelupdate. Dagen in het verleden worden niet getoond.
 

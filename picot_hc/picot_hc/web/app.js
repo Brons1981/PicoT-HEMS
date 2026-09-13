@@ -154,11 +154,16 @@ function renderControls(sources, commands) {
       card={root,reported,reason,status,select,modeButton,target,targetButton,off,row,targetRow,source,busy:false,dirty:false,retry:null};
       const send=async(field,value)=>{
         if(card.busy)return;
-        const signature=JSON.stringify({field,value});
-        if(!card.retry||card.retry.signature!==signature)card.retry={signature,id:crypto.randomUUID()};
-        card.lastRequest=card.retry.id;
-        card.busy=true;renderControls(current.sources,current.commands);status.textContent='Opdracht versturen…';
+        card.busy=true;card.lastRequest=null;
         try {
+          renderControls(current.sources,current.commands);status.textContent='Opdracht versturen…';
+          const signature=JSON.stringify({field,value});
+          // getRandomValues also works on local HTTP; randomUUID requires HTTPS.
+          if(!card.retry||card.retry.signature!==signature){
+            const bytes=crypto.getRandomValues(new Uint8Array(16));
+            card.retry={signature,id:Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('')};
+          }
+          card.lastRequest=card.retry.id;
           const response=await fetch('api/commands',{method:'POST',headers:{'Content-Type':'application/json','X-HC-CSRF':current.csrf_token},body:JSON.stringify({request_id:card.retry.id,source:source.id,field,value})});
           if(!response.ok){
             if(response.status===403)throw Error('Sessie verlopen. Vernieuw het dashboard.');

@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.6** — zelfstandige meting en handmatige bronbediening voor Home Assistant.
+Versie **0.1.0-dev.7** — zelfstandige meting en handmatige bronbediening voor Home Assistant.
 
 ## Wat deze versie doet
 

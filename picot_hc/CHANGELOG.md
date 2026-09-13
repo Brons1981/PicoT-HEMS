@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-dev.7
+
+- Bedieningsknoppen werken ook bij lokale HA-toegang via HTTP zonder randomUUID.
+- Fouten bij het voorbereiden van een opdracht worden zichtbaar bij de knop.
+
 ## 0.1.0-dev.6
 
 - Handmatige bronbediening voor cv, beide airco’s en badkamerverwarming.

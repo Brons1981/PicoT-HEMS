@@ -39,6 +39,8 @@ const http = require('node:http');
   try {
     browser = await chromium.launch({headless: true});
     const page = await browser.newPage({viewport: {width: 1280, height: 1000}});
+    // Local HA over HTTP has getRandomValues, but no randomUUID.
+    await page.addInitScript(()=>Object.defineProperty(crypto,'randomUUID',{value:undefined,configurable:true}));
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     for(let i=0;i<50;i++) {
       try { await page.goto('http://127.0.0.1:19099'); break; }
@@ -70,8 +72,18 @@ const http = require('node:http');
     await page.reload();
     await page.waitForFunction(() => document.querySelector('input[name=minimum]')?.value === '16');
     assert.equal(deviceCalls.length,0,'Startup and settings changes must never dispatch');
+    assert.equal(await page.evaluate(()=>typeof crypto.randomUUID),'undefined');
     const source=page.locator('.source-control').filter({has:page.getByRole('heading',{name:'Beneden',exact:true})});
     await source.locator('select').selectOption('heat');
+    await page.evaluate(()=>{
+      window.originalGetRandomValues=crypto.getRandomValues.bind(crypto);
+      crypto.getRandomValues=()=>{throw Error('Opdracht voorbereiden mislukt');};
+    });
+    await source.getByRole('button',{name:'Modus toepassen',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('.command-status') && [...document.querySelectorAll('.command-status')].some(s=>s.textContent==='Opdracht voorbereiden mislukt'));
+    assert.equal(deviceCalls.length,0,'Preparation failure must not dispatch');
+    assert.equal(await source.getByRole('button',{name:'Modus toepassen',exact:true}).isEnabled(),true);
+    await page.evaluate(()=>{crypto.getRandomValues=window.originalGetRandomValues;});
     await source.getByRole('button',{name:'Modus toepassen',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd'));
     assert.equal(deviceCalls.length,1);
@@ -90,7 +102,7 @@ const http = require('node:http');
     await page.setViewportSize({width:390,height:844});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     assert.deepEqual(errors, []);
-    console.log('Dashboard: save, reload, refresh draft, invalid bounds and mobile width passed.');
+    console.log('Dashboard: settings, manual commands without randomUUID, feedback, reload and mobile width passed.');
   } finally {
     if(browser) await browser.close();
     server.kill();

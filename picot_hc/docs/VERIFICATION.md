@@ -119,3 +119,11 @@ automatische bronopdrachten, fysieke/HA-wijziging en HC-opdracht als gedwongen
 bron, vrijgeven zonder nieuwe opdracht en mobiele breedte. Container/browser
 worden in CI gecontroleerd. Financiële optimalisatie is expliciet nog niet
 geïmplementeerd; hiervoor wordt alleen de gevraagde comfortbasis geleverd.
+
+## Dev.11 — 2026-09-14
+
+54 Python-tests geslaagd, plus beide JavaScript-syntaxcontroles en git diff --check.
+Nieuwe regressies toetsen de centrale band, exact comfort en dev.10-migratie met
+archief, behoud van overrides en herstart. Browserfixture gebruikt daggroepen en
+dupliceren met twaalf opgeslagen dagvensters in twee editorregels. CI-resultaat
+wordt in de PR vastgelegd; live HA blijft door Alex te beoordelen.

@@ -24,9 +24,12 @@ def minutes(value, *, end=False):
 
 
 def validate_settings(value):
-    keys = {'enabled', 'windows', 'door_open_seconds', 'door_close_seconds', 'sensor_max_age_seconds'}
+    keys = {'enabled', 'windows', 'optimization_band', 'door_open_seconds', 'door_close_seconds', 'sensor_max_age_seconds'}
     if not isinstance(value, dict) or set(value) != keys or type(value['enabled']) is not bool:
         raise ValueError('Ongeldige comfortinstellingen; het schema heeft geen bronkeuze.')
+    band = value['optimization_band']
+    if type(band) not in (int, float) or not math.isfinite(band) or not 0 <= band <= 5:
+        raise ValueError('Optimalisatieband moet tussen 0 en 5 °C liggen (±).')
     for key in ('door_open_seconds', 'door_close_seconds'):
         if type(value[key]) is not int or not 0 <= value[key] <= 1800:
             raise ValueError('Deurvertraging moet tussen 0 en 1800 seconden liggen.')
@@ -37,8 +40,8 @@ def validate_settings(value):
         raise ValueError('Voeg 1 tot 112 tijdvensters toe voordat je het comfortschema gebruikt.')
     spans = []
     for window in windows:
-        if not isinstance(window, dict) or set(window) != {'day', 'start', 'end', 'target', 'minimum', 'maximum', 'hard'}:
-            raise ValueError('Geef dag, begin/einde, gewenste temperatuur, band en harde grens op.')
+        if not isinstance(window, dict) or set(window) != {'day', 'start', 'end', 'target', 'hard'}:
+            raise ValueError('Geef dag, begin/einde, temperatuur en comfortkeuze op.')
         if type(window['day']) is not int or not 0 <= window['day'] <= 6 or type(window['hard']) is not bool:
             raise ValueError('Ongeldige weekdag of harde grens.')
         start, end = minutes(window['start']), minutes(window['end'], end=True)
@@ -46,13 +49,9 @@ def validate_settings(value):
             raise ValueError('Begin en einde zijn gelijk; gebruik 00:00–24:00 voor een hele dag.')
         if end < start:
             end += 1440
-        low, target, high = [window[k] for k in ('minimum', 'target', 'maximum')]
-        if any(type(v) not in (int, float) or not math.isfinite(v) for v in (low, target, high)):
-            raise ValueError('Temperaturen moeten eindige getallen zijn.')
-        if not 5 <= low <= target <= high <= 35:
-            raise ValueError('Gebruik 5 ≤ minimum ≤ gewenst ≤ maximum ≤ 35 °C.')
-        if window['hard'] and low != target:
-            raise ValueError('Bij een harde grens is de gewenste temperatuur ook het minimum.')
+        target = window['target']
+        if type(target) not in (int, float) or not math.isfinite(target) or not 5 <= target <= 35:
+            raise ValueError('Temperatuur moet tussen 5 en 35 °C liggen.')
         begin, finish = window['day'] * 1440 + start, window['day'] * 1440 + end
         spans.append((begin, min(finish, WEEK)))
         if finish > WEEK:
@@ -89,7 +88,9 @@ def occurrences(settings, now):
                 end += 1440
             begin, finish = wall_time(day, start), wall_time(day, end, end=True)
             if begin < finish:
-                result.append(dict(window, starts_at=begin, ends_at=finish, required_at=begin,
+                band = 0 if window['hard'] else settings['optimization_band']
+                result.append(dict(window, minimum=max(5, window['target']-band),
+                                   maximum=min(35, window['target']+band), starts_at=begin, ends_at=finish, required_at=begin,
                                    zone='beneden', kind='window'))
     return sorted(result, key=lambda w: (w['starts_at'], w['ends_at']))
 
@@ -103,7 +104,7 @@ def next_boundary(settings, now):
 
 def migrate_settings(old):
     """Preserve dev.9's weekly temperatures, archive source choice, require review."""
-    result = dict(enabled=False, windows=[], door_open_seconds=old.get('door_open_seconds', 60),
+    result = dict(enabled=False, windows=[], optimization_band=1, door_open_seconds=old.get('door_open_seconds', 60),
                   door_close_seconds=old.get('door_close_seconds', 120),
                   sensor_max_age_seconds=old.get('sensor_max_age_seconds', 900))
     entries = sorted(old.get('entries', []), key=lambda e: (e['day'], e['time']))
@@ -118,8 +119,7 @@ def migrate_settings(old):
             day, minute = divmod(start, 1440)
             last = end - day*1440
             result['windows'].append(dict(day=day % 7, start=f'{minute//60:02}:{minute%60:02}',
-                end=f'{last//60:02}:{last%60:02}', target=entry['temperature'], minimum=entry['temperature'],
-                maximum=entry['temperature'], hard=True))
+                end=f'{last//60:02}:{last%60:02}', target=entry['temperature'], hard=True))
             start = end
     return validate_settings(result)
 
@@ -132,16 +132,35 @@ class Schedule:
             db.execute('CREATE TABLE IF NOT EXISTS hc_schedule (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
             row = db.execute('SELECT payload FROM hc_schedule WHERE id=1').fetchone()
         old = json.loads(row[0]) if row else None
-        if old and old.get('format') != 2:
-            self.data = dict(format=2, settings=migrate_settings(old['settings']), revision=old['revision']+1,
+        if old and old.get('format') not in (2, 3):
+            self.data = dict(format=3, settings=migrate_settings(old['settings']), revision=old['revision']+1,
                 baseline=old.get('baseline', {}), overrides={}, door=old.get('door'), legacy_pause=old.get('override'),
                 migration='Bestaande schakelmomenten zijn omgezet naar comfortvensters. Controleer grenzen en schakel het comfortschema opnieuw in.')
             with store.connect() as db:
                 db.execute('CREATE TABLE IF NOT EXISTS hc_schedule_archive (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
                 db.execute('INSERT OR IGNORE INTO hc_schedule_archive VALUES (1, ?)', (json.dumps(old),))
                 db.execute('INSERT OR REPLACE INTO hc_schedule VALUES (1, ?)', (json.dumps(self.data),))
+        elif old and old.get('format') == 2:
+            self.data = copy.deepcopy(old)
+            settings = self.data['settings']
+            settings['optimization_band'] = 1
+            changed = False
+            for window in settings['windows']:
+                band = 0 if window['hard'] else 1
+                changed |= (window['minimum'] != max(5, window['target']-band)
+                            or window['maximum'] != min(35, window['target']+band))
+                del window['minimum'], window['maximum']
+            if changed:
+                settings['enabled'] = False
+                self.data['migration'] = 'Controleer de centrale optimalisatieband (±1 °C) en comfortkeuzes; oude grenzen zijn veranderd. Schakel daarna het schema opnieuw in.'
+            self.data.update(format=3, revision=old['revision']+1)
+            validate_settings(settings)
+            with store.connect() as db:
+                db.execute('CREATE TABLE IF NOT EXISTS hc_schedule_archive (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
+                db.execute('INSERT OR IGNORE INTO hc_schedule_archive VALUES (2, ?)', (json.dumps(old),))
+                db.execute('INSERT OR REPLACE INTO hc_schedule VALUES (1, ?)', (json.dumps(self.data),))
         else:
-            self.data = old or dict(format=2, settings=migrate_settings({}), revision=0,
+            self.data = old or dict(format=3, settings=migrate_settings({}), revision=0,
                                    baseline={}, overrides={}, door=None, legacy_pause=None, migration=None)
         self.ready = False
         self.control.observer = self.observe

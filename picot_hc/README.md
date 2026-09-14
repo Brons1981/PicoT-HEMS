@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.10** — zelfstandige meting, comfortvensters en handmatige bronbediening voor Home Assistant.
+Versie **0.1.0-dev.11** — zelfstandige meting, comfortvensters en handmatige bronbediening voor Home Assistant.
 
 ## Wat deze versie doet
 
@@ -57,32 +57,28 @@ werkelijke apparaatstand voordat je een nieuwe opdracht geeft.
 
 ## Comfortschema beneden
 
-Voeg weekdagen, begin-/eindtijden, gewenste temperaturen en toegestane banden toe
-op het dashboard. **Gewenst is harde ondergrens** betekent dat deze temperatuur
-bij aanvang al bereikt moet zijn en vervolgens behouden blijft. Het maximum
-blijft de bovengrens. Zonder vinkje kan de toekomstige planner binnen de band
-optimaliseren, bijvoorbeeld 18 °C aanhouden in een nachtvenster met voorkeur 17 °C.
+Kies per venster meerdere dagen (ma–vr, weekend, alle dagen of losse vinkjes),
+begin/einde, één temperatuur en **Comforttemperatuur**. Voeg meerdere vensters
+per dag toe of dupliceer een venster en pas dagen/tijden aan. Identieke vensters
+worden bij herladen samen getoond; overlap wordt geweigerd, ook over middernacht.
 
-Vensters hebben geen bronkeuze. HC moet later de financieel beste bron of
-combinatie bepalen met prijzen, verliezen, efficiëntie en opwarmtijd. De
-financiële planner is nog niet geïmplementeerd; de interface toont dit expliciet.
-De directe apparaatsturing uit dev.9 is vervangen door deze comfortbasis.
+Comfort aangevinkt betekent de temperatuur bij aanvang bereiken en aanhouden:
+de planner krijgt daarvoor geen economische afwijkingsruimte. Zonder vinkje geldt
+één centrale **Optimalisatieband (± °C)**, standaard 1 °C, instelbaar 0–5 °C.
+17 °C met ±1 °C geeft 16–18 °C. De absolute grenzen blijven 5–35 °C;
+algemene zonegrenzen blijven afzonderlijk bewaakt. Er zijn geen min/max-invoervelden
+per venster. Boven en badkamer behouden hun vaste zone-instellingen.
 
-Eindtijd vóór de begintijd betekent volgende dag. 00:00–24:00 is een hele dag;
-overlap wordt geweigerd. Buiten vensters gelden de algemene comfortinstellingen
-beneden, indien ingevuld. Boven en badkamer gebruiken een vaste gewenste
-waarde; boven behoudt de vochtband. Dit zijn comfortwensen, geen gedwongen bronnen.
+De financiële planner en automatisch voorverwarmen zijn nog niet geïmplementeerd.
+Opslaan, inschakelen, hervatten en herstarten sturen geen apparaat aan.
+Handmatige brontemperaturen blijven gedwongen bronkeuzes; cv raakt beneden en boven.
+Bestaande handmatige keuzes worden door een schemabewerking niet verlengd.
 
-Een handmatig ingestelde **brontemperatuur** is wél een gedwongen bron. De cv-keuze
-geldt voor beneden én boven. Voor bronnen die beneden bedienen geldt de volgende
-actieve venstergrens of HC hervatten; voor andere bronnen en zonder actief schema
-blijft de keuze tot HC hervatten. Het dashboard onderscheidt aanvraag, bevestiging
-en fout. Een handmatige Uit/modus is een te respecteren stand, geen automatische
-verwarmvraag. HC hervatten geeft alle handmatige keuzes vrij zonder iets te schakelen.
-
-Bij een update vanaf dev.9 wordt het oude schema gearchiveerd en omgezet naar
-vensters, uitgeschakeld ter controle. De oude bronkeuze verdwijnt uit het schema;
-apparaatstanden blijven staan. Zie [HC-ADR-014](docs/HC-ADR-014-comfort-requirements.md).
+Dev.10 wordt atomair gearchiveerd en omgezet met behoud van dagen, tijden,
+temperaturen, comfortvinkjes en handmatige keuzes. Wijzigen de afgeleide grenzen,
+dan staat het schema uit met een controlemelding. Controleer de band en schakel
+het daarna opnieuw in. Voor teruggaan naar dev.10 is herstel van de HC-back-up
+nodig: die versie begrijpt het nieuwe opslagformaat niet.
 
 ## Configuratie
 

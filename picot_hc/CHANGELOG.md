@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-dev.11
+
+- Daggroepen, losse dagkeuze en dupliceren; meerdere vensters per dag.
+- Eén temperatuur en comfortvinkje per venster; centrale optimalisatieband.
+- Comfort is een vast doel zonder economische afwijkingsruimte.
+- Dev.10-gegevens gearchiveerd; gewijzigde grenzen vragen controle.
+- Comfort blijft plannerinvoer zonder automatische apparaatopdrachten.
+
 ## 0.1.0-dev.10
 
 - Bronvrij comfortschema beneden met begin/einde, harde ondergrens en flexibele band.

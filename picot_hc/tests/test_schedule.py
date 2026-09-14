@@ -15,7 +15,7 @@ NOW = datetime(2026, 9, 14, 8, tzinfo=TZ).timestamp()
 
 
 def window(day=0, start='18:00', end='22:00', target=20, minimum=20, maximum=20, hard=True):
-    return dict(day=day, start=start, end=end, target=target, minimum=minimum, maximum=maximum, hard=hard)
+    return dict(day=day, start=start, end=end, target=target, hard=hard)
 
 
 class ScheduleTests(ControlFixture):
@@ -26,7 +26,7 @@ class ScheduleTests(ControlFixture):
         self.config['zones'][0].update(minimum=16, target=18, maximum=22)
         self.config['zones'][1].update(minimum=16, target=18, maximum=20)
         self.config['zones'][2].update(minimum=16, target=21, maximum=24)
-        self.settings = dict(enabled=True, windows=[window()], door_open_seconds=60,
+        self.settings = dict(enabled=True, optimization_band=1, windows=[window()], door_open_seconds=60,
                              door_close_seconds=120, sensor_max_age_seconds=900)
         self.apply = True
 
@@ -49,7 +49,42 @@ class ScheduleTests(ControlFixture):
         self.assertEqual(deadline['minimum'], 20)
         night = datetime(2026, 9, 14, 23, tzinfo=TZ).timestamp()
         request = self.scheduler.view(night)['comfort']['zones']['beneden']['request']
-        self.assertEqual((request['target'], request['minimum'], request['maximum'], request['hard']), (17,17,18,False))
+        self.assertEqual((request['target'], request['minimum'], request['maximum'], request['hard']), (17,16,18,False))
+
+    def test_central_band_and_exact_comfort(self):
+        self.settings['optimization_band'] = 1.5
+        self.settings['windows'] = [window(start='08:00',end='18:00',target=17,hard=False), window()]
+        self.enable()
+        request = self.scheduler.view(NOW)['current']
+        self.assertEqual((request['minimum'],request['maximum']),(15.5,18.5))
+        request = self.scheduler.view(NOW+10*3600)['current']
+        self.assertEqual((request['minimum'],request['maximum']),(20,20))
+        for band in [True,-1,6,float('nan')]:
+            with self.assertRaises(ValueError):
+                validate_settings(dict(self.settings,optimization_band=band))
+        self.assertEqual(self.calls,[])
+
+    def test_dev10_migration_preserves_windows_and_manual_constraints(self):
+        self.enable()
+        old = copy.deepcopy(self.scheduler.data)
+        old['format'] = 2
+        del old['settings']['optimization_band']
+        old['settings']['windows'][0].update(minimum=20,maximum=21)
+        old['overrides'] = {'example':dict(until=None,source='boven',command_id=None)}
+        with self.store.connect() as db:
+            db.execute('INSERT OR REPLACE INTO hc_schedule VALUES (1, ?)',(json.dumps(old),))
+        other = Runtime(self.config,self.store,self.url,'fake-secret')
+        data = other.schedule.data
+        self.assertFalse(data['settings']['enabled'])
+        self.assertEqual(data['settings']['windows'],[window()])
+        self.assertEqual(data['overrides'],old['overrides'])
+        self.assertTrue(data['migration'])
+        again = Runtime(self.config,self.store,self.url,'fake-secret')
+        self.assertEqual(again.schedule.data,data)
+        with self.store.connect() as db:
+            archived=json.loads(db.execute('SELECT payload FROM hc_schedule_archive WHERE id=2').fetchone()[0])
+        self.assertEqual(archived,old)
+        self.assertEqual(self.calls,[])
 
     def test_no_dispatch_on_enable_tick_transition_restart_or_resume(self):
         self.enable()
@@ -190,7 +225,7 @@ class ScheduleTests(ControlFixture):
     def test_overlap_week_wrap_invalid_ranges_and_stale_revision(self):
         for windows in [[window(),window(start='19:00',end='23:00')],
                         [window(day=6,start='22:00',end='06:00'),window(day=0,start='05:00',end='07:00')],
-                        [window(start='18:00',end='18:00')], [window(minimum=19)],
+                        [window(start='18:00',end='18:00')], [window(target=36)],
                         [window(target=float('nan'))], [window(day=True)], [window(start='24:00')]]:
             bad=dict(self.settings,windows=windows)
             with self.assertRaises(ValueError): validate_settings(bad)

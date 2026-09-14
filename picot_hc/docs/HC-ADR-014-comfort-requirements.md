@@ -1,6 +1,8 @@
 # HC-ADR-014 — Comfortvraag vóór bronkeuze
 
-Status: geaccepteerde correctie van Alex op HC-ADR-013, verwerkt in dev.10.
+Status: vensterinvoer en temperatuurgrenzen vervangen door HC-ADR-015; overige afspraken blijven gelden.
+
+Oorspronkelijk: geaccepteerde correctie van Alex op HC-ADR-013, verwerkt in dev.10.
 
 ## Besluit
 

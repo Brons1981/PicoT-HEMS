@@ -221,7 +221,7 @@ function renderSchedule(data){
   $('regulation-badge').textContent='Comfortbasis · bronbediening handmatig';
   $('schedule-status').textContent=data.reason+(data.migration?' '+data.migration:'');
   const active=data.current;
-  $('schedule-next').textContent=(active?'Nu: '+active.target+' °C · '+(active.hard?'harde ondergrens':'band '+active.minimum+'–'+active.maximum+' °C')+'. ':'')+(data.next?'Volgend venster: '+fmt(data.next.starts_at)+' · '+data.next.target+' °C'+(data.next.hard?' moet bij aanvang bereikt zijn.':'.'):'Geen volgend venster ingesteld.');
+  $('schedule-next').textContent=(active?'Nu: '+active.target+' °C · '+(active.hard?'comforttemperatuur':'band '+active.minimum+'–'+active.maximum+' °C')+'. ':'')+(data.next?'Volgend venster: '+fmt(data.next.starts_at)+' · '+data.next.target+' °C'+(data.next.hard?' moet bij aanvang bereikt zijn.':'.'):'Geen volgend venster ingesteld.');
   $('planner-status').textContent=data.comfort.planner_reason;
   const holds=$('forced-sources');holds.replaceChildren();
   if(data.legacy_pause)holds.append(el('p','Eerdere handmatige pauze bewaard: '+data.legacy_pause.reason));
@@ -236,6 +236,8 @@ function renderSchedule(data){
     const enabledLabel=el('label','Tijdvensters gebruiken');enabledLabel.prepend(enabled);
     const age=el('input');age.type='number';age.min=30;age.max=86400;age.step=1;age.required=true;age.name='sensor_max_age_seconds';
     const ageLabel=el('label','Maximale meetleeftijd beneden (seconden)');ageLabel.append(age);
+    const band=el('input');band.type='number';band.name='optimization_band';band.min=0;band.max=5;band.step='any';band.required=true;
+    const bandLabel=el('label','Optimalisatieband (± °C)');bandLabel.append(band);
     const rows=el('div',undefined,'schedule-rows');
     const add=el('button','Venster toevoegen');add.type='button';
     const door=el('details'), summary=el('summary','Voorwaarden voor de toekomstige planner');door.append(summary,ageLabel);
@@ -246,24 +248,32 @@ function renderSchedule(data){
     const save=el('button','Comfortschema opslaan');save.type='submit';
     const resume=el('button','HC hervatten');resume.type='button';
     const status=el('p','', 'schedule-save-status');status.setAttribute('role','status');
-    fields.append(enabledLabel,rows,add,door,save,resume);form.append(fields,status);$('schedule-editor').append(form);
+    fields.append(enabledLabel,bandLabel,rows,add,door,save,resume);form.append(fields,status);$('schedule-editor').append(form);
     form.dirty=false;form.busy=false;form.revision=0;
     const mark=()=>{form.dirty=true;status.textContent='Nog niet opgeslagen';};
     form.addEventListener('input',mark);form.addEventListener('change',mark);
-    const addRow=(entry={day:0,start:'',end:'',target:'',minimum:'',maximum:'',hard:false})=>{
-      const row=el('div',undefined,'schedule-row comfort-window'), day=el('select');day.name='day';
-      weekdays.forEach((name,index)=>{const option=el('option',name);option.value=index;day.append(option);});day.value=entry.day;
+    const addRow=(entry={days:[0],start:'',end:'',target:'',hard:false})=>{
+      const row=el('div',undefined,'schedule-row comfort-window');
       const wrap=(label,input)=>{const wrapper=el('label',label);wrapper.append(input);row.append(wrapper);};
-      wrap('Weekdag',day);
+      const days=el('div',undefined,'window-days');
+      const choices=[];
+      weekdays.forEach((name,index)=>{
+        const input=el('input');input.type='checkbox';input.name='day';input.value=index;input.checked=entry.days.includes(index);
+        const label=el('label',name.slice(0,2));label.prepend(input);days.append(label);choices.push(input);
+      });
+      const presets=el('div',undefined,'day-presets');
+      for(const [label,selected] of [['Ma–vr',[0,1,2,3,4]],['Weekend',[5,6]],['Alle dagen',[0,1,2,3,4,5,6]]]){
+        const button=el('button',label);button.type='button';button.addEventListener('click',()=>{choices.forEach((c,i)=>c.checked=selected.includes(i));mark();});presets.append(button);
+      }
+      days.append(presets);row.append(days);
       const start=el('input');start.type='time';start.required=true;start.name='start';start.value=entry.start;wrap('Vanaf',start);
       const end=el('input');end.type='text';end.required=true;end.name='end';end.value=entry.end;end.placeholder='24:00';end.pattern='([01][0-9]|2[0-3]):[0-5][0-9]|24:00';wrap('Tot',end);
-      const temps={};
-      for(const [key,label] of [['target','Gewenst (°C)'],['minimum','Minimum (°C)'],['maximum','Maximum (°C)']]){
-        const input=el('input');input.type='number';input.min=5;input.max=35;input.step='any';input.required=true;input.name=key;input.value=entry[key];temps[key]=input;wrap(label,input);
-      }
-      const hard=el('input');hard.type='checkbox';hard.name='hard';hard.checked=entry.hard;wrap('Gewenst is harde ondergrens',hard);
-      const sync=()=>{temps.minimum.disabled=hard.checked;if(hard.checked)temps.minimum.value=temps.target.value;};
-      hard.addEventListener('change',sync);temps.target.addEventListener('input',sync);sync();
+      const target=el('input');target.type='number';target.min=5;target.max=35;target.step='any';target.required=true;target.name='target';target.value=entry.target;wrap('Temperatuur (°C)',target);
+      const hard=el('input');hard.type='checkbox';hard.name='hard';hard.checked=entry.hard;wrap('Comforttemperatuur',hard);
+      const copy=el('button','Dupliceren');copy.type='button';copy.addEventListener('click',()=>{
+        if(rows.children.length>=112)return;
+        addRow({days:choices.filter(c=>c.checked).map(c=>Number(c.value)),start:start.value,end:end.value,target:target.value,hard:hard.checked});mark();
+      });row.append(copy);
       const remove=el('button','Verwijderen');remove.type='button';remove.addEventListener('click',()=>{row.remove();mark();});
       row.append(remove);rows.append(row);
     };
@@ -282,16 +292,25 @@ function renderSchedule(data){
     };
     form.addEventListener('submit',event=>{
       event.preventDefault();
-      const windows=[...rows.children].map(row=>{
+      const windows=[];
+      for(const row of rows.children){
         const get=name=>row.querySelector('[name='+name+']');
-        return {day:Number(get('day').value),start:get('start').value,end:get('end').value,target:Number(get('target').value),minimum:Number(get('minimum').value),maximum:Number(get('maximum').value),hard:get('hard').checked};
-      });
-      post('api/schedule',{revision:form.revision,settings:{enabled:enabled.checked,windows,sensor_max_age_seconds:Number(age.value),door_open_seconds:Number(delays.door_open_seconds.value),door_close_seconds:Number(delays.door_close_seconds.value)}});
+        const days=[...row.querySelectorAll('[name=day]:checked')];
+        if(!days.length){status.textContent='Selecteer voor ieder venster minstens één dag.';return;}
+        for(const day of days)windows.push({day:Number(day.value),start:get('start').value,end:get('end').value,target:Number(get('target').value),hard:get('hard').checked});
+      }
+      post('api/schedule',{revision:form.revision,settings:{enabled:enabled.checked,optimization_band:Number(band.value),windows,sensor_max_age_seconds:Number(age.value),door_open_seconds:Number(delays.door_open_seconds.value),door_close_seconds:Number(delays.door_close_seconds.value)}});
     });
     resume.addEventListener('click',()=>post('api/resume',{}));
     form.sync=d=>{
       if(!form.dirty&&!form.busy&&d.revision>=form.revision){
-        enabled.checked=d.settings.enabled;age.value=d.settings.sensor_max_age_seconds;rows.replaceChildren();d.settings.windows.forEach(addRow);
+        enabled.checked=d.settings.enabled;band.value=d.settings.optimization_band;age.value=d.settings.sensor_max_age_seconds;rows.replaceChildren();
+        const groups=new Map();
+        for(const w of d.settings.windows){
+          const key=JSON.stringify([w.start,w.end,w.target,w.hard]);
+          if(!groups.has(key))groups.set(key,{...w,days:[]});groups.get(key).days.push(w.day);
+        }
+        [...groups.values()].sort((a,b)=>a.start.localeCompare(b.start)).forEach(addRow);
         for(const [key,input]of Object.entries(delays))input.value=d.settings[key];form.revision=d.revision;
       }
       resume.disabled=form.busy||(!d.overrides.length&&!d.legacy_pause);

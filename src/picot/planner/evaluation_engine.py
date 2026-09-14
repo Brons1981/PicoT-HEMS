@@ -24,7 +24,7 @@ from picot.domain.evaluation import (
 )
 from picot.domain.objectives import ObjectiveKind, PlannerStrategy
 
-IMPLEMENTATION_VERSION = "evaluation-v2"
+IMPLEMENTATION_VERSION = "evaluation-v3"
 
 
 class EvaluationEngine:
@@ -100,6 +100,22 @@ class EvaluationEngine:
                             objective_record
                         )
                         break
+                # ADR-037.16: after comparable equal financial outcomes,
+                # prefer less net charging before lower-priority objectives.
+                # Feasibility was already enforced by the validity filter.
+                if (
+                    objective is ObjectiveKind.FINANCIAL_RESULT
+                    and len(remaining) > 1
+                    and any(by_id[item].grid_charge_duration_seconds is not None
+                            for item in remaining)
+                ):
+                    grid_record, remaining = self._compare_grid_charge_duration(
+                        remaining, by_id, objective_records,
+                    )
+                    tie_records.append(grid_record)
+                    if grid_record.decisive:
+                        decisive_step = "tie_break:grid_charge_duration"
+                        break
 
         if (
             len(remaining) > 1
@@ -129,7 +145,8 @@ class EvaluationEngine:
             remaining = [incumbent_candidate_id]
             decisive_step = "commitment:equivalent_incumbent_retained"
         elif len(remaining) > 1:
-            remaining, tie_records, decisive_step = self._apply_tie_breaks(remaining, by_id)
+            remaining, general_ties, decisive_step = self._apply_tie_breaks(remaining, by_id)
+            tie_records.extend(general_ties)
 
         winner_id = remaining[0] if len(remaining) == 1 else None
         evaluation_id = self._evaluation_id(
@@ -324,6 +341,45 @@ class EvaluationEngine:
             decisive=True,
             equivalence_margin=record.equivalence_margin,
         )
+
+    @staticmethod
+    def _compare_grid_charge_duration(
+        candidate_ids: list[str],
+        outcomes: dict[str, CandidateOutcome],
+        objectives: list[ObjectiveComparisonRecord],
+    ) -> tuple[TieBreakRecord, list[str]]:
+        financial = next((r for r in objectives
+                          if r.objective is ObjectiveKind.FINANCIAL_RESULT), None)
+        financial_equal = (
+            financial is not None
+            and financial.available
+            and financial.configured_weight > 0
+            and len({v.value for v in financial.values if v.candidate_id in candidate_ids}) == 1
+        )
+        raw = [(item, outcomes[item].grid_charge_duration_seconds) for item in candidate_ids]
+        if not financial_equal or any(value is None for _, value in raw):
+            return TieBreakRecord(
+                kind=TieBreakKind.GRID_CHARGE_DURATION,
+                values=tuple(CandidateComparisonValue(item, value, RelativeResult.UNAVAILABLE)
+                             for item, value in raw),
+                retained_candidate_ids=tuple(candidate_ids),
+                available=False,
+                decisive=False,
+            ), candidate_ids
+        best = min(value for _, value in raw if value is not None)
+        retained = [item for item, value in raw if value == best]
+        decisive = len(retained) == 1
+        return TieBreakRecord(
+            kind=TieBreakKind.GRID_CHARGE_DURATION,
+            values=tuple(CandidateComparisonValue(
+                item, value,
+                RelativeResult.BETTER if value == best and decisive
+                else RelativeResult.EQUAL if value == best else RelativeResult.WORSE,
+            ) for item, value in raw),
+            retained_candidate_ids=tuple(retained),
+            available=True,
+            decisive=decisive,
+        ), retained
 
     def _apply_tie_breaks(
         self,

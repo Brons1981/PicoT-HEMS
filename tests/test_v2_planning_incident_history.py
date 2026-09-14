@@ -270,3 +270,76 @@ def test_records_older_than_36_hours_keep_only_basic_incident_facts(tmp_path) ->
         "lifecycle_status": "due",
     }]
     assert "poll" not in record
+
+
+def test_revision_with_same_mode_and_reason_keeps_full_input(tmp_path) -> None:
+    path = tmp_path / "planning-incidents.jsonl"
+    history = PlanningIncidentHistory(path)
+    source = _snapshot()
+    first = CanonicalPipeline().run(planning_input=source)
+    history.record(bundle=_bundle(source, state="100"), run=first)
+    revised = replace(
+        first,
+        execution_plan_set=replace(
+            first.execution_plan_set,
+            plan_ids=tuple(plan.plan_id + "-revision" for plan in first.execution_plan_set.plans),
+            plans=tuple(replace(plan, plan_id=plan.plan_id + "-revision")
+                        for plan in first.execution_plan_set.plans),
+        ),
+    )
+    history.record(bundle=_bundle(source, state="101"), run=revised)
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(records) == 2
+    assert records[-1]["poll"]["planning_input"]["snapshot_id"] == source.snapshot_id
+    assert records[-1]["poll"]["entities"][0]["state"] == "101"
+
+
+def test_execution_result_change_is_recorded_without_new_plan(tmp_path) -> None:
+    path = tmp_path / "planning-incidents.jsonl"
+    history = PlanningIncidentHistory(path)
+    source = _snapshot()
+    first = CanonicalPipeline().run(planning_input=source)
+    history.record(bundle=_bundle(source, state="100"), run=first)
+    failed = replace(first, vendor_result=replace(first.vendor_result, status="failed"))
+    history.record(bundle=_bundle(source, state="101"), run=failed)
+    history.record(bundle=_bundle(source, state="102"), run=failed)
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(records) == 2
+    assert records[-1]["poll"]["vendor_result"]["status"] == "failed"
+
+
+def test_clock_boundary_evidence_has_no_invented_evaluation_and_deduplicates(tmp_path) -> None:
+    path = tmp_path / "planning-incidents.jsonl"
+    history = PlanningIncidentHistory(path)
+    bundle = _bundle(_snapshot(), state="100")
+    failed = {"status": "failed", "plan_id": "plan-committed",
+              "planned_vendor_mode": "Snel opladen", "failure_reason": "timeout",
+              "application_id": "attempt-1"}
+    history.record_boundary(bundle=bundle, outcome=failed,
+                            runtime_diagnostics={"monitor": "blocked_by_stabilisation"})
+    history.record_boundary(bundle=bundle, outcome=failed | {"application_id": "attempt-2"})
+    history.record_boundary(bundle=bundle, outcome=failed | {"status": "dispatched",
+                                                           "failure_reason": None})
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(records) == 2
+    assert records[0]["event"] == "execution_boundary_changed"
+    poll = records[0]["poll"]
+    assert poll["boundary_outcome"] == failed
+    assert poll["planning_input"]["snapshot_id"] == bundle.snapshot.snapshot_id
+    assert poll["runtime_diagnostics"]["monitor"] == "blocked_by_stabilisation"
+    assert "evaluation" not in poll
+    assert records[1]["poll"]["boundary_outcome"]["status"] == "dispatched"
+
+
+def test_clock_boundary_oversize_keeps_original_outcome_without_fabrication(
+    tmp_path, monkeypatch,
+) -> None:
+    path = tmp_path / "planning-incidents.jsonl"
+    monkeypatch.setattr(incident_history, "MAX_INCIDENT_RECORD_BYTES", 500)
+    history = PlanningIncidentHistory(path)
+    outcome = {"status": "failed", "plan_id": "plan-committed", "failure_reason": "timeout"}
+    history.record_boundary(bundle=_bundle(_snapshot(), state="100"), outcome=outcome)
+    record = json.loads(path.read_text())
+    assert record["detail_level"] == "bounded"
+    assert record["boundary_outcome"] == outcome
+    assert record["snapshot_id"] == _snapshot().snapshot_id

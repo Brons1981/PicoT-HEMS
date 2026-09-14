@@ -99,6 +99,8 @@ def _poll_snapshot(
         "horizon_end": run.planning_input.horizon_end,
         "entities": _entity_observations(bundle),
         "canonical_facts": [asdict(fact) for fact in bundle.facts],
+        "planning_input": asdict(run.planning_input),
+        "opportunities": asdict(run.opportunities),
         "household_load_observation": (
             asdict(bundle.household_load_observation)
             if bundle.household_load_observation is not None
@@ -159,6 +161,7 @@ class PlanningIncidentHistory:
     _active_incident_id: str | None = field(default=None, init=False)
     _active_fingerprint: str | None = field(default=None, init=False)
     _planning_outcome_fingerprint: str | None = field(default=None, init=False)
+    _boundary_fingerprint: str | None = field(default=None, init=False)
     _household_fallback_active: bool | None = field(default=None, init=False)
     _last_compacted_at: datetime | None = field(default=None, init=False)
 
@@ -171,6 +174,42 @@ class PlanningIncidentHistory:
         self._rotate_oversized_history(now)
         self._compact_expired_details(now)
         self._last_compacted_at = now
+
+    def record_boundary(
+        self,
+        *,
+        bundle: PlanningInputBundle,
+        outcome: dict[str, object],
+        runtime_diagnostics: dict[str, object] | None = None,
+    ) -> None:
+        """Persist actual clock execution evidence without inventing a planning run."""
+        fingerprint = json.dumps(
+            {key: value for key, value in outcome.items()
+             if key not in {"application_id", "command_id", "observed_at", "attempted_at"}},
+            default=_json_value, sort_keys=True, separators=(",", ":"),
+        )
+        if fingerprint == self._boundary_fingerprint:
+            return
+        source = bundle.snapshot
+        self._append({
+            "schema_version": SCHEMA_VERSION,
+            "event": "execution_boundary_changed",
+            "poll": {
+                "captured_at_utc": source.captured_at.astimezone(UTC).isoformat(),
+                "captured_at_local": source.captured_at.astimezone(
+                    ZoneInfo(self.local_timezone_name)
+                ).isoformat(),
+                "run_id": source.run_id,
+                "snapshot_id": source.snapshot_id,
+                "picot_version": source.picot_version,
+                "planning_input": asdict(source),
+                "canonical_facts": [asdict(fact) for fact in bundle.facts],
+                "entities": _entity_observations(bundle),
+                "boundary_outcome": outcome,
+                "runtime_diagnostics": runtime_diagnostics or {},
+            },
+        })
+        self._boundary_fingerprint = fingerprint
 
     def record(
         self,
@@ -282,8 +321,17 @@ class PlanningIncidentHistory:
             "winning_family": (
                 winning_candidate.family if winning_candidate is not None else None
             ),
+            "execution_status": run.execution_record.status,
+            "execution_reason": run.execution_record.reason,
+            "primitive_status": run.primitive_boundary.status,
+            "primitive_blockers": run.primitive_boundary.blockers,
+            "current_vendor_mode": run.primitive_boundary.current_vendor_mode,
+            "planned_vendor_mode": run.primitive_boundary.planned_vendor_mode,
+            "vendor_status": run.vendor_result.status,
             "plans": [
                 {
+                    "plan_id": plan.plan_id,
+                    "segments": [asdict(segment) for segment in plan.segments],
                     "execution_scope_id": plan.execution_scope_id,
                     "valid_from": (
                         plan.valid_from
@@ -469,6 +517,7 @@ def _basic_incident_record(record: dict[str, object]) -> dict[str, object]:
         "run_id": poll.get("run_id"),
         "snapshot_id": poll.get("snapshot_id"),
         "picot_version": poll.get("picot_version"),
+        "boundary_outcome": poll.get("boundary_outcome"),
         "evaluation_status": evaluation.get("status"),
         "evaluation_reason": evaluation.get("reason"),
         "decisive_step": evaluation.get("decisive_step"),

@@ -547,7 +547,16 @@ def load_options(options_path: str = "/data/options.json") -> dict[str, Any]:
     if not path.exists():
         return {}
     parsed = json.loads(path.read_text(encoding="utf-8"))
-    return parsed if isinstance(parsed, dict) else {}
+    if not isinstance(parsed, dict):
+        return {}
+    # All consumers (including Recorder recovery and display history) must
+    # resolve the same storage identity as live Planning Input. Never migrate
+    # only a binding while leaving the runtime's options on an individual unit.
+    raw_soc = parsed.get("zendure_soc_entity")
+    if isinstance(raw_soc, str):
+        entity_id = raw_soc.strip()
+        parsed["zendure_soc_entity"] = LEGACY_SOC_ENTITY_MIGRATIONS.get(entity_id, entity_id)
+    return parsed
 
 
 def load_storage_state_config(
@@ -634,8 +643,6 @@ def load_bindings(options_path: str = "/data/options.json") -> tuple[SourceBindi
     for category, semantic_role, option_key in DEFAULT_BINDINGS:
         raw = options.get(option_key)
         entity_id = raw.strip() if isinstance(raw, str) and raw.strip() else None
-        if semantic_role == "storage_soc" and entity_id is not None:
-            entity_id = LEGACY_SOC_ENTITY_MIGRATIONS.get(entity_id, entity_id)
         result.append(SourceBinding(category, semantic_role, entity_id))
     return tuple(result)
 

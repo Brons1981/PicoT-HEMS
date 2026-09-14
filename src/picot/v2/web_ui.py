@@ -5399,6 +5399,8 @@ def pipeline_result_nl(
     attributes: Mapping[str, object],
 ) -> str:
     """Translate one technical stage outcome into deterministic Dutch."""
+    if state == "mode_feedback_timeout":
+        return "De HA-keuzestand bevestigde de aangevraagde modus niet binnen de wachttijd."
     if stage == 1:
         return "De planningsgegevens zijn compleet en klaar voor beoordeling."
     if stage == 2:
@@ -5408,6 +5410,12 @@ def pipeline_result_nl(
         count = _result_count(attributes, "candidate_count")
         return f"Er zijn {count} mogelijke plannen opgebouwd."
     if stage == 4:
+        if attributes.get("decisive_step") == "tie_break:grid_charge_duration":
+            return "Bij gelijke kosten is het haalbare plan met de kortste netlaadduur gekozen."
+        if state == "plan_retained":
+            if attributes.get("winning_candidate_id"):
+                return "Het bestaande plan is na vergelijking behouden."
+            return "Het bestaande plan is behouden; er is geen nieuwe winnaar gekozen."
         family = attributes.get("winning_family")
         if family == "pv_charge_only":
             return "Het beste plan is laden met verwachte zonne-energie."
@@ -5418,6 +5426,10 @@ def pipeline_result_nl(
             return f"Het beste plan is {winner}."
         return "Er is nog geen beste plan gekozen."
     if stage == 5:
+        if state == "plan_retained":
+            return "Het bestaande uitvoeringsplan is behouden."
+        if state == "blocked":
+            return "Er is geen uitvoeringsplan beschikbaar; de planopbouw is geblokkeerd."
         count = _result_count(
             attributes,
             "plan_count" if "plan_count" in attributes else "execution_plan_count",
@@ -5436,6 +5448,8 @@ def pipeline_result_nl(
         normal_result = attributes.get("normal_result")
         if isinstance(normal_result, str) and normal_result.strip():
             return normal_result
+        if state == "already_active":
+            return "De teruggelezen modus komt al overeen; er is geen nieuwe opdracht nodig."
         if state == "request_ready":
             return "De uitvoerbare opdracht is vrijgegeven voor Zendure."
         return "Er is nu geen uitvoerbare opdracht voor Zendure."
@@ -5463,8 +5477,9 @@ def pipeline_stage_health(
     attributes: Mapping[str, object],
 ) -> str:
     """Classify technical health independently from a valid no-op outcome."""
-    del stage
-    unhealthy_markers = ("error", "failed", "invalid", "unavailable", "rejected")
+    if stage == 5 and state == "blocked":
+        return "fault"
+    unhealthy_markers = ("error", "failed", "invalid", "unavailable", "rejected", "timeout")
     normalized_state = state.casefold()
     if any(marker in normalized_state for marker in unhealthy_markers):
         return "fault"
@@ -6473,9 +6488,9 @@ def build_web_view(
         "healthy_count": healthy_count,
         "total_count": len(pipeline),
         "summary_nl": (
-            f"Pipeline werkt correct – {healthy_count}/{len(pipeline)} groen."
+            f"Geen technische fouten gemeld – {healthy_count}/{len(pipeline)} stappen groen."
             if healthy_count == len(pipeline)
-            else (f"Pipeline heeft een probleem – {len(pipeline) - healthy_count} stap(pen) rood.")
+            else (f"Technische fout gemeld – {len(pipeline) - healthy_count} stap(pen) rood.")
         ),
     }
     execution_attributes = pipeline[5]["attributes"]

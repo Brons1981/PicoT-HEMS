@@ -26,7 +26,7 @@ from picot.architecture_ownership import architecture_ownership
 from picot.domain.execution_plan import ExecutionPlan
 from picot.domain.market_execution import MarketExecutionProgress
 from picot.domain.market_plan_binding import MarketPlanBinding
-from picot.domain.runtime import RuntimeObservation
+from picot.domain.runtime import RuntimeObservation, RuntimeObservationKind
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.planner.market_daily_planner import MarketTradingPolicy
@@ -1218,6 +1218,12 @@ def _run_live_cycle(
     runtime_now: Callable[[], datetime] | None = None,
 ) -> str | None:
     """Execute one changed-input cycle and return the committed input signature."""
+    if runtime_monitor is not None and not force_runtime_replan:
+        # ADR-028/034: a changed signature is not admission. Execution clock
+        # checks and observation publishing already ran independently in poll.
+        if refresh_unchanged is not None:
+            refresh_unchanged(bundle)
+        return previous_signature
     if (
         not force_runtime_replan
         and not _should_run_cycle(previous_signature, bundle)
@@ -1322,6 +1328,14 @@ def _poll_live_cycle(
             if runtime_observations is not None
             else ()
         )
+        if previous_signature is None:
+            observations += (RuntimeObservation(
+                observation_id=f"planning-start:{bundle.snapshot.snapshot_id}",
+                kind=RuntimeObservationKind.COMMITMENT_CHANGED,
+                observed_at=bundle.snapshot.captured_at,
+                source_reference="live-planning-start-or-explicit-reset",
+                new_value="planning_requested",
+            ),)
         signal = runtime_monitor.observe(
             observations,
             now=bundle.snapshot.captured_at,
@@ -2116,6 +2130,29 @@ def _start_energy_device_catalog_observer(
     return thread
 
 
+def _observe_execution_status(
+    monitor: RuntimeMonitorSession,
+    *,
+    status: str,
+    source_reference: str,
+    observed_at: datetime,
+    observation_id: str,
+) -> None:
+    outcome = {
+        "failed": "failed", "dispatch_failed": "failed", "rejected": "rejected",
+        "mode_feedback_timeout": "timed_out", "dispatched": "accepted",
+        "already_active": "succeeded",
+    }.get(status)
+    if outcome is not None:
+        monitor.observe((RuntimeObservation(
+            observation_id=observation_id,
+            kind=RuntimeObservationKind.EXECUTION_OUTCOME_CHANGED,
+            observed_at=observed_at,
+            source_reference=source_reference,
+            new_value=outcome,
+        ),), now=observed_at)
+
+
 def _execute_planning_bundle(
     *,
     token: str,
@@ -2144,6 +2181,8 @@ def _execute_planning_bundle(
     financial_result_ledger: FinancialResultLedger | None = None,
     planning_checkpoint: Callable[[], None] | None = None,
     refresh_execution_input: Callable[[], PlanningInputSnapshot] | None = None,
+    monitor_diagnostics: dict[str, object] | None = None,
+    runtime_monitor: RuntimeMonitorSession | None = None,
 ) -> bool:
     """Run, project, and publish one already assembled Planning Input bundle."""
     planning_input_ms = round(
@@ -2179,6 +2218,7 @@ def _execute_planning_bundle(
             observed = refresh_execution_input()
             execution_observed_at = observed.captured_at
             execution_observation = {
+                "planning_input": asdict(observed),
                 "snapshot_id": observed.snapshot_id,
                 "captured_at": observed.captured_at.isoformat(),
                 "storage": [
@@ -2190,6 +2230,14 @@ def _execute_planning_bundle(
             run = canonical_execution_runtime.apply_committed(run, observed)
         else:
             run = canonical_execution_runtime.apply(run)
+        if runtime_monitor is not None:
+            _observe_execution_status(
+                runtime_monitor, status=run.vendor_result.status,
+                source_reference=(run.execution_plan_set.plans[0].plan_id
+                                  if run.execution_plan_set.plans else "committed-boundary"),
+                observed_at=execution_observed_at,
+                observation_id=f"execution-result:{run.planning_input.run_id}",
+            )
         if (
             run.vendor_result.status in {"dispatched", "already_active"}
             and run.vendor_result.planned_vendor_mode is not None
@@ -2230,6 +2278,7 @@ def _execute_planning_bundle(
                 bundle=bundle,
                 run=run,
                 runtime_diagnostics={
+                    "runtime_monitor": monitor_diagnostics,
                     "execution_observation": execution_observation,
                     "pv_actual": (
                         asdict(pv_actual_diagnostics)
@@ -2484,7 +2533,9 @@ def _execute_planning_bundle(
         ),
         flush=True,
     )
-    return run.vendor_result.status not in {"dispatch_failed", "rejected"}
+    return run.vendor_result.status not in {
+        "failed", "dispatch_failed", "rejected", "mode_feedback_timeout",
+    }
 
 
 def main() -> None:
@@ -3159,6 +3210,14 @@ def main() -> None:
             execution_enabled=execution_enabled,
             planning_fallback_notifier=planning_fallback_notifier,
             planning_incident_history=planning_incident_history,
+            monitor_diagnostics={
+                "state": asdict(runtime_monitor.state),
+                "admission": (
+                    asdict(runtime_monitor.last_admission)
+                    if runtime_monitor.last_admission is not None else None
+                ),
+            },
+            runtime_monitor=runtime_monitor,
             daily_pv_basis_decision=latest_daily_pv_basis_decision,
             financial_result_ledger=financial_result_ledger,
         )
@@ -3169,6 +3228,24 @@ def main() -> None:
             bundle.snapshot,
             execution_enabled=execution_enabled,
         )
+        _observe_execution_status(
+            runtime_monitor, status=outcome.status,
+            source_reference=outcome.plan_id or "committed-boundary",
+            observed_at=bundle.snapshot.captured_at,
+            observation_id=f"boundary-result:{bundle.snapshot.snapshot_id}",
+        )
+        try:
+            planning_incident_history.record_boundary(
+                bundle=bundle,
+                outcome=asdict(outcome),
+                runtime_diagnostics={"runtime_monitor": asdict(runtime_monitor.state)},
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            print(json.dumps({
+                "event": "picot_v2_boundary_history_error",
+                "snapshot_id": bundle.snapshot.snapshot_id,
+                "error": type(exc).__name__,
+            }), flush=True)
         if outcome.status == "dispatched":
             assert outcome.application_id is not None
             assert outcome.plan_id is not None
@@ -3184,7 +3261,7 @@ def main() -> None:
                 previous_vendor_mode=outcome.previous_vendor_mode,
                 requested_vendor_mode=outcome.planned_vendor_mode,
                 source="PicoT canonical commitment boundary",
-                reason="active canonical MEP segment boundary",
+                reason=outcome.reason or "active canonical MEP segment boundary",
                 confidence=None,
                 run_id=bundle.snapshot.run_id,
                 snapshot_id=bundle.snapshot.snapshot_id,
@@ -3193,7 +3270,7 @@ def main() -> None:
                 application_id=outcome.application_id,
                 occurred_at=bundle.snapshot.captured_at,
             )
-        elif outcome.status == "dispatch_failed":
+        elif outcome.status in {"failed", "dispatch_failed", "rejected", "mode_feedback_timeout"}:
             print(
                 json.dumps(
                     {
@@ -3212,6 +3289,9 @@ def main() -> None:
     runtime_monitor = RuntimeMonitorSession()
     material_replanning = MaterialReplanningObservationProducer(
         history=household_load_history,
+        conversion_model=lambda snapshot: market_daily_planner_runtime.planning_configuration(
+            snapshot
+        )[0],
     )
     previous_signature: str | None = None
     while True:

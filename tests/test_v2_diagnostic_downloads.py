@@ -98,3 +98,36 @@ def test_incident_overview_reads_only_the_bounded_file_tail(tmp_path) -> None:
     assert len(overview) == 20
     assert overview[0]["run_id"] == "run-10"
     assert overview[-1]["reason"] == "reason-29"
+
+
+def test_zip_includes_recent_rotated_incidents_but_not_other_files(tmp_path) -> None:
+    from datetime import UTC, datetime
+
+    incident = tmp_path / "picot_v2_planning_incident_history.jsonl"
+    incident.write_text("current\n")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    rotated = tmp_path / f"{incident.stem}.oversized-{timestamp}.jsonl"
+    rotated.write_text("morning\n")
+    (tmp_path / f"{incident.stem}.oversized-secrets.jsonl").write_text("secret")
+    with ZipFile(BytesIO(diagnostic_zip((incident,)))) as archive:
+        assert archive.read(rotated.name) == b"morning\n"
+        assert not any("secrets" in name for name in archive.namelist())
+
+
+def test_rotated_export_budget_reports_missing_evidence(tmp_path, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    import picot.v2.diagnostic_downloads as downloads
+
+    incident = tmp_path / "picot_v2_planning_incident_history.jsonl"
+    incident.write_text("current\n")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    rotated = tmp_path / f"{incident.stem}.oversized-{timestamp}.jsonl"
+    rotated.write_text("morning\n")
+    monkeypatch.setattr(downloads, "MAX_ROTATED_EXPORT_BYTES", 1)
+    with ZipFile(BytesIO(diagnostic_zip((incident,)))) as archive:
+        coverage = json.loads(archive.read("incident-export-coverage.json"))
+        assert coverage["complete"] is False
+        assert coverage["omitted_files"] == [rotated.name]
+        assert archive.read(incident.name) == b"current\n"
+    assert rotated.read_text() == "morning\n"

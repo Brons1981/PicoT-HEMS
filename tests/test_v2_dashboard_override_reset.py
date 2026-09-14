@@ -35,7 +35,7 @@ def test_every_pipeline_card_exposes_plain_dutch_result() -> None:
         "healthy": True,
         "healthy_count": 9,
         "total_count": 9,
-        "summary_nl": "Pipeline werkt correct – 9/9 groen.",
+        "summary_nl": "Geen technische fouten gemeld – 9/9 stappen groen.",
     }
     assert all(item["health"] == "healthy" for item in pipeline)
 

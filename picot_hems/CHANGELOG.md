@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.260
+
+- Herplanning vereist Monitor-vrijgave; segmentklok en planbehoud blijven afzonderlijk herleidbaar.
+- Bestaand dagplan en vervangers worden vanuit dezelfde actuele snapshot vergeleken; bij gelijke kosten krijgt minder netlaadduur voorrang.
+- SOC-bronidentiteit, uitvoeringsgrenzen, dispatchfouten en begrensde selectorfeedback hersteld.
+- Tegel 5 verklaart planbehoud en blokkades; diagnostiek bewaart volledige uitvoeringssnapshots en evaluatiebewijs.
+- Externe Gielz- en recorderconfiguratie worden niet door deze add-on aangepast; zie docs/development_log/2026-09-14-ha-followup.md.
+- Dagdoel, minimumreserve en belastingbescherming blijven gelden. Dev.254 blijft terugvalbasis.
+
 ## 2.0.0-dev.259
 
 - Voorkomt afwijzing van behouden marktroutes door een negatieve afrondingsrest; echte ongeldige energietoewijzingen blijven afgewezen.

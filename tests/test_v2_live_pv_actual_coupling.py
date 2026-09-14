@@ -459,9 +459,14 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         financial_result_ledger: object,
         planning_checkpoint: object,
         refresh_execution_input: object,
+        monitor_diagnostics: dict[str, object],
+        runtime_monitor: object,
         ) -> None:
         assert callable(planning_checkpoint)
         assert callable(refresh_execution_input)
+        admission = monitor_diagnostics["admission"]
+        assert isinstance(admission, dict)
+        assert admission["fresh_snapshot_required"] is True
         del (
             canonical_pipeline,
             price_config,
@@ -556,10 +561,12 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     # Daily main planning uses the original LOWER/CENTRAL range. Closed
     # intervals still carry real actuals; they do not rewrite future LOWER.
     assert future == bundle.snapshot.pv_energy_timeline.intervals[1]
-    assert diagnostics.history_status == "available"
+    # Monitor admission recaptures the snapshot. Closed historical PV evidence
+    # is reused on that second preparation, while the actual interval survives.
+    assert diagnostics.history_status == "cached"
     assert diagnostics.interval_status == "actual"
     assert diagnostics.entity_id == ENTITY_ID
-    assert diagnostics.cache_hit is False
+    assert diagnostics.cache_hit is True
 
 
 def test_live_actual_pv_accepts_sparse_state_changes() -> None:

@@ -261,7 +261,9 @@ def test_live_session_retries_failed_requested_run_after_stabilisation() -> None
     )
 
 
-def _execution_status(status, at, *, source="plan-1"):
+def _execution_status(
+    status: str, at: datetime, *, source: str = "plan-1"
+) -> RuntimeObservation:
     return RuntimeObservation(
         observation_id=f"{source}:{at.isoformat()}:{status}",
         kind=RuntimeObservationKind.EXECUTION_OUTCOME_CHANGED,
@@ -271,7 +273,7 @@ def _execution_status(status, at, *, source="plan-1"):
     )
 
 
-def test_latched_clock_timeout_does_not_replan_again_after_failed_cycle():
+def test_latched_clock_timeout_does_not_replan_again_after_failed_cycle() -> None:
     session = RuntimeMonitorSession()
     first = session.observe((_execution_status("timed_out", BASE),), now=BASE)
     assert first.fresh_snapshot_required
@@ -287,7 +289,7 @@ def test_latched_clock_timeout_does_not_replan_again_after_failed_cycle():
 
 
 @pytest.mark.parametrize("status,source", [("failed", "plan-1"), ("timed_out", "plan-2")])
-def test_distinct_execution_failure_still_requests_replanning(status, source):
+def test_distinct_execution_failure_still_requests_replanning(status: str, source: str) -> None:
     session = RuntimeMonitorSession()
     session.observe((_execution_status("timed_out", BASE),), now=BASE)
     session.start_requested_run(planner_run_id="run-1", started_at=BASE)
@@ -298,7 +300,7 @@ def test_distinct_execution_failure_still_requests_replanning(status, source):
 
 
 @pytest.mark.parametrize("recovery", ["dispatched", "already_active", "accepted", "succeeded"])
-def test_execution_recovery_allows_a_subsequent_identical_failure(recovery):
+def test_execution_recovery_allows_a_subsequent_identical_failure(recovery: str) -> None:
     session = RuntimeMonitorSession()
     session.observe((_execution_status("failed", BASE),), now=BASE)
     session.start_requested_run(planner_run_id="run-1", started_at=BASE)
@@ -311,7 +313,7 @@ def test_execution_recovery_allows_a_subsequent_identical_failure(recovery):
     assert changed.fresh_snapshot_required
 
 
-def test_generic_failed_replan_is_reported_once_until_success():
+def test_generic_failed_replan_is_reported_once_until_success() -> None:
     session = RuntimeMonitorSession()
     session.observe((_observation("start", RuntimeObservationKind.COMMITMENT_CHANGED),), now=BASE)
     session.start_requested_run(planner_run_id="run-1", started_at=BASE)
@@ -338,7 +340,7 @@ def test_generic_failed_replan_is_reported_once_until_success():
     assert session.state.replan_required
 
 
-def test_repeated_execution_status_still_validates_observation_order():
+def test_repeated_execution_status_still_validates_observation_order() -> None:
     session = RuntimeMonitorSession()
     session.observe((_execution_status("failed", BASE),), now=BASE)
     late = BASE + timedelta(seconds=2)

@@ -53,7 +53,6 @@ from picot.v2.daily_charge_assignment import DailyMainShortfallTrigger
 from picot.v2.daily_pv_comparison import (
     DailyMainPVSurplusTrigger,
     DailyPVComparisonBasis,
-    compare_daily_pv,
 )
 from picot.v2.execution_plan_projection import _project_plan, project_execution_plan_set
 from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
@@ -63,6 +62,7 @@ from picot.v2.market_daily_runtime import (
     MarketDailyRuntimeOutcome,
 )
 from picot.v2.market_rule_planning import market_rule_portfolio
+from picot.v2.material_replanning import daily_grid_review_comparison
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
@@ -928,7 +928,9 @@ def build_mep_canonical_run(
     candidate_set = CandidateSet(
         run_id=snapshot.run_id,
         snapshot_id=snapshot.snapshot_id,
-        candidate_set_id=_id("mep-candidate-set", opportunities.opportunity_set_id),
+        candidate_set_id=(comparable.outcome_set.candidate_set_reference
+                          if comparable is not None
+                          else _id("mep-candidate-set", opportunities.opportunity_set_id)),
         candidates=tuple(candidates),
         energy_paths=tuple(paths),
         projected_balances=((comparable.projected_balance,) if comparable is not None else ()),
@@ -978,6 +980,7 @@ def build_mep_canonical_run(
             comparable.incumbent_candidate_id if comparable is not None else None
         ),
         financial_equivalence_margin_eur=switching_margin_eur,
+        canonical_record=canonical_evaluation.record if canonical_evaluation is not None else None,
         commitment_decision=(
             "retained"
             if incumbent_retained
@@ -1351,25 +1354,7 @@ def _build_daily_main_run(
                     owner.ends_at <= snapshot.captured_at
                 ):
                     continue
-                pv_comparison = compare_daily_pv(
-                    state.basis, snapshot.pv_energy_timeline, at=snapshot.captured_at,
-                )
-                # A changed stored energy can make charging removable even with
-                # unchanged closed PV observations. Poll time is not new evidence.
-                storage_basis = tuple(
-                    (s.execution_scope_id, s.current_soc, s.usable_capacity_wh)
-                    for s in snapshot.current_storage_states
-                    if s.execution_scope_id == owner.execution_scope_id
-                )
-                pv_comparison = replace(
-                    pv_comparison, evidence_id="grid-review:" + sha256(
-                        repr((pv_comparison.evidence_id, storage_basis,
-                              (snapshot.household_load_guard.active,
-                               snapshot.household_load_guard.quality,
-                               snapshot.household_load_guard.extra_power_w)
-                              if snapshot.household_load_guard is not None else None)).encode()
-                    ).hexdigest(),
-                )
+                pv_comparison = daily_grid_review_comparison(snapshot, state)
                 if pv_comparison.status != "complete" or (
                     pv_comparison.evidence_id in state.assessed_evidence_ids
                 ):
@@ -1430,6 +1415,11 @@ def _build_daily_main_run(
                 comparable = produce_main_charge_portfolio(
                     snapshot=snapshot, windows=windows, tariffs=tariffs,
                     opportunity_ids=opportunities.opportunity_ids,
+                    incumbent=adapter.main_charge_incumbent(
+                        snapshot=snapshot, assignment=pending[0], conversion_model=conversion,
+                        horizon_end=windows.windows[0].schedule.horizon_end,
+                    ) if optimisation_trigger is not None
+                    and not isinstance(optimisation_trigger, DailyBridgeTrigger) else None,
                 )
         elif not retained:
             raise ValueError("daily_main_active_plan_unavailable")
@@ -1439,14 +1429,31 @@ def _build_daily_main_run(
     candidate_ms = round((perf_counter() - started) * 1000, 3)
     started = perf_counter()
     if comparable is not None:
-        # EUR/kWh-stored: deliberately no legacy EUR switching margin/incumbent.
+        # Fresh unchanged incumbent and challengers share units and horizon.
+        # ADR-037.16 applies net-charge duration only after objective equality.
         result = EvaluationEngine().evaluate(
             comparable.candidate_set,
             comparable.strategy,
             comparable.outcome_set,
             created_at=snapshot.captured_at,
+            incumbent_candidate_id=comparable.incumbent_candidate_id,
         )
-        if result.winning_energy_path is not None:
+        if result.winning_energy_path is not None and (
+            result.record.winning_candidate_id == comparable.incumbent_candidate_id
+        ):
+            reason = "daily_main_incumbent_retained"
+            if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
+                assert commitment_store is not None
+                try:
+                    commitment_store.record_daily_pv_assessment(
+                        assignment_id=optimisation_trigger.assignment_id,
+                        basis_id=optimisation_trigger.basis_id,
+                        evidence_id=optimisation_trigger.comparison_evidence_id,
+                        outcome="no_better_grid_reduction_candidate",
+                    )
+                except (ValueError, OSError) as exc:
+                    reason = str(exc) or exc.__class__.__name__
+        elif result.winning_energy_path is not None:
             selected_window = next(
                 s.window
                 for s in comparable.sources
@@ -1613,7 +1620,9 @@ def _build_daily_main_run(
                     reason = "market_not_admitted:" + str(exc)
         except (ValueError, OSError) as exc:
             reason = "market_not_admitted:" + str(exc)
-    candidate_set_id = _id("daily-main-candidates", snapshot.snapshot_id)
+    candidate_set_id = (comparable.outcome_set.candidate_set_reference
+                        if comparable is not None
+                        else _id("daily-main-candidates", snapshot.snapshot_id))
     candidates = tuple(
         Candidate(
             run_id=snapshot.run_id,
@@ -1727,8 +1736,12 @@ def _build_daily_main_run(
         else "plan_retained"
         if retained
         else "fallback_active",
+        canonical_record=result.record if result is not None else None,
         evaluated_candidate_ids=result.record.evaluated_candidate_ids if result is not None else (),
         decisive_step=result.record.decisive_step if result is not None else None,
+        incumbent_candidate_id=(
+            comparable.incumbent_candidate_id if comparable is not None else None
+        ),
         commitment_decision="triggered_revision"
         if canonical_set is not None and optimisation_trigger is not None
         else "initial_binding"

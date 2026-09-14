@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from math import isfinite
 from typing import TYPE_CHECKING
 
 from picot.domain.objectives import ObjectiveKind
@@ -32,6 +33,7 @@ class RelativeResult(StrEnum):
 
 
 class TieBreakKind(StrEnum):
+    GRID_CHARGE_DURATION = "grid_charge_duration"
     INCUMBENT_COMMITMENT = "incumbent_commitment"
     CONFIDENCE = "confidence"
     RECOVERABILITY = "recoverability"
@@ -77,8 +79,14 @@ class CandidateOutcome:
     validity: CandidateValidity
     invalidity_reasons: tuple[str, ...] = ()
     evidence_ids: tuple[str, ...] = ()
+    grid_charge_duration_seconds: float | None = None
 
     def __post_init__(self) -> None:
+        if self.grid_charge_duration_seconds is not None and (
+            not isfinite(self.grid_charge_duration_seconds)
+            or self.grid_charge_duration_seconds < 0.0
+        ):
+            raise ValueError("Grid charge duration must be finite and nonnegative seconds.")
         if not self.candidate_id.strip():
             raise ValueError("Candidate outcome candidate ID must not be empty.")
         if not 0.0 <= self.confidence <= 1.0:

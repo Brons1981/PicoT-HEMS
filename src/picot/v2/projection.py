@@ -699,8 +699,10 @@ def project(run: CanonicalPipelineRun) -> Projection:
         Card(
             "sensor.picot_v2_pipeline_05_execution_plan_builder",
             (
-                "blocked"
-                if e.winning_candidate_id is None
+                "plan_retained"
+                if e.status == "plan_retained" and ps.plan_ids
+                else "blocked"
+                if not ps.plan_ids
                 else (
                     "observer_only"
                     if execution_observer_only
@@ -884,25 +886,32 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "planned_vendor_mode": vr.planned_vendor_mode,
                 "command_id": vr.command_id,
                 "observed_result_id": vr.observed_result_id,
-                "normal_result": (
-                    "De Zendure-opdracht is volledig voorbereid; PicoT "
-                    "kijkt nog mee en heeft niets verstuurd."
-                    if vr.status == "observer_dispatch_ready"
-                    else (
-                        "De opdracht is naar Zendure verstuurd."
-                        if vr.status == "dispatched"
-                        else (
-                            "Zendure stond al in de geplande modus."
-                            if vr.status == "already_active"
-                            else (
-                                "PicoT wacht op bevestiging van de vorige "
-                                "Zendure-opdracht."
-                                if vr.status == "awaiting_mode_feedback"
-                                else "Er is geen opdracht naar Zendure verstuurd."
-                            )
-                        )
-                    )
+                "feedback_source": "home_assistant_mode_selector",
+                "source_entity_id": (
+                    p.storage_mode_capability_evidence.source_entity_id
+                    if p.storage_mode_capability_evidence is not None
+                    else pb.source_entity_id
                 ),
+                "physical_confirmation": "not_observed",
+                "failure_reason": vr.failure_reason,
+                "normal_result": {
+                    "observer_dispatch_ready": (
+                        "De Zendure-opdracht is volledig voorbereid; PicoT "
+                        "kijkt nog mee en heeft niets verstuurd."
+                    ),
+                    "dispatched": "De opdracht is aan de Zendure-koppeling in HA doorgegeven.",
+                    "already_active": (
+                        "De HA-keuzestand komt al overeen met de geplande modus; "
+                        "de werking van de omvormer is hiermee niet bevestigd."
+                    ),
+                    "awaiting_mode_feedback": (
+                        "PicoT wacht tot de HA-keuzestand overeenkomt met de aangevraagde modus."
+                    ),
+                    "mode_feedback_timeout": (
+                        "De HA-keuzestand bevestigde de aangevraagde modus "
+                        "niet binnen de wachttijd."
+                    ),
+                }.get(vr.status, "Er is geen opdracht naar Zendure verstuurd."),
             },
         ),
     )

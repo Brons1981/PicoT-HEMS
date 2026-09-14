@@ -259,3 +259,89 @@ def test_live_session_retries_failed_requested_run_after_stabilisation() -> None
     assert retry.source_observation_ids == (
         "planner-run:run-failed:execution-failed",
     )
+
+
+def _execution_status(status, at, *, source="plan-1"):
+    return RuntimeObservation(
+        observation_id=f"{source}:{at.isoformat()}:{status}",
+        kind=RuntimeObservationKind.EXECUTION_OUTCOME_CHANGED,
+        observed_at=at,
+        source_reference=source,
+        new_value=status,
+    )
+
+
+def test_latched_clock_timeout_does_not_replan_again_after_failed_cycle():
+    session = RuntimeMonitorSession()
+    first = session.observe((_execution_status("timed_out", BASE),), now=BASE)
+    assert first.fresh_snapshot_required
+    session.start_requested_run(planner_run_id="run-timeout", started_at=BASE)
+    session.finish_requested_run(
+        planner_run_id="run-timeout", ended_at=BASE, execution_succeeded=False
+    )
+    at = BASE + timedelta(seconds=5)
+    repeated = session.observe((_execution_status("timed_out", at),), now=at)
+    assert not repeated.fresh_snapshot_required
+    assert session.state.last_processed_observation_at == at
+    assert session.last_admission == first
+
+
+@pytest.mark.parametrize("status,source", [("failed", "plan-1"), ("timed_out", "plan-2")])
+def test_distinct_execution_failure_still_requests_replanning(status, source):
+    session = RuntimeMonitorSession()
+    session.observe((_execution_status("timed_out", BASE),), now=BASE)
+    session.start_requested_run(planner_run_id="run-1", started_at=BASE)
+    session.finish_requested_run(planner_run_id="run-1", ended_at=BASE, execution_succeeded=False)
+    at = BASE + timedelta(seconds=5)
+    changed = session.observe((_execution_status(status, at, source=source),), now=at)
+    assert changed.fresh_snapshot_required
+
+
+@pytest.mark.parametrize("recovery", ["dispatched", "already_active", "accepted", "succeeded"])
+def test_execution_recovery_allows_a_subsequent_identical_failure(recovery):
+    session = RuntimeMonitorSession()
+    session.observe((_execution_status("failed", BASE),), now=BASE)
+    session.start_requested_run(planner_run_id="run-1", started_at=BASE)
+    session.finish_requested_run(planner_run_id="run-1", ended_at=BASE, execution_succeeded=False)
+    session.observe(
+        (_execution_status(recovery, BASE + timedelta(seconds=1)),), now=BASE + timedelta(seconds=1)
+    )
+    at = BASE + timedelta(seconds=5)
+    changed = session.observe((_execution_status("failed", at),), now=at)
+    assert changed.fresh_snapshot_required
+
+
+def test_generic_failed_replan_is_reported_once_until_success():
+    session = RuntimeMonitorSession()
+    session.observe((_observation("start", RuntimeObservationKind.COMMITMENT_CHANGED),), now=BASE)
+    session.start_requested_run(planner_run_id="run-1", started_at=BASE)
+    session.finish_requested_run(planner_run_id="run-1", ended_at=BASE, execution_succeeded=False)
+    at = BASE + timedelta(seconds=5)
+    assert session.observe((), now=at).fresh_snapshot_required
+    session.start_requested_run(planner_run_id="run-2", started_at=at)
+    session.finish_requested_run(planner_run_id="run-2", ended_at=at, execution_succeeded=False)
+    at += timedelta(seconds=5)
+    assert not session.observe((), now=at).fresh_snapshot_required
+    session.observe(
+        (_observation("new-plan", RuntimeObservationKind.COMMITMENT_CHANGED, observed_at=at),),
+        now=at,
+    )
+    session.start_requested_run(planner_run_id="run-3", started_at=at)
+    session.finish_requested_run(planner_run_id="run-3", ended_at=at, execution_succeeded=True)
+    at += timedelta(seconds=5)
+    session.observe(
+        (_observation("new-plan-2", RuntimeObservationKind.COMMITMENT_CHANGED, observed_at=at),),
+        now=at,
+    )
+    session.start_requested_run(planner_run_id="run-4", started_at=at)
+    session.finish_requested_run(planner_run_id="run-4", ended_at=at, execution_succeeded=False)
+    assert session.state.replan_required
+
+
+def test_repeated_execution_status_still_validates_observation_order():
+    session = RuntimeMonitorSession()
+    session.observe((_execution_status("failed", BASE),), now=BASE)
+    late = BASE + timedelta(seconds=2)
+    session.observe((_execution_status("failed", late),), now=late)
+    with pytest.raises(ValueError, match="precede"):
+        session.observe((_execution_status("failed", BASE),), now=late)

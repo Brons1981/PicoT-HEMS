@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 MAX_INCIDENT_EVENTS = 20
 TAIL_READ_CHUNK_BYTES = 64 * 1024
+MAX_ROTATED_EXPORT_BYTES = 128 * 1024 * 1024
 
 
 def incident_overview(path: Path) -> list[dict[str, object]]:
@@ -53,6 +56,38 @@ def diagnostic_zip(paths: tuple[Path, ...]) -> bytes:
         for path in paths:
             if path.is_file():
                 archive.write(path, arcname=path.name)
+        remaining = MAX_ROTATED_EXPORT_BYTES
+        omitted: list[str] = []
+        for path in paths:
+            if path.name != "picot_v2_planning_incident_history.jsonl":
+                continue
+            cutoff = datetime.now(UTC) - timedelta(hours=36)
+            for rotated in sorted(path.parent.glob(f"{path.stem}.oversized-*.jsonl"), reverse=True):
+                match = re.fullmatch(
+                    re.escape(path.stem) + r"\.oversized-(\d{8}T\d{6}Z)(?:-\d+)?\.jsonl",
+                    rotated.name,
+                )
+                if match is None or rotated.is_symlink() or not rotated.is_file():
+                    continue
+                try:
+                    rotated_at = datetime.strptime(match[1], "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+                except ValueError:
+                    continue
+                if rotated_at < cutoff:
+                    continue
+                size = rotated.stat().st_size
+                if size > remaining:
+                    omitted.append(rotated.name)
+                    continue
+                archive.write(rotated, arcname=rotated.name)
+                remaining -= size
+        if omitted:
+            archive.writestr("incident-export-coverage.json", json.dumps({
+                "complete": False,
+                "reason": "rotated_incident_export_byte_budget",
+                "omitted_files": omitted,
+                "budget_bytes": MAX_ROTATED_EXPORT_BYTES,
+            }))
     return output.getvalue()
 
 
@@ -89,7 +124,12 @@ def _compact_incident(record: dict[str, object]) -> dict[str, object]:
 
 def _evaluation_reason(poll: dict[str, object]) -> object:
     evaluation = poll.get("evaluation")
-    return evaluation.get("reason") if isinstance(evaluation, dict) else None
+    if isinstance(evaluation, dict):
+        return evaluation.get("reason")
+    boundary = poll.get("boundary_outcome")
+    if isinstance(boundary, dict):
+        return boundary.get("failure_reason") or boundary.get("status")
+    return None
 
 
 def _compact_poll(poll: dict[str, object]) -> dict[str, object]:

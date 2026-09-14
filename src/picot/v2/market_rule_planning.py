@@ -468,6 +468,7 @@ def market_rule_portfolio(
                 row.window
                 for row in charge_portfolio.sources
                 if row.candidate_id == charge_result.record.winning_candidate_id
+                and row.window is not None
             )
             proposed = charge_window.projection
             proposed_schedule = charge_window.schedule

@@ -389,3 +389,27 @@ def test_live_power_evidence_becomes_household_load_observation(
         "evidence-storage_power_from_house",
     )
     assert observation.method_version == "complete-power-balance:v1"
+
+
+def test_runtime_options_and_planning_share_migrated_soc_source(tmp_path: Path) -> None:
+    from picot.v2.planning_input import load_options
+
+    path = tmp_path / "options.json"
+    path.write_text(json.dumps({
+        "zendure_soc_entity": " sensor.zendure_2400_ac_batterij_1_laadpercentage ",
+    }))
+    runtime_source = load_options(str(path))["zendure_soc_entity"]
+    planning_source = next(
+        b.entity_id for b in load_bindings(str(path)) if b.semantic_role == "storage_soc"
+    )
+    assert runtime_source == planning_source == "sensor.zendure_2400_ac_laadpercentage"
+    # Normalisation is in memory, never a rewrite of user configuration.
+    assert "batterij_1" in path.read_text()
+
+
+def test_explicit_custom_soc_source_is_preserved(tmp_path: Path) -> None:
+    from picot.v2.planning_input import load_options
+
+    path = tmp_path / "options.json"
+    path.write_text(json.dumps({"zendure_soc_entity": "sensor.my_stack_soc"}))
+    assert load_options(str(path))["zendure_soc_entity"] == "sensor.my_stack_soc"

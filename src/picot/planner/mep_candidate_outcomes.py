@@ -86,7 +86,10 @@ from picot.v2.contracts import (
     StorageEnergyRequirement,
 )
 from picot.v2.energy_requirements import derive_storage_energy_requirement
-from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
+from picot.v2.independent_daily_reference_adapter import (
+    DailyMainIncumbentAssessment,
+    IndependentDailyReferenceAdapter,
+)
 from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
 from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
@@ -1377,7 +1380,7 @@ def produce_mep_comparable_portfolio(
 @dataclass(frozen=True, slots=True)
 class MainChargeCandidateSource:
     candidate_id: str
-    window: DailyMainChargeWindow
+    window: DailyMainChargeWindow | None
     financial: DailyPlanningFinancialResult
 
 
@@ -1389,6 +1392,7 @@ class MainChargeComparablePortfolio:
     outcome_set: DomainCandidateOutcomeSet
     strategy: PlannerStrategy
     sources: tuple[MainChargeCandidateSource, ...]
+    incumbent_candidate_id: str | None = None
 
 
 def produce_main_charge_portfolio(
@@ -1397,6 +1401,7 @@ def produce_main_charge_portfolio(
     windows: DailyMainChargeWindowSet,
     tariffs: DailyReferenceTariffSchedule,
     opportunity_ids: tuple[str, ...],
+    incumbent: DailyMainIncumbentAssessment | None = None,
 ) -> MainChargeComparablePortfolio:
     """Project feasible main windows into the existing Candidate/Evaluation contract."""
     if windows.snapshot_id != snapshot.snapshot_id or tariffs.snapshot_id != snapshot.snapshot_id:
@@ -1427,7 +1432,10 @@ def produce_main_charge_portfolio(
     outcomes: list[DomainCandidateOutcome] = []
     sources: list[MainChargeCandidateSource] = []
     settlement = IndependentDailyFinancialSettlement()
-    for window in windows.windows:
+    compared: tuple[DailyMainChargeWindow | DailyMainIncumbentAssessment, ...] = windows.windows
+    if incumbent is not None:
+        compared += (incumbent,)
+    for window in compared:
         if window.target_storage_energy_wh != storage.usable_capacity_wh:
             raise ValueError("main charge window must target actual full storage")
         if window.schedule.horizon_start != snapshot.captured_at:
@@ -1498,6 +1506,29 @@ def produce_main_charge_portfolio(
             invalid += ("storage_capability_unavailable",)
         if limits.maximum_soc < 1.0:
             invalid += ("configured_maximum_conflicts_with_daily_100_percent",)
+        if isinstance(window, DailyMainIncumbentAssessment):
+            invalid += window.invalidity_reasons
+            if any(s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                   and s.requested_power_w is not None
+                   and s.requested_power_w > limits.maximum_charge_input_power_w
+                   for s in path.segments):
+                invalid += ("incumbent_charge_power_exceeds_current_limit",)
+            if any(s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                   and s.requested_power_w != limits.maximum_charge_input_power_w
+                   for s in path.segments):
+                invalid += ("incumbent_charge_power_not_supported_by_fresh_simulation",)
+            if any(s.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+                   and (s.requested_power_w is None
+                        or s.requested_power_w > limits.maximum_discharge_output_power_w)
+                   for s in path.segments):
+                invalid += ("incumbent_discharge_power_exceeds_current_limit",)
+            if any(s.soc_constraint is None
+                   or s.soc_constraint.minimum is None
+                   or s.soc_constraint.maximum is None
+                   or s.soc_constraint.minimum < limits.minimum_soc
+                   or s.soc_constraint.maximum > limits.maximum_soc
+                   for s in path.segments):
+                invalid += ("incumbent_soc_constraints_require_revision",)
         intervals = window.projection.intervals
         price = financial.acquisition_eur_per_stored_kwh
         objectives = _objective_outcomes(
@@ -1525,7 +1556,9 @@ def produce_main_charge_portfolio(
             objectives = (
                 ObjectiveOutcome(
                     ObjectiveKind.FINANCIAL_RESULT,
-                    price,
+                    # ADR-032 producer normalization: arithmetic roundoff is
+                    # not a financial advantage. Raw settlement stays intact.
+                    round(price, 12),
                     ComparisonDirection.LOWER_IS_BETTER,
                     "EUR/kWh-stored",
                     confidence,
@@ -1541,13 +1574,22 @@ def produce_main_charge_portfolio(
                 recoverability=None,
                 execution_complexity=len(path.segments),
                 expected_switching_count=max(0, len(path.segments) - 1),
-                complexity_version="main-charge-segment-count:v1",
+                complexity_version="main-charge-segment-count:v2;acquisition-decimals:12",
+                grid_charge_duration_seconds=sum(
+                    (s.ends_at - s.starts_at).total_seconds()
+                    for s in path.segments
+                    if s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                    and s.charge_source_policy is not None
+                    and s.charge_source_policy.permits_grid_import
+                ),
                 validity=CandidateValidity.INVALID if invalid else CandidateValidity.VALID,
                 invalidity_reasons=invalid,
                 evidence_ids=evidence,
             )
         )
-        sources.append(MainChargeCandidateSource(candidate_id, window, financial))
+        sources.append(MainChargeCandidateSource(
+            candidate_id, window if isinstance(window, DailyMainChargeWindow) else None, financial,
+        ))
     candidate_set = DomainCandidateSet(
         snapshot.snapshot_id, strategy.strategy_version, tuple(candidates), tuple(paths), ()
     )
@@ -1557,13 +1599,17 @@ def produce_main_charge_portfolio(
         EvaluationEngine.candidate_set_reference(candidate_set),
         tuple(outcomes),
     )
-    return MainChargeComparablePortfolio(candidate_set, outcome_set, strategy, tuple(sources))
+    return MainChargeComparablePortfolio(
+        candidate_set, outcome_set, strategy, tuple(sources),
+        _id("main-charge-candidate", incumbent.schedule.schedule_id)
+        if incumbent is not None else None,
+    )
 
 
 def _main_charge_energy_path(
     *,
     snapshot: PlanningInputSnapshot,
-    window: DailyMainChargeWindow,
+    window: DailyMainChargeWindow | DailyMainIncumbentAssessment,
     candidate_id: str,
     family: CandidateFamily,
     confidence: float,
@@ -1590,12 +1636,13 @@ def _main_charge_energy_path(
         for segment in plan.segments
         if segment.segment_id in binding.segment_ids
     )
-    for interval in _execution_path_intervals(
+    for interval in (() if isinstance(window, DailyMainIncumbentAssessment)
+                     else _execution_path_intervals(
         window.schedule,
         maximum_discharge_output_power_w=limits.maximum_discharge_output_power_w,
         projection=window.projection,
         retained_exports=tuple((s.starts_at, s.ends_at) for _, s in retained_market),
-    ):
+    )):
         # Preserve ownership even where adjacent main/retained segments use the
         # same primitive. The Plan Builder copies these source IDs unchanged.
         boundaries = sorted(
@@ -1707,6 +1754,22 @@ def _main_charge_energy_path(
                     "charge_source_policy", "energy_profile_id",
                 )):
                     raise ValueError("retained main action changed without an explicit revision")
+    if isinstance(window, DailyMainIncumbentAssessment):
+        segments = [PathSegment(
+            segment_id=f"{window.schedule.schedule_id}:source:{original.segment_id}",
+            order=n, execution_scope_id=window.plan.execution_scope_id,
+            starts_at=max(original.starts_at, window.schedule.horizon_start),
+            ends_at=min(original.ends_at, window.schedule.horizon_end),
+            primitive=original.primitive, capability_id=original.capability_id,
+            purpose=original.purpose, evidence_ids=original.evidence_ids,
+            requested_power_w=original.requested_power_w,
+            soc_constraint=original.soc_constraint, energy_profile_id=original.energy_profile_id,
+            charge_source_policy=original.charge_source_policy,
+            main_assignment_id=original.main_assignment_id,
+            retained_execution_origin=original.retained_execution_origin,
+        ) for n, original in enumerate((s for s in window.plan.segments
+                if s.ends_at > window.schedule.horizon_start
+                and s.starts_at < window.schedule.horizon_end), start=1)]
     projected = window.projection.intervals
     states = (
         ProjectedEnergyState(
@@ -1746,7 +1809,9 @@ def _main_charge_energy_path(
         assumptions=(
             window.projection.basis_method,
             "main-window acquisition EUR/kWh-stored; full-horizon cash shown separately",
-            "100 percent reached within explicit main segments",
+            "unchanged incumbent feasibility recorded in canonical outcome"
+            if isinstance(window, DailyMainIncumbentAssessment)
+            else "100 percent reached within explicit main segments",
         ),
         confidence=confidence,
     )

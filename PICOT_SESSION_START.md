@@ -238,3 +238,33 @@ Extra huisvraag wordt tijdelijk meegenomen; lopend netladen wordt beschermd.
 De kleine-tekortmarge vereist een strikt haalbare herstelproef binnen het bestaande
 hoofdvenster. Werkelijk 100% blijft verplicht. Implementatie lokaal, nog geen release.
 Dev.254 blijft de vaste terugvalbasis; werkdag/weekendweging is buiten scope.
+
+## 2026-09-14 — Auditcorrecties, lokaal en nog niet uitgebracht
+
+Lees `docs/development_log/2026-09-14-audit-repair.md` en
+`docs/development_log/2026-09-14-diagnostic-evidence-repair.md`.
+Monitor-vrijgave en native dagobservaties vormen één samenhangende wijziging;
+klokuitvoering blijft onafhankelijk. SOC-bronidentiteit, uitvoeringsconstraints,
+foutterugkoppeling en diagnostische herleidbaarheid zijn lokaal gecorrigeerd.
+Punt 8 (volwaardige incumbentvergelijking) was aanvankelijk open wegens de expliciete
+botsing tussen gelijkwaardig-behouden en ADR-037.12-netlaadvermindering;
+het onderstaande besluit en vervolglog lossen dit op.
+Geen stilzwijgende nieuwe rangschikregel, release of livewijziging. De bestaande
+pre-stable terugvalafspraak blijft gelden. Zie het log voor verificatieresultaten.
+
+### Punt 8 — expliciet besluit over netlaadduur
+
+Alex heeft de gelijkspelregel bevestigd; zie
+`docs/architecture/ADR-037.16-netlaadduur-bij-gelijkwaardige-plannen.md`.
+Implementatie en verificatie: `docs/development_log/2026-09-14-grid-duration-comparison.md`.
+Bij gelijke beschikbare financiële uitkomsten wint minder resterende netlaadduur
+vóór lagere strategieprioriteiten en incumbentbehoud. PV/NOM-laadduur telt niet mee.
+Geen nieuwe herplantrigger of versoepeling van dagdoel/reserve/belastingbescherming.
+
+## 2026-09-14 — Afronding en release dev.260
+
+Alex heeft de resterende punten inclusief de gezamenlijke release laten oppakken.
+Lees `docs/development_log/2026-09-14-ha-followup.md` voor de vijf Gielz-templates,
+recorderbeperkingen en livecontrole. Externe HA-YAML ontbreekt nog; snippets zijn
+geen uitgevoerde reparatie van die automatisering. Geen databasegegevens wissen.
+De codewijzigingen gaan via PR en CI naar main; installatie/livebewijs volgt apart.

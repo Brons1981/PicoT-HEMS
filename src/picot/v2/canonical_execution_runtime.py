@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from picot.adapters.home_assistant import (
@@ -13,6 +13,7 @@ from picot.adapters.home_assistant import (
 )
 from picot.adapters.home_assistant_http import HomeAssistantHttpTransport
 from picot.architecture_ownership import architecture_ownership
+from picot.domain.energy_path import SocConstraint
 from picot.domain.execution import ExecutionPrimitiveRequest
 from picot.domain.execution_plan import ExecutionPlanSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
@@ -34,6 +35,8 @@ class CanonicalDispatchOutcome:
 
     status: str
     command_id: str
+    failure_reason: str | None = None
+    response_status: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +51,7 @@ class CommittedBoundaryDispatchOutcome:
     planned_vendor_mode: str | None = None
     failure_reason: str | None = None
     primitive: ExecutionPrimitive | None = None
+    reason: str | None = None
 
 
 DispatchCanonicalMode = Callable[
@@ -74,6 +78,8 @@ class CanonicalExecutionRuntime:
     dispatch: DispatchCanonicalMode
     commitment_store: ActivePlanCommitmentStore | None = None
     _pending_vendor_mode: str | None = None
+    _pending_since: datetime | None = None
+    mode_feedback_timeout: timedelta = timedelta(seconds=60)
     _confirmed_daily_segment: tuple[str, str, datetime] | None = None
     _daily_execution_suspended: bool = False
     _confirmed_daily_observation: _ChargeConfirmation | None = None
@@ -130,6 +136,21 @@ class CanonicalExecutionRuntime:
             self.completion_generation += 1
         return result
 
+    def _market_stop_reason(self, snapshot: PlanningInputSnapshot, scope_id: str) -> str:
+        if self.commitment_store is not None:
+            for binding in self.commitment_store.load_market_plan_bindings():
+                if binding.execution_scope_id != scope_id:
+                    continue
+                plan = self.commitment_store.load_market_original_plan(binding)
+                ids = binding.original_segment_ids or binding.segment_ids
+                parts = tuple(s for s in plan.segments if s.segment_id in ids)
+                if not parts or not parts[0].starts_at <= snapshot.captured_at < parts[-1].ends_at:
+                    continue
+                progress = self.commitment_store.load_market_progress(binding.assignment_id)
+                if progress is not None and progress.reason is not None:
+                    return progress.reason
+        return "market_execution_guard_override"
+
     def _observe_market_interruption(self, snapshot: PlanningInputSnapshot) -> None:
         provenance = snapshot.storage_mode_control_provenance
         if provenance is not None and provenance.manual_override_active:
@@ -141,10 +162,49 @@ class CanonicalExecutionRuntime:
                     ownership_lost=True,
                 )
 
+    def _feedback_status(self, mode: str, now: datetime) -> str | None:
+        if self._pending_vendor_mode != mode:
+            return None
+        if (self._pending_since is not None
+                and now - self._pending_since >= self.mode_feedback_timeout):
+            return "mode_feedback_timeout"
+        return "awaiting_mode_feedback"
+
+    @staticmethod
+    def _soc_blocker(
+        snapshot: PlanningInputSnapshot,
+        scope_id: str,
+        capability_id: str,
+        primitive: ExecutionPrimitive,
+        constraint: SocConstraint | None,
+    ) -> str | None:
+        if constraint is None:
+            return None
+        state = next(
+            (s for s in snapshot.current_storage_states
+             if s.execution_scope_id == scope_id and s.capability_id == capability_id),
+            None,
+        )
+        if state is None:
+            return "execution_soc_unavailable"
+        # A lower reserve must not prevent recovery charging. Delegated NOM can
+        # move in either direction; preserve its constraints, without inventing
+        # a replacement command or assuming the direction of household flow.
+        if primitive in {
+            ExecutionPrimitive.DISCHARGE_AT_POWER, ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+        } and constraint.minimum is not None and state.current_soc <= constraint.minimum:
+            return "execution_soc_below_segment_minimum"
+        if primitive in {
+            ExecutionPrimitive.CHARGE_AT_POWER, ExecutionPrimitive.BALANCE_CHARGE_ONLY
+        } and constraint.maximum is not None and state.current_soc >= constraint.maximum:
+            return "execution_soc_above_segment_maximum"
+        return None
+
     def reset_pending_state(self) -> None:
         """Drop only process-local dispatch state after a manual plan reset."""
 
         self._pending_vendor_mode = None
+        self._pending_since = None
         self._confirmed_daily_segment = None
         self._confirmed_daily_observation = None
         self._pending_daily_closure = None
@@ -563,11 +623,15 @@ class CanonicalExecutionRuntime:
                 failure_reason="storage_mode_capability_evidence_unavailable",
             )
         market_override = False
+        market_reason = None
         if daily_plan is not None:
             try:
                 guarded = self._market_primitive(snapshot, scope_id, primitive)
+                if guarded is not primitive:
+                    market_reason = self._market_stop_reason(snapshot, scope_id)
             except (ValueError, OSError):
                 guarded = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                market_reason = "market_execution_evidence_unavailable"
             market_override = guarded is not primitive
             primitive = guarded
         mapping = self._mapping(
@@ -594,6 +658,7 @@ class CanonicalExecutionRuntime:
             "previous_vendor_mode": evidence.current_vendor_mode,
             "planned_vendor_mode": planned_vendor_mode,
             "primitive": primitive,
+            "reason": market_reason,
         }
         requested_power_w = None
         if primitive in {
@@ -672,9 +737,20 @@ class CanonicalExecutionRuntime:
                 status="already_active",
                 **common,
             )
-        if self._pending_vendor_mode == planned_vendor_mode:
+        if daily_plan is not None:
+            blocker = self._soc_blocker(
+                snapshot, scope_id, original.capability_id, primitive, original.soc_constraint
+            )
+            if blocker is not None:
+                return CommittedBoundaryDispatchOutcome(
+                    status="blocked", failure_reason=blocker, **common
+                )
+        feedback_status = self._feedback_status(planned_vendor_mode, snapshot.captured_at)
+        if feedback_status is not None:
             return CommittedBoundaryDispatchOutcome(
-                status="awaiting_mode_feedback",
+                status=feedback_status,
+                failure_reason=("selector_mode_not_observed_before_timeout"
+                                if feedback_status == "mode_feedback_timeout" else None),
                 **common,
             )
         request = ExecutionPrimitiveRequest(
@@ -695,6 +771,8 @@ class CanonicalExecutionRuntime:
             primitive=primitive,
             requested_at=snapshot.captured_at,
             requested_power_w=requested_power_w,
+            soc_constraint=original.soc_constraint if daily_plan is not None else None,
+            energy_profile_id=original.energy_profile_id if daily_plan is not None else None,
         )
         try:
             outcome = self.dispatch(request, mapping)
@@ -707,9 +785,11 @@ class CanonicalExecutionRuntime:
             )
         if outcome.status == "dispatched":
             self._pending_vendor_mode = planned_vendor_mode
+            self._pending_since = snapshot.captured_at
         return CommittedBoundaryDispatchOutcome(
             status=outcome.status,
             command_id=outcome.command_id,
+            failure_reason=outcome.failure_reason,
             **common,
         )
 
@@ -948,12 +1028,30 @@ class CanonicalExecutionRuntime:
                     status="already_active",
                 ),
             )
-        if self._pending_vendor_mode == planned_vendor_mode:
+        if not fallback:
+            blocker = self._soc_blocker(
+                run.planning_input, scope_id, capability_id,
+                boundary.planned_primitive, segment.soc_constraint,
+            )
+            if blocker is not None:
+                return replace(
+                    translated,
+                    primitive_boundary=replace(translated.primitive_boundary,
+                                               status="blocked", blockers=(blocker,)),
+                    vendor_result=replace(translated.vendor_result,
+                                          status="not_dispatched", failure_reason=blocker),
+                )
+        feedback_status = self._feedback_status(
+            planned_vendor_mode, run.planning_input.captured_at
+        )
+        if feedback_status is not None:
             return replace(
                 translated,
                 vendor_result=replace(
                     translated.vendor_result,
-                    status="awaiting_mode_feedback",
+                    status=feedback_status,
+                    failure_reason=("selector_mode_not_observed_before_timeout"
+                                    if feedback_status == "mode_feedback_timeout" else None),
                 ),
             )
         request = ExecutionPrimitiveRequest(
@@ -967,6 +1065,8 @@ class CanonicalExecutionRuntime:
             primitive=boundary.planned_primitive,
             requested_at=run.planning_input.captured_at,
             requested_power_w=requested_power_w,
+            soc_constraint=segment.soc_constraint if not fallback else None,
+            energy_profile_id=segment.energy_profile_id if not fallback else None,
         )
         try:
             outcome = self.dispatch(request, mapping)
@@ -998,6 +1098,7 @@ class CanonicalExecutionRuntime:
             )
         if outcome.status == "dispatched":
             self._pending_vendor_mode = planned_vendor_mode
+            self._pending_since = run.planning_input.captured_at
         return replace(
             translated,
             adapter_boundary=replace(
@@ -1008,6 +1109,7 @@ class CanonicalExecutionRuntime:
                 translated.vendor_result,
                 command_id=outcome.command_id,
                 status=outcome.status,
+                failure_reason=outcome.failure_reason,
             ),
         )
 
@@ -1042,6 +1144,8 @@ class HomeAssistantCanonicalModeAdapter:
             transport=transport,
         )
         return CanonicalDispatchOutcome(
-            status=result.status.value,
+            status="dispatch_failed" if result.status.value == "failed" else result.status.value,
             command_id=result.command_id,
+            failure_reason=result.error_reason,
+            response_status=result.response_status,
         )

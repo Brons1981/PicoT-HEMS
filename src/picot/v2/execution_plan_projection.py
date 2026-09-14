@@ -96,6 +96,8 @@ def _project_plan(
                 planned_vendor_mode=None,
                 main_assignment_id=item.main_assignment_id,
                 retained_execution_origin=item.retained_execution_origin,
+                soc_constraint=item.soc_constraint,
+                energy_profile_id=item.energy_profile_id,
             )
             for item in segments
         ),

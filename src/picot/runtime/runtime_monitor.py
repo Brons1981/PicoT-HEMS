@@ -22,6 +22,8 @@ from picot.domain.runtime import (
 ARCHITECTURE_OWNERSHIP = architecture_ownership("runtime_monitor", __name__)
 IMPLEMENTATION_VERSION = "runtime-monitor-v1"
 STABILISATION_INTERVAL = timedelta(seconds=5)
+_EXECUTION_FAILURES = frozenset({"rejected", "failed", "timed_out", "timeout", "replan_required"})
+_PLANNER_EXECUTION_SOURCE = "planner-execution"
 
 
 class RuntimeMonitor:
@@ -306,6 +308,8 @@ class RuntimeMonitorSession:
         state: RuntimeCoordinationState | None = None,
     ) -> None:
         self._monitor = monitor or RuntimeMonitor()
+        self._last_admission: ReplanningSignal | None = None
+        self._execution_outcomes: dict[str, str] = {}
         self._state = state or RuntimeCoordinationState(
             planner_state=PlannerRunState.IDLE,
             active_planner_run_id=None,
@@ -324,14 +328,40 @@ class RuntimeMonitorSession:
     def state(self) -> RuntimeCoordinationState:
         return self._state
 
+    @property
+    def last_admission(self) -> ReplanningSignal | None:
+        """Immutable reason/evidence for the most recently admitted run."""
+        return self._last_admission
+
     def observe(
         self,
         observations: tuple[RuntimeObservation, ...],
         *,
         now: datetime,
     ) -> ReplanningSignal:
-        result = self._monitor.evaluate(observations, self._state, now=now)
-        self._state = result.next_state
+        # Validate the complete stream before coalescing repeated status reads;
+        # duplicate IDs or time travel must not disappear behind deduplication.
+        self._monitor._validate_inputs(observations, self._state, now)
+        outcomes = dict(self._execution_outcomes)
+        transitions: list[RuntimeObservation] = []
+        for observation in observations:
+            if observation.kind is not RuntimeObservationKind.EXECUTION_OUTCOME_CHANGED:
+                transitions.append(observation)
+                continue
+            value = (observation.new_value or "").strip().lower()
+            source = observation.source_reference
+            if value in {"dispatched", "already_active", "accepted", "succeeded"}:
+                outcomes.pop(_PLANNER_EXECUTION_SOURCE, None)
+            if outcomes.get(source) != value:
+                transitions.append(observation)
+            outcomes[source] = value
+        result = self._monitor.evaluate(tuple(transitions), self._state, now=now)
+        self._state = replace(
+            result.next_state,
+            last_processed_observation_at=(observations[-1].observed_at if observations
+                                           else result.next_state.last_processed_observation_at),
+        )
+        self._execution_outcomes = outcomes
         return result.replanning_signal
 
     def start_requested_run(
@@ -350,6 +380,7 @@ class RuntimeMonitorSession:
             planner_run_id=planner_run_id,
             started_at=started_at,
         )
+        self._last_admission = signal
 
     def finish_requested_run(
         self,
@@ -364,12 +395,17 @@ class RuntimeMonitorSession:
             ended_at=ended_at,
         )
         if execution_succeeded:
+            self._execution_outcomes.pop(_PLANNER_EXECUTION_SOURCE, None)
+            return
+        # A named execution failure has already requested its one replan. A
+        # repeated unsuccessful run must not manufacture another transition.
+        if any(value in _EXECUTION_FAILURES for value in self._execution_outcomes.values()):
             return
         failure = RuntimeObservation(
             observation_id=f"planner-run:{planner_run_id}:execution-failed",
             kind=RuntimeObservationKind.EXECUTION_OUTCOME_CHANGED,
             observed_at=ended_at,
-            source_reference=f"planner-run:{planner_run_id}",
+            source_reference=_PLANNER_EXECUTION_SOURCE,
             new_value="failed",
         )
         self.observe((failure,), now=ended_at)

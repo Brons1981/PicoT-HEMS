@@ -9,8 +9,14 @@ from typing import TYPE_CHECKING
 
 from picot.domain.capability_snapshot import CapabilitySnapshotSet
 from picot.domain.charge_source_policy import ChargeSourcePolicy
-from picot.domain.energy_path import PathSegment, ProjectedEnergyState, RetainedExecutionOrigin
+from picot.domain.energy_path import (
+    PathSegment,
+    ProjectedEnergyState,
+    RetainedExecutionOrigin,
+    SocConstraint,
+)
 from picot.domain.evaluation import CandidateOutcome as CanonicalCandidateOutcome
+from picot.domain.evaluation import EvaluationRecord as CanonicalEvaluationRecord
 from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.market_execution import MarketExecutionProgress
@@ -1370,6 +1376,17 @@ class EvaluationRecord:
     daily_main_input_shortfalls: tuple[DailyMainShortfallTrigger, ...] = ()
     daily_pv_comparison: DailyPVComparison | None = None
     daily_pv_surplus_trigger: DailyMainPVSurplusTrigger | None = None
+    canonical_record: CanonicalEvaluationRecord | None = None
+
+    def __post_init__(self) -> None:
+        record = self.canonical_record
+        if record is not None and (
+            record.evaluation_id != self.evaluation_id
+            or record.snapshot_id != self.snapshot_id
+            or record.candidate_set_reference != self.candidate_set_id
+            or record.winning_candidate_id != self.winning_candidate_id
+        ):
+            raise ValueError("Evaluation projection must preserve canonical record identity")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1388,6 +1405,8 @@ class ObserverExecutionPlanSegment:
     planned_vendor_mode: str | None = None
     main_assignment_id: str | None = None
     retained_execution_origin: RetainedExecutionOrigin | None = None
+    soc_constraint: SocConstraint | None = None
+    energy_profile_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -37,6 +37,7 @@ from picot.domain.daily_reference_strategy_space import DailyReferenceStrategySp
 from picot.domain.daily_reference_tariff import (
     DailyReferenceTariffSchedule,
 )
+from picot.domain.execution_plan import ExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.household_load_forecast import (
     HouseholdLoadForecast as DomainHouseholdForecast,
@@ -54,6 +55,7 @@ from picot.domain.pv_energy_timeline import (
     PVEnergyTimelineInterval as DomainPVInterval,
 )
 from picot.domain.storage_conversion_model import StorageConversionModel
+from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.planner.independent_daily_charge_window_discoverer import (
     IndependentDailyChargeWindowDiscoverer,
 )
@@ -105,6 +107,22 @@ class _DailyReferenceInputs:
     target_storage_energy_wh: float
     maximum_charge_input_power_w: float
     maximum_discharge_output_power_w: float
+
+
+@dataclass(frozen=True, slots=True)
+class DailyMainIncumbentAssessment:
+    """Fresh unchanged route evidence, including explicit physical invalidity."""
+
+    assignment_id: str
+    plan: ExecutionPlan
+    family: str
+    schedule: DailyReferenceIntentSchedule
+    main_segments: tuple[DailyMainChargeSegment, ...]
+    projection: DailyPlanningProjection
+    target_storage_energy_wh: float
+    retained_main_segments: tuple[DailyRetainedMainSegment, ...]
+    supplemental_assignments: tuple[SupplementalChargeAssignment, ...]
+    invalidity_reasons: tuple[str, ...]
 
 
 class IndependentDailyReferenceAdapter:
@@ -549,6 +567,94 @@ class IndependentDailyReferenceAdapter:
                 )
         return None
 
+    def main_charge_incumbent(
+        self, *, snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
+        conversion_model: StorageConversionModel, horizon_end: datetime,
+    ) -> DailyMainIncumbentAssessment:
+        """Simulate the unchanged incumbent on the exact challenger horizon.
+
+        Failed goals remain evidence in Candidate/Evaluation, never a fabricated
+        feasible DailyMainChargeWindow. Historical financial outcomes are unused.
+        """
+        context = snapshot.daily_charge_context
+        if context is None or assignment.route_plan_id is None:
+            raise DailyReferenceInputError("main_charge_incumbent_requires_stored_route")
+        active = tuple(p for p in context.main_plans if p.plan_id in context.active_main_plan_ids)
+        if len(active) != 1:
+            raise DailyReferenceInputError("main_charge_incumbent_requires_one_active_plan")
+        plan = active[0]
+        inputs = self._inputs(snapshot, horizon_end=horizon_end,
+                              maximum_duration=timedelta(hours=36))
+        schedule, retained = self._retained_main_schedule(
+            snapshot=snapshot, assignment=assignment, inputs=inputs, supplied=None,
+            allow_uncovered_incumbent=True,
+        )
+        assert schedule is not None
+        projection = IndependentDailyIntentSimulator().simulate_planning_basis(
+            snapshot_id=snapshot.snapshot_id, household=inputs.household,
+            pv_scenarios=inputs.pv_scenarios, storage_state=inputs.storage,
+            conversion_model=conversion_model, intent_schedule=schedule,
+            minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+            target_storage_energy_wh=inputs.target_storage_energy_wh,
+            maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+        )
+        invalid = []
+        if plan.valid_from > schedule.horizon_start or plan.valid_until < schedule.horizon_end:
+            invalid.append("incumbent_remaining_horizon_not_covered")
+        primitive_by_intent = {
+            DailyStorageIntent.NOM: ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+            DailyStorageIntent.GRID_REQUIREMENT: ExecutionPrimitive.CHARGE_AT_POWER,
+            DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY: ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+            DailyStorageIntent.STORAGE_EXPORT: ExecutionPrimitive.DISCHARGE_AT_POWER,
+            DailyStorageIntent.STANDBY: ExecutionPrimitive.STANDBY,
+        }
+        if any(not any(s.starts_at <= i.starts_at and i.ends_at <= s.ends_at
+                       for s in plan.segments) for i in schedule.intervals):
+            invalid.append("incumbent_remaining_schedule_gap")
+        if any(s.primitive is not primitive_by_intent[i.intent]
+               for i in schedule.intervals for s in plan.segments
+               if s.starts_at <= i.starts_at and i.ends_at <= s.ends_at):
+            invalid.append("incumbent_schedule_requires_reconciliation")
+        if any(min(i.storage_energy_at_start_wh, i.storage_energy_at_end_wh) + 1e-6
+               < inputs.minimum_storage_energy_wh for i in projection.intervals):
+            invalid.append("household_reserve_unreachable")
+        for owner in context.assignments:
+            if (owner.route_plan_id is None or owner.completed_at is not None
+                or owner.ends_at <= snapshot.captured_at
+                or owner.execution_scope_id != assignment.execution_scope_id):
+                continue
+            if not any(energy + 1e-6 >= inputs.storage.usable_capacity_wh
+                       and any(s.starts_at <= at <= s.ends_at for s in owner.main_segments)
+                       for i in projection.intervals
+                       for at, energy in ((i.starts_at, i.storage_energy_at_start_wh),
+                                          (i.ends_at, i.storage_energy_at_end_wh))):
+                invalid.append(f"daily_main_goal_unreachable:{owner.assignment_id}")
+        owned = tuple(DailyMainChargeSegment(
+            f"{schedule.schedule_id}:incumbent:{n}", i.starts_at, i.ends_at, i.intent,
+        ) for n, i in enumerate(schedule.intervals)
+            if any(s.starts_at <= i.starts_at and i.ends_at <= s.ends_at
+                   for s in assignment.main_segments))
+        if not owned:
+            invalid.append("daily_main_remaining_segments_missing")
+        supplemental = tuple(a for a in context.supplemental_assignments
+                             if a.execution_scope_id == assignment.execution_scope_id
+                             and a.completed_at is None and a.required_by > snapshot.captured_at)
+        for goal in supplemental:
+            if not any(i.ends_at == goal.ends_at and i.storage_energy_at_end_wh + 1e-6
+                       >= goal.target_soc * inputs.storage.usable_capacity_wh
+                       for i in projection.intervals):
+                invalid.append(f"supplemental_goal_unreachable:{goal.assignment_id}")
+        grid = any(s.intent is DailyStorageIntent.GRID_REQUIREMENT for s in owned)
+        pv = any(s.intent is DailyStorageIntent.NOM for s in owned)
+        return DailyMainIncumbentAssessment(
+            assignment.assignment_id, plan,
+            "hybrid" if grid and pv else "grid" if grid else "pv", schedule, owned, projection,
+            inputs.storage.usable_capacity_wh,
+            tuple(s for s in retained if s.assignment_id != assignment.assignment_id),
+            supplemental, tuple(invalid),
+        )
+
     def main_charge_windows(
         self,
         *,
@@ -678,6 +784,7 @@ class IndependentDailyReferenceAdapter:
         *, snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
         inputs: _DailyReferenceInputs, supplied: DailyReferenceIntentSchedule | None,
         revising_assignment_id: str | None = None,
+        allow_uncovered_incumbent: bool = False,
     ) -> tuple[DailyReferenceIntentSchedule | None, tuple[DailyRetainedMainSegment, ...]]:
         context = snapshot.daily_charge_context
         if context is None:
@@ -739,6 +846,10 @@ class IndependentDailyReferenceAdapter:
                 part = next((s for s in plan.segments if s.starts_at <= grid.starts_at
                              and grid.ends_at <= s.ends_at), None)
                 if part is None:
+                    if allow_uncovered_incumbent:
+                        # Only the explicit INVALID incumbent assessment may
+                        # simulate an uncovered interval; never admit this fill.
+                        continue
                     raise DailyReferenceInputError("retained_main_plan_has_a_schedule_gap")
                 recovered = next((a for a in context.assignments
                                   if a.assignment_id == part.main_assignment_id
@@ -768,6 +879,7 @@ class IndependentDailyReferenceAdapter:
                     raise DailyReferenceInputError("retained_main_primitive_not_simulatable")
                 if source.primitive is ExecutionPrimitive.CHARGE_AT_POWER and (
                     source.requested_power_w != inputs.maximum_charge_input_power_w
+                    and not allow_uncovered_incumbent
                 ):
                     raise DailyReferenceInputError(
                         "retained_charge_power_requires_explicit_revision"
@@ -795,7 +907,10 @@ class IndependentDailyReferenceAdapter:
                         )
                 if revising_assignment_id is not None and (
                     source.main_assignment_id == revising_assignment_id
+                    and source.primitive is ExecutionPrimitive.CHARGE_AT_POWER
                 ):
+                    # Grid energy is rediscovered; already admitted PV capture
+                    # remains part of the route while the goal is revised.
                     intent = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
             intervals.append(DailyReferenceIntentInterval(
                 grid.starts_at, grid.ends_at, intent, storage_export_target_wh=export_wh,

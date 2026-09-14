@@ -527,3 +527,62 @@ def test_grid_power_observation_interval_is_independent_from_planner_poll() -> N
         live_runtime._grid_power_observation_interval_seconds(options)
         == 1.0
     )
+
+
+def test_changed_input_cannot_bypass_monitor_stabilisation() -> None:
+    first = _bundle(captured_at=BASE, price=0.20)
+    observed = _bundle(captured_at=BASE + timedelta(seconds=1), price=0.21)
+    monitor = RuntimeMonitorSession()
+    monitor.observe((RuntimeObservation(
+        observation_id="initial", kind=RuntimeObservationKind.COMMITMENT_CHANGED,
+        observed_at=BASE, source_reference="startup", new_value="missing",
+    ),), now=BASE)
+    monitor.start_requested_run(planner_run_id=first.snapshot.run_id, started_at=BASE)
+    monitor.finish_requested_run(planner_run_id=first.snapshot.run_id, ended_at=BASE)
+    executed: list[str] = []
+    boundaries: list[str] = []
+    previous = _planning_input_signature(first)
+    result = _poll_live_cycle(
+        previous_signature=previous, load_bundle=lambda: observed,
+        execute=lambda b: executed.append(b.snapshot.run_id),
+        advance_clock_boundaries=lambda b: boundaries.append(b.snapshot.run_id),
+        runtime_monitor=monitor,
+        runtime_observations=lambda b: (RuntimeObservation(
+            observation_id="changed", kind=RuntimeObservationKind.PRICE_CHANGED,
+            observed_at=b.snapshot.captured_at, source_reference="prices",
+            material_transition=True,
+        ),),
+    )
+    assert executed == []
+    assert result == previous
+    assert boundaries == [observed.snapshot.run_id]
+    assert monitor.state.replan_required
+    assert monitor.state.last_planner_run_ended_at == BASE
+
+
+def test_first_run_also_requires_monitor_fresh_capture() -> None:
+    observed = _bundle(captured_at=BASE, price=0.20)
+    fresh = _bundle(captured_at=BASE + timedelta(seconds=1), price=0.21)
+    bundles = [observed, fresh]
+    executed: list[PlanningInputBundle] = []
+    monitor = RuntimeMonitorSession()
+    _poll_live_cycle(
+        previous_signature=None, load_bundle=lambda: bundles.pop(0),
+        execute=lambda b: executed.append(b), runtime_monitor=monitor,
+        runtime_now=lambda: fresh.snapshot.captured_at,
+    )
+    assert executed == [fresh]
+    assert bundles == []
+    assert monitor.state.last_planner_run_ended_at == fresh.snapshot.captured_at
+
+
+def test_changed_raw_input_without_material_signal_does_not_plan() -> None:
+    first = _bundle(captured_at=BASE, price=0.20)
+    changed = _bundle(captured_at=BASE + timedelta(minutes=1), price=0.21)
+    executed: list[PlanningInputBundle] = []
+    previous = _planning_input_signature(first)
+    assert _poll_live_cycle(
+        previous_signature=previous, load_bundle=lambda: changed,
+        execute=lambda b: executed.append(b), runtime_monitor=RuntimeMonitorSession(),
+    ) == previous
+    assert executed == []

@@ -167,3 +167,50 @@ def test_failed_revision_write_keeps_original_route_and_active_pointer(tmp_path,
     assert "test disk unavailable" in result.evaluation.reason
     assert (tmp_path / "plans.json").read_bytes() == before
     assert store.load_active_daily_main_plan("battery") == original
+
+
+def test_revision_discovery_preserves_existing_nom_capture(tmp_path, monkeypatch):
+    """Revising the same goal must not erase already admitted PV capture."""
+    from picot.domain.daily_reference_intent import DailyStorageIntent
+
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    first = pipeline.run(planning_input=recover(fresh(recover(), soc=0.9, tag="initial")))
+    source = recover(fresh(first.planning_input, pv_factor=0.0))
+    adapter = IndependentDailyReferenceAdapter()
+    owner = store.load_daily_assignments()[0]
+    physical = adapter._inputs(
+        source, horizon_end=store.load_active_daily_main_plan("battery").valid_until,
+        maximum_duration=timedelta(hours=36),
+    )
+    observed, _ = adapter._retained_main_schedule(
+        snapshot=source, assignment=owner, inputs=physical, supplied=None,
+    )
+    discovery, _ = adapter._retained_main_schedule(
+        snapshot=source, assignment=owner, inputs=physical, supplied=None,
+        revising_assignment_id=owner.assignment_id,
+    )
+    nom = [i for i, value in enumerate(observed.intervals)
+           if value.intent is DailyStorageIntent.NOM]
+    assert nom
+    assert all(discovery.intervals[i].intent is DailyStorageIntent.NOM for i in nom)
+
+
+def test_revision_evaluates_infeasible_incumbent_but_cannot_select_it(tmp_path, monkeypatch):
+    from picot.domain.evaluation import CandidateValidity
+
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    first = pipeline.run(planning_input=recover(fresh(recover(), soc=0.9, tag="initial")))
+    source = recover(fresh(first.planning_input, pv_factor=0.0))
+    result = pipeline.run(planning_input=source)
+    incumbent_id = result.evaluation.incumbent_candidate_id
+    assert incumbent_id is not None
+    incumbent = next(o for o in result.outcomes.canonical_outcomes
+                     if o.candidate_id == incumbent_id)
+    assert incumbent.validity is CandidateValidity.INVALID
+    assert any("daily_main_goal_unreachable" in r for r in incumbent.invalidity_reasons)
+    assert result.evaluation.winning_candidate_id != incumbent_id
+    path = next(p for p in result.candidate_set.energy_paths
+                if p.path_id == next(c.energy_path_id for c in result.candidate_set.candidates
+                                     if c.candidate_id == incumbent_id))
+    assert path.projected_states[0].storage_energy_wh == pytest.approx(
+        source.current_storage_states[0].current_stored_energy_wh)

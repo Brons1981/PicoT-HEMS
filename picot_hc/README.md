@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.12** — zelfstandige meting, comfortvensters en handmatige bronbediening voor Home Assistant.
+Versie **0.1.0-dev.13** — zelfstandige meting, comfortvensters en handmatige bronbediening voor Home Assistant.
 
 ## Wat deze versie doet
 
@@ -140,12 +140,11 @@ eenheid °C is. Een expliciete HA-stap heeft voorrang; andere entiteiten krijgen
 geen impliciete stap. Temperatuur instellen blijft beschikbaar in heat/auto;
 Uit schakelt de cv uit en activeert geen verwarming via een temperatuurwijziging.
 
-## Ecowitt en badkamer-energiemeter (dev.12)
+## Ecowitt en badkamer-energiemeter (vanaf dev.12)
 
 Bron: Alex’ PicoT_HC_entiteiten.xlsx, 2026-09-15. Beneden gebruikt de gateway-
 binnenmeting, buiten kanaal 1, boven kanaal 2 en badkamer kanaal 3. Temperatuur en
-luchtvochtigheid worden uitgelezen; buitenluchtvochtigheid staat bij gezamenlijke
-metingen en wordt met de snapshots opgeslagen. De badkamer gebruikt nu ook de
+luchtvochtigheid worden uitgelezen; buitenluchtvochtigheid staat bovenaan bij de weerkaart en wordt met de snapshots opgeslagen. De badkamer gebruikt nu ook de
 cumulatieve kWh-entiteit naast vermogen.
 
 Bij updates vult HC lege meetvelden voor deze zones aan. Ingevulde eigen entiteiten
@@ -158,3 +157,6 @@ De historische grafiek is niet uitgebreid met buitenluchtvochtigheid.
 
 Schema, comfortdoelen en handmatige keuzes blijven behouden. Dit voegt metingen
 toe; automatische bronkeuze en aansturing volgen later.
+
+Vanaf dev.13 toont de weerkaart eigen Ecowitt-metingen naast actueel Buienradar.
+De dagverwachting blijft afzonderlijk als voorspelling benoemd.

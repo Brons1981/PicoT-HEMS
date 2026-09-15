@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-dev.13
+
+- Eigen buitentemperatuur en luchtvochtigheid bovenaan bij de weerkaart.
+- Ecowitt, actueel Buienradar en Buienradar-voorspelling duidelijk gescheiden.
+- Bronmomenten en ontbrekende/verouderde gegevens blijven zichtbaar.
+
 ## 0.1.0-dev.12
 
 - Bevestigde Ecowitt-temperatuur en vochtmetingen voor drie zones en buiten.

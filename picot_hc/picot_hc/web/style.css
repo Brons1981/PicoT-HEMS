@@ -19,3 +19,5 @@
 .comfort-window{grid-template-columns:repeat(3,minmax(0,1fr));padding:14px;background:#f7f5fa;border-radius:9px}.comfort-window label{margin:0;font-size:13px}.comfort-window label>input,.comfort-window label>select{display:block;width:100%;box-sizing:border-box;margin-top:5px}.comfort-window label>input[type=checkbox]{width:auto}.comfort-window label:has(input[type=checkbox]){grid-column:span 2}.comfort-window input:disabled{background:#eee9f2}#forced-sources{font-size:13px;overflow-wrap:anywhere}@media(max-width:600px){.comfort-window{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .window-days{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:.6rem}.window-days label{display:flex;align-items:center;gap:.2rem}.day-presets{display:flex;flex-wrap:wrap;gap:.4rem;width:100%}.day-presets button{margin:0}
+
+.weather-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.weather-comparison>section{min-width:0;padding:16px;background:#f7f5fa;border-radius:10px}.weather-comparison h3{margin-top:0}.weather-comparison .sub{overflow-wrap:anywhere}@media(max-width:800px){.weather-comparison{grid-template-columns:1fr}}

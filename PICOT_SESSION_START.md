@@ -268,3 +268,17 @@ Lees `docs/development_log/2026-09-14-ha-followup.md` voor de vijf Gielz-templat
 recorderbeperkingen en livecontrole. Externe HA-YAML ontbreekt nog; snippets zijn
 geen uitgevoerde reparatie van die automatisering. Geen databasegegevens wissen.
 De codewijzigingen gaan via PR en CI naar main; installatie/livebewijs volgt apart.
+
+## 2026-09-15 — Schakelhistorie, NOM-continuïteit en SOC-verwachting
+
+Lees `docs/development_log/2026-09-15-observation-fixes.md` en
+`docs/architecture/decisions/V2ADR-066-soc-display-expectation-history.md`.
+Een vrijgekomen eigen netlaadsegment blijft NOM in de revisiekandidaat;
+incumbent, Evaluation en uitvoeringsautoriteit blijven ongewijzigd.
+Klokschakelingen verversen hun webhistorie onafhankelijk van herplanning.
+De SOC-grafiek bewaart verstreken voorspellingen; de bestaande simulator levert
+vanaf actuele SOC een verse verwachting voor het geldende plan, ook bij behoud.
+Dit is weergavebewijs en kan geen plan of herplantrigger wijzigen.
+Geen actuele invoer betekent geen actuele toekomstige prognose.
+De wijzigingen zijn lokaal geverifieerd. Alex heeft release dev.261 aangevraagd;
+publicatie via PR en CI. Installatie en livevalidatie volgen daarna.

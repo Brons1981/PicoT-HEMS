@@ -38,6 +38,7 @@ Date.now=()=>Date.parse('2026-09-11T00:45:00Z');
 const at=m=>new Date(Date.parse('2026-09-11T00:00:00Z')+m*60000).toISOString();
 const forecast=[{at:at(0),soc_percent:20},{at:at(30),soc_percent:50},
   {at:at(30),soc_percent:10,break_before:true},{at:at(60),soc_percent:80}];
+forecast.forEach((point,index)=>point.source_identity={plan_id:index<2?'old':'new'});
 const actual={points:[{at:at(0),soc_percent:20},{at:at(15),soc_percent:null},
   {at:at(30),soc_percent:30}],ends_at:at(45)};
 const before=JSON.stringify([forecast,actual]);
@@ -67,7 +68,8 @@ console.log(JSON.stringify({nodes:flatten(root).map(e=>({tag:e.tag,...e.attrs}))
     assert len(actual) == 2  # No line across the 15-minute unavailable interval.
     assert actual[0]["d"].endswith("H 365.5")
     assert "H 932.5" in actual[1]["d"]  # Stops at observed 00:45, not forecast end 01:00.
-    assert len([n for n in nodes if n.get("class") == "soc-line canonical-charge"]) == 2
+    assert len([n for n in nodes if n.get("class") == "soc-line soc-projected"]) == 2
+    assert len([n for n in nodes if n.get("class") == "soc-replan-marker"]) == 1
     assert result["unchanged"] is True
 
 

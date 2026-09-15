@@ -212,3 +212,17 @@ Dit is de registratiebasis voor een toekomstig woningmodel. Geschikte perioden,
 na-ijlen van warmte, zon en interne warmte moeten nog worden beoordeeld; er wordt
 nog geen afkoelcoëfficiënt, COP of verwarmingstijd voorspeld. Terugval naar dev.14
 vereist geen databasemigratie en laat de oude meetreeks intact.
+
+## Klimaatgrafieken per zone (vanaf dev.16)
+
+Naast het bestaande temperatuuroverzicht staat per zone een klimaatgrafiek over
+de afgelopen 24 uur. Temperatuur (paars, doorgetrokken) en dauwpunt (oranje,
+gestippeld) gebruiken samen de linker °C-as. Luchtvochtigheid (blauw, gestreept)
+gebruikt rechts altijd 0–100%. De °C-as schaalt op de beschikbare temperatuur- en
+dauwpuntwaarden. De grafieken tonen opgeslagen metingen, geen voorspelling.
+
+Aanwijzen of aantikken toont de drie waarden en het tijdstip van het dichtstbijzijnde
+opgeslagen meetmoment. Met focus op de grafiek werken ook de pijltjestoetsen.
+Ontbrekende/verkeerd gekwalificeerde waarden en gaten vanaf vijf minuten worden
+niet verbonden. Oudere historie zonder dauwpunt krijgt geen berekende vervanging.
+De bestaande database, bewaartermijn, bronbediening en comfortregeling wijzigen niet.

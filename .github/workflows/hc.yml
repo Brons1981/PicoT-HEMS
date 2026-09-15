@@ -27,7 +27,10 @@ jobs:
         working-directory: picot_hc
         run: python -m unittest discover -s tests -v
       - name: Dashboard syntax
-        run: node --check picot_hc/picot_hc/web/app.js
+        run: |
+          node --check picot_hc/picot_hc/web/app.js
+          node --check picot_hc/picot_hc/web/climate-charts.js
+          node picot_hc/tests/climate-charts.cjs
       - name: Build independent app container
         run: docker build --tag picot-hc:test picot_hc
       - name: Verify container package and assets

@@ -26,6 +26,7 @@ const {gunzipSync} = require('node:zlib');
   for(const [entity_id,state,attributes] of [
     ['sensor.gw1200a_indoor_dewpoint','11.5',{unit_of_measurement:'°C'}],
     ['sensor.gw1200a_dewpoint_2','12.5',{unit_of_measurement:'°C'}],
+    ['sensor.gw1200a_humidity_2','70',{unit_of_measurement:'%'}],
     ['sensor.gw1200a_dewpoint_3','14.5',{unit_of_measurement:'°C'}],
     ['sensor.gw1200a_dewpoint_1','8.5',{unit_of_measurement:'°C'}],
     ['binary_sensor.gw1200a_battery_1','off',{device_class:'battery'}],
@@ -79,6 +80,18 @@ const {gunzipSync} = require('node:zlib');
     assert.match(zoneText,/SensorbatterijBatterij bijna leeg/);
     assert.match(zoneText,/SensorbatterijNiet beschikbaar/);
     assert.equal(await page.locator('#zones .battery-low').count(),1);
+    assert.equal(await page.locator('.zone-climate-panel canvas').count(),3);
+    assert.match(await page.locator('#climate-readout-beneden').textContent(),/Temperatuur 19 °C/);
+    assert.match(await page.locator('#climate-readout-beneden').textContent(),/Dauwpunt 11,5 °C/);
+    assert.match(await page.locator('#climate-readout-beneden').textContent(),/Luchtvochtigheid Niet beschikbaar/);
+    assert.match(await page.locator('#climate-readout-boven').textContent(),/Dauwpunt 12,5 °C/);
+    assert.match(await page.locator('#climate-readout-badkamer').textContent(),/Dauwpunt 14,5 °C/);
+    assert.match(await page.locator('#climate-readout-boven').textContent(),/Luchtvochtigheid 70 %/);
+    const climateCanvas=page.locator('#climate-beneden');
+    await climateCanvas.focus();await page.keyboard.press('ArrowLeft');
+    assert.match(await page.locator('#climate-readout-beneden').textContent(),/Temperatuur 19 °C/);
+    await climateCanvas.click({position:{x:100,y:100}});
+    assert.equal(await page.evaluate(()=>document.querySelector('#climate-beneden').userSelected),true);
     assert.match(await page.locator('#building-status').textContent(),/Registratie loopt/);
     assert.match(await page.locator('#building-retention').textContent(),/90 dagen/);
     assert.match(await page.locator('#zones .zone').first().textContent(),/Binnen − buiten9 °C/);

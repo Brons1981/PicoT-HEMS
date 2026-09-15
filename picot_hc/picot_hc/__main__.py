@@ -229,7 +229,7 @@ def handler(runtime, ingress):
             elif path == '/api/history':
                 body = json.dumps(runtime.store.history(time.time() - 86400), allow_nan=False).encode()
                 mime = 'application/json'
-            elif path in ('/', '/index.html', '/app.js', '/style.css'):
+            elif path in ('/', '/index.html', '/app.js', '/climate-charts.js', '/style.css'):
                 name = 'index.html' if path == '/' else path[1:]
                 body = (web / name).read_bytes()
                 mime = {'html':'text/html', 'js':'text/javascript', 'css':'text/css'}[name.split('.')[-1]]

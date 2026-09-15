@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-dev.15
+
+- Woningmetingen bewaren nu binnen-buitenverschil, achterdeur en gemelde modus, activiteit en doeltemperatuur per warmtebron.
+- Achterdeur zichtbaar bij beneden; bronrapportagetijden blijven bij de metingen bewaard.
+- Volledige aanwezige meetreeks downloaden voor analyse en langer bewaren.
+- Bestaande metingen blijven behouden; dit registreert gegevens zonder automatisch te verwarmen.
+
 ## 0.1.0-dev.14
 
 - Dauwpunt van Ecowitt zichtbaar en opgeslagen per zone en buiten.

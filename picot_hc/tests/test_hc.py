@@ -1,4 +1,5 @@
 import copy
+import gzip
 import json
 import tempfile
 import threading
@@ -11,6 +12,7 @@ from urllib.error import HTTPError
 
 from picot_hc.core import Store, snapshot, validate, prices, fetch_states, observation, tariff_confirmed, battery_observation
 from picot_hc.__main__ import Runtime, handler
+from picot_hc.schedule import DOOR
 
 ROOT = Path(__file__).resolve().parents[1]
 NOW = 1789293600.0
@@ -339,6 +341,50 @@ class HC(unittest.TestCase):
         expected['zones'][1]['battery'] = 'binary_sensor.custom_battery'
         self.assertEqual(Runtime(expected, store, '', '').config, expected)
         self.assertEqual(again.control.records(), [])
+
+    def test_building_http_capture_export_and_restart(self):
+        states = [dict(entity_id=self.config['outdoor'], **self.state('10','°C')),
+                  dict(entity_id=self.config['zones'][0]['temperature'], **self.state('21','°C')),
+                  dict(entity_id=DOOR, **self.state('on')),
+                  dict(entity_id=self.config['cv'], state='heat', attributes={'hvac_action':'idle','temperature':20})]
+        calls = []
+        class FakeHA(BaseHTTPRequestHandler):
+            def log_message(self,*args): pass
+            def do_GET(self):
+                calls.append(('GET', self.path))
+                self.send_response(200); self.end_headers()
+                payload = {'unit_system':{'temperature':'°C'}} if self.path=='/api/config' else states
+                self.wfile.write(json.dumps(payload).encode())
+            def do_POST(self):
+                calls.append(('POST', self.path)); self.send_response(500); self.end_headers()
+        url = self.server(FakeHA)
+        store = Store(Path(self.tmp.name)/'building.sqlite3')
+        rt = Runtime(self.config,store,url+'/api','secret-never-export')
+        for door in ['on','off','unknown']:
+            states[2]['state'] = door
+            rt.collect()
+        self.assertEqual(calls.count(('GET','/api/states')),3)
+        self.assertTrue(all(method=='GET' and path in ('/api/states','/api/config') for method,path in calls))
+        self.assertEqual(rt.current()['building']['zones'][0]['delta_t_k'], 11)
+        self.assertIsNone(rt.current()['building']['back_door']['value'])
+        again = Runtime(self.config,store,url+'/api','secret-never-export')
+        self.assertEqual(again.current()['building'],rt.current()['building'])
+        public = self.server(handler(again,False))
+        with urlopen(public+'/api/building-export') as response:
+            self.assertIn('attachment;',response.headers['Content-Disposition'])
+            self.assertEqual(response.headers['Content-Type'],'application/gzip')
+            raw = gzip.decompress(response.read()).decode()
+        self.assertNotIn('secret-never-export',raw)
+        self.assertNotIn('csrf_token',raw)
+        records = [json.loads(line) for line in raw.splitlines()]
+        self.assertEqual(records[0]['format'],'picot_hc_building_history')
+        self.assertEqual(len(records),4)
+        self.assertEqual([row['building']['back_door']['value'] for row in records[1:]], ['on','off',None])
+        self.assertEqual(records[1]['zones'][0]['samples']['temperature']['value'],21)
+        private = self.server(handler(again,True))
+        with self.assertRaises(HTTPError) as error:
+            urlopen(private+'/api/building-export')
+        self.assertEqual(error.exception.code,403)
 
     def test_battery_binary_semantics_and_dewpoint_failures(self):
         entity = 'binary_sensor.gw1200a_battery_2'

@@ -6,13 +6,15 @@ import secrets
 import sqlite3
 import threading
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.error import HTTPError
 
 from .control import Control
-from .schedule import Schedule
+from .schedule import Schedule, DOOR
+from .building import building_observation
 from .weather import DEFAULT_ENTITY, WeatherReader, forecast_view
 from .core import Store, fetch_states, snapshot, validate, number, observation
 
@@ -104,6 +106,7 @@ class Runtime:
             now = time.time()
             self.control.observe(states, started, now)
             data = snapshot(self.config, states, now)
+            data['building'] = building_observation(self.config, states, now, data, DOOR)
             data['weather'] = self.weather.collect(states, now, self.url, self.token)
             self.store.save(data, self.config['retention_days'])
             self.connection, self.error = 'connected', None
@@ -149,6 +152,7 @@ class Runtime:
         data['control_mode'] = 'comfort_input'
         data['csrf_token'] = self.csrf_token
         data.update(connection=self.connection, error=self.error, age_seconds=age,
+                    retention_days=self.config['retention_days'],
                     stale=age is None or age > self.config['stale_seconds'])
         return data
 
@@ -216,6 +220,9 @@ def handler(runtime, ingress):
                 self.send_error(403)
                 return
             path = urlsplit(self.path).path
+            if path == '/api/building-export':
+                self.export_building()
+                return
             if path == '/api/snapshot':
                 body = json.dumps(runtime.current(), allow_nan=False).encode()
                 mime = 'application/json'
@@ -237,6 +244,27 @@ def handler(runtime, ingress):
             self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self'")
             self.end_headers()
             self.wfile.write(body)
+
+        def export_building(self):
+            until = time.time()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/gzip')
+            self.send_header('Content-Disposition', 'attachment; filename="picot-hc-woningmetingen.jsonl.gz"')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.close_connection = True
+            compressor = zlib.compressobj(wbits=31)
+            metadata = dict(format='picot_hc_building_history', version=1, exported_until=until,
+                            retention_days=runtime.config['retention_days'])
+            try:
+                self.wfile.write(compressor.compress((json.dumps(metadata) + '\n').encode()))
+                for record in runtime.store.building_records(until):
+                    self.wfile.write(compressor.compress((json.dumps(record, allow_nan=False) + '\n').encode()))
+                self.wfile.write(compressor.flush())
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # A cancelled download must not affect the collector.
     return Handler
 
 

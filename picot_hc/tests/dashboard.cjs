@@ -20,6 +20,15 @@ const http = require('node:http');
   deviceStates.push({entity_id:'sensor.downstairs',state:'19',attributes:{unit_of_measurement:'°C'},last_reported:new Date().toISOString()});
   const options=JSON.parse(readFileSync(path.join(root,'options.example.json'),'utf8'));
   options.zones[0].temperature='sensor.downstairs';options.poll_seconds=10;options.stale_seconds=30;
+  for(const [entity_id,state,attributes] of [
+    ['sensor.gw1200a_indoor_dewpoint','11.5',{unit_of_measurement:'°C'}],
+    ['sensor.gw1200a_dewpoint_2','12.5',{unit_of_measurement:'°C'}],
+    ['sensor.gw1200a_dewpoint_3','14.5',{unit_of_measurement:'°C'}],
+    ['sensor.gw1200a_dewpoint_1','8.5',{unit_of_measurement:'°C'}],
+    ['binary_sensor.gw1200a_battery_1','off',{device_class:'battery'}],
+    ['binary_sensor.gw1200a_battery_2','on',{device_class:'battery'}],
+    ['binary_sensor.gw1200a_battery_3','unavailable',{device_class:'battery'}],
+  ]) deviceStates.push({entity_id,state,attributes,last_updated:new Date().toISOString()});
   const configPath=path.join(data,'options.json');writeFileSync(configPath,JSON.stringify(options));
   const fakeHA = http.createServer((req,res) => {
     res.setHeader('Content-Type','application/json');
@@ -59,6 +68,14 @@ const http = require('node:http');
     await form.waitFor();
     assert.equal(await page.locator('form.temperature-settings').count(), 3);
     await page.waitForFunction(()=>document.querySelectorAll('.forecast-day').length===5);
+    assert.match(await page.locator('#weather-measured').textContent(), /Dauwpunt: 8,5 °C/);
+    assert.match(await page.locator('#weather-measured').textContent(), /Sensorbatterij: Normaal/);
+    const zoneText=await page.locator('#zones').textContent();
+    assert.match(zoneText,/11,5 °C/);assert.match(zoneText,/12,5 °C/);assert.match(zoneText,/14,5 °C/);
+    assert.match(zoneText,/SensorbatterijNiet van toepassing/);
+    assert.match(zoneText,/SensorbatterijBatterij bijna leeg/);
+    assert.match(zoneText,/SensorbatterijNiet beschikbaar/);
+    assert.equal(await page.locator('#zones .battery-low').count(),1);
     assert.match(await page.locator('#weather-current').textContent(), /Bewolkt/);
     assert.match(await page.locator('#weather-current').textContent(), /20,7 °C/);
     assert.doesNotMatch(await page.locator('#weather-forecast').textContent(), /Neerslag | mm|bron voorspelt regen/);

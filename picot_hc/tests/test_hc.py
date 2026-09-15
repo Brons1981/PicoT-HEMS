@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError
 
-from picot_hc.core import Store, snapshot, validate, prices, fetch_states, observation, tariff_confirmed
+from picot_hc.core import Store, snapshot, validate, prices, fetch_states, observation, tariff_confirmed, battery_observation
 from picot_hc.__main__ import Runtime, handler
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -246,10 +246,12 @@ class HC(unittest.TestCase):
         self.config['zones'][2]['energy'] = ''
         states = []
         for zone in expected['zones']:
-            for key, unit, value in [('temperature','°C','21.5'),('humidity','%','52')]:
+            for key, unit, value in [('temperature','°C','21.5'),('humidity','%','52'),('dewpoint','°C','11.2')]:
                 states.append(dict(entity_id=zone[key], **self.state(value,unit)))
-        for key, unit, value in [('outdoor','°C','12.5'),('outdoor_humidity','%','81')]:
+        for key, unit, value in [('outdoor','°C','12.5'),('outdoor_humidity','%','81'),('outdoor_dewpoint','°C','9.3')]:
             states.append(dict(entity_id=expected[key], **self.state(value,unit)))
+        for entity in [expected['outdoor_battery'], expected['zones'][1]['battery'], expected['zones'][2]['battery']]:
+            states.append(dict(entity_id=entity, state='off', attributes={'device_class':'battery'}))
         states.append(dict(entity_id=expected['zones'][2]['energy'], **self.state('4.25','kWh')))
         calls = []
         class FakeHA(BaseHTTPRequestHandler):
@@ -271,6 +273,11 @@ class HC(unittest.TestCase):
             self.assertEqual(zone['samples']['humidity']['value'],52)
         self.assertEqual(data['outdoor']['value'],12.5)
         self.assertEqual(data['outdoor_humidity']['value'],81)
+        self.assertEqual(data['outdoor_dewpoint']['value'],9.3)
+        self.assertEqual(data['outdoor_battery']['battery_status'],'normal')
+        for zone in data['zones']:
+            self.assertEqual(zone['samples']['dewpoint']['value'],11.2)
+        self.assertEqual(data['zones'][1]['samples']['battery']['battery_status'],'normal')
         self.assertEqual(data['zones'][2]['samples']['energy']['value'],4.25)
         self.assertEqual(data['zones'][0]['settings']['target'],20)
         self.assertEqual(calls,['/api/states'])
@@ -296,5 +303,58 @@ class HC(unittest.TestCase):
         self.config['zones'][2].update(device='switch.other',energy='')
         rt = Runtime(self.config,rt.store,'','')
         self.assertEqual(rt.config['zones'][2]['energy'],'')
+
+    def test_dewpoint_battery_upgrade_and_history(self):
+        expected = copy.deepcopy(self.config)
+        for key in ('outdoor_dewpoint', 'outdoor_battery'):
+            self.config.pop(key)
+        for zone in self.config['zones']:
+            zone.pop('dewpoint'); zone.pop('battery')
+        store = Store(Path(self.tmp.name)/'dewpoint.sqlite3')
+        old = snapshot(self.config, {}, NOW-30)
+        for zone in old['zones']:
+            zone['samples'].pop('dewpoint'); zone['samples'].pop('battery')
+        old.pop('outdoor_dewpoint'); old.pop('outdoor_battery')
+        store.save(old, 90)
+        rt = Runtime(self.config, store, '', '')
+        self.assertEqual(rt.config, expected)
+        self.assertIsNone(store.history(0)[0]['outdoor_dewpoint'])
+        self.assertIsNone(store.history(0)[0]['zones'][0]['samples']['dewpoint'])
+        self.assertEqual(len(rt.current()['zones']), 3)
+        states = {expected['outdoor_dewpoint']: self.state('-2.5', '°C'),
+                  expected['outdoor_battery']: dict(state='off', attributes={'device_class':'battery'})}
+        for zone in expected['zones']:
+            states[zone['dewpoint']] = self.state('0', '°C')
+            if zone['battery']:
+                states[zone['battery']] = dict(state='on', attributes={'device_class':'battery'})
+        data = snapshot(rt.config, states, NOW)
+        store.save(data, 90)
+        again = Runtime(rt.config, store, '', '')
+        self.assertEqual(again.current()['outdoor_dewpoint']['value'], -2.5)
+        self.assertEqual(again.current()['outdoor_battery']['battery_status'], 'normal')
+        self.assertEqual(store.history(0)[-1]['zones'][1]['samples']['battery']['battery_status'], 'low')
+        self.assertEqual(data['zones'][0]['samples']['battery']['quality'], 'not_configured')
+        self.assertEqual(data['zones'][0]['samples']['dewpoint']['value'], 0)
+        expected['outdoor_dewpoint'] = 'sensor.custom_dewpoint'
+        expected['zones'][1]['battery'] = 'binary_sensor.custom_battery'
+        self.assertEqual(Runtime(expected, store, '', '').config, expected)
+        self.assertEqual(again.control.records(), [])
+
+    def test_battery_binary_semantics_and_dewpoint_failures(self):
+        entity = 'binary_sensor.gw1200a_battery_2'
+        for raw, quality, status in [('off','available','normal'),('on','available','low'),
+                                     ('unknown','unknown',None),('unavailable','unavailable',None),
+                                     ('Normaal','invalid',None),('50','invalid',None)]:
+            with self.subTest(raw=raw):
+                sample = battery_observation(entity, {entity:dict(state=raw, attributes={'device_class':'battery'})}, NOW)
+                self.assertEqual((sample['quality'], sample['battery_status']), (quality,status))
+        sample = battery_observation(entity, {entity:self.state('off')}, NOW)
+        self.assertEqual(sample['quality'], 'device_class_mismatch')
+        self.assertIsNone(sample['battery_status'])
+        self.assertEqual(battery_observation(entity, {}, NOW)['quality'], 'missing')
+        for raw, unit, quality in [('unknown','°C','unknown'),('nan','°C','invalid'),('12','°F','unit_mismatch')]:
+            data = snapshot(self.config, {self.config['outdoor_dewpoint']:self.state(raw,unit)}, NOW)
+            self.assertEqual(data['outdoor_dewpoint']['quality'], quality)
+            self.assertIsNone(data['outdoor_dewpoint']['value'])
 
 if __name__=='__main__':unittest.main()

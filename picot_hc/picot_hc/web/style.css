@@ -21,3 +21,5 @@
 .window-days{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:.6rem}.window-days label{display:flex;align-items:center;gap:.2rem}.day-presets{display:flex;flex-wrap:wrap;gap:.4rem;width:100%}.day-presets button{margin:0}
 
 .weather-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.weather-comparison>section{min-width:0;padding:16px;background:#f7f5fa;border-radius:10px}.weather-comparison h3{margin-top:0}.weather-comparison .sub{overflow-wrap:anywhere}@media(max-width:800px){.weather-comparison{grid-template-columns:1fr}}
+
+.battery-low{color:#a52a20;font-weight:600}

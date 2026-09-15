@@ -84,6 +84,23 @@ def observation(entity, states, now, numeric=False, unit=None):
     return result
 
 
+def battery_observation(entity, states, now):
+    """HA battery binary sensors: on = low, off = normal; preserve raw state."""
+    result = observation(entity, states, now)
+    result['battery_status'] = None
+    if result['quality'] == 'available':
+        attrs = (states.get(entity) or {}).get('attributes') or {}
+        if attrs.get('device_class') != 'battery':
+            result['quality'] = 'device_class_mismatch'
+            result['value'] = None
+        elif result['value'] in ('on', 'off'):
+            result['battery_status'] = 'low' if result['value'] == 'on' else 'normal'
+        else:
+            result['quality'] = 'invalid'
+            result['value'] = None
+    return result
+
+
 # Alex confirmed this configured tariff source on 2026-09-13.
 CONFIRMED_PRICE_ENTITY = 'sensor.nordpool_kwh_nl_eur_3_095_0'
 
@@ -139,8 +156,9 @@ def snapshot(config, states, now):
     zones = []
     for z in config['zones']:
         samples = {}
-        for key, unit in [('temperature', '°C'), ('humidity', '%'), ('power', 'W'), ('energy', 'kWh')]:
+        for key, unit in [('temperature', '°C'), ('humidity', '%'), ('dewpoint', '°C'), ('power', 'W'), ('energy', 'kWh')]:
             samples[key] = observation(z.get(key, ''), states, now, True, unit)
+        samples['battery'] = battery_observation(z.get('battery', ''), states, now)
         samples['device'] = observation(z['device'], states, now)
         reason = 'Observatie: geen automatische aansturing.'
         if samples['temperature']['quality'] != 'available':
@@ -150,6 +168,8 @@ def snapshot(config, states, now):
     return dict(mode='observe', collected=now, connection='connected', zones=zones,
                 outdoor=observation(config['outdoor'], states, now, True, '°C'),
                 outdoor_humidity=observation(config.get('outdoor_humidity', ''), states, now, True, '%'),
+                outdoor_dewpoint=observation(config.get('outdoor_dewpoint', ''), states, now, True, '°C'),
+                outdoor_battery=battery_observation(config.get('outdoor_battery', ''), states, now),
                 presence=observation(config['presence'], states, now),
                 cv=observation(config['cv'], states, now),
                 cv_status=observation(config['cv_status'], states, now),
@@ -191,7 +211,7 @@ class Store:
         with self.connect() as db:
             rows = db.execute('SELECT payload FROM samples WHERE time >= ? ORDER BY time', (since,)).fetchall()
         # Small response: graph inputs only, no full HA state inventory.
-        return [dict(time=d['collected'], zones=[dict(id=z['id'], samples={k:z['samples'][k] for k in ('temperature','humidity','power')}) for z in d['zones']]) for d in map(lambda r:json.loads(r[0]), rows)]
+        return [dict(time=d['collected'], outdoor_dewpoint=d.get('outdoor_dewpoint'), outdoor_battery=d.get('outdoor_battery'), zones=[dict(id=z['id'], samples={k:z['samples'].get(k) for k in ('temperature','humidity','power','dewpoint','battery')}) for z in d['zones']]) for d in map(lambda r:json.loads(r[0]), rows)]
 
     def settings(self):
         with self.connect() as db:

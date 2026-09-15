@@ -58,7 +58,7 @@ def fetch_states(base_url, token):
 
 
 def observation(entity, states, now, numeric=False, unit=None):
-    result = dict(entity_id=entity, value=None, quality='not_configured', received=now, source_updated=None, unit=unit)
+    result = dict(entity_id=entity, value=None, quality='not_configured', received=now, source_updated=None, source_reported=None, unit=unit)
     if not entity:
         return result
     result['quality'] = 'missing'
@@ -66,6 +66,7 @@ def observation(entity, states, now, numeric=False, unit=None):
     if item is None:
         return result
     result['source_updated'] = item.get('last_updated')
+    result['source_reported'] = item.get('last_reported')
     state = item.get('state')
     attrs = item.get('attributes') or {}
     if state in (None, 'unknown', 'unavailable'):
@@ -216,6 +217,22 @@ class Store:
     def settings(self):
         with self.connect() as db:
             return {key: json.loads(payload) for key, payload in db.execute('SELECT id, payload FROM zone_settings')}
+
+    def building_records(self, until, page_size=128):
+        """Bounded memory, release SQLite read locks between export pages."""
+        after = -1e300
+        keys = ('collected', 'zones', 'outdoor', 'outdoor_humidity', 'outdoor_dewpoint',
+                'outdoor_battery', 'presence', 'cv', 'cv_status', 'gas', 'weather', 'building')
+        while True:
+            with self.connect() as db:
+                rows = db.execute('SELECT time, payload FROM samples WHERE time > ? AND time <= ? ORDER BY time LIMIT ?',
+                                  (after, until, page_size)).fetchall()
+            if not rows:
+                return
+            for stored_time, payload in rows:
+                data = json.loads(payload)
+                yield {key: data.get(key) for key in keys}
+                after = stored_time
 
     def save_settings(self, zone_id, values):
         with self.connect() as db:

@@ -183,3 +183,32 @@ Zie https://www.home-assistant.io/integrations/binary_sensor/.
 Dit voegt observaties toe. Dauwpuntgestuurde ventilatie of verwarming volgt later.
 Terugval naar dev.13 behoudt de database; verwijder bij Supervisor-validatiefouten
 alleen de nieuwe optionele configuratiesleutels uit de add-on-opties.
+
+## Meetbasis woninggedrag (vanaf dev.15)
+
+HC bouwt de meetreeks voor afkoeling en latere verwarmingssessies verder op in
+`/data/hc.sqlite3`. Bestaande snapshots blijven behouden. Nieuwe snapshots krijgen
+`building.version = 1` met binnen-buitenverschil in K per zone, achterdeur en
+bronmodus, gemelde activiteit en doeltemperatuur. Cv wordt als gedeelde bron van
+beneden en boven vastgelegd. Bronrapportagetijd en wijzigingstijd blijven apart;
+een ontbrekende bronrapportagetijd wordt niet vervangen door de ontvangsttijd.
+
+De temperatuur beneden blijft de echte meting, ook bij een open achterdeur. De
+meereizende deurstatus maakt latere selectie mogelijk. Deur open en herstel na
+sluiten mogen niet zonder meer als normaal woningverlies worden ingeleerd.
+Een heat-modus bewijst geen actieve verwarming. Het getoonde binnen-buitenverschil
+is een rekenkundige observatie, geen bewijs van geschikte of verse leerdata.
+
+Bij Meetbasis woninggedrag staat de registratiestatus en bewaartermijn. Die blijft
+zoals ingesteld (standaard 90 dagen). Meetgegevens downloaden levert gzip-JSONL:
+eerst formaat/versie/eindtijd/bewaartermijn, daarna de aanwezige snapshots met de
+relevante meetvelden, inclusief oudere rijen met `building: null`.
+Het endpoint `api/building-export` gebruikt dezelfde toegangscontrole als HC en
+leest in kleine pagina's tot een vast eindtijdstip. Downloaden verstuurt geen HA-
+opdrachten. Bewaar downloads zelf als de metingen langer nodig zijn; de ingestelde
+retentie blijft van toepassing en een download wijzigt deze niet.
+
+Dit is de registratiebasis voor een toekomstig woningmodel. Geschikte perioden,
+na-ijlen van warmte, zon en interne warmte moeten nog worden beoordeeld; er wordt
+nog geen afkoelcoëfficiënt, COP of verwarmingstijd voorspeld. Terugval naar dev.14
+vereist geen databasemigratie en laat de oude meetreeks intact.

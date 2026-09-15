@@ -63,7 +63,19 @@ function temperatureForm(zone) {
   });
   return form;
 }
-function renderZones(zones) {
+function doorValue(s) {
+  if(!s) return 'Nog geen meting';
+  if(s.quality!=='available') return value(s);
+  return {on:'Open',off:'Dicht'}[s.value] || 'Onbekend';
+}
+function renderBuilding(data) {
+  const recording=data.building?.version===1;
+  $('building-status').textContent=recording
+    ? 'Laatste woningmeting: '+fmt(data.collected)+'. '+(data.stale||data.connection!=='connected'?'Registratie wacht op actuele HA-gegevens.':'Registratie loopt.')
+    : 'Wacht op de eerste woningmeting met bron- en deurcontext.';
+  $('building-retention').textContent='Bewaartermijn: '+data.retention_days+' dagen. Download de meetreeks om deze langer te bewaren.';
+}
+function renderZones(zones, building) {
   for (const z of zones) {
     let parts = zoneCards.get(z.id);
     if (!parts) {
@@ -82,6 +94,9 @@ function renderZones(zones) {
     for (const [key, val] of [['Dauwpunt', z.samples.dewpoint?value(z.samples.dewpoint):'Nog geen meting'], ['Sensorbatterij', batteryValue(z.samples.battery)], ['Apparaat', value(z.samples.device)], ['Vermogen', value(z.samples.power)], ['Energie', value(z.samples.energy)], ['Vochtband', z.settings.humidity_min + '–' + z.settings.humidity_max + '%']]) {
       parts.facts.append(el('dt', key), el('dd', val, key==='Sensorbatterij'&&z.samples.battery?.battery_status==='low'?'battery-low':undefined));
     }
+    const delta=building?.zones.find(zone=>zone.id===z.id)?.delta_t_k;
+    parts.facts.append(el('dt','Binnen − buiten'),el('dd',typeof delta==='number'?delta.toLocaleString('nl-NL',{maximumFractionDigits:1})+' °C':'Nog geen bruikbaar meetpaar'));
+    if(z.id==='beneden') parts.facts.append(el('dt','Achterdeur'),el('dd',doorValue(building?.back_door)));
     parts.reason.textContent = z.reason;
     parts.form.sync(z.settings);
   }
@@ -329,5 +344,5 @@ function renderSchedule(data){
   }
   scheduleForm.sync(data);
 }
-async function refresh(){try{const [a,b]=await Promise.all([fetch('api/snapshot'),fetch('api/history')]);if(!a.ok||!b.ok)throw Error();const received=await a.json();if(current&&current.csrf_token!==received.csrf_token)settingsRevision=0;current=received;hist=await b.json();const d=current;document.body.classList.toggle('stale',d.stale||d.connection!=='connected');$('connection').textContent=d.connection==='connected'&&!d.stale?'HA verbonden — handmatige bediening beschikbaar':'HA nog niet verbonden of gegevens verouderd';$('updated').textContent=d.collected?'Laatste ontvangst: '+fmt(d.collected):'Nog geen metingen ontvangen';$('error').textContent=d.error||'';if(d.settings_revision>=settingsRevision){settingsRevision=d.settings_revision;renderZones(d.zones);}renderWeather(d.weather,d.stale||d.connection!=='connected',d.outdoor,d.outdoor_humidity,d.outdoor_dewpoint,d.outdoor_battery);renderControls(d.sources,d.commands);renderSchedule(d.schedule);$('price-description').textContent=(d.price_basis_confirmed?'Bevestigd elektriciteitstarief':'Bronprijzen')+' in €/kWh · Europe/Amsterdam';$('warnings').textContent=d.warnings.join(' ');$('price-table').replaceChildren();for(const p of d.prices){const tr=el('tr');tr.append(el('td',fmt(p.start)),el('td',fmt(p.end)),el('td',p.value.toFixed(4)));$('price-table').append(tr);}$('shared').replaceChildren();for(const [name,s]of [['Aanwezigheid',d.presence],['Cv-thermostaat',d.cv],['Cv-status (betekenis nog controleren)',d.cv_status],['Gas totaal, inclusief tapwater',d.gas],['CO₂ beneden',d.co2]])$('shared').append(el('div',name+': '+value(s)));$('shared').append(el('div','Gastarief: € '+d.gas_price.toLocaleString('nl-NL',{maximumFractionDigits:5})+'/m³ · geldig t/m '+d.gas_valid_until));$('history-note').textContent='Registratie sinds HC draait. Dit is meetgeschiedenis, geen voorspelling.';graphs();}catch(e){$('connection').textContent='Dashboard kan HC niet bereiken';document.body.classList.add('stale');}finally{setTimeout(refresh,15000);}}
+async function refresh(){try{const [a,b]=await Promise.all([fetch('api/snapshot'),fetch('api/history')]);if(!a.ok||!b.ok)throw Error();const received=await a.json();if(current&&current.csrf_token!==received.csrf_token)settingsRevision=0;current=received;hist=await b.json();const d=current;document.body.classList.toggle('stale',d.stale||d.connection!=='connected');$('connection').textContent=d.connection==='connected'&&!d.stale?'HA verbonden — handmatige bediening beschikbaar':'HA nog niet verbonden of gegevens verouderd';$('updated').textContent=d.collected?'Laatste ontvangst: '+fmt(d.collected):'Nog geen metingen ontvangen';$('error').textContent=d.error||'';if(d.settings_revision>=settingsRevision){settingsRevision=d.settings_revision;renderZones(d.zones,d.building);}renderWeather(d.weather,d.stale||d.connection!=='connected',d.outdoor,d.outdoor_humidity,d.outdoor_dewpoint,d.outdoor_battery);renderBuilding(d);renderControls(d.sources,d.commands);renderSchedule(d.schedule);$('price-description').textContent=(d.price_basis_confirmed?'Bevestigd elektriciteitstarief':'Bronprijzen')+' in €/kWh · Europe/Amsterdam';$('warnings').textContent=d.warnings.join(' ');$('price-table').replaceChildren();for(const p of d.prices){const tr=el('tr');tr.append(el('td',fmt(p.start)),el('td',fmt(p.end)),el('td',p.value.toFixed(4)));$('price-table').append(tr);}$('shared').replaceChildren();for(const [name,s]of [['Aanwezigheid',d.presence],['Cv-thermostaat',d.cv],['Cv-status (betekenis nog controleren)',d.cv_status],['Gas totaal, inclusief tapwater',d.gas],['CO₂ beneden',d.co2]])$('shared').append(el('div',name+': '+value(s)));$('shared').append(el('div','Gastarief: € '+d.gas_price.toLocaleString('nl-NL',{maximumFractionDigits:5})+'/m³ · geldig t/m '+d.gas_valid_until));$('history-note').textContent='Registratie sinds HC draait. Dit is meetgeschiedenis, geen voorspelling.';graphs();}catch(e){$('connection').textContent='Dashboard kan HC niet bereiken';document.body.classList.add('stale');}finally{setTimeout(refresh,15000);}}
 window.addEventListener('resize',graphs);refresh();

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-dev.14
+
+- Dauwpunt van Ecowitt zichtbaar en opgeslagen per zone en buiten.
+- Sensorbatterijen boven, badkamer en buiten als tekststatus, met opvallende melding bij bijna leeg.
+- Nieuwe lege koppelingen automatisch ingevuld. Eigen koppelingen blijven behouden.
+- Onbekende, ontbrekende of ongeldige batterijstatus wordt nooit als normaal getoond.
+
 ## 0.1.0-dev.13
 
 - Eigen buitentemperatuur en luchtvochtigheid bovenaan bij de weerkaart.

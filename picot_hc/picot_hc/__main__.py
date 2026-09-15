@@ -26,13 +26,15 @@ class Runtime:
         self.config = copy.deepcopy(config)
         # Confirmed entity list from Alex, 2026-09-15. Existing options may still be blank.
         for key, entity in {'outdoor': 'sensor.gw1200a_temperature_1',
+                            'outdoor_dewpoint': 'sensor.gw1200a_dewpoint_1',
+                            'outdoor_battery': 'binary_sensor.gw1200a_battery_1',
                             'outdoor_humidity': 'sensor.gw1200a_humidity_1'}.items():
             if not self.config.get(key):
                 self.config[key] = entity
         sensor_defaults = {
-            'beneden': {'temperature': 'sensor.gw1200a_indoor_temperature', 'humidity': 'sensor.gw1200a_indoor_humidity'},
-            'boven': {'temperature': 'sensor.gw1200a_temperature_2', 'humidity': 'sensor.gw1200a_humidity_2'},
-            'badkamer': {'temperature': 'sensor.gw1200a_temperature_3', 'humidity': 'sensor.gw1200a_humidity_3'},
+            'beneden': {'dewpoint': 'sensor.gw1200a_indoor_dewpoint', 'battery': '', 'temperature': 'sensor.gw1200a_indoor_temperature', 'humidity': 'sensor.gw1200a_indoor_humidity'},
+            'boven': {'dewpoint': 'sensor.gw1200a_dewpoint_2', 'battery': 'binary_sensor.gw1200a_battery_2', 'temperature': 'sensor.gw1200a_temperature_2', 'humidity': 'sensor.gw1200a_humidity_2'},
+            'badkamer': {'dewpoint': 'sensor.gw1200a_dewpoint_3', 'battery': 'binary_sensor.gw1200a_battery_3', 'temperature': 'sensor.gw1200a_temperature_3', 'humidity': 'sensor.gw1200a_humidity_3'},
         }
         saved_settings = store.settings()
         for zone in self.config['zones']:

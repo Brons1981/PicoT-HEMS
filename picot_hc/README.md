@@ -160,3 +160,26 @@ toe; automatische bronkeuze en aansturing volgen later.
 
 Vanaf dev.13 toont de weerkaart eigen Ecowitt-metingen naast actueel Buienradar.
 De dagverwachting blijft afzonderlijk als voorspelling benoemd.
+
+## Dauwpunt en sensorbatterijen (vanaf dev.14)
+
+De ingevulde entiteitenlijst levert vier dauwpunten in °C: beneden
+`sensor.gw1200a_indoor_dewpoint`, boven `sensor.gw1200a_dewpoint_2`, badkamer
+`sensor.gw1200a_dewpoint_3` en buiten `sensor.gw1200a_dewpoint_1`.
+Batterijmeldingen zijn `binary_sensor.gw1200a_battery_2`, `_3` en `_1` voor
+respectievelijk boven, badkamer en buiten. Beneden heeft geen batterijmelding.
+
+Nieuwe optionele instellingen zijn `dewpoint` en `battery` per zone, plus
+`outdoor_dewpoint` en `outdoor_battery`. Lege velden krijgen de bevestigde
+koppelingen. Bestaande eigen entiteiten worden niet vervangen.
+
+Dauwpunt en batterijmelding staan op de zonekaart en voor buiten op de weerkaart.
+Beide worden met bronstatus in de meetgeschiedenis opgeslagen. Oudere metingen
+krijgen geen verzonnen waarden. HA-binary sensors met device_class `battery`
+gebruiken `off` voor Normaal en `on` voor Batterij bijna leeg. Andere of ontbrekende
+waarden blijven ongeldig/onbekend; een verkeerd sensortype vraagt controle.
+Zie https://www.home-assistant.io/integrations/binary_sensor/.
+
+Dit voegt observaties toe. Dauwpuntgestuurde ventilatie of verwarming volgt later.
+Terugval naar dev.13 behoudt de database; verwijder bij Supervisor-validatiefouten
+alleen de nieuwe optionele configuratiesleutels uit de add-on-opties.

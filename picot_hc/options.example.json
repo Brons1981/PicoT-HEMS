@@ -30,7 +30,9 @@
       "maximum": null,
       "humidity_min": 40,
       "humidity_target": 50,
-      "humidity_max": 60
+      "humidity_max": 60,
+      "dewpoint": "sensor.gw1200a_indoor_dewpoint",
+      "battery": ""
     },
     {
       "id": "boven",
@@ -45,7 +47,9 @@
       "maximum": null,
       "humidity_min": 40,
       "humidity_target": 50,
-      "humidity_max": 60
+      "humidity_max": 60,
+      "dewpoint": "sensor.gw1200a_dewpoint_2",
+      "battery": "binary_sensor.gw1200a_battery_2"
     },
     {
       "id": "badkamer",
@@ -60,11 +64,15 @@
       "maximum": null,
       "humidity_min": 40,
       "humidity_target": 50,
-      "humidity_max": 60
+      "humidity_max": 60,
+      "dewpoint": "sensor.gw1200a_dewpoint_3",
+      "battery": "binary_sensor.gw1200a_battery_3"
     }
   ],
   "weather_entity": "weather.buienradar",
   "confirmed_price_entity": "sensor.nordpool_kwh_nl_eur_3_095_0",
   "command_timeout_seconds": 300,
-  "outdoor_humidity": "sensor.gw1200a_humidity_1"
+  "outdoor_humidity": "sensor.gw1200a_humidity_1",
+  "outdoor_dewpoint": "sensor.gw1200a_dewpoint_1",
+  "outdoor_battery": "binary_sensor.gw1200a_battery_1"
 }

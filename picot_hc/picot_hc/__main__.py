@@ -14,7 +14,7 @@ from urllib.error import HTTPError
 from .control import Control
 from .schedule import Schedule
 from .weather import DEFAULT_ENTITY, WeatherReader, forecast_view
-from .core import Store, fetch_states, snapshot, validate, number
+from .core import Store, fetch_states, snapshot, validate, number, observation
 
 
 class Runtime:
@@ -24,8 +24,25 @@ class Runtime:
         self.settings_revision = 0
         self.csrf_token = secrets.token_urlsafe(32)
         self.config = copy.deepcopy(config)
+        # Confirmed entity list from Alex, 2026-09-15. Existing options may still be blank.
+        for key, entity in {'outdoor': 'sensor.gw1200a_temperature_1',
+                            'outdoor_humidity': 'sensor.gw1200a_humidity_1'}.items():
+            if not self.config.get(key):
+                self.config[key] = entity
+        sensor_defaults = {
+            'beneden': {'temperature': 'sensor.gw1200a_indoor_temperature', 'humidity': 'sensor.gw1200a_indoor_humidity'},
+            'boven': {'temperature': 'sensor.gw1200a_temperature_2', 'humidity': 'sensor.gw1200a_humidity_2'},
+            'badkamer': {'temperature': 'sensor.gw1200a_temperature_3', 'humidity': 'sensor.gw1200a_humidity_3'},
+        }
         saved_settings = store.settings()
         for zone in self.config['zones']:
+            for key, entity in sensor_defaults.get(zone['id'], {}).items():
+                if not zone.get(key):
+                    zone[key] = entity
+            if (zone['id'] == 'badkamer'
+                    and zone.get('device') == 'switch.1_5_3_badkamer_verwarming_badkamer'
+                    and not zone.get('energy')):
+                zone['energy'] = 'sensor.1_5_3_badkamer_verwarming_badkamer_energy'
             # Existing Supervisor options retain blank meter fields after updates.
             # Only supply defaults for Alex's confirmed upstairs air conditioner.
             if zone['id'] == 'boven' and zone.get('device') == 'climate.19791209313101_climate':
@@ -108,6 +125,8 @@ class Runtime:
         if data is None:
             data = snapshot(self.config, {}, time.time())
             data['collected'] = None
+        if 'outdoor_humidity' not in data:
+            data['outdoor_humidity'] = observation(self.config.get('outdoor_humidity', ''), {}, time.time(), True, '%')
         age = time.time() - data['collected'] if data['collected'] is not None else None
         # Current settings must not wait for a new measurement or HA connectivity.
         with self.settings_lock:

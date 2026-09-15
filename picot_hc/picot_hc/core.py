@@ -149,6 +149,7 @@ def snapshot(config, states, now):
     points, warnings = prices(states.get(config['price_entity']), config, now)
     return dict(mode='observe', collected=now, connection='connected', zones=zones,
                 outdoor=observation(config['outdoor'], states, now, True, '°C'),
+                outdoor_humidity=observation(config.get('outdoor_humidity', ''), states, now, True, '%'),
                 presence=observation(config['presence'], states, now),
                 cv=observation(config['cv'], states, now),
                 cv_status=observation(config['cv_status'], states, now),

@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.11** — zelfstandige meting, comfortvensters en handmatige bronbediening voor Home Assistant.
+Versie **0.1.0-dev.12** — zelfstandige meting, comfortvensters en handmatige bronbediening voor Home Assistant.
 
 ## Wat deze versie doet
 
@@ -19,7 +19,7 @@ Deze installatievorm is voorbereid; Docker-build, Supervisor-installatie en live
 1. Gebruik de bestaande repository `https://github.com/Brons1981/PicoT-HEMS` in de HA-app/add-onwinkel, dezelfde als voor Energy Devices. Er is geen extra repository nodig.
 2. Nadat deze toevoeging op `main` staat: vernieuw de winkel en zoek **PicoT Home Climate** onder PicoT HEMS Add-ons.
 3. Installeer de app. De eerste installatie bouwt de container en heeft toegang tot het Python-basisimage nodig.
-4. Controleer de configuratie. De door Alex aangeleverde entiteiten staan vooraf ingevuld. Temperatuur-/vochtsensoren en buitenmeting mogen leeg blijven tot Ecowitt geplaatst is.
+4. Controleer de configuratie. De door Alex aangeleverde entiteiten staan vooraf ingevuld. De bevestigde Ecowitt-entiteiten en badkamer-energiemeter zijn vooraf ingevuld.
 5. Start de app en open de webinterface via HA. De interface gebruikt Ingress; er is geen externe poort gepubliceerd. De HA-verbinding gebruikt het Supervisor-token intern.
 
 Gegevens staan in `/data/hc.sqlite3` binnen de app. Ze blijven behouden bij herstart/update. Verwijderen van de app kan de gegevens verwijderen. Gebruik een HA-back-up inclusief deze app; back-upmodus is cold.
@@ -139,3 +139,22 @@ HC gebruikt deze alleen wanneer HA geen `target_temp_step` doorgeeft en de
 eenheid °C is. Een expliciete HA-stap heeft voorrang; andere entiteiten krijgen
 geen impliciete stap. Temperatuur instellen blijft beschikbaar in heat/auto;
 Uit schakelt de cv uit en activeert geen verwarming via een temperatuurwijziging.
+
+## Ecowitt en badkamer-energiemeter (dev.12)
+
+Bron: Alex’ PicoT_HC_entiteiten.xlsx, 2026-09-15. Beneden gebruikt de gateway-
+binnenmeting, buiten kanaal 1, boven kanaal 2 en badkamer kanaal 3. Temperatuur en
+luchtvochtigheid worden uitgelezen; buitenluchtvochtigheid staat bij gezamenlijke
+metingen en wordt met de snapshots opgeslagen. De badkamer gebruikt nu ook de
+cumulatieve kWh-entiteit naast vermogen.
+
+Bij updates vult HC lege meetvelden voor deze zones aan. Ingevulde eigen entiteiten
+blijven behouden. De badkamer-energiemeter wordt alleen automatisch gekoppeld bij
+de bevestigde badkamerschakelaar. Buitenluchtvochtigheid is configureerbaar via
+`outdoor_humidity`. Een leeg veld krijgt de bevestigde standaard bij herstart.
+Ontbrekende of onbruikbare gegevens blijven ontbrekend; geen fictieve nulwaarden.
+De bestaande temperatuur-/vochtgrafieken bouwen historie op vanaf ontvangst.
+De historische grafiek is niet uitgebreid met buitenluchtvochtigheid.
+
+Schema, comfortdoelen en handmatige keuzes blijven behouden. Dit voegt metingen
+toe; automatische bronkeuze en aansturing volgen later.

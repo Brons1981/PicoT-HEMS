@@ -237,4 +237,64 @@ class HC(unittest.TestCase):
         rt = Runtime(self.config, rt.store, '', '')
         self.assertEqual(rt.config['zones'][1]['power'], '')
 
+    def test_ecowitt_upgrade_ingestion_and_persistence(self):
+        expected = copy.deepcopy(self.config)
+        self.config['outdoor'] = ''
+        self.config.pop('outdoor_humidity')
+        for zone in self.config['zones']:
+            zone.update(temperature='', humidity='')
+        self.config['zones'][2]['energy'] = ''
+        states = []
+        for zone in expected['zones']:
+            for key, unit, value in [('temperature','°C','21.5'),('humidity','%','52')]:
+                states.append(dict(entity_id=zone[key], **self.state(value,unit)))
+        for key, unit, value in [('outdoor','°C','12.5'),('outdoor_humidity','%','81')]:
+            states.append(dict(entity_id=expected[key], **self.state(value,unit)))
+        states.append(dict(entity_id=expected['zones'][2]['energy'], **self.state('4.25','kWh')))
+        calls = []
+        class FakeHA(BaseHTTPRequestHandler):
+            def log_message(self,*args): pass
+            def do_GET(self):
+                calls.append(self.path)
+                self.send_response(200); self.end_headers()
+                self.wfile.write(json.dumps(states).encode())
+            def do_POST(self):
+                calls.append('POST'); self.send_response(500); self.end_headers()
+        url = self.server(FakeHA)
+        store = Store(Path(self.tmp.name)/'ecowitt.sqlite3')
+        store.save_settings('beneden',dict(minimum=16,target=20,maximum=22))
+        rt = Runtime(self.config,store,url+'/api','test-secret')
+        rt.collect()
+        data = rt.current()
+        for zone in data['zones']:
+            self.assertEqual(zone['samples']['temperature']['value'],21.5)
+            self.assertEqual(zone['samples']['humidity']['value'],52)
+        self.assertEqual(data['outdoor']['value'],12.5)
+        self.assertEqual(data['outdoor_humidity']['value'],81)
+        self.assertEqual(data['zones'][2]['samples']['energy']['value'],4.25)
+        self.assertEqual(data['zones'][0]['settings']['target'],20)
+        self.assertEqual(calls,['/api/states'])
+        self.assertEqual(store.latest()['outdoor_humidity']['value'],81)
+        again = Runtime(self.config,store,url+'/api','test-secret')
+        self.assertEqual(again.config,rt.config)
+        # Old snapshot remains readable during restart before the first poll.
+        del data['outdoor_humidity']
+        store.save(data,90)
+        self.assertIsNone(again.current()['outdoor_humidity']['value'])
+
+    def test_ecowitt_custom_bindings_and_unavailable_values(self):
+        self.config.update(outdoor='sensor.custom_outside',outdoor_humidity='sensor.custom_rh')
+        for zone in self.config['zones']:
+            zone.update(temperature='sensor.custom_'+zone['id'],humidity='sensor.rh_'+zone['id'])
+        self.config['zones'][2]['energy']='sensor.custom_energy'
+        rt = Runtime(self.config,Store(Path(self.tmp.name)/'custom.sqlite3'),'','')
+        self.assertEqual(rt.config,self.config)
+        data = snapshot(rt.config,{'sensor.custom_rh':self.state('81','°C')},NOW)
+        self.assertEqual(data['outdoor_humidity']['quality'],'unit_mismatch')
+        self.assertIsNone(data['outdoor_humidity']['value'])
+        self.assertIsNone(data['zones'][2]['samples']['energy']['value'])
+        self.config['zones'][2].update(device='switch.other',energy='')
+        rt = Runtime(self.config,rt.store,'','')
+        self.assertEqual(rt.config['zones'][2]['energy'],'')
+
 if __name__=='__main__':unittest.main()

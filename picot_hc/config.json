@@ -1,6 +1,6 @@
 {
   "name": "PicoT Home Climate",
-  "version": "0.1.0-dev.11",
+  "version": "0.1.0-dev.12",
   "slug": "picot_hc",
   "description": "Comfortvensters, vaste zonetemperaturen en handmatige bronbediening",
   "arch": [
@@ -21,7 +21,7 @@
     "poll_seconds": 30,
     "stale_seconds": 120,
     "retention_days": 90,
-    "outdoor": "",
+    "outdoor": "sensor.gw1200a_temperature_1",
     "presence": "device_tracker.4_iphone_alex",
     "cv": "climate.huiskamer",
     "cv_status": "binary_sensor.huiskamer_status",
@@ -40,8 +40,8 @@
         "id": "beneden",
         "name": "Beneden",
         "device": "climate.airco_woonkamer",
-        "temperature": "",
-        "humidity": "",
+        "temperature": "sensor.gw1200a_indoor_temperature",
+        "humidity": "sensor.gw1200a_indoor_humidity",
         "power": "sensor.kwh_meter_airco_vermogen",
         "energy": "sensor.kwh_meter_airco_energie_import",
         "humidity_min": 40,
@@ -52,8 +52,8 @@
         "id": "boven",
         "name": "Boven / slaapkamer",
         "device": "climate.19791209313101_climate",
-        "temperature": "",
-        "humidity": "",
+        "temperature": "sensor.gw1200a_temperature_2",
+        "humidity": "sensor.gw1200a_humidity_2",
         "power": "sensor.shellyplugsg3_d0cf13c907e0_vermogen",
         "energy": "sensor.shellyplugsg3_d0cf13c907e0_energie",
         "humidity_min": 40,
@@ -64,10 +64,10 @@
         "id": "badkamer",
         "name": "Badkamer",
         "device": "switch.1_5_3_badkamer_verwarming_badkamer",
-        "temperature": "",
-        "humidity": "",
+        "temperature": "sensor.gw1200a_temperature_3",
+        "humidity": "sensor.gw1200a_humidity_3",
         "power": "sensor.1_5_3_badkamer_verwarming_badkamer_power",
-        "energy": "",
+        "energy": "sensor.1_5_3_badkamer_verwarming_badkamer_energy",
         "humidity_min": 40,
         "humidity_target": 50,
         "humidity_max": 60
@@ -75,7 +75,8 @@
     ],
     "weather_entity": "weather.buienradar",
     "confirmed_price_entity": "sensor.nordpool_kwh_nl_eur_3_095_0",
-    "command_timeout_seconds": 300
+    "command_timeout_seconds": 300,
+    "outdoor_humidity": "sensor.gw1200a_humidity_1"
   },
   "schema": {
     "outdoor": "str",
@@ -113,7 +114,8 @@
     ],
     "weather_entity": "str?",
     "confirmed_price_entity": "str?",
-    "command_timeout_seconds": "int(30,900)?"
+    "command_timeout_seconds": "int(30,900)?",
+    "outdoor_humidity": "str?"
   },
   "url": "https://github.com/Brons1981/PicoT-HEMS/tree/main/picot_hc"
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-dev.12
+
+- Bevestigde Ecowitt-temperatuur en vochtmetingen voor drie zones en buiten.
+- Buitenluchtvochtigheid uitlezen, opslaan en tonen bij gezamenlijke metingen.
+- Badkamer-energiemeter toegevoegd naast de bestaande vermogensmeting.
+- Lege bestaande opties aangevuld; eigen entiteiten en comfortinstellingen behouden.
+
 ## 0.1.0-dev.11
 
 - Daggroepen, losse dagkeuze en dupliceren; meerdere vensters per dag.

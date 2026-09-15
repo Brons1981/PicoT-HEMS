@@ -144,6 +144,7 @@ from picot.v2.pv_sunset_source import (
     HomeAssistantSunsetReader,
     SunsetReadResult,
 )
+from picot.v2.soc_expectation import committed_soc_expectation
 from picot.v2.soc_history_recovery import HistoricalSOCRecovery
 from picot.v2.soc_projection_cache import SOCProjectionCache
 from picot.v2.storage_mode_transition_history import (
@@ -3099,7 +3100,35 @@ def main() -> None:
                 print(json.dumps({"event": "picot_v2_grid_charge_review_error",
                                   "error": type(exc).__name__}), flush=True)
 
+    def refresh_soc_expectation(bundle: PlanningInputBundle) -> None:
+        # Dashboard evidence only: one unchanged-route simulation, no search,
+        # admission, control request or replacement of the winning EnergyPath.
+        try:
+            snapshot = _restore_daily_charge_context(
+                bundle.snapshot, active_plan_commitment_store, local_timezone=pv_sunset_timezone,
+            )
+            context = snapshot.daily_charge_context
+            if context is None or context.status != "ready":
+                return
+            active = tuple(p for p in context.main_plans
+                           if p.plan_id in context.active_main_plan_ids
+                           and p.valid_from <= snapshot.captured_at < p.valid_until)
+            if len(active) != 1:
+                return
+            conversion = market_daily_planner_runtime.planning_configuration(snapshot)[0]
+            web_view_store.publish_soc_expectation(
+                committed_soc_expectation(snapshot, active[0], conversion)
+            )
+        except (ValueError, OSError) as exc:
+            web_view_store.publish_soc_expectation_unavailable(
+                snapshot.captured_at, "committed_expectation_input_unavailable"
+            )
+            print(json.dumps({"event": "picot_v2_soc_expectation_error",
+                              "snapshot_id": bundle.snapshot.snapshot_id,
+                              "error": str(exc) or type(exc).__name__}), flush=True)
+
     def refresh_unchanged(bundle: PlanningInputBundle) -> None:
+        refresh_soc_expectation(bundle)
         power_history, _ = read_power_history(bundle)
         web_view_store.publish_power_history(power_history)
         try:
@@ -3188,7 +3217,7 @@ def main() -> None:
             if timeline is not None
             else ()
         )
-        return _execute_planning_bundle(
+        completed = _execute_planning_bundle(
             planning_checkpoint=service.checkpoint,
             refresh_execution_input=refresh_execution_input,
             token=token,
@@ -3221,6 +3250,9 @@ def main() -> None:
             daily_pv_basis_decision=latest_daily_pv_basis_decision,
             financial_result_ledger=financial_result_ledger,
         )
+        if completed:
+            refresh_soc_expectation(bundle)
+        return completed
 
     def advance_clock_boundaries(bundle: PlanningInputBundle) -> bool:
         before_completion = canonical_execution_runtime.completion_generation
@@ -3269,6 +3301,9 @@ def main() -> None:
                 plan_id=outcome.plan_id,
                 application_id=outcome.application_id,
                 occurred_at=bundle.snapshot.captured_at,
+            )
+            web_view_store.publish_storage_mode_transition_history(
+                storage_mode_transition_history.load()
             )
         elif outcome.status in {"failed", "dispatch_failed", "rejected", "mode_feedback_timeout"}:
             print(

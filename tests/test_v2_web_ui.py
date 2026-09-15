@@ -871,7 +871,7 @@ def test_price_bars_use_existing_energy_palette_for_mep_actions() -> None:
     assert ".price-swatch.canonical-support { background: #3994e6; }" in (
         DASHBOARD_HTML
     )
-    assert ".price-chart .soc-line.canonical-support" in DASHBOARD_HTML
+    assert ".price-chart .soc-line.soc-projected { stroke: #ffd600; }" in DASHBOARD_HTML
     assert "stroke: #3994e6;" in DASHBOARD_HTML
 
 

@@ -128,6 +128,36 @@ class DailyMainIncumbentAssessment:
 class IndependentDailyReferenceAdapter:
     """Build and run the daily simulation without reading planner Candidates."""
 
+    def committed_plan_projection(
+        self, *, snapshot: PlanningInputSnapshot, plan: ExecutionPlan,
+        conversion_model: StorageConversionModel,
+    ) -> tuple[DailyPlanningProjection, DailyReferenceIntentSchedule]:
+        """Read-only fresh expectation of the exact retained route, never a candidate."""
+        context = snapshot.daily_charge_context
+        if context is None or context.status != "ready":
+            raise DailyReferenceInputError("committed_expectation_context_unavailable")
+        if (not any(p.plan_id == plan.plan_id
+                    and p.winning_energy_path_id == plan.winning_energy_path_id
+                    for p in context.main_plans)
+                or plan.plan_id not in context.active_main_plan_ids):
+            raise DailyReferenceInputError("committed_expectation_plan_not_active")
+        if not plan.valid_from <= snapshot.captured_at < plan.valid_until:
+            raise DailyReferenceInputError("committed_expectation_plan_not_due")
+        owner = next((a for a in context.assignments
+                      if a.execution_scope_id == plan.execution_scope_id
+                      and a.route_plan_id is not None), None)
+        if owner is None:
+            raise DailyReferenceInputError("committed_expectation_owner_missing")
+        inputs = self._inputs(
+            snapshot, horizon_end=plan.valid_until, maximum_duration=timedelta(hours=36),
+            extra_boundaries=tuple(t for s in plan.segments for t in (s.starts_at, s.ends_at)),
+        )
+        schedule, _ = self._retained_main_schedule(
+            snapshot=snapshot, assignment=owner, inputs=inputs, supplied=None,
+        )
+        assert schedule is not None
+        return self._bridge_projection(snapshot, inputs, schedule, conversion_model), schedule
+
     def bridge_assessment(
         self, *, snapshot: PlanningInputSnapshot, conversion_model: StorageConversionModel,
     ) -> DailyBridgeAssessment:
@@ -909,9 +939,11 @@ class IndependentDailyReferenceAdapter:
                     source.main_assignment_id == revising_assignment_id
                     and source.primitive is ExecutionPrimitive.CHARGE_AT_POWER
                 ):
-                    # Grid energy is rediscovered; already admitted PV capture
-                    # remains part of the route while the goal is revised.
-                    intent = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+                    # ADR-037.12: rediscover explicit grid charging over NOM.
+                    # A removed grid slot must keep PV capture available, just
+                    # like the feasibility trial that admitted this revision.
+                    # Only challengers use this baseline; the incumbent stays exact.
+                    intent = DailyStorageIntent.NOM
             intervals.append(DailyReferenceIntentInterval(
                 grid.starts_at, grid.ends_at, intent, storage_export_target_wh=export_wh,
             ))

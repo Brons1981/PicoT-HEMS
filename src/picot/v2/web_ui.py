@@ -819,7 +819,7 @@ DASHBOARD_HTML = """<!doctype html>
       background: repeating-linear-gradient(135deg, #b9c3cf 0 2px, #253341 2px 6px);
     }
     .price-swatch.soc-actual { background: #c084fc; height: 3px; }
-    .price-swatch.soc-projected { background: #c1ccd9; height: 3px; }
+    .price-swatch.soc-projected { background: #ffd600; height: 3px; }
     .planner-window-summary {
       display: flex;
       flex-wrap: wrap;
@@ -892,12 +892,7 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .planner-window.energy-device-placement { fill: #b96cff; }
     .price-chart .soc-line { fill: none; stroke-width: 3; }
     .price-chart .soc-line.soc-actual { stroke: #c084fc; stroke-width: 3; }
-    .price-chart .soc-line.canonical-nom { stroke: #35a862; }
-    .price-chart .soc-line.canonical-charge { stroke: #df5c57; }
-    .price-chart .soc-line.canonical-trade { stroke: #aab2bd; }
-    .price-chart .soc-line.canonical-support {
-      stroke: #3994e6;
-    }
+    .price-chart .soc-line.soc-projected { stroke: #ffd600; }
     .price-chart .soc-point { fill: #eef4fb; stroke: #17202a; stroke-width: 2; }
     .price-chart .now-line {
       stroke: #eef4fb;
@@ -1695,9 +1690,22 @@ DASHBOARD_HTML = """<!doctype html>
       for (let index = 1; index < visibleSoc.length; index += 1) {
         const previous = visibleSoc[index - 1];
         const current = visibleSoc[index];
-        if (current.break_before === true) continue;
+        if (current.break_before === true) {
+          if (current.source_identity?.plan_id !== previous.source_identity?.plan_id) {
+            const marker = createSvgElement("circle", {
+              class: "soc-replan-marker", fill: "#ffd600", r: 3,
+              cx: xPosition(new Date(current.at).getTime()),
+              cy: socYPosition(Number(current.soc_percent))
+            });
+            const title = createSvgElement("title", {});
+            title.textContent = `Nieuw plan · ${formatTimestamp(current.at)}`;
+            marker.appendChild(title);
+            svg.appendChild(marker);
+          }
+          continue;
+        }
         svg.appendChild(createSvgElement("line", {
-          class: `soc-line ${primitivePlanKind(current.primitive)}`,
+          class: "soc-line soc-projected",
           x1: xPosition(new Date(previous.at).getTime()),
           y1: socYPosition(Number(previous.soc_percent)),
           x2: xPosition(new Date(current.at).getTime()),
@@ -3072,8 +3080,12 @@ DASHBOARD_HTML = """<!doctype html>
       const decision = status.decision ?? {};
       addCard("Besluit", [
         ["Status", decision.status],
-        ["SOC-prognose", status.soc_projection_retained
-          ? "Oorspronkelijke prognose van behouden plan" : null],
+        ["SOC-prognose", status.soc_expectation?.status === "available"
+          ? "Actuele verwachting van het geldende plan"
+          : status.soc_expectation?.status === "unavailable"
+            ? "Actuele verwachting tijdelijk niet beschikbaar"
+            : status.soc_projection_retained
+              ? "Oorspronkelijke prognose van behouden plan" : null],
         ["SOC-prognose berekend", formatTimestamp(status.soc_projection_captured_at)],
         ["Gekozen planfamilie", decision.candidate_family],
         ["Beslisregel", decision.decisive_step],
@@ -3891,7 +3903,6 @@ DASHBOARD_HTML = """<!doctype html>
       for (const event of [...events].reverse()) {
         const row = document.createElement("tr");
         const occurredAt = new Date(event.occurred_at);
-        const confidence = Number(event.confidence);
         const values = [
           Number.isNaN(occurredAt.getTime())
             ? displayValue(event.occurred_at)
@@ -3899,9 +3910,7 @@ DASHBOARD_HTML = """<!doctype html>
           displayValue(event.previous_vendor_mode),
           displayValue(event.requested_vendor_mode),
           displayValue(event.reason),
-          Number.isFinite(confidence)
-            ? `${Math.round(confidence * 100)}%`
-            : "—",
+          formatConfidence(event.confidence),
           displayValue(event.run_id),
         ];
         for (const value of values) {
@@ -4677,6 +4686,8 @@ class WebViewStore:
         self._user_rules: dict[str, object] | None = None
         self._energy_device_catalog: dict[str, object] | None = None
         self._energy_device_placements: dict[str, object] | None = None
+        self._soc_expectation: dict[str, object] | None = None
+        self._storage_mode_transitions: list[dict[str, object]] | None = None
         self._revision = 0
         self._reset_storage_mode_override: Callable[[str], dict[str, object]] | None = None
         self._reset_planning: Callable[[str], dict[str, object]] | None = None
@@ -4717,6 +4728,8 @@ class WebViewStore:
         view: dict[str, object],
     ) -> None:
         self._overlay_fast_grid_power_source(view)
+        if self._storage_mode_transitions is not None:
+            view["storage_mode_transition_history"] = self._storage_mode_transitions
         if self._retired_comparison_history is not None:
             view["retired_comparison_history"] = dict(self._retired_comparison_history)
         if self._financial_results is not None:
@@ -4764,7 +4777,19 @@ class WebViewStore:
         """Serialize completely before atomically replacing the snapshot."""
         with self._condition:
             previous = json.loads(self._latest_json) if self._latest_json is not None else {}
+            incoming_transitions = view.get("storage_mode_transition_history")
+            if isinstance(incoming_transitions, list):
+                rows = {row["event_id"]: row for row in (self._storage_mode_transitions or [])}
+                rows.update({row["event_id"]: row for row in incoming_transitions})
+                self._storage_mode_transitions = sorted(
+                    rows.values(), key=lambda row: str(row["occurred_at"])
+                )[-200:]
             current_status = view.get("planning_status")
+            if isinstance(current_status, dict) and self._soc_expectation is not None:
+                current_status = self._overlay_soc_expectation(
+                    current_status, self._soc_expectation
+                )
+                view = {**view, "planning_status": current_status}
             previous_status = previous.get("planning_status")
             if isinstance(current_status, dict) and isinstance(previous_status, dict):
                 current_plan = current_status.get("chosen_plan") or {}
@@ -4776,6 +4801,7 @@ class WebViewStore:
                     and current_plan.get("plan_id") == previous_plan.get("plan_id")
                     and current_plan.get("energy_path_id") == previous_plan.get("energy_path_id")
                     and not current_status.get("soc_timeline")
+                    and not current_status.get("soc_expectation")
                     and previous_status.get("soc_timeline")
                 ):
                     # Display the original canonical projection, never a new
@@ -4790,7 +4816,8 @@ class WebViewStore:
             status = view.get("planning_status")
             if self._soc_cache is not None and isinstance(status, dict):
                 decision = status.get("decision") or {}
-                if decision.get("status") == "plan_retained" and not status.get("soc_timeline"):
+                if (decision.get("status") == "plan_retained" and not status.get("soc_timeline")
+                        and not status.get("soc_expectation")):
                     restored = self._soc_cache.restore(status)
                     if restored is not None:
                         status = restored
@@ -4810,6 +4837,81 @@ class WebViewStore:
             if self._price_reference is not None:
                 view = {**view, "original_price_plan": self._price_reference.read()}
             self._replace_latest_locked(view)
+
+    @staticmethod
+    def _overlay_soc_expectation(
+        status: dict[str, object], patch: dict[str, object],
+    ) -> dict[str, object]:
+        plan, expected = status.get("chosen_plan"), patch.get("chosen_plan")
+        decision = status.get("decision")
+        if (not isinstance(plan, dict) or not isinstance(expected, dict)
+                or not isinstance(decision, dict)
+                or decision.get("status") not in {"winner_selected", "plan_retained"}
+                or any(not expected.get(key) or plan.get(key) != expected.get(key)
+                       for key in ("plan_id", "energy_path_id"))):
+            return status
+        try:
+            captured = datetime.fromisoformat(str(patch.get("soc_projection_captured_at")))
+            previous_raw = status.get("soc_projection_captured_at")
+            previous = datetime.fromisoformat(str(previous_raw)) if previous_raw else None
+            if captured.utcoffset() is None or (previous is not None and captured < previous):
+                return status
+        except (ValueError, TypeError):
+            return status
+        return {**status, **{key: patch[key] for key in (
+            "soc_timeline", "soc_projection_captured_at", "soc_projection_retained",
+            "soc_expectation", "captured_at",
+        ) if key in patch}}
+
+    def publish_soc_expectation(self, status_patch: dict[str, object]) -> None:
+        """Render the simulation owner's fresh view of the same committed plan."""
+        copied = json.loads(json.dumps(status_patch, allow_nan=False))
+        with self._condition:
+            if self._latest_json is None:
+                return
+            latest = json.loads(self._latest_json)
+            status = latest.get("planning_status")
+            if not isinstance(status, dict):
+                return
+            updated = self._overlay_soc_expectation(status, copied)
+            if updated is status:
+                return
+            self._soc_expectation = copied
+            if self._soc_cache is not None:
+                if updated.get("soc_timeline"):
+                    self._soc_cache.remember(updated)
+                updated = self._soc_cache.display(updated)
+            else:
+                updated = self._soc_display.apply(updated)
+            latest["planning_status"] = updated
+            self._replace_latest_locked(latest)
+
+    def publish_soc_expectation_unavailable(self, captured_at: datetime, reason: str) -> None:
+        """Expire a future curve when no current committed-route input is available."""
+        with self._condition:
+            if self._latest_json is None:
+                return
+            latest = json.loads(self._latest_json)
+            status = latest.get("planning_status")
+            if not isinstance(status, dict):
+                return
+            plan = status.get("chosen_plan")
+        self.publish_soc_expectation({
+            "chosen_plan": plan, "captured_at": captured_at.isoformat(),
+            "soc_projection_captured_at": captured_at.isoformat(),
+            "soc_projection_retained": False, "soc_timeline": [],
+            "soc_expectation": {"status": "unavailable", "reason": reason},
+        })
+
+    def publish_storage_mode_transition_history(
+        self, events: tuple[StorageModeTransitionEvent, ...],
+    ) -> None:
+        """Publish persisted clock transitions without requiring a Planner Run."""
+        rows = _transition_history_view(events)
+        with self._condition:
+            self._storage_mode_transitions = rows
+            if self._latest_json is not None:
+                self._replace_latest_locked(json.loads(self._latest_json))
 
     def publish_fast_grid_power_source(
         self,
@@ -6622,21 +6724,27 @@ def build_web_view(
         "household_load_forecast": household_load_forecast,
         "power_history": power_history_view,
         "self_consumption_history": _self_consumption_history_view(power_history),
-        "storage_mode_transition_history": [
-            {
-                "event_id": event.event_id,
-                "occurred_at": event.occurred_at.isoformat(),
-                "previous_vendor_mode": event.previous_vendor_mode,
-                "requested_vendor_mode": event.requested_vendor_mode,
-                "source": event.source,
-                "reason": event.reason,
-                "confidence": event.confidence,
-                "run_id": event.run_id,
-                "snapshot_id": event.snapshot_id,
-                "evaluation_id": event.evaluation_id,
-                "plan_id": event.plan_id,
-                "application_id": event.application_id,
-            }
-            for event in storage_mode_transitions
-        ],
+        "storage_mode_transition_history": _transition_history_view(storage_mode_transitions),
     }
+
+
+def _transition_history_view(
+    events: tuple[StorageModeTransitionEvent, ...],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "event_id": event.event_id,
+            "occurred_at": event.occurred_at.isoformat(),
+            "previous_vendor_mode": event.previous_vendor_mode,
+            "requested_vendor_mode": event.requested_vendor_mode,
+            "source": event.source,
+            "reason": event.reason,
+            "confidence": event.confidence,
+            "run_id": event.run_id,
+            "snapshot_id": event.snapshot_id,
+            "evaluation_id": event.evaluation_id,
+            "plan_id": event.plan_id,
+            "application_id": event.application_id,
+            }
+        for event in events
+    ]

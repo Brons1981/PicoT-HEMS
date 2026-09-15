@@ -1,4 +1,4 @@
-"""Bounded persistence of an original canonical SOC curve, for display only."""
+"""Bounded display persistence of SOC expectations and immutable elapsed strokes."""
 
 from __future__ import annotations
 
@@ -93,6 +93,7 @@ class SOCProjectionCache:
                 "identity": {k: plan.get(k) for k in IDENTITY_KEYS},
                 "captured_at": status.get("soc_projection_captured_at"),
                 "soc_timeline": status.get("soc_timeline"),
+                "soc_expectation": status.get("soc_expectation"),
             })
             if value == self._projection:
                 return
@@ -153,6 +154,7 @@ class SOCProjectionCache:
                     **status, "soc_timeline": value["soc_timeline"],
                     "soc_projection_captured_at": value["captured_at"],
                     "soc_projection_retained": True,
+                    "soc_expectation": value.get("soc_expectation"),
                 }
         except (OSError, ValueError, TypeError, KeyError):
             self.status = "history_unavailable"
@@ -271,7 +273,8 @@ class SOCDisplayHistory:
                 plan = status.get("chosen_plan") or {}
                 identity = {key: plan.get(key) for key in IDENTITY_KEYS}
                 sourced = [{**p, "source_identity": identity,
-                            "source_captured_at": status.get("soc_projection_captured_at")}
+                            "source_captured_at": status.get("soc_projection_captured_at"),
+                            "source_expectation": status.get("soc_expectation")}
                            for p in timeline]
                 if self.value["updated_at"] is None:
                     old = sourced

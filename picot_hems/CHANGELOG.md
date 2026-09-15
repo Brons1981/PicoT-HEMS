@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.261
+
+- Schakelhistorie ververst direct bij klokschakelingen, ook zonder nieuwe planningsrun.
+- Een vervallen eigen netlaadsegment blijft NOM in de revisiekandidaat.
+- Gele SOC-verwachting wordt vanuit actuele SOC vernieuwd voor het geldende plan; verstreken voorspellingen blijven behouden en planwissels krijgen een markering.
+- Paarse SOC-lijn blijft meetgeschiedenis; ontbrekende actuele prognose-invoer wist alleen de toekomst.
+- Onbekende confidence verschijnt als — in plaats van 0%.
+- Dagdoel, reserve, belastingbescherming en uitvoeringsautoriteit blijven gelden. Dev.254 blijft terugvalbasis.
+
 ## 2.0.0-dev.260
 
 - Herplanning vereist Monitor-vrijgave; segmentklok en planbehoud blijven afzonderlijk herleidbaar.

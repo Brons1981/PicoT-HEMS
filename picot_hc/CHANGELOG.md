@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-dev.16
+
+- Eigen klimaatgrafiek per zone voor temperatuur, luchtvochtigheid en dauwpunt over de afgelopen 24 uur.
+- Temperatuur en dauwpunt delen de °C-as; relatieve luchtvochtigheid gebruikt een aparte 0–100%-as.
+- Meetwaarden aanwijzen, aantikken of met pijltjestoetsen bekijken. Ontbrekende waarden blijven onderbroken.
+
 ## 0.1.0-dev.15
 
 - Woningmetingen bewaren nu binnen-buitenverschil, achterdeur en gemelde modus, activiteit en doeltemperatuur per warmtebron.

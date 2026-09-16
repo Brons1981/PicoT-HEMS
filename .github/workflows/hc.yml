@@ -29,6 +29,7 @@ jobs:
       - name: Dashboard syntax
         run: |
           node --check picot_hc/picot_hc/web/app.js
+          node --check picot_hc/picot_hc/web/heating.js
           node --check picot_hc/picot_hc/web/climate-charts.js
           node picot_hc/tests/climate-charts.cjs
       - name: Build independent app container

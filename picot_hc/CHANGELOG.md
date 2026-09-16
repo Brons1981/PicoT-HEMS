@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.0-dev.17
+
+- Opt-in automatische verwarming met gedeelde cv, beide airco's en badkamerschakelaar.
+- Bronkeuze op geschatte actuele kosten, instelbare rendementen; cv neemt de plaats
+  van beide airco's in wanneer de gezamenlijke comfortvraag dit toelaat.
+- Hysterese, uitrusttijd, bevestigde bronwissels, handmatige voorrang, deurvertraging
+  en meetleeftijd. Eigen bronnen stoppen bij weggevallen voorwaarden.
+- Storing vergrendelt nieuwe opdrachten; geen automatische herhaling, expliciete
+  vrijgave. Regeling staat na herstart uit; apparaatstanden blijven controleerbaar.
+- Nog geen berekend voorverwarmen, automatisch ontvochtigen of ingeleerd woningmodel.
+
 ## 0.1.0-dev.16
 
 - Eigen klimaatgrafiek per zone voor temperatuur, luchtvochtigheid en dauwpunt over de afgelopen 24 uur.

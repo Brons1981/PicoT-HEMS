@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 
 from .control import Control
 from .schedule import Schedule, DOOR
+from .heating import Heating
 from .building import building_observation
 from .weather import DEFAULT_ENTITY, WeatherReader, forecast_view
 from .core import Store, fetch_states, snapshot, validate, number, observation
@@ -60,6 +61,7 @@ class Runtime:
         validate(self.config)
         self.control = Control(self.config, store, url, token)
         self.schedule = Schedule(self.control, store, self.config)
+        self.heating = Heating(self.control, self.schedule, store)
         previous = store.latest() or {}
         self.weather = WeatherReader(self.config.get('weather_entity', DEFAULT_ENTITY), previous.get('weather'))
         self.connection = 'starting'
@@ -111,6 +113,7 @@ class Runtime:
             self.store.save(data, self.config['retention_days'])
             self.connection, self.error = 'connected', None
             self.schedule.tick(self.config)
+            self.heating.tick(self.config)
         except HTTPError as exc:
             self.control.connected = False
             self.connection, self.error = 'disconnected', 'HA antwoordt met HTTP ' + str(exc.code)
@@ -149,7 +152,10 @@ class Runtime:
         data['commands'] = self.control.records()[:20]
         with self.control.lock:
             data['schedule'] = self.schedule.view(time.time())
-        data['control_mode'] = 'comfort_input'
+            data['heating'] = self.heating.view(self.config, time.time())
+        data['control_mode'] = 'automatic_heating' if data['heating']['enabled'] else 'comfort_input'
+        for zone in data['zones']:
+            zone['reason'] = data['heating']['zones'][zone['id']]['reason']
         data['csrf_token'] = self.csrf_token
         data.update(connection=self.connection, error=self.error, age_seconds=age,
                     retention_days=self.config['retention_days'],
@@ -169,7 +175,7 @@ def handler(runtime, ingress):
                 self.send_error(403)
                 return
             path = urlsplit(self.path).path
-            if path not in ('/api/settings', '/api/commands', '/api/schedule', '/api/resume'):
+            if path not in ('/api/settings', '/api/commands', '/api/schedule', '/api/resume', '/api/heating', '/api/heating/reset'):
                 self.send_error(404)
                 return
             if not secrets.compare_digest(self.headers.get('X-HC-CSRF', ''), runtime.csrf_token):
@@ -189,6 +195,14 @@ def handler(runtime, ingress):
                         result = {'command': runtime.control.submit(payload, runtime.config['stale_seconds'])}
                     elif path == '/api/schedule':
                         result = {'schedule': runtime.schedule.update(payload, time.time())}
+                    elif path in ('/api/heating', '/api/heating/reset'):
+                        if path.endswith('/reset'):
+                            if payload != {}:
+                                raise ValueError('Ongeldig vrijgaveverzoek.')
+                            runtime.heating.reset_faults()
+                        else:
+                            runtime.heating.update(payload)
+                        result = {'heating': runtime.heating.view(runtime.config, time.time())}
                     else:
                         if payload != {}:
                             raise ValueError('Ongeldig hervatverzoek.')
@@ -229,7 +243,7 @@ def handler(runtime, ingress):
             elif path == '/api/history':
                 body = json.dumps(runtime.store.history(time.time() - 86400), allow_nan=False).encode()
                 mime = 'application/json'
-            elif path in ('/', '/index.html', '/app.js', '/climate-charts.js', '/style.css'):
+            elif path in ('/', '/index.html', '/app.js', '/heating.js', '/climate-charts.js', '/style.css'):
                 name = 'index.html' if path == '/' else path[1:]
                 body = (web / name).read_bytes()
                 mime = {'html':'text/html', 'js':'text/javascript', 'css':'text/css'}[name.split('.')[-1]]

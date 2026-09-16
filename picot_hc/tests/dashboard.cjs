@@ -220,6 +220,42 @@ const {gunzipSync} = require('node:zlib');
     assert.equal(deviceCalls.length,6);
     doorState.state='unknown';
     await page.waitForFunction(()=>document.querySelector('#zones .zone').textContent.includes('AchterdeurOnbekend'),null,{timeout:45000});
+    // Enable the real automatic regulator through the UI, with simulated sources.
+    for(const device of deviceStates.filter(d=>d.entity_id.startsWith('climate.')||d.entity_id.startsWith('switch.')))device.state='off';
+    for(const zone of options.zones){
+      let sensor=deviceStates.find(d=>d.entity_id===zone.temperature);
+      if(!sensor){sensor={entity_id:zone.temperature,attributes:{unit_of_measurement:'°C'}};deviceStates.push(sensor);}
+      sensor.state='18';sensor.last_reported=new Date().toISOString();
+    }
+    deviceStates.push({entity_id:options.price_entity,state:'0.25',attributes:{unit_of_measurement:'EUR/kWh',raw_today:[{start:new Date(Date.now()-3600000).toISOString(),end:new Date(Date.now()+3600000).toISOString(),value:.25}]}});
+    doorState.state='off';
+    await schedule.locator('[name=door_close_seconds]').fill('0');
+    await schedule.getByRole('button',{name:'Comfortschema opslaan'}).click();
+    await page.waitForFunction(()=>document.querySelector('.schedule-save-status').textContent==='Comfortschema opgeslagen.');
+    for(const zoneForm of await page.locator('.temperature-settings').all()){
+      await zoneForm.locator('[name=minimum]').fill('10');await zoneForm.locator('[name=target]').fill('20');await zoneForm.locator('[name=maximum]').fill('25');
+      await zoneForm.getByRole('button',{name:'Opslaan',exact:true}).click();
+      await page.waitForFunction(()=>![...document.querySelectorAll('.temperature-settings button')].some(b=>b.disabled));
+    }
+    await page.evaluate(async()=>{await fetch('api/resume',{method:'POST',headers:{'Content-Type':'application/json','X-HC-CSRF':current.csrf_token},body:'{}'});});
+    const heating=page.locator('.heating-form');
+    await heating.locator('[name=cop_boven]').fill('3.1');
+    await page.evaluate(()=>refresh());
+    assert.equal(await heating.locator('[name=cop_boven]').inputValue(),'3.1');
+    await heating.locator('[name=enabled]').check();
+    await heating.getByRole('button',{name:'Regeling opslaan',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('.heating-save-status').textContent==='Regeling opgeslagen.');
+    await page.waitForFunction(()=>current?.commands?.filter(c=>c.origin==='schedule'&&c.field!=='mode'&&c.status==='confirmed').length>=3,null,{timeout:90000});
+    assert.equal(deviceStates.find(d=>d.entity_id===options.zones[0].device).state,'heat');
+    assert.equal(deviceStates.find(d=>d.entity_id===options.zones[1].device).state,'heat');
+    assert.equal(deviceStates.find(d=>d.entity_id===options.zones[2].device).state,'on');
+    assert.equal(cv.state,'off');
+    await page.reload();
+    await page.waitForFunction(()=>document.querySelector('.heating-form input[name=enabled]')?.checked);
+    assert.equal(await heating.locator('[name=cop_boven]').inputValue(),'3.1');
+    await heating.getByRole('button',{name:'Automatische verwarming uit',exact:true}).click();
+    await page.waitForFunction(()=>current?.heating&&!current.heating.enabled&&Object.keys(current.heating.owned).length===0,null,{timeout:90000});
+    assert.ok(deviceStates.filter(d=>d.entity_id.startsWith('climate.')||d.entity_id.startsWith('switch.')).every(d=>d.state==='off'));
     await page.setViewportSize({width:390,height:844});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     assert.deepEqual(errors, []);

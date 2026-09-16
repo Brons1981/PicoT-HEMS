@@ -1,6 +1,36 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.13** — zelfstandige meting, comfortvensters en handmatige bronbediening voor Home Assistant.
+Versie **0.1.0-dev.17** — metingen, comfortvensters, handmatige bediening en opt-in automatische verwarming voor Home Assistant.
+
+## Automatische verwarming
+
+Activeer de regeling afzonderlijk op het dashboard. Alle vier bronnen doen mee:
+cv (beneden én boven), airco beneden, airco boven en elektrische badkamerverwarming.
+Na installatie en herstart staat de regeling uit; een herstart zet apparaten niet
+uit. Uitschakelen via het dashboard stopt alleen eigen bronnen, met terugmelding.
+
+De basisregeling volgt het huidige vensterdoel beneden of de vaste basis buiten
+vensters, en de vaste doelen boven/badkamer. Start bij 0,3 °C onder het doel, stop
+bij het doel. Geen berekend voorverwarmen: een hogere temperatuur bij vensterstart
+is nog niet gegarandeerd. Automatisch ontvochtigen en bijleren volgen later.
+
+Bronkosten zijn expliciete startschattingen: COP beneden 3,72, COP boven 3,0
+(aanname, geen SCOP), cv 90% op gasbovenwaarde 9,76944 kWh/m³. Alle waarden zijn
+instelbaar. De actuele bevestigde stroomprijs en geldige gasprijs zijn leidend;
+ontbrekende prijzen blokkeren nieuwe bronkeuze. Geen berekening van warmteverlies,
+cv-hulpstroom of bufferoptimalisatie in deze eerste versie.
+
+Cv kan boven niet onafhankelijk verwarmen. HC kiest cv bij warmtevraag beneden,
+ruimte onder het doel boven en lagere geschatte kosten dan iedere beschikbare
+gevraagde airco. Bij alleen boven-vraag gebruikt HC de airco. Een bronwissel wacht
+op bevestigde uitschakeling van de oude bron. Economische wissels pas na 5 minuten;
+na uitschakelen minimaal 3 minuten rust. Meetfouten, handmatige keuzes en deur gaan
+voor. Achterdeurinstellingen en maximale meetleeftijd staan bij het comfortschema.
+
+Een storing blijft zichtbaar tot **Storingen vrijgeven na controle**. Geen
+automatische herhaling. Controleer echte apparaatstanden vóór vrijgeven.
+Een handmatig actieve bron van vóór activeren wordt niet automatisch overgenomen:
+zet die zelf uit, of hervat een door HC geregistreerde handmatige pauze.
 
 ## Wat deze versie doet
 
@@ -10,7 +40,7 @@ Versie **0.1.0-dev.13** — zelfstandige meting, comfortvensters en handmatige b
 - Laat ontbrekende entiteiten en eenheidsproblemen zien. Houdt laatst ontvangen gegevens zichtbaar bij verbindingsverlies, gemarkeerd als verouderd.
 - Biedt temperatuurinstellingen per zone op het dashboard; entiteiten en vochtgrenzen blijven in de HA-appconfiguratie.
 
-Er is geen afhankelijkheid van PicoT HEMS. De bronbediening is handmatig. Het comfortschema levert bronvrije eisen aan de toekomstige planner en voert zelf geen opdrachten uit. Tijdelijk badkamervenster, woningmodel, kostenvergelijking en automatische prijsoptimalisatie volgen volgens `docs/PicoT_HC_basis.md`.
+Er is geen afhankelijkheid van PicoT HEMS. Het comfortschema blijft bronvrije invoer; de afzonderlijke regelaar verzorgt automatische uitvoering. Tijdelijk badkamervenster, woningmodel en prijsoptimalisatie over meerdere tijdvensters volgen later.
 
 ## Installeren vanuit de PicoT HEMS-repository
 
@@ -69,8 +99,9 @@ de planner krijgt daarvoor geen economische afwijkingsruimte. Zonder vinkje geld
 algemene zonegrenzen blijven afzonderlijk bewaakt. Er zijn geen min/max-invoervelden
 per venster. Boven en badkamer behouden hun vaste zone-instellingen.
 
-De financiële planner en automatisch voorverwarmen zijn nog niet geïmplementeerd.
-Opslaan, inschakelen, hervatten en herstarten sturen geen apparaat aan.
+De financiële planner over meerdere tijdvensters en automatisch voorverwarmen zijn nog niet geïmplementeerd.
+Schema-opslag verstuurt zelf geen apparaatopdracht. Bij actieve regeling wordt het
+nieuwe doel bij de volgende cyclus gebruikt; hervatten geeft handmatige keuzes vrij.
 Handmatige brontemperaturen blijven gedwongen bronkeuzes; cv raakt beneden en boven.
 Bestaande handmatige keuzes worden door een schemabewerking niet verlengd.
 
@@ -87,14 +118,14 @@ Minimum, gewenste temperatuur en maximum staan per zone op het dashboard. Klik o
 Entiteiten en overige configuratie staan in de HA-appopties. Herstart HC na wijzigingen daaraan. `options.example.json` is een zelfstandig voorbeeld voor lokaal testen.
 
 - `zones`: drie zones met apparaat, temperatuur, vocht, vermogen en energie-entiteiten. Een lege sensornaam betekent nog niet gekoppeld.
-- `minimum`, `target`, `maximum`: optionele temperatuurgrenzen per zone; nog geen numerieke defaults. Minimum ≤ doel ≤ maximum. Deze versie toont/bewaart ze, maar regelt er nog niet op.
+- `minimum`, `target`, `maximum`: optionele temperatuurgrenzen per zone; geen verzonnen doelen. Minimum ≤ doel ≤ maximum. De opt-in regeling gebruikt deze doelen en blokkeert conflicten met vensters.
 - `humidity_min`, `humidity_target`, `humidity_max`: aanvankelijk 40, 50 en 60. Deze grenzen activeren geen automatische ontvochtiging; de apparaatmodus dry kan handmatig worden beproefd. Automatische vochtregeling is eerst voorzien voor boven.
 - `presence`: voorlopig iPhone-tracker, later te vervangen door het juiste `person`-ID. UniFi is niet toegevoegd.
 - `price_entity` en `price_attributes`: standaard de aangeleverde Nordpool-entiteit en `raw_today`, `raw_tomorrow`. Elke rij moet `start`, `end` met tijdzone en numerieke `value` hebben. Numerieke lijsten zonder tijdstippen worden niet geïnterpreteerd.
 - Prijzen ondersteunen EUR/kWh en EUR/MWh (ook met €-symbool). Negatieve prijzen zijn toegestaan. Geen invulling van ontbrekende tijdvakken, geen eigen belastingen toegevoegd.
 - `confirmed_price_entity`: de door Alex bevestigde werkelijke prijsbron is `sensor.nordpool_kwh_nl_eur_3_095_0`. Deze bevestiging geldt ook bij bestaande opties zonder dit veld. De bedragen worden ongewijzigd gebruikt, zonder extra belasting of opslag. Bij een andere prijsentiteit geldt deze bevestiging niet.
 - `price_basis_confirmed`: handmatige bevestiging voor een andere gecontroleerde prijsbron. Om een bevestiging in te trekken: maak `confirmed_price_entity` leeg en zet deze vlag op false.
-- `gas_price`: 1.41197 €/m³; `gas_valid_until`: 2027-06-14, volgens gebruiker. Er is nog geen kostenplanner die dit tarief toepast.
+- `gas_price`: 1.41197 €/m³; `gas_valid_until`: 2027-06-14, volgens gebruiker. De basisregeling gebruikt dit tarief zolang het geldig is.
 - `poll_seconds`: 10–300, standaard 30. `stale_seconds`: standaard 120 en minstens tweemaal pollinterval. `retention_days`: 1–365, standaard 90.
 
 ## Meetkwaliteit en grenzen

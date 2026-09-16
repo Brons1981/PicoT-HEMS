@@ -46,7 +46,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None  # Never forward the HA credential to another endpoint.
 
 
-def fetch_states(base_url, token):
+def fetch_states(base_url, token, temperature_entities=()):
     if not token:
         raise ValueError('HA token missing')
     req = Request(base_url.rstrip('/') + '/states', headers={'Authorization': 'Bearer ' + token})
@@ -54,7 +54,43 @@ def fetch_states(base_url, token):
         payload = json.load(response)
     if not isinstance(payload, list) or any(not isinstance(x, dict) or 'entity_id' not in x for x in payload):
         raise ValueError('Invalid HA state response')
-    return {x['entity_id']: x for x in payload}
+    states = {x['entity_id']: x for x in payload}
+    entities = sorted({e for e in temperature_entities if e})
+    if entities:
+        # Read properties directly: HA's cached state JSON can retain last_reported
+        # from the last value change. Include the value in the same template read.
+        template = ('{% set ns = namespace(rows=[]) %}{% for id in ' + json.dumps(entities)
+            + ' %}{% set s = states[id] %}{% if s is defined and s is not none %}'
+            '{% set ns.rows = ns.rows + [{"entity_id": id, "state": s.state, '
+            '"attributes": {"unit_of_measurement": s.attributes.get("unit_of_measurement")}, '
+            '"last_updated": s.last_updated.isoformat(), "last_reported": s.last_reported.isoformat()}] %}'
+            '{% endif %}{% endfor %}{{ ns.rows | to_json }}')
+        try:
+            req = Request(base_url.rstrip('/') + '/template',
+                data=json.dumps({'template': template}).encode(),
+                headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+            with build_opener(NoRedirect).open(req, timeout=10) as response:
+                reports = json.load(response)
+            if (not isinstance(reports, list) or any(not isinstance(r, dict) for r in reports)
+                    or len({r.get('entity_id') for r in reports}) != len(reports)
+                    or any(r.get('entity_id') not in entities for r in reports)):
+                raise ValueError('Invalid temperature report response')
+            reports = {r['entity_id']: r for r in reports}
+        except (OSError, ValueError, TypeError):
+            reports = {}
+        for entity in entities:
+            report = reports.get(entity)
+            try:
+                if not report or not isinstance(report.get('state'), str) or not isinstance(report.get('attributes'), dict):
+                    raise ValueError('Missing temperature report')
+                timestamp(report['last_reported'])
+                timestamp(report['last_updated'])
+            except (ValueError, TypeError, KeyError, OverflowError):
+                # Preserve display values, but never promote a cached timestamp to fresh.
+                states.setdefault(entity, {'entity_id': entity, 'state': 'unknown', 'attributes': {}})['hc_report_error'] = True
+            else:
+                states[entity] = dict(states.get(entity, {}), **report, hc_report_error=False)
+    return states
 
 
 def observation(entity, states, now, numeric=False, unit=None):
@@ -67,6 +103,8 @@ def observation(entity, states, now, numeric=False, unit=None):
         return result
     result['source_updated'] = item.get('last_updated')
     result['source_reported'] = item.get('last_reported')
+    if 'hc_report_error' in item:
+        result['report_error'] = item['hc_report_error']
     state = item.get('state')
     attrs = item.get('attributes') or {}
     if state in (None, 'unknown', 'unavailable'):

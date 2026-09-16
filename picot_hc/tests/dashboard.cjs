@@ -39,6 +39,12 @@ const {gunzipSync} = require('node:zlib');
     deviceStates.find(s=>s.entity_id==='sensor.downstairs').last_reported=new Date().toISOString();
     if(req.method === 'GET' && req.url === '/api/states') res.end(JSON.stringify([weatherState,...deviceStates]));
     else if(req.method === 'GET' && req.url === '/api/config') res.end(JSON.stringify({unit_system:{temperature:'°C'}}));
+    else if(req.method === 'POST' && req.url === '/api/template') {
+      let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{
+        const ids=JSON.parse(JSON.parse(body).template.split('{% for id in ')[1].split(' %}')[0]);
+        res.end(JSON.stringify(deviceStates.filter(s=>ids.includes(s.entity_id)).map(s=>({...s,last_reported:s.actual_reported||s.last_reported||s.last_updated,last_updated:s.last_updated||s.last_reported}))));
+      });
+    }
     else if(req.method === 'POST' && ['/api/services/climate/set_hvac_mode','/api/services/climate/set_temperature','/api/services/switch/turn_on','/api/services/switch/turn_off'].includes(req.url)) {
       let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{
         const payload=JSON.parse(body);deviceCalls.push({path:req.url,payload});
@@ -225,7 +231,9 @@ const {gunzipSync} = require('node:zlib');
     for(const zone of options.zones){
       let sensor=deviceStates.find(d=>d.entity_id===zone.temperature);
       if(!sensor){sensor={entity_id:zone.temperature,attributes:{unit_of_measurement:'°C'}};deviceStates.push(sensor);}
-      sensor.state='18';sensor.last_reported=new Date().toISOString();
+      // Reproduce HA's cached REST report while direct template data remains fresh.
+      sensor.state='18';sensor.last_reported=new Date(Date.now()-3600000).toISOString();
+      sensor.actual_reported=new Date().toISOString();
     }
     deviceStates.push({entity_id:options.price_entity,state:'0.25',attributes:{unit_of_measurement:'EUR/kWh',raw_today:[{start:new Date(Date.now()-3600000).toISOString(),end:new Date(Date.now()+3600000).toISOString(),value:.25}]}});
     doorState.state='off';

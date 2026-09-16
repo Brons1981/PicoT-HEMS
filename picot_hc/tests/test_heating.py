@@ -371,3 +371,58 @@ class HeatingTests(ControlFixture):
         self.config['zones'][2]['maximum']=None
         self.poll()
         self.assertEqual(self.calls[-1][0],'/api/services/switch/turn_off')
+
+    def live_reports(self, age=0, value='18'):
+        self.template_reports=[]
+        for zone in self.config['zones']:
+            entity=zone['temperature']
+            self.states[entity]['last_updated']=datetime.fromtimestamp(NOW-3600,timezone.utc).isoformat()
+            self.template_reports.append(dict(self.states[entity],state=value,
+                last_reported=datetime.fromtimestamp(NOW+121-age,timezone.utc).isoformat()))
+        self.runtime.weather.entity=''
+
+    def collect_at(self, moment=NOW+121):
+        with patch('time.time',return_value=moment):
+            self.runtime.collect()
+            return self.heat.view(self.config,moment)
+
+    def test_live_report_accepts_unchanged_temperature_and_exports_actual_time(self):
+        self.enable();self.live_reports();view=self.collect_at()
+        self.assertEqual(self.runtime.connection,'connected')
+        self.assertTrue(view['zones']['beneden']['demand'])
+        self.assertEqual(len(self.calls),1)
+        self.assertEqual(len(self.template_calls),2)  # Poll and fresh-read guard.
+        sample=self.store.latest()['zones'][1]['samples']['temperature']
+        self.assertEqual(sample['source_reported'],self.template_reports[1]['last_reported'])
+        self.assertNotEqual(sample['source_reported'],sample['source_updated'])
+
+    def test_live_report_uses_matching_value_not_old_rest_value(self):
+        self.enable();self.live_reports(value='22');view=self.collect_at()
+        self.assertEqual(view['zones']['beneden']['temperature'],22)
+        self.assertFalse(view['zones']['beneden']['demand'])
+        self.assertEqual(self.calls,[])
+
+    def test_live_report_old_future_missing_and_invalid_block_starts(self):
+        self.enable()
+        for age in [3600,-60]:
+            self.live_reports(age=age);view=self.collect_at()
+            self.assertFalse(view['zones']['beneden']['demand'])
+        for reports in [[],{},[{'entity_id':'sensor.other'}]]:
+            self.template_reports=reports;view=self.collect_at()
+            self.assertIn('ontvangsttijd',view['zones']['beneden']['reason'])
+        self.assertEqual(self.calls,[])
+
+    def test_template_failure_stops_owned_heat_without_losing_source_feedback(self):
+        self.enable();self.live_reports();self.collect_at()
+        self.template_status=503
+        view=self.collect_at(NOW+152)
+        self.assertEqual(self.runtime.connection,'connected')
+        self.assertIn('ontvangsttijd',view['zones']['beneden']['reason'])
+        self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
+        self.assertEqual(len(self.calls),2)
+
+    def test_live_stale_report_also_blocks_bathroom_timer(self):
+        self.timer();self.live_reports(age=3600);view=self.collect_at()
+        self.assertTrue(view['timer']['active'])
+        self.assertFalse(view['zones']['badkamer']['demand'])
+        self.assertEqual(self.calls,[])

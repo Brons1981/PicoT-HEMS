@@ -180,7 +180,9 @@ class Heating:
                 age = now-timestamp(sample.get('source_reported') or sample.get('source_updated'))
             except (ValueError, TypeError, OverflowError):
                 age = None
-            if not fresh or sample['quality'] != 'available' or age is None or not 0 <= age <= view['settings']['sensor_max_age_seconds']:
+            if sample.get('report_error'):
+                reason = 'Actuele ontvangsttijd temperatuur kon niet worden gecontroleerd.'
+            elif not fresh or sample['quality'] != 'available' or age is None or not 0 <= age <= view['settings']['sensor_max_age_seconds']:
                 reason = 'Temperatuur ontbreekt of brontijd is te oud.'
             elif not goal or numeric(goal.get('target')) is None or not 5 <= goal['target'] <= 35:
                 reason = 'Geen bruikbaar temperatuurdoel ingesteld.'

@@ -263,7 +263,7 @@ class HC(unittest.TestCase):
                 self.send_response(200); self.end_headers()
                 self.wfile.write(json.dumps(states).encode())
             def do_POST(self):
-                calls.append('POST'); self.send_response(500); self.end_headers()
+                calls.append(self.path); self.send_response(500); self.end_headers()
         url = self.server(FakeHA)
         store = Store(Path(self.tmp.name)/'ecowitt.sqlite3')
         store.save_settings('beneden',dict(minimum=16,target=20,maximum=22))
@@ -282,7 +282,8 @@ class HC(unittest.TestCase):
         self.assertEqual(data['zones'][1]['samples']['battery']['battery_status'],'normal')
         self.assertEqual(data['zones'][2]['samples']['energy']['value'],4.25)
         self.assertEqual(data['zones'][0]['settings']['target'],20)
-        self.assertEqual(calls,['/api/states'])
+        self.assertEqual(calls,['/api/states','/api/template'])
+        self.assertTrue(data['zones'][0]['samples']['temperature']['report_error'])
         self.assertEqual(store.latest()['outdoor_humidity']['value'],81)
         again = Runtime(self.config,store,url+'/api','test-secret')
         self.assertEqual(again.config,rt.config)
@@ -364,7 +365,8 @@ class HC(unittest.TestCase):
             states[2]['state'] = door
             rt.collect()
         self.assertEqual(calls.count(('GET','/api/states')),3)
-        self.assertTrue(all(method=='GET' and path in ('/api/states','/api/config') for method,path in calls))
+        self.assertTrue(all((method=='GET' and path in ('/api/states','/api/config'))
+                            or (method,path)==('POST','/api/template') for method,path in calls))
         self.assertEqual(rt.current()['building']['zones'][0]['delta_t_k'], 11)
         self.assertIsNone(rt.current()['building']['back_door']['value'])
         again = Runtime(self.config,store,url+'/api','secret-never-export')

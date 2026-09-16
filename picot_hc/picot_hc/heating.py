@@ -38,7 +38,13 @@ class Heating:
         self.data = json.loads(row[0]) if row else dict(settings=copy.deepcopy(DEFAULTS), revision=0,
             owned={}, faults={}, demand={}, changed={})
         self.data.setdefault('manual', [])
+        self.data.setdefault('timer_revision', 0)
+        self.data.setdefault('timer', None)
         self.armed = False
+        if self.data['timer'] and self.data['timer']['status'] == 'running':
+            self.data['timer']['status'] = 'restart'
+            self.data['timer_revision'] += 1
+            self.save()
         if self.data['settings']['enabled']:
             self.data['settings']['enabled'] = False
             self.data['revision'] += 1
@@ -56,6 +62,9 @@ class Heating:
         settings = validate_settings(payload['settings'])
         previous = copy.deepcopy(self.data)
         self.data.update(settings=settings, revision=self.data['revision']+1)
+        if not settings['enabled'] and self.data['timer'] and self.data['timer']['status'] == 'running':
+            self.data['timer']['status'] = 'stopped'
+            self.data['timer_revision'] += 1
         try:
             self.save()
         except Exception:
@@ -77,9 +86,45 @@ class Heating:
             self.data = previous
             raise
 
+    def timer_active(self, now):
+        timer = self.data['timer']
+        return bool(timer and timer['status'] == 'running' and now < timer['ends'])
+
+    def update_timer(self, payload, config, now):
+        if (not isinstance(payload, dict) or type(payload.get('revision')) is not int
+                or payload['revision'] != self.data['timer_revision']):
+            raise ValueError('Timer gewijzigd; herlaad het dashboard.')
+        action = payload.get('action')
+        previous = copy.deepcopy(self.data)
+        if action == 'start' and set(payload) == {'revision', 'action', 'minutes', 'temperature'}:
+            minutes, target = payload['minutes'], payload['temperature']
+            zone = next(z for z in config['zones'] if z['id'] == 'badkamer')
+            low, high = numeric(zone.get('minimum')), numeric(zone.get('maximum'))
+            if type(minutes) is not int or not 1 <= minutes <= 180:
+                raise ValueError('Kies 1 tot en met 180 hele minuten.')
+            if (type(target) not in (int, float) or not math.isfinite(target) or not 5 <= target <= 35
+                    or low is None or high is None or not low <= target <= high):
+                raise ValueError('Kies een temperatuur binnen de ingestelde badkamergrenzen.')
+            self.data['timer'] = dict(minutes=minutes, temperature=target, ends=now+60*minutes, status='running', cleanup=True)
+        elif action == 'stop' and set(payload) == {'revision', 'action'}:
+            if self.data['timer']:
+                self.data['timer']['status'] = 'stopped'
+        else:
+            raise ValueError('Ongeldig timerverzoek.')
+        self.data['timer_revision'] += 1
+        try:
+            self.save()
+        except Exception:
+            self.data = previous
+            raise
+
     def reconcile(self, now):
         records = {c['id']: c for c in self.control.records()}
         holds = {h['source'] for h in self.schedule.view(now)['overrides'] if h['active']}
+        timer = self.data['timer']
+        if timer and timer['status'] == 'running' and (now >= timer['ends'] or 'badkamer' in holds):
+            timer['status'] = 'manual' if 'badkamer' in holds else 'expired'
+            self.data['timer_revision'] += 1
         for source in holds:
             if source not in self.data['manual']:
                 self.data['manual'].append(source)
@@ -101,6 +146,9 @@ class Heating:
             elif command['value'] == 'off' and command['status'] in ('confirmed', 'already_set'):
                 self.data['changed'][source] = now
                 del self.data['owned'][source]
+        if timer and not self.timer_active(now) and (
+                'badkamer' not in self.data['owned'] or self.armed and self.data['settings']['enabled']):
+            timer['cleanup'] = False
 
     def plan(self, config, now):
         settings = self.data['settings']
@@ -123,6 +171,8 @@ class Heating:
             zid = zone['id']
             req = view['comfort']['zones'][zid]
             goal = req['request']
+            if zid == 'badkamer' and self.timer_active(now):
+                goal = {'target': self.data['timer']['temperature']}
             sample = observation(zone['temperature'], self.control.states, now, True, '°C')
             temp = sample['value']
             reason = None
@@ -136,6 +186,10 @@ class Heating:
                 reason = 'Geen bruikbaar temperatuurdoel ingesteld.'
             elif req['errors']:
                 reason = ' '.join(req['errors'])
+            elif zid == 'badkamer' and self.timer_active(now) and (
+                    numeric(zone.get('minimum')) is None or numeric(zone.get('maximum')) is None
+                    or not zone['minimum'] <= goal['target'] <= zone['maximum']):
+                reason = 'Timerdoel valt buiten de badkamergrenzen.'
             elif zid in blocked:
                 reason = 'Handmatige bronkeuze heeft voorrang.'
             target = goal['target'] if goal else None
@@ -205,10 +259,14 @@ class Heating:
                         if set(COVERAGE[source]) & set(COVERAGE[other]):
                             del desired[other]
                     desired[source] = zones['beneden' if source == 'cv' else source]['target']
+        # An explicit bathroom timer needs no economic source selection or global enable.
+        if self.timer_active(now) and demand['badkamer'] and eligible('badkamer', zones['badkamer']['target']):
+            desired['badkamer'] = zones['badkamer']['target']
         for zid, zone in zones.items():
-            if not enabled:
+            timed = zid == 'badkamer' and self.timer_active(now)
+            if not enabled and not timed:
                 zone['reason'] = 'Automatische verwarming staat uit.'
-            elif zone['demand'] and price is None:
+            elif zone['demand'] and price is None and not timed:
                 zone['reason'] = 'Geen bevestigd huidig stroomtarief; bronkeuze geblokkeerd.'
             elif zone['demand'] and not any(zid in COVERAGE[s] for s in desired) and zone['reason'] == 'Warmtevraag.':
                 zone['reason'] = 'Warmtevraag; bron geblokkeerd door mogelijkheden, storing of gedeelde cv-grens.'
@@ -221,6 +279,8 @@ class Heating:
         holds = {h['source'] for h in self.schedule.view(now)['overrides'] if h['active']}
         # Stop obsolete owned sources before any new start. Stop can preempt a start.
         for source, own in self.data['owned'].items():
+            if not self.armed and source != 'badkamer':
+                continue
             if source in holds:
                 continue
             c = records.get(own['command'], {})
@@ -247,7 +307,7 @@ class Heating:
 
     def tick(self, config, now=None):
         now = time.time() if now is None else now
-        if not self.armed:
+        if not self.armed and not (self.data['timer'] or {}).get('cleanup'):
             return
         self.reconcile(now)
         plan = self.plan(config, now)
@@ -287,4 +347,8 @@ class Heating:
         result = self.plan(config, now)
         result.update(settings=copy.deepcopy(self.data['settings']), revision=self.data['revision'],
                       faults=copy.deepcopy(self.data['faults']), owned=copy.deepcopy(self.data['owned']))
+        timer = copy.deepcopy(self.data['timer'])
+        result['timer'] = dict(revision=self.data['timer_revision'], active=self.timer_active(now),
+            remaining_seconds=max(0, timer['ends']-now) if self.timer_active(now) else 0,
+            **(timer or dict(minutes=30, temperature=22, ends=None, status='idle')))
         return result

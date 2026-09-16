@@ -153,7 +153,8 @@ class Runtime:
         with self.control.lock:
             data['schedule'] = self.schedule.view(time.time())
             data['heating'] = self.heating.view(self.config, time.time())
-        data['control_mode'] = 'automatic_heating' if data['heating']['enabled'] else 'comfort_input'
+        data['control_mode'] = ('automatic_heating' if data['heating']['enabled']
+                                else 'bathroom_timer' if data['heating']['timer']['active'] else 'comfort_input')
         for zone in data['zones']:
             zone['reason'] = data['heating']['zones'][zone['id']]['reason']
         data['csrf_token'] = self.csrf_token
@@ -175,7 +176,7 @@ def handler(runtime, ingress):
                 self.send_error(403)
                 return
             path = urlsplit(self.path).path
-            if path not in ('/api/settings', '/api/commands', '/api/schedule', '/api/resume', '/api/heating', '/api/heating/reset'):
+            if path not in ('/api/settings', '/api/commands', '/api/schedule', '/api/resume', '/api/heating', '/api/heating/reset', '/api/heating/timer'):
                 self.send_error(404)
                 return
             if not secrets.compare_digest(self.headers.get('X-HC-CSRF', ''), runtime.csrf_token):
@@ -195,8 +196,10 @@ def handler(runtime, ingress):
                         result = {'command': runtime.control.submit(payload, runtime.config['stale_seconds'])}
                     elif path == '/api/schedule':
                         result = {'schedule': runtime.schedule.update(payload, time.time())}
-                    elif path in ('/api/heating', '/api/heating/reset'):
-                        if path.endswith('/reset'):
+                    elif path in ('/api/heating', '/api/heating/reset', '/api/heating/timer'):
+                        if path.endswith('/timer'):
+                            runtime.heating.update_timer(payload, runtime.config, time.time())
+                        elif path.endswith('/reset'):
                             if payload != {}:
                                 raise ValueError('Ongeldig vrijgaveverzoek.')
                             runtime.heating.reset_faults()

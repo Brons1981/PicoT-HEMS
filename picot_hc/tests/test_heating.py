@@ -269,3 +269,105 @@ class HeatingTests(ControlFixture):
         self.assertEqual(self.runtime.connection,'connected')
         self.assertEqual(len(self.calls),1)
         self.assertEqual(self.store.latest()['zones'][0]['samples']['temperature']['value'],18)
+
+    def timer(self, minutes=5, temperature=22):
+        self.ctl.observe(self.states, NOW, NOW)
+        self.heat.update_timer(dict(revision=self.heat.data['timer_revision'], action='start',
+                                   minutes=minutes, temperature=temperature), self.config, NOW)
+
+    def test_timer_only_bathroom_without_global_enable_or_tariff_and_expires(self):
+        self.states.pop(self.config['price_entity'])
+        self.timer(minutes=1)
+        self.assertEqual(self.calls, [])
+        view=self.poll(NOW+1)
+        self.assertTrue(view['timer']['active'])
+        self.assertEqual(view['zones']['badkamer']['target'],22)
+        self.assertEqual(self.calls[-1],('/api/services/switch/turn_on',{'entity_id':self.config['zones'][2]['device']}))
+        self.poll(NOW+31);view=self.poll(NOW+60)
+        self.assertFalse(view['timer']['active'])
+        self.assertEqual(self.calls[-1][0],'/api/services/switch/turn_off')
+        self.poll();self.assertEqual(len(self.calls),2)
+
+    def test_timer_temperature_feedback_and_stale_measurement(self):
+        self.timer();self.poll(NOW+1);self.poll()
+        self.temperature('badkamer',22);self.poll()
+        self.assertEqual(self.calls[-1][0],'/api/services/switch/turn_off')
+        self.poll();self.temperature('badkamer',18)
+        self.poll(NOW+280)
+        self.assertEqual(self.calls[-1][0],'/api/services/switch/turn_on')
+        entity=self.config['zones'][2]['temperature']
+        self.states[entity]['state']='unavailable';self.poll(NOW+290)
+        self.assertEqual(self.calls[-1][0],'/api/services/switch/turn_off')
+
+    def test_timer_stop_returns_fixed_goal_and_global_off_cancels(self):
+        self.enable();self.timer();view=self.poll(NOW+1)
+        self.heat.update_timer(dict(revision=1,action='stop'),self.config,NOW+2)
+        view=self.heat.view(self.config,NOW+2)
+        self.assertEqual(view['zones']['badkamer']['target'],20)
+        self.assertFalse(view['timer']['active'])
+        self.timer()
+        self.heat.update(dict(revision=self.heat.data['revision'],settings=dict(self.heat.data['settings'],enabled=False)))
+        self.assertFalse(self.heat.timer_active(NOW+3))
+
+    def test_timer_restart_cancels_and_stops_owned_bathroom_without_restart(self):
+        from picot_hc.heating import Heating
+        self.timer();self.poll(NOW+1);self.poll()
+        self.heat=Heating(self.ctl,self.runtime.schedule,self.store)
+        self.assertEqual(len(self.calls),1)
+        self.assertEqual(self.heat.data['timer']['status'],'restart')
+        self.poll();self.poll();self.poll()
+        self.assertEqual([c[0] for c in self.calls],['/api/services/switch/turn_on','/api/services/switch/turn_off'])
+
+    def test_timer_manual_off_cancels_and_resume_does_not_restart_timer(self):
+        self.timer();self.poll(NOW+1);self.poll()
+        self.states[self.config['zones'][2]['device']]['state']='off'
+        view=self.poll()
+        self.assertEqual(view['timer']['status'],'manual')
+        self.runtime.schedule.resume(self.at)
+        self.poll();self.assertEqual(len(self.calls),1)
+
+    def test_timer_validation_revision_and_storage_failure(self):
+        for minutes,target in [(0,22),(181,22),(True,22),(1.5,22),(5,26),(5,float('nan')),(5,True)]:
+            with self.assertRaises(ValueError):self.timer(minutes,target)
+        self.timer()
+        with self.assertRaises(ValueError):
+            self.heat.update_timer(dict(revision=0,action='start',minutes=5,temperature=22),self.config,NOW+1)
+        before=copy.deepcopy(self.heat.data)
+        with patch.object(self.heat,'save',side_effect=sqlite3.Error('full')):
+            with self.assertRaises(sqlite3.Error):
+                self.heat.update_timer(dict(revision=1,action='stop'),self.config,NOW+1)
+        self.assertEqual(self.heat.data,before)
+        self.assertEqual(self.calls,[])
+
+    def test_timer_expiry_preempts_unconfirmed_start(self):
+        self.apply=False;self.timer(minutes=1);self.poll(NOW+1)
+        self.poll(NOW+60)
+        self.assertEqual([c[0] for c in self.calls],['/api/services/switch/turn_on','/api/services/switch/turn_off'])
+
+    def test_timer_api_requires_csrf_and_returns_remaining_time(self):
+        url=self.server(handler(self.runtime,False))
+        raw=json.dumps(dict(revision=0,action='start',minutes=30,temperature=22)).encode()
+        with self.assertRaises(HTTPError) as err:
+            urlopen(Request(url+'/api/heating/timer',data=raw,headers={'Content-Type':'application/json'}))
+        self.assertEqual(err.exception.code,403)
+        headers={'Content-Type':'application/json','X-HC-CSRF':self.runtime.csrf_token}
+        result=json.load(urlopen(Request(url+'/api/heating/timer',data=raw,headers=headers)))
+        self.assertTrue(result['heating']['timer']['active'])
+        self.assertGreater(result['heating']['timer']['remaining_seconds'],1790)
+        self.assertEqual(self.calls,[])
+
+    def test_timer_restart_cleanup_does_not_stop_other_owned_sources(self):
+        from picot_hc.heating import Heating
+        self.enable();self.timer();self.poll(NOW+121);self.poll();self.poll();self.poll()
+        self.assertEqual(len(self.calls),3)
+        self.heat=Heating(self.ctl,self.runtime.schedule,self.store)
+        self.poll();self.poll()
+        self.assertEqual(len(self.calls),4)
+        self.assertEqual(self.calls[-1],('/api/services/switch/turn_off',{'entity_id':self.config['zones'][2]['device']}))
+        self.assertEqual(self.states[self.config['zones'][0]['device']]['state'],'heat')
+
+    def test_removed_bounds_during_timer_stop_owned_heat(self):
+        self.timer();self.poll(NOW+1);self.poll()
+        self.config['zones'][2]['maximum']=None
+        self.poll()
+        self.assertEqual(self.calls[-1][0],'/api/services/switch/turn_off')

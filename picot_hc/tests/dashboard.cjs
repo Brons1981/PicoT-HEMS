@@ -229,6 +229,7 @@ const {gunzipSync} = require('node:zlib');
     }
     deviceStates.push({entity_id:options.price_entity,state:'0.25',attributes:{unit_of_measurement:'EUR/kWh',raw_today:[{start:new Date(Date.now()-3600000).toISOString(),end:new Date(Date.now()+3600000).toISOString(),value:.25}]}});
     doorState.state='off';
+    await schedule.locator('details summary').click();
     await schedule.locator('[name=door_close_seconds]').fill('0');
     await schedule.getByRole('button',{name:'Comfortschema opslaan'}).click();
     await page.waitForFunction(()=>document.querySelector('.schedule-save-status').textContent==='Comfortschema opgeslagen.');

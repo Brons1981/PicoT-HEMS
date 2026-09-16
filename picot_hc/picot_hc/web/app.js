@@ -265,7 +265,7 @@ function renderSchedule(data){
     const bandLabel=el('label','Optimalisatieband (± °C)');bandLabel.append(band);
     const rows=el('div',undefined,'schedule-rows');
     const add=el('button','Venster toevoegen');add.type='button';
-    const door=el('details'), summary=el('summary','Voorwaarden voor de toekomstige planner');door.append(summary,ageLabel);
+    const door=el('details'), summary=el('summary','Meetleeftijd en deurvertraging');door.append(summary,ageLabel);
     const delays={};
     for(const [key,label] of [['door_open_seconds','Achterdeur open: blokkeer airco na (seconden)'],['door_close_seconds','Achterdeur dicht: airco weer beschikbaar na (seconden)']]){
       const wrapper=el('label',label), input=el('input');input.type='number';input.min=0;input.max=1800;input.step=1;input.required=true;input.name=key;wrapper.append(input);door.append(wrapper);delays[key]=input;

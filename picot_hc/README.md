@@ -1,6 +1,18 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.17** — metingen, comfortvensters, handmatige bediening en opt-in automatische verwarming voor Home Assistant.
+Versie **0.1.0-dev.18** — metingen, comfortvensters, handmatige bediening en opt-in automatische verwarming voor Home Assistant.
+
+Badkamertimer: kies 1–180 minuten en een temperatuur binnen de badkamergrenzen,
+en klik **Start timer**. Resterende minuten en **Stop timer** staan bij de timer.
+Dit tijdelijke doel werkt ook zonder algemene automatische regeling of stroomprijs.
+Na afloop of stoppen geldt weer het vaste doel als de regeling actief is;
+anders stopt HC zijn badkamerverwarming. **Automatische verwarming uit** beëindigt
+ook de timer. Handmatige bronbediening beëindigt de timer en blijft leidend.
+Na herstart vervalt de timer; HC stopt uitsluitend zijn eigen timerverwarming zodra
+bereikbaar. Onbevestigde opdrachten worden niet automatisch herhaald.
+
+De vaste temperatuur boven staat bij **Boven / slaapkamer → Vaste temperatuur
+instellen → Gewenst → Opslaan**. Bronbediening is handmatige apparaatbediening.
 
 ## Automatische verwarming
 

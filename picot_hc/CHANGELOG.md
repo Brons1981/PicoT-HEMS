@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-dev.18
+
+- Badkamertimer met instelbare duur en temperatuur, resterende tijd en stopknop.
+- Tijdelijk badkamerdoel werkt onafhankelijk van algemene regeling en prijsgegevens.
+- Terug naar vaste regeling na afloop; anders eigen badkamerverwarming uit.
+- Handmatige voorrang, begrenzing, meetleeftijd en terugmelding blijven gelden.
+- Herstart breekt timer af; eigen timerverwarming wordt gestopt zodra bereikbaar.
+
 ## 0.1.0-dev.17
 
 - Opt-in automatische verwarming met gedeelde cv, beide airco's en badkamerschakelaar.

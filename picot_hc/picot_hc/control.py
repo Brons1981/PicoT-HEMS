@@ -142,7 +142,7 @@ class Control:
                     reason=None if available else 'Geen actuele, bruikbare HA-terugmelding.'))
             return result
 
-    def submit(self, payload, stale_seconds, *, origin='manual', guard=None):
+    def submit(self, payload, stale_seconds, *, origin='manual', guard=None, force_off=False):
         if not isinstance(payload, dict) or set(payload) != {'request_id', 'source', 'field', 'value'}:
             raise ValueError('Ongeldige bronopdracht.')
         request_id = payload['request_id']
@@ -216,7 +216,7 @@ class Control:
                            reported={'value':actual, 'received':self.received, 'source_updated':source['source_updated']})
             if self.intent_observer:
                 self.intent_observer(command)
-            if self.matches(actual, value) and not pending and (field != 'heating' or source['state'] == 'heat'):
+            if self.matches(actual, value) and not pending and not (force_off and value == 'off') and (field != 'heating' or source['state'] == 'heat'):
                 command.update(status='already_set', finished=now)
                 self.save(command)
                 return command

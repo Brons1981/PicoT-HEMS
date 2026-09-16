@@ -54,7 +54,7 @@ function temperatureForm(zone) {
       settingsRevision = Math.max(settingsRevision, result.settings_revision);
       zone.settings = result.settings;
       form.dirty = false;
-      status.textContent = 'Opgeslagen. Automatische regeling is nog niet actief.';
+      status.textContent = 'Opgeslagen. Een actieve regeling gebruikt dit doel bij de volgende controle.';
     } catch (error) { status.textContent = error.message || 'Opslaan mislukt. Probeer opnieuw.'; }
     finally {
       form.saving = false; button.disabled = false;
@@ -237,17 +237,17 @@ function renderControls(sources, commands) {
   }
   const history=$('command-history');history.replaceChildren();
   if(!commands?.length)history.append(el('p','Nog geen opdrachten vanuit HC.'));
-  for(const c of commands||[]){const name=(sources||[]).find(s=>s.id===c.source)?.name||c.source;history.append(el('p',fmt(c.created)+' · '+name+' · '+(c.origin==='schedule'?'Schema · ':'Handmatig · ')+commandText(c)));}
+  for(const c of commands||[]){const name=(sources||[]).find(s=>s.id===c.source)?.name||c.source;history.append(el('p',fmt(c.created)+' · '+name+' · '+(c.origin==='schedule'?'Automatisch · ':'Handmatig · ')+commandText(c)));}
 }
 const weekdays=['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag','Zondag'];
 let scheduleForm=null;
 function renderSchedule(data){
   if(!data)return;
-  $('regulation-badge').textContent='Comfortbasis · bronbediening handmatig';
+  renderHeating(current.heating);
   $('schedule-status').textContent=data.reason+(data.migration?' '+data.migration:'');
   const active=data.current;
   $('schedule-next').textContent=(active?'Nu: '+active.target+' °C · '+(active.hard?'comforttemperatuur':'band '+active.minimum+'–'+active.maximum+' °C')+'. ':'')+(data.next?'Volgend venster: '+fmt(data.next.starts_at)+' · '+data.next.target+' °C'+(data.next.hard?' moet bij aanvang bereikt zijn.':'.'):'Geen volgend venster ingesteld.');
-  $('planner-status').textContent=data.comfort.planner_reason;
+  $('planner-status').textContent='De basisregeling volgt het huidige doel. Berekend voorverwarmen, temperatuuroptimalisatie en automatisch bijleren zijn nog niet actief; tijdige opwarming vóór een nieuw venster is nog niet gegarandeerd.';
   const holds=$('forced-sources');holds.replaceChildren();
   if(data.legacy_pause)holds.append(el('p','Eerdere handmatige pauze bewaard: '+data.legacy_pause.reason));
   for(const hold of data.overrides){
@@ -265,7 +265,7 @@ function renderSchedule(data){
     const bandLabel=el('label','Optimalisatieband (± °C)');bandLabel.append(band);
     const rows=el('div',undefined,'schedule-rows');
     const add=el('button','Venster toevoegen');add.type='button';
-    const door=el('details'), summary=el('summary','Voorwaarden voor de toekomstige planner');door.append(summary,ageLabel);
+    const door=el('details'), summary=el('summary','Meetleeftijd en deurvertraging');door.append(summary,ageLabel);
     const delays={};
     for(const [key,label] of [['door_open_seconds','Achterdeur open: blokkeer airco na (seconden)'],['door_close_seconds','Achterdeur dicht: airco weer beschikbaar na (seconden)']]){
       const wrapper=el('label',label), input=el('input');input.type='number';input.min=0;input.max=1800;input.step=1;input.required=true;input.name=key;wrapper.append(input);door.append(wrapper);delays[key]=input;

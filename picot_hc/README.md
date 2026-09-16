@@ -1,6 +1,14 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.18** — metingen, comfortvensters, handmatige bediening en opt-in automatische verwarming voor Home Assistant.
+Versie **0.1.0-dev.19** — metingen, comfortvensters, handmatige bediening en opt-in automatische verwarming voor Home Assistant.
+
+Temperatuurontvangst: HC leest voor de drie zones en buiten de actuele waarde,
+eenheid en `last_reported` samen via HA `/api/template`. Zo blijft een constante
+temperatuur bruikbaar bij nieuwe meldingen, ook als de `/api/states`-weergave
+een oude ontvangsttijd bevat. De ingestelde maximale meetleeftijd blijft gelden.
+Mislukt de extra controle, dan blijft de oude waarde zichtbaar met een blokkadereden
+bij de regeling. HC start daarop geen verwarming en stopt zijn eigen betrokken bron
+zodra bereikbaar. Ook de controle direct vóór een opdracht gebruikt deze uitlezing.
 
 Badkamertimer: kies 1–180 minuten en een temperatuur binnen de badkamergrenzen,
 en klik **Start timer**. Resterende minuten en **Stop timer** staan bij de timer.

@@ -104,7 +104,7 @@ class Runtime:
     def _collect(self):
         try:
             started = time.time()
-            states = fetch_states(self.url, self.token)
+            states = fetch_states(self.url, self.token, self.control.temperature_entities)
             now = time.time()
             self.control.observe(states, started, now)
             data = snapshot(self.config, states, now)
@@ -211,7 +211,7 @@ def handler(runtime, ingress):
                             raise ValueError('Ongeldig hervatverzoek.')
                         started = time.time()
                         try:
-                            states = fetch_states(runtime.url, runtime.token)
+                            states = fetch_states(runtime.url, runtime.token, runtime.control.temperature_entities)
                         except Exception:
                             raise ValueError('HA niet bereikbaar; HC blijft gepauzeerd.') from None
                         runtime.control.observe(states, started, time.time())

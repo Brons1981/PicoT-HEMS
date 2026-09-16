@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0-dev.19
+
+- Actuele temperatuur en ontvangsttijd samen ophalen via HA-sjabloon-API;
+  voorkomt onterechte blokkering bij onveranderde Ecowitt-temperaturen.
+- Dezelfde controle in meetopslag en direct vóór een bronopdracht.
+- Werkelijk oude/toekomstige of ontbrekende meldingen blijven geblokkeerd.
+- Duidelijke melding bij mislukte ontvangstcontrole; bestaande bronterugmelding
+  blijft beschikbaar om eigen verwarming te stoppen.
+
 ## 0.1.0-dev.18
 
 - Badkamertimer met instelbare duur en temperatuur, resterende tijd en stopknop.

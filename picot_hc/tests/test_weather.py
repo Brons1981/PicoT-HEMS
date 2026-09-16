@@ -38,6 +38,9 @@ class WeatherTests(unittest.TestCase):
                 self.send_response(200); self.end_headers()
                 self.wfile.write(json.dumps([outer.state]).encode())
             def do_POST(self):
+                if self.path == '/api/template':
+                    self.rfile.read(int(self.headers['Content-Length']))
+                    self.send_response(200); self.end_headers(); self.wfile.write(b'[]'); return
                 outer.calls.append((self.path,json.loads(self.rfile.read(int(self.headers['Content-Length'])))))
                 self.send_response(503 if outer.fail else 200); self.end_headers()
                 self.wfile.write(json.dumps({'service_response':{ENTITY:{'forecast':outer.rows}}}).encode())

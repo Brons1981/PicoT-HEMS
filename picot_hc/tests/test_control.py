@@ -20,6 +20,7 @@ class ControlFixture(unittest.TestCase):
         self.config = json.loads((Path(__file__).parents[1] / 'options.example.json').read_text())
         self.calls, self.status, self.apply, self.drop, self.read_fail = [], 200, False, False, False
         self.unit = '°C'
+        self.template_status, self.template_reports, self.template_calls = 200, None, []
         self.states = {}
         for entity in [self.config['cv'], *(z['device'] for z in self.config['zones'])]:
             self.states[entity] = {'entity_id': entity, 'state': 'off', 'last_updated': '2026-09-13T10:00:00Z',
@@ -34,6 +35,15 @@ class ControlFixture(unittest.TestCase):
                 self.wfile.write(json.dumps({'unit_system': {'temperature':outer.unit}} if self.path == '/api/config' else list(outer.states.values())).encode())
             def do_POST(self):
                 data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                if self.path == '/api/template':
+                    outer.template_calls.append(data)
+                    ids = json.loads(data['template'].split('{% for id in ',1)[1].split(' %}',1)[0])
+                    reports = outer.template_reports
+                    if reports is None:
+                        reports = [dict(outer.states[e], last_reported=outer.states[e].get('last_reported') or outer.states[e].get('last_updated'),
+                            last_updated=outer.states[e].get('last_updated') or outer.states[e].get('last_reported')) for e in ids if e in outer.states]
+                    self.send_response(outer.template_status); self.end_headers()
+                    self.wfile.write(json.dumps(reports).encode()); return
                 outer.calls.append((self.path, data))
                 if outer.apply:
                     state = outer.states[data['entity_id']]

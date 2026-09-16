@@ -47,6 +47,7 @@ class Control:
     def __init__(self, config, store, url, token):
         self.store, self.url, self.token = store, url, token
         self.bindings = source_bindings(config)
+        self.temperature_entities = [z.get('temperature') for z in config['zones']] + [config.get('outdoor')]
         self.timeout = config.get('command_timeout_seconds', 300)
         if not isinstance(self.timeout, int) or not 30 <= self.timeout <= 900:
             raise ValueError('command_timeout_seconds moet tussen 30 en 900 liggen.')
@@ -160,7 +161,7 @@ class Control:
             # Fresh independent read immediately before any device write.
             started = time.time()
             try:
-                states = fetch_states(self.url, self.token)
+                states = fetch_states(self.url, self.token, self.temperature_entities)
             except Exception:
                 self.connected = False
                 raise ValueError('HA niet bereikbaar; geen opdracht verstuurd.') from None

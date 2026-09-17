@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.262
+
+- Nacontrole haalt meetgeschiedenis in begrensde stukken op en daarna alleen nieuwe gegevens; mislukte aanvragen worden opnieuw geprobeerd.
+- Ruwe meetreeksen van vandaag en gisteren worden bewaard en meegenomen in de diagnose-download.
+- Meetonderbrekingen tonen de sensor en het exacte tijdvak. Ontbrekende waarden blijven ontbrekend.
+- Geen wijzigingen aan MEP-planning, commitmentregels of batterijaansturing.
+
 ## 2.0.0-dev.261
 
 - Schakelhistorie ververst direct bij klokschakelingen, ook zonder nieuwe planningsrun.

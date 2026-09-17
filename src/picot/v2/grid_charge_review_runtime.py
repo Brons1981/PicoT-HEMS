@@ -18,10 +18,12 @@ from picot.v2.daily_pv_comparison import DailyPVComparisonBasis
 from picot.v2.grid_charge_review import ReviewSettings, _Series, actual_soc_view, review_day
 from picot.v2.power_history import (
     HomeAssistantPowerHistoryReader,
+    PowerHistoryCache,
     PowerHistorySnapshot,
     PowerSeriesSpec,
     rebase_power_history,
 )
+from picot.v2.review_measurements import measurement_archive_paths, save_measurements
 
 
 class GridChargeReviewObserver:
@@ -63,6 +65,7 @@ class GridChargeReviewObserver:
         self.lock = Lock()
         self.last_attempt: datetime | None = None
         self.last_day: str | None = None
+        self._history_caches: dict[str, PowerHistoryCache] = {}
         self.state: dict[str, Any] = {"schema_version": 1, "days": {}, "inputs": {}}
         try:
             if path.stat().st_size <= 5_000_000:
@@ -187,13 +190,22 @@ class GridChargeReviewObserver:
                 continue
             # Separate raw read preserves unavailable markers; existing dashboards/ledger
             # keep their original history contract. SOC's transport scalar is percent.
-            history = self.reader.read(
+            cache = self._history_caches.setdefault(
+                key, PowerHistoryCache(preserve_unavailable=True)
+            )
+            history = cache.update(
+                self.reader,
                 specs=self.specs,
                 starts_at=start - timedelta(minutes=5),
                 ends_at=end,
-                preserve_unavailable=True,
             )
             history = self.attach_household(rebase_power_history(history, starts_at=start))
+            archive_path = measurement_archive_paths(self.path)[0 if day == today else 1]
+            try:
+                archive = save_measurements(archive_path, history)
+            except OSError as exc:
+                archive = {"status": "unavailable", "reason": type(exc).__name__}
+
             if day == today:
                 actual = actual_soc_view(history)
                 if actual["status"] == "available":
@@ -261,10 +273,15 @@ class GridChargeReviewObserver:
                     "route_plan_id": owner.route_plan_id if owner else None,
                     "settings": ctx["settings"],
                     "evidence_digest": digest.hexdigest(),
+                    "measurement_archive": archive,
                     "pv_comparison": self._pv_comparison(history, basis),
                 }
             )
             self.state["days"][key] = result
+        self._history_caches = {
+            key: value for key, value in self._history_caches.items()
+            if key in {today.isoformat(), (today - timedelta(days=1)).isoformat()}
+        }
         # Keep 90 review days and 3 days of input tariffs; finalized missing days are
         # visible but excluded from aggregate conclusions, never invented as zero.
         for mapping, count in ((self.state["days"], 90), (inputs, 3)):

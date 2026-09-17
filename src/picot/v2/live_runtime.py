@@ -144,6 +144,7 @@ from picot.v2.pv_sunset_source import (
     HomeAssistantSunsetReader,
     SunsetReadResult,
 )
+from picot.v2.review_measurements import measurement_archive_paths
 from picot.v2.soc_expectation import committed_soc_expectation
 from picot.v2.soc_history_recovery import HistoricalSOCRecovery
 from picot.v2.soc_projection_cache import SOCProjectionCache
@@ -2683,6 +2684,7 @@ def main() -> None:
             ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
             FINANCIAL_RESULT_STATE_PATH,
             GRID_CHARGE_REVIEW_PATH,
+            *measurement_archive_paths(GRID_CHARGE_REVIEW_PATH),
             USER_RULES_PATH,
             ENERGY_DEVICE_PLACEMENTS_PATH,
         ),

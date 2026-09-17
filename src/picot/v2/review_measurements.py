@@ -82,7 +82,9 @@ def measurement_archive_paths(review_path: Path) -> tuple[Path, Path]:
             review_path.with_name(f"{review_path.stem}_measurements_yesterday.json.gz"))
 
 
-def save_measurements(path: Path, history: PowerHistorySnapshot) -> dict[str, Any]:
+def save_measurements(
+    path: Path, history: PowerHistorySnapshot, *, alignment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Atomically retain raw review inputs, preserving gaps as JSON null.
 
 The observer calls this for today/yesterday only. A transport failure must not
@@ -105,6 +107,8 @@ replace the last readable snapshot. No extra Home Assistant requests are made.
                         "evidence_id": p.evidence_id} for p in s.points],
         } for s in history.series],
     }
+    if alignment is not None:
+        payload["aligned_measurements"] = alignment
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".writing")
     try:

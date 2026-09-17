@@ -282,6 +282,11 @@ def test_observer_persists_review_and_finalizes_after_midnight(tmp_path):
         "battery_charge", "battery_discharge", "storage_soc",
     }
     assert measurements["ends_at"] == snapshot.captured_at.isoformat()
+    assert measurements["aligned_measurements"]["intervals"]
+    assert measurements["aligned_measurements"]["strict_replay_permitted"] is False
+    summary = recorded[-1]["days"][0]["aligned_measurements"]
+    assert summary["derived_interval_count"] > 0
+    assert "intervals" not in summary
     restarted = observer()
     restarted.refresh(
         replace(snapshot, captured_at=START + timedelta(days=1, minutes=5)), (), (owner,), ()

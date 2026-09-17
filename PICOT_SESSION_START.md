@@ -291,3 +291,12 @@ ZIP-diagnose; meetonderbrekingen per bron en tijdvak in UI en diagnose.
 Geen ontbrekende data aangevuld en geen MEP-/commitment-/aansturingswijzigingen.
 Bronuitval blijft een blokkade; 17 september bevat een echte SOC-onderbreking van
 1,008294 seconde rond 09:31. Zie development_log/2026-09-17-review-measurement-evidence.md.
+
+## 2026-09-17 — HEMS dev.263: aparte kwartierbalans
+
+Alex heeft release aangevraagd van de observer-only kwartierintegratie.
+De vermogensreeksen leveren afzonderlijk geïntegreerde Wh over gelijke kwartieren.
+Afgeleid huisverbruik blijft gescheiden van ruwe metingen en de strikte replay;
+geen nulvulling of nieuwe MEP-inputs. Op export 19:43: 74 afgeleide tijdvakken,
+vijf ongeldig. Geen bewijs dat de volledige 1,7 kWh netladen vermijdbaar was.
+Details: docs/development_log/2026-09-17-review-quarter-alignment.md.

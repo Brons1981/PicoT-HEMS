@@ -214,14 +214,15 @@ def test_observer_persists_review_and_finalizes_after_midnight(tmp_path):
             base = history()
             return replace(
                 base,
+                starts_at=kwargs["starts_at"],
                 ends_at=end,
                 series=tuple(
                     replace(
                         s,
                         points=(
-                            *s.points[:-1],
-                            replace(s.points[-1], power_w=80 if s.role == "storage_soc" else 0),
-                            PowerHistoryPoint(end, 80 if s.role == "storage_soc" else 0, "closing"),
+                            *(p for p in s.points[:-1] if p.sampled_at <= end),
+                            *((replace(s.points[-1], power_w=80 if s.role == "storage_soc" else 0),)
+                              if s.points[-1].sampled_at <= end else ()),
                         ),
                     )
                     for s in base.series
@@ -273,6 +274,14 @@ def test_observer_persists_review_and_finalizes_after_midnight(tmp_path):
     obs = observer()
     obs.refresh(snapshot, rates, (owner,), ())
     assert recorded[-1]["days"][0]["finalized"] is False
+    import gzip
+    with gzip.open(tmp_path / "review_measurements_today.json.gz", "rt") as stream:
+        measurements = json.load(stream)
+    assert {s["role"] for s in measurements["series"]} == {
+        "pv_generation", "household_load", "grid_import", "grid_export",
+        "battery_charge", "battery_discharge", "storage_soc",
+    }
+    assert measurements["ends_at"] == snapshot.captured_at.isoformat()
     restarted = observer()
     restarted.refresh(
         replace(snapshot, captured_at=START + timedelta(days=1, minutes=5)), (), (owner,), ()
@@ -429,7 +438,7 @@ def test_soc_history_failure_retains_coverage_across_restart_and_recovers(tmp_pa
                 return PowerHistorySnapshot(
                     START, ends_at, "unavailable", "history_unavailable", ()
                 )
-            return replace(history(), ends_at=ends_at)
+            return replace(history(), starts_at=kwargs["starts_at"], ends_at=ends_at)
 
     reader = Reader()
 

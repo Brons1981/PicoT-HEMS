@@ -4071,6 +4071,33 @@ DASHBOARD_HTML = """<!doctype html>
           const td = document.createElement("td"); td.textContent = value; tr.appendChild(td);
         }
         body.appendChild(tr);
+        const coverage = day.measurement_coverage ?? {};
+        const missing = Object.entries(coverage).filter(([, item]) => item.gap_count > 0);
+        if (missing.length) {
+          const detailRow = document.createElement("tr");
+          const cell = document.createElement("td");
+          cell.colSpan = 7;
+          const details = document.createElement("details");
+          const label = document.createElement("summary");
+          label.textContent = `Meetonderbrekingen (${missing.length} meetreeksen)`;
+          details.appendChild(label);
+          for (const [role, item] of missing) {
+            for (const gap of item.gaps ?? []) {
+              const line = document.createElement("p");
+              line.textContent = `${item.source_entity_id ?? role}: ` +
+                `${reasons[gap.reason] ?? gap.reason} · ` +
+                `${new Date(gap.starts_at).toLocaleString("nl-NL")} – ` +
+                `${new Date(gap.ends_at).toLocaleString("nl-NL")}`;
+              details.appendChild(line);
+            }
+            if (item.omitted_gap_count) {
+              const more = document.createElement("p");
+              more.textContent = `Nog ${item.omitted_gap_count} onderbrekingen voor ${role}.`;
+              details.appendChild(more);
+            }
+          }
+          cell.appendChild(details); detailRow.appendChild(cell); body.appendChild(detailRow);
+        }
       }
       table.appendChild(body); scroll.appendChild(table); container.appendChild(scroll);
       const note = document.createElement("p");

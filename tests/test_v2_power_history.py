@@ -499,3 +499,35 @@ def test_market_read_preserves_unknown_gap_instead_of_holding_stale_power(monkey
     assert result.status == "available"
     assert all(len(s.points) == 3 and isnan(s.points[1].power_w) for s in result.series)
     assert measured_market_export(result, START, result.ends_at) is None
+
+
+def test_passive_cache_preserves_gaps_and_retries_failed_chunk():
+    from math import isnan
+
+    attempts = []
+
+    class Reader:
+        def read(self, *, specs, starts_at, ends_at, preserve_unavailable=False):
+            assert preserve_unavailable is True
+            attempts.append((starts_at, ends_at))
+            if len(attempts) == 2:
+                return PowerHistorySnapshot(starts_at, ends_at, "unavailable", "TimeoutError", ())
+            return PowerHistorySnapshot(starts_at, ends_at, "available", None, (
+                PowerHistorySeries("pv", "pv_generation", PV, "identity", (
+                    PowerHistoryPoint(starts_at, float("nan"), starts_at.isoformat()),
+                    PowerHistoryPoint(ends_at, 100, ends_at.isoformat()),
+                )),
+            ))
+
+    cache = PowerHistoryCache(preserve_unavailable=True)
+    reader = Reader()
+    spec = (PowerSeriesSpec("pv", "pv_generation", PV),)
+    first = cache.update(reader, specs=spec, starts_at=START, ends_at=START + timedelta(hours=3))
+    assert first.error == "TimeoutError"
+    assert first.ends_at == START + timedelta(hours=2)
+    result = cache.update(reader, specs=spec, starts_at=START, ends_at=START + timedelta(hours=3))
+    assert result.error is None
+    assert attempts[2][0] == START + timedelta(hours=2)
+    assert all(b - a <= timedelta(hours=2) for a, b in attempts)
+    assert isnan(result.series[0].points[0].power_w)
+    assert result.ends_at == START + timedelta(hours=3)

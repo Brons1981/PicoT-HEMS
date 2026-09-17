@@ -178,8 +178,9 @@ FINANCIAL_ANCHOR_LOOKBACK = timedelta(minutes=15)
 class PowerHistoryCache:
     """Retain today's series and request only the unseen time tail."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, preserve_unavailable: bool = False) -> None:
         self._snapshot: PowerHistorySnapshot | None = None
+        self._preserve_unavailable = preserve_unavailable
 
     def update(
         self,
@@ -235,6 +236,7 @@ class PowerHistoryCache:
             specs=specs,
             starts_at=read_starts_at,
             ends_at=read_ends_at,
+            **({"preserve_unavailable": True} if self._preserve_unavailable else {}),
         )
         if previous is None or not same_window:
             if latest.status == "unavailable":

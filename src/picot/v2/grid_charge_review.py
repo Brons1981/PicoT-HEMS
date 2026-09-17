@@ -17,6 +17,7 @@ from typing import Any
 from picot.v2.contracts import PriceForecastPoint
 from picot.v2.financial_result_ledger import FinancialResultLedger
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
+from picot.v2.review_measurements import measurement_coverage
 
 METHOD = "measured-day-uniform-grid-reduction:v1"
 ROLES = (
@@ -135,6 +136,7 @@ def review_day(
         "observer_only": True,
         "selection_permitted": False,
         "commitment_permitted": False,
+        "measurement_coverage": measurement_coverage(history),
     }
     try:
         if history.status != "available" or history.error is not None:

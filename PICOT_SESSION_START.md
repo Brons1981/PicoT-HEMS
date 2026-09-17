@@ -282,3 +282,12 @@ Dit is weergavebewijs en kan geen plan of herplantrigger wijzigen.
 Geen actuele invoer betekent geen actuele toekomstige prognose.
 De wijzigingen zijn lokaal geverifieerd. Alex heeft release dev.261 aangevraagd;
 publicatie via PR en CI. Installatie en livevalidatie volgen daarna.
+
+## 2026-09-17 — HEMS dev.262: meetbewijs voor nacontrole
+
+Alex heeft release van de afzonderlijke meetregistratie/nacontrole aangevraagd.
+Begrensde, incrementele HA-history reads; gzip-archief van vandaag/gisteren in de
+ZIP-diagnose; meetonderbrekingen per bron en tijdvak in UI en diagnose.
+Geen ontbrekende data aangevuld en geen MEP-/commitment-/aansturingswijzigingen.
+Bronuitval blijft een blokkade; 17 september bevat een echte SOC-onderbreking van
+1,008294 seconde rond 09:31. Zie development_log/2026-09-17-review-measurement-evidence.md.

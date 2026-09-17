@@ -4071,6 +4071,40 @@ DASHBOARD_HTML = """<!doctype html>
           const td = document.createElement("td"); td.textContent = value; tr.appendChild(td);
         }
         body.appendChild(tr);
+        const alignment = day.aligned_measurements;
+        if (alignment) {
+          const alignmentRow = document.createElement("tr");
+          const alignmentCell = document.createElement("td");
+          alignmentCell.colSpan = 7;
+          const details = document.createElement("details");
+          const summary = document.createElement("summary");
+          summary.textContent = alignment.status === "unavailable"
+            ? "Kwartierbalans niet beschikbaar"
+            : `Kwartierbalans: ${alignment.derived_interval_count} berekend, ` +
+              `${alignment.invalid_interval_count} onbruikbaar`;
+          details.appendChild(summary);
+          const explanation = document.createElement("p");
+          explanation.textContent = "Afgeleid huisverbruik per tijdvak. " +
+            "Verschillen in sensortiming blijven onzeker; geen vervanging van ontbrekende " +
+            "metingen en geen zelfstandig bewijs van besparing.";
+          details.appendChild(explanation);
+          for (const interval of alignment.invalid_intervals ?? []) {
+            const line = document.createElement("p");
+            const reason = interval.reason === "negative_household_energy_balance"
+              ? "Negatieve energiebalans" : "Onvolledige brongegevens";
+            line.textContent = `${new Date(interval.starts_at).toLocaleString("nl-NL")} – ` +
+              `${new Date(interval.ends_at).toLocaleString("nl-NL")}: ${reason}`;
+            details.appendChild(line);
+          }
+          if (alignment.omitted_invalid_interval_count) {
+            const line = document.createElement("p");
+            line.textContent = `Nog ${alignment.omitted_invalid_interval_count} ` +
+              "onbruikbare tijdvakken.";
+            details.appendChild(line);
+          }
+          alignmentCell.appendChild(details); alignmentRow.appendChild(alignmentCell);
+          body.appendChild(alignmentRow);
+        }
         const coverage = day.measurement_coverage ?? {};
         const missing = Object.entries(coverage).filter(([, item]) => item.gap_count > 0);
         if (missing.length) {

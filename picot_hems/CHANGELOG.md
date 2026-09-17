@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.263
+
+- Nacontrole integreert vermogens over gelijke klokkwartieren en toont apart het afgeleide huisverbruik.
+- Volledige kwartierwaarden in de meetarchieven; samenvatting en ongeldige tijdvakken in het dashboard.
+- Bronuitval en negatieve energiebalansen blijven ongeldig. Afgeleide waarden zijn geen sluitend bewijs van besparing.
+- Geen wijzigingen aan MEP-planning, commitmentregels of batterijaansturing.
+
 ## 2.0.0-dev.262
 
 - Nacontrole haalt meetgeschiedenis in begrensde stukken op en daarna alleen nieuwe gegevens; mislukte aanvragen worden opnieuw geprobeerd.

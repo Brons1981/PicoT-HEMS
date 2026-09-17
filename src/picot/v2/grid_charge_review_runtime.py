@@ -23,6 +23,7 @@ from picot.v2.power_history import (
     PowerSeriesSpec,
     rebase_power_history,
 )
+from picot.v2.review_alignment import aligned_measurements
 from picot.v2.review_measurements import measurement_archive_paths, save_measurements
 
 
@@ -200,9 +201,10 @@ class GridChargeReviewObserver:
                 ends_at=end,
             )
             history = self.attach_household(rebase_power_history(history, starts_at=start))
+            alignment = aligned_measurements(history)
             archive_path = measurement_archive_paths(self.path)[0 if day == today else 1]
             try:
-                archive = save_measurements(archive_path, history)
+                archive = save_measurements(archive_path, history, alignment=alignment)
             except OSError as exc:
                 archive = {"status": "unavailable", "reason": type(exc).__name__}
 
@@ -274,6 +276,9 @@ class GridChargeReviewObserver:
                     "settings": ctx["settings"],
                     "evidence_digest": digest.hexdigest(),
                     "measurement_archive": archive,
+                    "aligned_measurements": {
+                        k: v for k, v in alignment.items() if k != "intervals"
+                    },
                     "pv_comparison": self._pv_comparison(history, basis),
                 }
             )

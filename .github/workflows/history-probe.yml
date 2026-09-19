@@ -1,0 +1,32 @@
+name: PicoT History Probe
+on:
+  push:
+    branches: [main, 'feature/**']
+    paths: ['picot_history_probe/**', '.github/workflows/history-probe.yml']
+  pull_request:
+    paths: ['picot_history_probe/**', '.github/workflows/history-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify isolated package
+        run: python -m unittest discover -s picot_history_probe/tests -v
+      - name: Build test app
+        run: docker build --tag picot-history-probe:test picot_history_probe
+      - name: Execute bounded container without network
+        run: |
+          mkdir -p "$RUNNER_TEMP/history-probe-data"
+          timeout 60s docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --memory 256m --cpus 1 --pids-limit 32 \
+            --volume "$RUNNER_TEMP/history-probe-data:/data" \
+            picot-history-probe:test > "$RUNNER_TEMP/history-probe-result.json"
+          cat "$RUNNER_TEMP/history-probe-result.json"
+          python -c 'import json,sys; assert json.load(open(sys.argv[1]))["workload_complete"]' "$RUNNER_TEMP/history-probe-result.json"

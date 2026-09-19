@@ -33,7 +33,7 @@ class ProbePackageTests(unittest.TestCase):
     def test_bundled_hashes(self):
         for source, digest in json.loads((APP / "source-manifest.json").read_text()).items():
             target = (
-                APP / "probe.py"
+                APP / ("large_probe.py" if "large_probe" in source else "probe.py")
                 if source.startswith("tools/")
                 else (APP / "runtime/picot/v2/passive_history" / Path(source).name)
             )
@@ -56,3 +56,22 @@ class ProbePackageTests(unittest.TestCase):
             self.assertTrue(json.loads(run.stdout)["workload_complete"])
             self.assertEqual(list(Path(d).iterdir()), [sentinel])
             self.assertEqual(sentinel.read_text(), "keep")
+
+    def test_large_probe(self):
+        with tempfile.TemporaryDirectory() as d:
+            run = subprocess.run(
+                [sys.executable, str(APP / "large_probe.py"), "--scratch-parent", d],
+                cwd=d,
+                env=os.environ | {"PYTHONPATH": str(APP / "runtime")},
+                capture_output=True,
+                text=True,
+                timeout=55,
+                check=False,
+            )
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            report = json.loads(run.stdout)
+            self.assertTrue(report["workload_complete"])
+            self.assertTrue(report["overlap_observed"])
+            self.assertEqual(report["sizes_mib"], [1, 2, 4, 8])
+            self.assertEqual(report["phases"][1]["index"]["jobs"], {"done": 4})
+            self.assertEqual(list(Path(d).iterdir()), [])

@@ -2,13 +2,16 @@
 
 ## Wat deze app doet
 
-1. Vier seconden een vaste controletik meten zonder opname.
-2. Dezelfde meting met vier synthetische records van ongeveer 256 KiB, één per seconde.
-3. De records ontdekken en één batch verwerken; vervolgens stoppen.
+1. Ongeveer acht seconden een vaste controletik meten zonder opname.
+2. Dezelfde meting met vier vooraf opgebouwde synthetische records van ongeveer
+   1, 2, 4 en 8 MiB, één per twee seconden.
+3. Een apart kindproces ontdekt en verwerkt ondertussen eerder opgeslagen records
+   in maximaal vier rondes; iedere ronde maximaal vier jobs. Daarna stoppen.
 
-De proef gebruikt eigen kindprocessen met geheugen-/CPU-limieten. Per fase geldt
-vijftien seconden timeout. Normaal duurt het programma ongeveer acht tot tien
-seconden na het opstarten. De beschikbare schijfruimte moet vooraf minimaal
+De proef gebruikt eigen kindprocessen met geheugen-/CPU-limieten. Baseline en gelijktijdige fase hebben ieder 25 seconden timeout. De indexworker
+heeft een aanvullende begrensde wachttijd; bij een fase-timeout wordt de eigen
+procesgroep beëindigd. Normaal duurt het programma ongeveer twintig seconden
+na het opstarten. De beschikbare schijfruimte moet vooraf minimaal
 512 MiB zijn. Alleen zijn eigen tijdelijke proefdirectory wordt opgeruimd.
 
 ## Starten nadat de afzonderlijke app beschikbaar is gemaakt
@@ -33,12 +36,16 @@ watchdog of herhaallus. De concrete Supervisor-uitvoering moet nog worden getoet
 ## Resultaat beoordelen
 
 `workload_complete: true` vereist vier publicaties, vier verwerkte jobs, geen
-pending werk en SQLite-integriteit `ok`. Bekijk daarnaast CPU-tijd, piek-RSS,
+pending werk en SQLite-integriteit `ok`. `overlap_observed` moet bovendien waar
+zijn om deze specifieke gelijktijdigheidsproef als uitgevoerd te beschouwen.
+Ontbrekende overlap levert geen automatische herhaling op. Bekijk daarnaast CPU-tijd, piek-RSS,
 maximale aanbiedduur en p95/maximale controletikvertraging vóór en tijdens opname.
 Er is geen automatische prestatiegrens of plannergoedkeuring.
 
-Dit is een korte proef met kleine synthetische records, geen bewijs voor grote
-plansnapshots, langdurig gebruik, gelijktijdige workers of storingsvrij plannen.
+Dit is een korte proef met synthetische records tot ongeveer 8 MiB, geen bewijs
+voor alle echte plansnapshotstructuren, grotere records, langdurige inventarisgroei
+of storingsvrij plannen. De objectstructuur en compressie verschillen van echte
+plannen; er worden geen inhoudelijke plannerberekeningen uitgevoerd.
 De NUC deelt CPU, RAM en schijf tussen apps; afzonderlijke containers maken die
 resources niet onafhankelijk. De proef wijzigt geen MEP-regels of PicoT-bestanden.
 
@@ -57,3 +64,23 @@ proefcode tijdens uitvoering.
 
 Configuratiebasis:
 [Home Assistant-appconfiguratie](https://developers.home-assistant.io/docs/apps/configuration/).
+
+
+## Aanvullende begrenzing in 0.2.0
+
+Per meet-/indexproces blijft maximaal 128 MiB virtuele adresruimte gelden.
+Opname en baseline krijgen ieder vijf CPU-seconden; de gehele indexfase twee.
+Er is dus geen verdubbeling van de toegestane index-CPU per ronde. Het bewijsbudget
+voor deze afzonderlijke grotere proef is 64 MiB en het SQLite-budget 8 MiB.
+Er is geen wijziging van productie-instellingen of automatische budgetverhoging.
+
+Indexwerk begint gepland 75 ms na een nieuw aanbod. Die verschuiving houdt rekening
+met het 50-ms-pollen van de bestaande recorder. De meetrunner registreert begin/einde
+van werkelijke `publish`-aanroepen en indexrondes op dezelfde monotone klok. Alleen
+hun daadwerkelijke tijdsdoorsnede telt als overlap; geplande gelijktijdigheid alleen
+is onvoldoende. Indexperioden bevatten ontdekking, lezen, parsen en schrijven;
+het is geen meting van gelijktijdig gebruikte CPU-kernen. De timinginstrumentatie
+bestaat alleen in de proefrunner en verandert de meegeleverde historiecode niet.
+
+Het oude 0.1.0-programma blijft meegeleverd voor regressiecontrole. De standaard
+startopdracht van de app voert uitsluitend de nieuwe grotere proef uit.

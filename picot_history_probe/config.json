@@ -1,8 +1,8 @@
 {
   "name": "PicoT History Probe",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "slug": "picot_history_probe",
-  "description": "Eenmalige synthetische historieproef; geen verbinding met de planner.",
+  "description": "Eenmalige grotere historieproef met gelijktijdige opname en indexering.",
   "arch": [
     "amd64"
   ],

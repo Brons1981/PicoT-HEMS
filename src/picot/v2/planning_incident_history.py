@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import deque
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum
@@ -157,6 +158,7 @@ class PlanningIncidentHistory:
     path: Path
     preceding_poll_count: int = DEFAULT_PRECEDING_POLLS
     local_timezone_name: str = "Europe/Amsterdam"
+    evidence_offer: Callable[[str], object] | None = None
     _polls: deque[dict[str, object]] = field(init=False)
     _active_incident_id: str | None = field(default=None, init=False)
     _active_fingerprint: str | None = field(default=None, init=False)
@@ -371,6 +373,13 @@ class PlanningIncidentHistory:
             self._last_compacted_at = captured_at
         encoded = json.dumps(record, default=_json_value, separators=(",", ":"))
         encoded_size = len(encoded)
+        if self.evidence_offer is not None:
+            try:
+                # Opt-in, non-waiting handoff of the existing immutable text.
+                # No storage acknowledgement may affect incident or plan processing.
+                self.evidence_offer(encoded)
+            except Exception:
+                pass
         if encoded_size > MAX_INCIDENT_RECORD_BYTES:
             bounded = _basic_incident_record(record)
             bounded["detail_level"] = "bounded"

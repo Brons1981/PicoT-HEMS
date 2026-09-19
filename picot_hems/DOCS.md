@@ -104,3 +104,19 @@ herstellen en de complete route moet in het slechtste scenario minimaal vijf cen
 netto opleveren. Zodra de exportsessie is gestart, blijft die sessie vastgelegd tot
 het venster of het energiedoel eindigt; een nieuwe 60-secondenpoll start geen losse
 kwartierhandel.
+
+
+## Snapshotopnameproef — dev.264
+
+Laat `history_capture_trial_enabled` eerst op `false` staan en verzamel 30 minuten
+logboek als baseline. De nieuwe JSON-regels heten `picot_v2_history_capture_trial`.
+Na beoordeling kan de optie op `true` worden gezet, gevolgd door een appherstart.
+Dan worden gedurende 30 minuten bestaande volledige incidentrecords opgenomen.
+De recorder heeft een wachtrij van twee records, 64 MiB gereserveerde tekstobjecten
+en een eigen opslagbudget van 512 MiB met 128 MiB vrije-ruimtereserve.
+
+Een schrijffout stopt de opname. Afwijzingen en ontbrekende opnamen blijven
+zichtbaar. Er is geen automatische indexverwerking of verwijdering. Na de proef
+de optie terug op `false` zetten en herstarten; opgeslagen bestanden blijven staan.
+Een herstart met `true` begint een nieuwe proef. Een lopende schrijfactie mag na
+de 30-minutengrens afronden. Deze proef is nog geen vrijgave voor permanent gebruik.

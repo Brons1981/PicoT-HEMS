@@ -77,6 +77,7 @@ from picot.v2.market_daily_runtime import (
 )
 from picot.v2.material_replanning import MaterialReplanningObservationProducer
 from picot.v2.opportunity_engine import PriceOpportunityConfig
+from picot.v2.passive_history.trial import HistoryCaptureTrial
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings, PlanningInputSuperseded
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
@@ -226,6 +227,22 @@ def _log_runtime_memory(phase: str, *, run_id: str | None = None, **extra: objec
         ),
         flush=True,
     )
+
+
+def _log_history_capture_trial(
+    trial: HistoryCaptureTrial, *, cycle_ms: float, cycle_cpu_ms: float,
+) -> None:
+    """Observational only: a missed diagnostic must not interrupt execution."""
+    try:
+        print(json.dumps({
+            "event": "picot_v2_history_capture_trial",
+            "cycle_ms": round(cycle_ms, 3),
+            "cycle_cpu_ms": round(cycle_cpu_ms, 3),
+            **_runtime_memory_kib(),
+            **trial.report(),
+        }, separators=(",", ":")), flush=True)
+    except Exception:
+        pass
 
 
 def _save_market_daily_diagnostics(
@@ -2606,8 +2623,10 @@ def main() -> None:
         commitment_store=active_plan_commitment_store,
     )
     planning_fallback_notifier = PlanningFallbackNotifier()
+    history_capture_trial = HistoryCaptureTrial(options)
     planning_incident_history = PlanningIncidentHistory(
         PLANNING_INCIDENT_HISTORY_PATH,
+        evidence_offer=history_capture_trial.evidence_offer,
         local_timezone_name=str(
             options.get("pv_local_timezone", "Europe/Amsterdam")
         ).strip(),
@@ -3333,6 +3352,8 @@ def main() -> None:
     previous_signature: str | None = None
     while True:
         cycle_started_at = datetime.now(UTC)
+        cycle_started_clock = perf_counter()
+        cycle_started_cpu = time.process_time()
         if planning_reset_requested.is_set():
             planning_reset_requested.clear()
             previous_signature = None
@@ -3350,6 +3371,11 @@ def main() -> None:
                 runtime_monitor=runtime_monitor,
                 runtime_observations=material_replanning.observe,
             )
+        )
+        _log_history_capture_trial(
+            history_capture_trial,
+            cycle_ms=(perf_counter() - cycle_started_clock) * 1000,
+            cycle_cpu_ms=(time.process_time() - cycle_started_cpu) * 1000,
         )
         execution_scope_id = str(
             options.get("storage_execution_scope_id", "home-battery")

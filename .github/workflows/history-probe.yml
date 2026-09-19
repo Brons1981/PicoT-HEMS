@@ -24,7 +24,7 @@ jobs:
       - name: Execute bounded container without network
         run: |
           mkdir -p "$RUNNER_TEMP/history-probe-data"
-          timeout 60s docker run --rm --network none --read-only --cap-drop ALL \
+          timeout 60s docker run --rm --user "$(id -u):$(id -g)" --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --memory 256m --cpus 1 --pids-limit 32 \
             --volume "$RUNNER_TEMP/history-probe-data:/data" \
             picot-history-probe:test > "$RUNNER_TEMP/history-probe-result.json"

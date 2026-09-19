@@ -29,4 +29,4 @@ jobs:
             --volume "$RUNNER_TEMP/history-probe-data:/data" \
             picot-history-probe:test > "$RUNNER_TEMP/history-probe-result.json"
           cat "$RUNNER_TEMP/history-probe-result.json"
-          python -c 'import json,sys; assert json.load(open(sys.argv[1]))["workload_complete"]' "$RUNNER_TEMP/history-probe-result.json"
+          python -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["workload_complete"] and r["overlap_observed"]' "$RUNNER_TEMP/history-probe-result.json"

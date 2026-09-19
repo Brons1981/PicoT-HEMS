@@ -3,10 +3,13 @@
 Tijdelijke, afzonderlijke Home Assistant-app voor een kleine synthetische
 belastingproef op de NUC. Geen nieuwe PicoT HEMS-versie.
 
-Na handmatig starten voert deze app één proef uit en stopt. Het JSON-resultaat
+Versie 0.2.0 gebruikt synthetische records van ongeveer 1, 2, 4 en 8 MiB,
+met gelijktijdige opname en indexwerk. Na handmatig starten voert deze app
+één proef uit en stopt. Het JSON-resultaat
 verschijnt in het logboek. Een gestopte app is na deze proef dus normaal.
 `workload_complete: true` betekent dat vier synthetische records zijn opgeslagen
-en verwerkt; het is geen vrijgave van opname in de draaiende planner.
+en verwerkt. `overlap_observed: true` bevestigt overlappende publicatie- en
+indexwerkperioden; het is geen vrijgave van opname in de draaiende planner.
 
 De app vraagt geen Home Assistant-/Supervisor-/Docker-API-toegang, geen
 hostnetwerk, extra rechten, poorten of gedeelde directories. Hij gebruikt alleen

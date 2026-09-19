@@ -13,8 +13,8 @@ hostnetwerk, extra rechten, poorten of gedeelde directories. Hij gebruikt alleen
 zijn eigen `/data` voor tijdelijke proefbestanden. AppArmor blijft ingeschakeld.
 De code maakt geen netwerkverbindingen; dit is geen netwerkfirewallgarantie.
 
-Dit pakket is lokaal voorbereid. De containerbouw en uitvoering onder Home
-Assistant Supervisor zijn nog niet gecontroleerd. Er is nog niets gepubliceerd,
-geïnstalleerd of op de NUC gestart.
+Dit is een afzonderlijk testpakket. De bijbehorende GitHub-controle bouwt de
+container en voert de proef zonder netwerk uit. De echte uitvoering onder Home
+Assistant Supervisor op de NUC moet daarna nog worden beoordeeld.
 
 Zie [DOCS.md](DOCS.md) voor uitvoering en interpretatie.

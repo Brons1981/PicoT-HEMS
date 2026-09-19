@@ -1,5 +1,5 @@
 # 0.1.0
 
-Eerste lokale voorbereiding van een afzonderlijke, handmatig gestarte historieproef.
-Vier synthetische records; eigen tijdelijke opslag; uitslag in het logboek.
-Geen productieaansluiting, publicatie of NUC-uitvoering.
+Afzonderlijke, handmatig gestarte historieproef. Vier synthetische records,
+eigen tijdelijke opslag en uitslag in het logboek. Inclusief bronhashcontrole en
+containerproef via GitHub Actions. Geen wijziging aan PicoT HEMS dev.263.

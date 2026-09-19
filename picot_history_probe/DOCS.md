@@ -46,8 +46,8 @@ resources niet onafhankelijk. De proef wijzigt geen MEP-regels of PicoT-bestande
 
 Het buildcontext bevat een expliciete kopie van het beoordeelde proefprogramma en
 zes passieve bron-/schemabestanden, zonder live-runtime of planner. De hashes staan
-in `source-manifest.json`. De repositorytest vergelijkt die bestanden met de
-canonieke bronnen en faalt bij afwijking. Bij een volgende wijziging moeten het
+in `source-manifest.json`. De zelfstandige pakkettest verifieert deze hashes. Bij samenstellen zijn de
+bestanden bovendien byte voor byte met de canonieke lokale bronnen vergeleken. Bij een volgende wijziging moeten het
 pakket en manifest samen opnieuw worden bijgewerkt en beoordeeld.
 
 De Dockerfile kopieert uitsluitend deze bestanden. De basisimage heeft een

@@ -300,3 +300,89 @@ Afgeleid huisverbruik blijft gescheiden van ruwe metingen en de strikte replay;
 geen nulvulling of nieuwe MEP-inputs. Op export 19:43: 74 afgeleide tijdvakken,
 vijf ongeldig. Geen bewijs dat de volledige 1,7 kWh netladen vermijdbaar was.
 Details: docs/development_log/2026-09-17-review-quarter-alignment.md.
+
+## 2026-09-19 — geïntegreerde passieve historie, lokaal en standaard uit
+
+Lees `docs/development_log/2026-09-19-passive-history-implementation.md`.
+Alex heeft na de gezamenlijke ontwerpen en offline proeven de geïntegreerde
+implementatiestap bevestigd. `picot.v2.passive_history` bevat opname, bewijsindex,
+compacte records/revisies, kalender, diagnose-import en een begrensde worker.
+De incidentregistratie heeft een optionele pre-reductiecallback; geen live callsite
+of workerinitialisatie toegevoegd. Planner, MEP, Plan Store, uitvoering en
+bestaande financiële/prognose-inputs blijven ongewijzigd. Geen release of live
+activatie. Automatische afschaling, volledige dependencycertificering en
+NUC-belasting blijven vóór activering te beoordelen. Geen oude bestanden wissen.
+
+Vervolg 19 september: `passive_history.retention` biedt nu een alleen-lezen
+bewaaroverzicht met bronsnapshottoken en een afzonderlijke offline vergelijkkopie.
+Alleen bewezen dagaggregaten mogen daarin oudere overige kwartiergetallen
+vervangen; huisverbruik, kwartierprijzen en kwaliteits-/herkomstinformatie blijven
+behouden. Revisietwijfel, open dagen, onbekende meetsoorten en de vijfjaarsgrens
+betekenen behoud/beoordeling. De kopie wordt geweigerd als actieve HistoryStore.
+Geen bronverwijdering, automatische vervanging, live-aansluiting of release.
+Lees de vervolgsectie in bovengenoemd ontwikkellog voor grenzen en proefbewijs.
+
+Gericht herstel na uitvaltoets: tijdelijke I/O-uitval krijgt `source_unavailable`,
+corruptie blijft `invalid_record`. Alleen expliciet geselecteerde digests kunnen
+begrensd opnieuw worden ingepland (`worker --recheck-digest SHA256`, maximaal 16,
+totale pending-wachtrij 64). Geen automatische retry na herstart/herontdekking.
+Pogingen en observaties blijven bewaard; volledige replay wordt niet opgewaardeerd.
+Zie ontwikkellog voor regressiebewijs. Nog geen live-aansluiting of release.
+
+Voorbereiding eerste NUC-proef: lees
+`docs/development_log/2026-09-19-passive-history-nuc-probe.md`.
+`tools/passive_history_probe.py` meet een kleine synthetische belasting in eigen
+kindprocessen/tijdelijke opslag: baseline, opname en indexverwerking. Lokaal getest;
+niet op de NUC uitgevoerd. Geen installatie of aansluiting op dev.263. Eerst de
+beschikbare afzonderlijke NUC-proefomgeving vaststellen; geen HA-instellingen wijzigen.
+
+Terminal & SSH heeft volgens Alex geen `python3`. Daarom is met zijn akkoord
+`picot_history_probe/` als afzonderlijke tijdelijke HA-testapp voorbereid:
+handmatig/eenzelfde eenmalige proef, eigen `/data`, geen API-/hosttoegang of gedeelde
+PicoT-bestanden. Bronnen zijn meegeleverd met hashcontrole. Nog niet gepubliceerd,
+gebouwd met Docker of op de NUC geïnstalleerd; dev.263 hoeft niet te wijzigen.
+Zie README/DOCS in die appmap en het NUC-proeflog voor de concrete grenzen.
+
+Publicatie afgerond: PR #659, merge `27ec942abd3b7955eaa69ac43096f1fe2c5c2a50`.
+Uitsluitend `picot_history_probe/` en eigen CI-workflow gepubliceerd (18 nieuwe
+bestanden, geen bestaande wijzigingen); HEMS blijft dev.263. Containerproef,
+686 v2-tests en 1.618 PR-tests geslaagd; pushchecks eveneens groen. Testapp 0.1.0
+kan na appwinkelverversing worden geïnstalleerd en één keer handmatig gestart.
+Nog geen NUC-resultaat. Overige lokale historiewijzigingen zijn niet gepubliceerd.
+
+Eerste NUC-proef ontvangen: `workload_complete=true`, 4/4 gepubliceerd en verwerkt,
+geen achterstand of integriteitsfout. Bronhashes passen bij testapp 0.1.0.
+Opnametijd aanbod maximaal 0,060 ms; p95 controletik baseline/opname 0,279/0,271 ms;
+opnameproces piek-RSS 20,23 MiB. Dit is uitsluitend een kleine synthetische proef,
+geen bewijs over plannerlatentie of grote snapshots. Zie NUC-proeflog voor exact
+bewijs en beperkingen. Nog geen actieve historieaansluiting of nieuwe HEMS-release.
+
+Testapp 0.2.0 gepubliceerd via PR #660, merge
+`a1f00bfe9111b6b0e05b2a349352f723751a1e91`. Grotere synthetische records
+1/2/4/8 MiB met aantoonbare overlap van publicatie en indexwerk. Alleen testapp en
+CI gewijzigd, HEMS blijft dev.263. Vier pakkettests, containerproef en alle
+projectchecks geslaagd. Lokale/CI-tikvertraging kende uitschieters circa 5/21 ms;
+geen plannergoedkeuring afleiden. Wacht op Alex' NUC-log van 0.2.0 na handmatige start.
+
+Tweede NUC-log ontvangen: functioneel 4/4 en 0,641 s overlap, maar upload bevat
+alleen de laatste 100 regels. Baseline en heartbeatmetingen ontbreken. Piek-RSS
+50,11 MiB per gerapporteerd proces; maximaal aanbod 0,064 ms. Nog geen oordeel
+over vertraging. Vraag bestaande logs met 300 regels op; proef niet opnieuw starten.
+
+## 2026-09-19 — runtime-opnameproef, lokaal en standaard uit
+
+Lees `docs/development_log/2026-09-19-history-capture-runtime-trial.md`.
+Het complete NUC-log bevat twee geslaagde grote proeven inclusief tikmetingen;
+de eerdere ontbrekende-baselineblokkade is opgeheven. Dit certificeert geen planner.
+Alex heeft de optionele opnameaansluiting bevestigd. De lokale HEMS-optie
+`history_capture_trial_enabled` staat standaard false. Alleen capture wordt
+verbonden, met 30 minuten aanbiedvenster, begrensde wachtrij/eigen opslag en
+stoppen bij een publicatiefout. Geen indexworker of verwijdering in de runtime.
+Nieuwe logregels meten ook de uitgeschakelde baseline. Planner/MEP/commitmentbeleid
+blijven gelijk. Geen release of NUC-optiewijziging uitgevoerd; dev.263 blijft live.
+
+Releasevoorbereiding na Alex' akkoord: dev.264 op een aparte branch vanaf
+`a1f00bfe9111b6b0e05b2a349352f723751a1e91`. Optie blijft false; eerst 30 minuten
+baseline op de NUC. De opnameproef start pas na expliciet inschakelen/herstarten.
+Geen plannerwijziging of automatische verwijdering. Publicatiestatus volgt in het
+ontwikkellog van de runtimeproef; de eerdere lokale statusregels zijn historisch.

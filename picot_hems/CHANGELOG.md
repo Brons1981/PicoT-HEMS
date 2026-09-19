@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0-dev.264
+
+- Begrensde praktijkproef voor volledige snapshots, standaard uit (`history_capture_trial_enabled: false`).
+- Na inschakelen maximaal 30 minuten nieuwe opnamen; begrensde wachtrij en eigen opslag. Opname stopt bij een schrijffout.
+- Compacte logregels met looptijd, CPU, geheugen en opgeslagen/gemiste records, ook voor de baseline met opname uit.
+- Geen automatische indexverwerking of verwijdering; plannerregels, MEP en batterijaansturing blijven ongewijzigd.
+- Start de praktijkproef met 30 minuten opname uit. Inschakelen vereist een appherstart.
+
 ## 2.0.0-dev.263
 
 - Nacontrole integreert vermogens over gelijke klokkwartieren en toont apart het afgeleide huisverbruik.

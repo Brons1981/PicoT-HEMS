@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.266
+
+- Nieuwe diagnose- en proefrecords behouden de oorspronkelijke tijdzone-offset voor reproduceerbare historische ID’s.
+- Wijzigingsdetectie blijft UTC gebruiken; plannerregels en aansturing blijven gelijk.
+- Bestaande archieven blijven behouden. Laat `history_capture_trial_enabled` op `false` staan.
+
 ## 2.0.0-dev.265
 
 - Diagnose-download bevat nu de bewaarde snapshotproefobjecten en een exportmanifest.

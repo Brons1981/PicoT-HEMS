@@ -392,3 +392,14 @@ ontwikkellog van de runtimeproef; de eerdere lokale statusregels zijn historisch
 See `docs/development_log/2026-09-20-history-trial-export.md` for the bounded
 read-only export and completed dev.264 trial. Keep capture false during update
 and download. The three actual NUC objects still require offline verification.
+
+## 20 september — tijdnotatie voor replay, lokaal
+
+Lees `docs/development_log/2026-09-20-history-time-offset.md`. De echte proefrecords
+zijn geverifieerd; de oorspronkelijke beslissing is inclusief ID’s gereproduceerd.
+Recordopslag bewaart nu bronoffsets, terwijl fingerprints UTC blijven gebruiken.
+65 gerichte tests en de echte opslag/replayproef slagen; Ruff en mypy groen.
+Branch `fix/history-preserve-time-offset`, nog geen publicatie of livewijziging.
+
+Releasevoorbereiding na Alex’ akkoord: dev.266 via PR en CI. Opname blijft
+standaard false; installatie en livecontrole volgen afzonderlijk.

@@ -33,6 +33,18 @@ def _json_value(value: object) -> object:
     raise TypeError(f"unsupported incident value: {type(value).__name__}")
 
 
+def _record_json_value(value: object) -> object:
+    """Preserve source offsets in evidence; fingerprints still normalise to UTC.
+
+    Historical planner IDs include datetime representations. Converting evidence
+    to UTC loses the notation needed to reproduce those IDs from fixed-offset
+    inputs. Existing archived strings and explicitly labelled UTC fields stay as-is.
+    """
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return _json_value(value)
+
+
 def _entity_observations(bundle: PlanningInputBundle) -> list[dict[str, object]]:
     observations: list[dict[str, object]] = []
     for evidence in bundle.evidence:
@@ -371,7 +383,7 @@ class PlanningIncidentHistory:
         ):
             self._compact_expired_details(captured_at)
             self._last_compacted_at = captured_at
-        encoded = json.dumps(record, default=_json_value, separators=(",", ":"))
+        encoded = json.dumps(record, default=_record_json_value, separators=(",", ":"))
         encoded_size = len(encoded)
         if self.evidence_offer is not None:
             try:
@@ -384,7 +396,7 @@ class PlanningIncidentHistory:
             bounded = _basic_incident_record(record)
             bounded["detail_level"] = "bounded"
             bounded["oversized_record_bytes"] = encoded_size
-            encoded = json.dumps(bounded, default=_json_value, separators=(",", ":"))
+            encoded = json.dumps(bounded, default=_record_json_value, separators=(",", ":"))
             encoded_size = len(encoded)
         if (
             self.path.is_file()

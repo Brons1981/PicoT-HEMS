@@ -343,3 +343,26 @@ def test_clock_boundary_oversize_keeps_original_outcome_without_fabrication(
     assert record["detail_level"] == "bounded"
     assert record["boundary_outcome"] == outcome
     assert record["snapshot_id"] == _snapshot().snapshot_id
+
+
+def test_storage_preserves_original_offsets_and_replay_identity(tmp_path) -> None:
+    from datetime import timezone
+    from hashlib import sha256
+
+    # Persist the same instant in summer, winter and UTC notation. ID inputs
+    # must survive storage unchanged, even when instant equality holds.
+    offered: list[str] = []
+    path = tmp_path / "incidents.jsonl"
+    history = PlanningIncidentHistory(path, evidence_offer=offered.append)
+    instant = datetime(2026, 9, 20, 22, tzinfo=UTC)
+    for offset in (2, 1, 0):
+        original = instant.astimezone(timezone(timedelta(hours=offset)))
+        history._append({"poll": {"planning_input": {"ends_at": original}}})
+        saved = json.loads(offered[-1])["poll"]["planning_input"]["ends_at"]
+        restored = datetime.fromisoformat(saved)
+        assert saved == original.isoformat()
+        assert restored == original
+        assert sha256(repr(restored).encode()).digest() == sha256(repr(original).encode()).digest()
+        # Change detection keeps its existing canonical representation.
+        assert incident_history._json_value(original) == instant.isoformat()
+    assert path.read_text().splitlines() == offered

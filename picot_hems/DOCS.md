@@ -120,3 +120,9 @@ zichtbaar. Er is geen automatische indexverwerking of verwijdering. Na de proef
 de optie terug op `false` zetten en herstarten; opgeslagen bestanden blijven staan.
 Een herstart met `true` begint een nieuwe proef. Een lopende schrijfactie mag na
 de 30-minutengrens afronden. Deze proef is nog geen vrijgave voor permanent gebruik.
+
+Vanaf dev.265 bevat de diagnose-download ook de reeds opgeslagen proefobjecten
+en een exportmanifest. Zet `history_capture_trial_enabled` vóór installatie op
+`false` en download na de update één nieuwe diagnose-ZIP. Een nieuwe opname is
+niet nodig. Export is begrensd op 16 MiB en 64 objecten en verwijdert niets. Het
+manifest meldt ontbrekende of gedeeltelijke export; inhoudsverificatie volgt apart.

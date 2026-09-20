@@ -77,7 +77,7 @@ from picot.v2.market_daily_runtime import (
 )
 from picot.v2.material_replanning import MaterialReplanningObservationProducer
 from picot.v2.opportunity_engine import PriceOpportunityConfig
-from picot.v2.passive_history.trial import HistoryCaptureTrial
+from picot.v2.passive_history.trial import TRIAL_ROOT, HistoryCaptureTrial
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings, PlanningInputSuperseded
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
@@ -2693,6 +2693,7 @@ def main() -> None:
     web_view_store.set_diagnostic_paths(
         (
             PLANNING_INCIDENT_HISTORY_PATH,
+            TRIAL_ROOT,
             SOC_PROJECTION_CACHE_PATH,
             HOUSEHOLD_LOAD_HISTORY_PATH,
             PV_ATTENUATION_FORECAST_BASIS_PATH,

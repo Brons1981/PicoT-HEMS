@@ -9,6 +9,8 @@ from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from picot.v2.passive_history.export import export_trial
+
 MAX_INCIDENT_EVENTS = 20
 TAIL_READ_CHUNK_BYTES = 64 * 1024
 MAX_ROTATED_EXPORT_BYTES = 128 * 1024 * 1024
@@ -54,7 +56,9 @@ def diagnostic_zip(paths: tuple[Path, ...]) -> bytes:
     output = BytesIO()
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
         for path in paths:
-            if path.is_file():
+            if path.name == "picot_history_capture_trial":
+                export_trial(archive, path)
+            elif path.is_file():
                 archive.write(path, arcname=path.name)
         remaining = MAX_ROTATED_EXPORT_BYTES
         omitted: list[str] = []

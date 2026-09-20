@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.265
+
+- Diagnose-download bevat nu de bewaarde snapshotproefobjecten en een exportmanifest.
+- Export is begrensd op 16 MiB en 64 objecten; opgeslagen gegevens blijven behouden.
+- Laat `history_capture_trial_enabled` op `false` staan bij installatie en download daarna één nieuwe diagnose-ZIP. Een nieuwe opnameproef is niet nodig.
+
 ## 2.0.0-dev.264
 
 - Begrensde praktijkproef voor volledige snapshots, standaard uit (`history_capture_trial_enabled: false`).

@@ -386,3 +386,9 @@ Releasevoorbereiding na Alex' akkoord: dev.264 op een aparte branch vanaf
 baseline op de NUC. De opnameproef start pas na expliciet inschakelen/herstarten.
 Geen plannerwijziging of automatische verwijdering. Publicatiestatus volgt in het
 ontwikkellog van de runtimeproef; de eerdere lokale statusregels zijn historisch.
+
+## Dev.265 — trial diagnostic export
+
+See `docs/development_log/2026-09-20-history-trial-export.md` for the bounded
+read-only export and completed dev.264 trial. Keep capture false during update
+and download. The three actual NUC objects still require offline verification.

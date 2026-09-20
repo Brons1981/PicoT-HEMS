@@ -403,3 +403,12 @@ Branch `fix/history-preserve-time-offset`, nog geen publicatie of livewijziging.
 
 Releasevoorbereiding na Alex’ akkoord: dev.266 via PR en CI. Opname blijft
 standaard false; installatie en livecontrole volgen afzonderlijk.
+
+## 20 september — standby-adapterherstel, lokaal
+
+Lees `docs/development_log/2026-09-20-adapter-standby.md`.
+De bestaande standby-koppeling werd door de HA-adapter geweigerd. Eén toegevoegde
+primitive herstelt de vertaling; planner en runtime zijn ongewijzigd. 63 gerichte
+tests, Ruff, mypy en tien offline diagnosegrenzen slagen. Branch
+`fix/adapter-standby`. Alex heeft release dev.267 aangevraagd; publicatie via
+PR en CI, installatie en liveverificatie volgen afzonderlijk.

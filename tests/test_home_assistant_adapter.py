@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -239,3 +240,65 @@ def test_adapter_rejects_scope_mismatch() -> None:
     )
     with pytest.raises(ValueError, match="scope"):
         HomeAssistantAdapter().translate(_request(), mapping, created_at=NOW)
+
+
+@pytest.mark.parametrize("dispatch_mode", list(HomeAssistantDispatchMode))
+def test_standby_translation_preserves_command_and_plan_lineage(
+    dispatch_mode: HomeAssistantDispatchMode,
+) -> None:
+    request = _mode_request(ExecutionPrimitive.STANDBY)
+    mapping = _mode_mapping(ExecutionPrimitive.STANDBY, "Standby")
+    adapter = HomeAssistantAdapter()
+    call = adapter.translate(request, mapping, created_at=NOW, dispatch_mode=dispatch_mode)
+
+    assert call.domain == "input_select"
+    assert call.service == "select_option"
+    assert call.target == (("entity_id", "input_select.zendure_2400_ac_modus_selecteren"),)
+    assert call.service_data == (("option", "Standby"),)
+    assert call.source_request_id == request.request_id
+    assert call.plan_set_id == request.plan_set_id
+    assert call.plan_id == request.plan_id
+    assert call.segment_id == request.segment_id
+    assert call.capability_id == request.capability_id
+    assert call.execution_scope_id == request.execution_scope_id
+    assert call.mapping_id == mapping.mapping_id
+    assert call.mapping_version == mapping.mapping_version
+    assert call.dispatch_mode is dispatch_mode
+    assert call == adapter.translate(
+        request, mapping, created_at=NOW, dispatch_mode=dispatch_mode
+    )
+    result = HomeAssistantDispatcher().dispatch(call, attempted_at=NOW)
+    expected = (
+        HomeAssistantDispatchStatus.DRY_RUN_ONLY
+        if dispatch_mode is HomeAssistantDispatchMode.DRY_RUN
+        else HomeAssistantDispatchStatus.REJECTED
+    )
+    assert result.status is expected
+
+
+@pytest.mark.parametrize(
+    ("mapping", "error"),
+    [
+        (replace(_mode_mapping(ExecutionPrimitive.STANDBY, "Standby"), enabled=False),
+         "disabled"),
+        (replace(_mode_mapping(ExecutionPrimitive.STANDBY, "Standby"), fixed_value=None),
+         "explicit fixed option"),
+        (replace(_mode_mapping(ExecutionPrimitive.STANDBY, "Standby"), service="set_value"),
+         "input_select.select_option"),
+        (replace(_mode_mapping(ExecutionPrimitive.STANDBY, "Standby"),
+                 execution_scope_id="other-battery"), "scope"),
+        (replace(_mode_mapping(ExecutionPrimitive.STANDBY, "Standby"),
+                 capability_id="other-capability"), "Capability"),
+        (replace(_mode_mapping(ExecutionPrimitive.STANDBY, "Standby"), value_key="value"),
+         "key 'option'"),
+    ],
+)
+def test_standby_rejects_invalid_mapping(
+    mapping: HomeAssistantCommandMapping, error: str,
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        HomeAssistantAdapter().translate(
+            _mode_request(ExecutionPrimitive.STANDBY),
+            mapping,
+            created_at=NOW,
+        )

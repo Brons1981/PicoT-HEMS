@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.0-dev.267
+
+- Herstelt uitvoering van geplande standby-opdrachten via de Zendure-moduskoppeling.
+- Plannerregels, laadplanning en handmatige overrides blijven ongewijzigd.
+
 ## 2.0.0-dev.266
 
 - Nieuwe diagnose- en proefrecords behouden de oorspronkelijke tijdzone-offset voor reproduceerbare historische ID’s.

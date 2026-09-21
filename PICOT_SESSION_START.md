@@ -412,3 +412,16 @@ primitive herstelt de vertaling; planner en runtime zijn ongewijzigd. 63 gericht
 tests, Ruff, mypy en tien offline diagnosegrenzen slagen. Branch
 `fix/adapter-standby`. Alex heeft release dev.267 aangevraagd; publicatie via
 PR en CI, installatie en liveverificatie volgen afzonderlijk.
+
+## 21 september — bewijs van afgewezen huisverbruik, lokaal
+
+Lees `docs/development_log/2026-09-21-household-rejection-evidence.md`.
+Branch `fix/household-rejection-evidence` vanaf dev.267. Afwijsredenen ontstaan in
+Planning Input en gaan met bronwaarden/brontijden naar een aparte begrensde
+registratie en diagnose-export. Geen wijzigingen aan geldige waarden, MEP of
+kwartierbalans; 240 vergelijkingen met dev.267 geven dezelfde observaties.
+76 gerichte tests, Ruff en mypy geslaagd. Nog niet gepubliceerd of live getest.
+
+Releasevoorbereiding na Alex’ akkoord: dev.268 via PR en CI. De aparte
+afwijsregistratie werkt zonder inschakelen van de snapshotproef. Installatie en
+nieuwe diagnose moeten de livewerking nog aantonen.

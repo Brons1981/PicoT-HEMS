@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.268
+
+- Afgewezen huisverbruiksmetingen krijgen een aparte registratie met bronwaarden, brontijden en afwijsreden in de diagnose-download.
+- Registratie begrensd op 16 MiB; bestaande gegevens blijven behouden en opslagfouten blokkeren de regeling niet.
+- Geldige meetwaarden, plannerregels en batterijaansturing blijven ongewijzigd.
+
 ## 2.0.0-dev.267
 
 - Herstelt uitvoering van geplande standby-opdrachten via de Zendure-moduskoppeling.

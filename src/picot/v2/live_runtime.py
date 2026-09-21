@@ -56,6 +56,7 @@ from picot.v2.financial_result_ledger import FinancialResultLedger
 from picot.v2.grid_charge_review_runtime import GridChargeReviewObserver
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
+from picot.v2.household_load_rejections import HouseholdLoadRejectionStore
 from picot.v2.household_objective_input import attach_household_objectives
 from picot.v2.household_planning_regime import (
     AdaptiveHouseholdObjectivePolicy,
@@ -164,6 +165,7 @@ ARCHITECTURE_OWNERSHIP = architecture_ownership(
     "live_runtime_composition", "picot.v2.live_runtime"
 )
 
+HOUSEHOLD_LOAD_REJECTIONS_PATH = Path("/data/picot_v2_household_load_rejections.jsonl")
 HOUSEHOLD_LOAD_HISTORY_PATH = Path(
     "/data/picot_v2_household_load_history.jsonl"
 )
@@ -1304,6 +1306,7 @@ def _poll_live_cycle(
     persist_observation: (
         Callable[[HouseholdLoadObservation], None] | None
     ) = None,
+    persist_rejection: Callable[[PlanningInputBundle], None] | None = None,
     refresh_unchanged: Callable[[PlanningInputBundle], None] | None = None,
     advance_clock_boundaries: (
         Callable[[PlanningInputBundle], bool | None] | None
@@ -1333,6 +1336,15 @@ def _poll_live_cycle(
                     ),
                     flush=True,
                 )
+        if persist_rejection is not None and observation is None:
+            try:
+                persist_rejection(current)
+            except (OSError, ValueError, TypeError) as exc:
+                print(json.dumps({
+                    "event": "picot_v2_household_load_rejection_history_unavailable",
+                    "error": type(exc).__name__,
+                    "reason": str(exc),
+                }, separators=(",", ":")), flush=True)
         return current
 
     bundle = load_current_bundle()
@@ -2593,6 +2605,7 @@ def main() -> None:
     )
     planning_reset_requested = Event()
     planning_reset_barrier = PlanningResetBarrier()
+    household_load_rejections = HouseholdLoadRejectionStore(HOUSEHOLD_LOAD_REJECTIONS_PATH)
     household_load_history = HouseholdLoadHistoryStore(
         HOUSEHOLD_LOAD_HISTORY_PATH
     )
@@ -2696,6 +2709,7 @@ def main() -> None:
             TRIAL_ROOT,
             SOC_PROJECTION_CACHE_PATH,
             HOUSEHOLD_LOAD_HISTORY_PATH,
+            HOUSEHOLD_LOAD_REJECTIONS_PATH,
             PV_ATTENUATION_FORECAST_BASIS_PATH,
             PV_ATTENUATION_EVIDENCE_PATH,
             STORAGE_MODE_PROVENANCE_PATH,
@@ -3366,6 +3380,7 @@ def main() -> None:
                 prepare_bundle=prepare_bundle,
                 execute=execute,
                 persist_observation=household_load_history.append,
+                persist_rejection=household_load_rejections.append,
                 refresh_unchanged=refresh_unchanged,
                 observe=publish_input_sources,
                 advance_clock_boundaries=advance_clock_boundaries,

@@ -142,6 +142,7 @@ def test_main_starts_one_web_server_before_pipeline_loop(
         "picot_history_capture_trial",
         "picot_v2_soc_projection.json",
         "picot_v2_household_load_history.jsonl",
+        "picot_v2_household_load_rejections.jsonl",
         "picot_v2_pv_forecast_basis.jsonl",
         "picot_v2_pv_attenuation_evidence.jsonl",
         "picot_v2_storage_mode_provenance.json",

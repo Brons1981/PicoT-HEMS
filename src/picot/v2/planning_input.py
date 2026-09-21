@@ -148,6 +148,7 @@ class PlanningInputBundle:
     assembly_started_at: datetime
     assembly_finished_at: datetime
     household_load_observation: HouseholdLoadObservation | None = None
+    household_load_rejection_reason: str | None = None
 
 
 DEFAULT_BINDINGS = (
@@ -253,6 +254,14 @@ def _household_load_observation_from_evidence(
     *,
     sampled_at: datetime,
 ) -> HouseholdLoadObservation | None:
+    return _assess_household_load_evidence(evidence, sampled_at=sampled_at)[0]
+
+
+def _assess_household_load_evidence(
+    evidence: tuple[SourceEvidence, ...],
+    *,
+    sampled_at: datetime,
+) -> tuple[HouseholdLoadObservation | None, str | None]:
     required_roles = (
         "grid_power",
         "pv_power",
@@ -266,22 +275,22 @@ def _household_load_observation_from_evidence(
         if item.semantic_role not in required_roles:
             continue
         if item.semantic_role in available:
-            return None
+            return None, "duplicate_source_role"
         if (
             item.availability != "available"
             or item.raw_state is None
             or item.raw_unit != "W"
             or item.observed_at is None
         ):
-            return None
+            return None, "source_unavailable_or_invalid_metadata"
         try:
             value = float(item.raw_state)
         except ValueError:
-            return None
+            return None, "source_value_not_numeric"
         available[item.semantic_role] = (value, item.evidence_id)
 
     if set(available) != set(required_roles):
-        return None
+        return None, "required_source_missing"
 
     storage_power_w = derive_validated_storage_power_w(
         signed_power_w=available["storage_power_signed"][0],
@@ -294,7 +303,11 @@ def _household_load_observation_from_evidence(
         battery_power_w=storage_power_w,
     )
     if household_load_power_w is None:
-        return None
+        if any(not isfinite(value) for value, _ in available.values()):
+            return None, "source_value_not_finite"
+        if storage_power_w is None:
+            return None, "storage_power_inconsistent"
+        return None, "negative_household_power_balance"
 
     return HouseholdLoadObservation(
         power_w=household_load_power_w,
@@ -304,7 +317,7 @@ def _household_load_observation_from_evidence(
             for role in required_roles
         ),
         method_version=HOUSEHOLD_LOAD_OBSERVATION_METHOD_VERSION,
-    )
+    ), None
 
 
 def _parse_datetime(value: object) -> datetime | None:
@@ -813,8 +826,8 @@ def assemble_planning_input(
         else None
     )
 
-    household_load_observation = (
-        _household_load_observation_from_evidence(
+    household_load_observation, household_load_rejection_reason = (
+        _assess_household_load_evidence(
             evidence,
             sampled_at=capture,
         )
@@ -1115,4 +1128,5 @@ def assemble_planning_input(
         started,
         finished,
         household_load_observation,
+        household_load_rejection_reason,
     )

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.269
+
+- Bij ontbrekende actuele PV kan vijf minuten betrouwbaar Shelly- en batterijbewijs een vermindering van netladen laten beoordelen.
+- Het 100%-dagdoel, de reserve en de bestaande volledige MEP-planvergelijking blijven vereist; vrijgekomen laadintervallen worden NOM.
+- Ontbrekende PV blijft onbekend. Ongeldige of verouderde bronnen en actieve belastingbescherming blokkeren de terugval.
+- Diagnose bevat het onafhankelijke netbalansbewijs en de revisiereden. Dev.268 is de eerste terugvalbasis.
+
 ## 2.0.0-dev.268
 
 - Afgewezen huisverbruiksmetingen krijgen een aparte registratie met bronwaarden, brontijden en afwijsreden in de diagnose-download.

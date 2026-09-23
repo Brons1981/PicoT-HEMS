@@ -8,6 +8,16 @@ This file is a routing index and guardrail.  The linked Accepted ADR files are
 the architectural authority.  Current code, tests, comments, diagnostics and
 earlier assistant memory are evidence, but they do not redefine ownership.
 
+## Actuele eerste terugvalbasis — 2026-09-23
+
+Alex heeft **2.0.0-dev.268** aangewezen als eerste terugvalbasis:
+`7e49bf9eff507e7f277f5007d400bac731b07f25`.
+Dit is de uitgebrachte versie vóór de nieuwe terugval op netbalans bij ontbrekende
+PV. De lokale, nog niet uitgebrachte wijzigingen horen niet bij deze basis.
+Dit besluit vervangt oudere verwijzingen naar dev.254 als eerste terugvalbasis;
+dev.254 blijft een historisch checkpoint. Overige stop- en terugvalafspraken
+blijven ongewijzigd. Zie `docs/development_log/2026-09-23-missing-pv-net-balance.md`.
+
 ## Authority and reading order
 
 1. `docs/rebuild/CANONICAL_PIPELINE_CONTRACT.md`
@@ -425,3 +435,13 @@ kwartierbalans; 240 vergelijkingen met dev.267 geven dezelfde observaties.
 Releasevoorbereiding na Alex’ akkoord: dev.268 via PR en CI. De aparte
 afwijsregistratie werkt zonder inschakelen van de snapshotproef. Installatie en
 nieuwe diagnose moeten de livewerking nog aantonen.
+
+## 2026-09-23 — Release dev.269: netbalans bij ontbrekende PV
+
+Lees `docs/architecture/ADR-037.17-missing-pv-net-balance-review.md` en
+`docs/development_log/2026-09-23-missing-pv-net-balance.md`. Alex heeft release
+aangevraagd. De onafhankelijke vijfminuten-netbalans kan bij ontbrekende PV een
+bestaande hoofdrouteherziening openen. Dagdoel, reserve, actieve belastingbescherming
+en canonieke selectie blijven gelden; ontbrekende PV wordt niet ingevuld.
+Dev.268 is expliciet de eerste terugvalbasis. Publicatie via PR en CI;
+installatie en liveverificatie volgen afzonderlijk.

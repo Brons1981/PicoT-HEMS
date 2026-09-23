@@ -77,6 +77,7 @@ from picot.v2.market_daily_runtime import (
     MarketDailyPlannerRuntime,
 )
 from picot.v2.material_replanning import MaterialReplanningObservationProducer
+from picot.v2.net_balance import NetBalanceObserver
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.passive_history.trial import TRIAL_ROOT, HistoryCaptureTrial
 from picot.v2.pipeline import CanonicalPipeline, PipelineStageTimings, PlanningInputSuperseded
@@ -2958,6 +2959,7 @@ def main() -> None:
     previous_household_regime: HouseholdPlanningRegime | None = None
     household_regime_started_at: datetime | None = None
     latest_daily_pv_basis_decision: DailyPVBasisDecision | None = None
+    net_balance_observer = NetBalanceObserver()
 
     def prepare_bundle(
         bundle: PlanningInputBundle,
@@ -2968,6 +2970,7 @@ def main() -> None:
         nonlocal previous_household_regime
         nonlocal household_regime_started_at
         nonlocal latest_daily_pv_basis_decision
+        bundle = net_balance_observer.observe(bundle)
         bundle = attach_storage_mode_provenance(
             bundle,
             storage_mode_provenance_runtime,

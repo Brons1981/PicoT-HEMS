@@ -14,6 +14,7 @@ from picot.v2.contracts import CurrentStorageState, PlanningInputSnapshot
 from picot.v2.daily_pv_comparison import DailyPVComparison, DailyPVComparisonState, compare_daily_pv
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
 from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
+from picot.v2.net_balance import net_balance_for
 from picot.v2.plan_commitment_store import (
     ActivePlanCommitment,
     CommittedHouseholdLoadInterval,
@@ -208,7 +209,9 @@ class MaterialReplanningObservationProducer:
                 ):
                     continue
                 comparison = daily_grid_review_comparison(snapshot, state)
-                if comparison.status != "complete" or (
+                if (comparison.status != "complete" and net_balance_for(
+                    snapshot, owner.execution_scope_id,
+                ) is None) or (
                     comparison.evidence_id in state.assessed_evidence_ids
                 ):
                     continue
@@ -451,7 +454,13 @@ def daily_grid_review_comparison(
         if s.execution_scope_id == owner.execution_scope_id
     )
     guard = snapshot.household_load_guard
-    return replace(comparison, evidence_id="grid-review:" + sha256(repr((
+    net_proof = net_balance_for(snapshot, owner.execution_scope_id)
+    identity: tuple[object, ...] = (
         comparison.evidence_id, storage_basis,
         (guard.active, guard.quality, guard.extra_power_w) if guard is not None else None,
-    )).encode()).hexdigest())
+    )
+    if net_proof is not None:
+        identity += (net_proof.evidence_id,)
+    return replace(comparison, evidence_id="grid-review:" + sha256(
+        repr(identity).encode(),
+    ).hexdigest())

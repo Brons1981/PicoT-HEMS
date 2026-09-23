@@ -39,6 +39,7 @@ from picot.v2.power_history import PowerHistorySnapshot
 
 if TYPE_CHECKING:
     from picot.v2.household_load_guard import HouseholdLoadGuardAssessment
+    from picot.v2.net_balance import NetBalanceSurplus
     from picot.v2.storage_mode_provenance import StorageModeControlProvenance
     from picot.v2.zendure_mode_capabilities import ZendureModeCapabilityEvidence
 
@@ -751,6 +752,8 @@ class PlanningInputSnapshot:
     # Executable opportunities continue to use the future-only price_points.
     published_price_points: tuple[PriceForecastPoint, ...] = ()
     household_load_guard: HouseholdLoadGuardAssessment | None = None
+    net_balance_surplus: NetBalanceSurplus | None = None
+    net_balance_status: str = "not_observed"
 
     def __post_init__(self) -> None:
         if self.daily_charge_context is not None and (

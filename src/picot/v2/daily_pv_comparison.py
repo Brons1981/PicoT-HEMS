@@ -273,14 +273,17 @@ class DailyMainPVSurplusTrigger:
     target_wh: float
     basis_id: str
     comparison_evidence_id: str
-    actual_wh: float
-    central_wh: float
+    actual_wh: float | None
+    central_wh: float | None
     prior_grid_input_wh: float
     removable_grid_input_wh: float
     soc_based: bool = False
+    net_balance_evidence_id: str | None = None
 
     @property
     def revision_reason(self) -> DailyChargeRevisionReason:
+        if self.net_balance_evidence_id is not None:
+            return DailyChargeRevisionReason.NET_BALANCE_REDUCTION
         return (DailyChargeRevisionReason.GRID_REDUCTION if self.soc_based
                 else DailyChargeRevisionReason.PV_UPPER)
 
@@ -299,19 +302,25 @@ class DailyMainPVSurplusTrigger:
             )
         ):
             raise ValueError("PV trigger requires explicit lineage")
+        if self.net_balance_evidence_id is not None:
+            if not self.net_balance_evidence_id or not self.soc_based or (
+                self.actual_wh is not None or self.central_wh is not None
+            ):
+                raise ValueError("Net balance proof must not fabricate PV comparison energy")
+        elif self.actual_wh is None or self.central_wh is None or (
+            not all(isfinite(v) and v >= 0 for v in (self.actual_wh, self.central_wh))
+            or (not self.soc_based and self.actual_wh <= self.central_wh)
+        ):
+            raise ValueError("Grid reduction requires complete PV or independent net evidence")
         if not all(
             isfinite(v)
             for v in (
                 self.target_wh,
-                self.actual_wh,
-                self.central_wh,
                 self.prior_grid_input_wh,
                 self.removable_grid_input_wh,
             )
         ) or (
             self.target_wh <= 0
-            or min(self.actual_wh, self.central_wh) < 0
-            or (not self.soc_based and self.actual_wh <= self.central_wh)
             or not 0 < self.removable_grid_input_wh <= self.prior_grid_input_wh
         ):
             raise ValueError(

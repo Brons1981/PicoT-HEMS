@@ -761,7 +761,9 @@ class HomeAssistantStateReader:
             raw_unit=str(unit) if unit is not None else None,
             observed_at=_parse_datetime(payload.get("last_updated")),
             state_read_at=datetime.now(UTC) if not unavailable
-            and binding.category == "zendure" and binding.semantic_role == "storage_soc" else None,
+            and binding.category == "zendure" and binding.semantic_role in {
+                "storage_soc", "storage_power_to_house", "storage_power_from_house",
+            } else None,
             availability="unavailable" if unavailable else "available",
             mapping_version=mapping_version,
             last_changed_at=_parse_datetime(payload.get("last_changed")),

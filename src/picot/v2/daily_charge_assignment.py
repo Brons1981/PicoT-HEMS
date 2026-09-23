@@ -23,6 +23,7 @@ class DailyChargeRevisionReason(StrEnum):
     PV_LOWER = "pv_at_or_below_lower_with_execution_impact"
     PV_UPPER = "pv_above_central_with_execution_impact"
     GRID_REDUCTION = "current_soc_allows_grid_reduction"
+    NET_BALANCE_REDUCTION = "net_balance_allows_grid_reduction"
     LOAD = "additional_load_with_execution_impact"
     RESERVE = "projected_reserve_shortfall"
 

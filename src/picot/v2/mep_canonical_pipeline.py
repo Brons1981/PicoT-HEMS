@@ -63,6 +63,7 @@ from picot.v2.market_daily_runtime import (
 )
 from picot.v2.market_rule_planning import market_rule_portfolio
 from picot.v2.material_replanning import daily_grid_review_comparison
+from picot.v2.net_balance import net_balance_for
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
@@ -1355,7 +1356,9 @@ def _build_daily_main_run(
                 ):
                     continue
                 pv_comparison = daily_grid_review_comparison(snapshot, state)
-                if pv_comparison.status != "complete" or (
+                if (pv_comparison.status != "complete" and net_balance_for(
+                    snapshot, owner.execution_scope_id,
+                ) is None) or (
                     pv_comparison.evidence_id in state.assessed_evidence_ids
                 ):
                     continue

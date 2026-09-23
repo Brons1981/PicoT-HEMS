@@ -87,6 +87,7 @@ from picot.v2.daily_pv_comparison import DailyMainPVSurplusTrigger, DailyPVCompa
 from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
+from picot.v2.net_balance import net_balance_for
 from picot.v2.plan_commitment_store import active_pv_preservation_dates
 from picot.v2.supplemental_charge_planning import attach_supplemental_goals
 
@@ -503,10 +504,13 @@ class IndependentDailyReferenceAdapter:
     @staticmethod
     def _protected_grid_end(
         snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
+        *, net_balance_review: bool = False,
     ) -> datetime | None:
         guard = snapshot.household_load_guard
         context = snapshot.daily_charge_context
         if guard is None or context is None or not (guard.active or guard.quality == "unknown"):
+            return None
+        if net_balance_review and net_balance_for(snapshot, assignment.execution_scope_id):
             return None
         if any(s.execution_scope_id == assignment.execution_scope_id and s.current_soc >= 1.0
                for s in snapshot.current_storage_states):
@@ -522,16 +526,20 @@ class IndependentDailyReferenceAdapter:
         comparison: DailyPVComparison, conversion_model: StorageConversionModel,
     ) -> DailyMainPVSurplusTrigger | None:
         """Prove a removable future grid interval before any price window search."""
+        net_proof = net_balance_for(snapshot, assignment.execution_scope_id)
         if comparison.assignment_id != assignment.assignment_id or (
-            comparison.status != "complete"
+            (comparison.status != "complete" and net_proof is None)
             or assignment.completed_at is not None or assignment.route_plan_id is None
         ):
             return None
-        if self._protected_grid_end(snapshot, assignment) is not None:
+        if self._protected_grid_end(
+            snapshot, assignment, net_balance_review=net_proof is not None,
+        ) is not None:
             return None
         if snapshot.household_load_guard is not None and (
             snapshot.household_load_guard.quality == "unknown"
-        ) and not any(s.execution_scope_id == assignment.execution_scope_id and s.current_soc >= 1.0
+        ) and net_proof is None and not any(
+                      s.execution_scope_id == assignment.execution_scope_id and s.current_soc >= 1.0
                       for s in snapshot.current_storage_states):
             return None
         context = snapshot.daily_charge_context
@@ -578,22 +586,26 @@ class IndependentDailyReferenceAdapter:
                 maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
                 maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
             )
-            if all(any(
+            reserve_ok = all(min(i.storage_energy_at_start_wh, i.storage_energy_at_end_wh)
+                             + 1e-6 >= inputs.minimum_storage_energy_wh
+                             for i in projection.intervals)
+            if reserve_ok and all(any(
                 main.starts_at <= at <= main.ends_at
                 and energy + 1e-6 >= inputs.storage.usable_capacity_wh
                 for main in owner.main_segments for i in projection.intervals
                 for at, energy in ((i.starts_at, i.storage_energy_at_start_wh),
                                    (i.ends_at, i.storage_energy_at_end_wh))
             ) for owner in pending):
-                assert comparison.actual_wh is not None and comparison.central_wh is not None
                 return DailyMainPVSurplusTrigger(
                     assignment.assignment_id, assignment.route_plan_id, assignment.revision,
                     plan.plan_id, snapshot.snapshot_id, snapshot.captured_at,
                     inputs.storage.usable_capacity_wh, comparison.basis_id, comparison.evidence_id,
-                    comparison.actual_wh, comparison.central_wh, prior_grid_wh,
+                    comparison.actual_wh if net_proof is None else None,
+                    comparison.central_wh if net_proof is None else None, prior_grid_wh,
                     inputs.maximum_charge_input_power_w
                     * (interval.ends_at - interval.starts_at).total_seconds() / 3600,
-                    soc_based=comparison.boundary != "above_central",
+                    soc_based=net_proof is not None or comparison.boundary != "above_central",
+                    net_balance_evidence_id=net_proof.evidence_id if net_proof else None,
                 )
         return None
 
@@ -706,6 +718,14 @@ class IndependentDailyReferenceAdapter:
                 "observed_main_goal_already_completed", 0)
         if optimisation_trigger is not None:
             optimisation_trigger.validate(assignment, snapshot.snapshot_id, snapshot.captured_at)
+            if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger) and (
+                optimisation_trigger.net_balance_evidence_id is not None
+            ):
+                proof = net_balance_for(snapshot, assignment.execution_scope_id)
+                if proof is None or (
+                    proof.evidence_id != optimisation_trigger.net_balance_evidence_id
+                ):
+                    raise DailyReferenceInputError("net_balance_trigger_requires_current_proof")
         elif assignment.revision:
             raise DailyReferenceInputError("main_charge_existing_route_requires_optimisation")
         if snapshot.horizon_end is None:
@@ -793,7 +813,12 @@ class IndependentDailyReferenceAdapter:
             if not feasible:
                 return replace(result, windows=(), status="unreachable",
                                reason="pv_comparison_has_no_admissible_grid_reduction")
-        protected_end = self._protected_grid_end(snapshot, assignment)
+        protected_end = self._protected_grid_end(
+            snapshot, assignment, net_balance_review=(
+                isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
+                and optimisation_trigger.net_balance_evidence_id is not None
+            ),
+        )
         if protected_end is not None:
             feasible = tuple(w for w in feasible if all(
                 i.intent is DailyStorageIntent.GRID_REQUIREMENT

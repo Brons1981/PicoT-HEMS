@@ -445,3 +445,12 @@ bestaande hoofdrouteherziening openen. Dagdoel, reserve, actieve belastingbesche
 en canonieke selectie blijven gelden; ontbrekende PV wordt niet ingevuld.
 Dev.268 is expliciet de eerste terugvalbasis. Publicatie via PR en CI;
 installatie en liveverificatie volgen afzonderlijk.
+
+## 2026-09-24 — lokaal crashherstel overbrugging samengesteld plan
+
+Lees `docs/development_log/2026-09-24-shared-plan-bridge-owner.md`.
+De overbruggingscontrole volgt bij markt-/laadplannen de bewaarde laadherkomst;
+geen directe plan-ID-gelijkheid veronderstellen. Ontbrekende herkomst geeft een
+gecontroleerde fout. Laadbeleid, marktroute en opslag blijven gelijk.
+Alex heeft release dev.270 aangevraagd; publicatie via PR en CI. Installatie
+en liveverificatie volgen afzonderlijk. Dev.268 blijft de afgesproken terugvalbasis.

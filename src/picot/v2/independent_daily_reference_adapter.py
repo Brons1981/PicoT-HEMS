@@ -185,7 +185,18 @@ class IndependentDailyReferenceAdapter:
             return DailyBridgeAssessment("main_session_active")
         if not future:
             # No invented deadline: expose only the known remaining trajectory.
-            owner = next(a for a in context.assignments if a.route_plan_id == plan.plan_id)
+            # A shared market plan retains daily ownership through its segments;
+            # the daily assignment still points to the original charge plan.
+            owner = next((a for a in context.assignments
+                          if a.execution_scope_id == plan.execution_scope_id
+                          and a.route_plan_id is not None
+                          and (a.route_plan_id == plan.plan_id or any(
+                              s.main_assignment_id == a.assignment_id
+                              and s.retained_execution_origin is not None
+                              and s.retained_execution_origin.plan_id == a.route_plan_id
+                              for s in plan.segments))), None)
+            if owner is None:
+                raise DailyReferenceInputError("bridge_retained_plan_owner_missing")
             inputs = self._inputs(snapshot, horizon_end=plan.valid_until,
                                   maximum_duration=timedelta(hours=36))
             schedule, _ = self._retained_main_schedule(

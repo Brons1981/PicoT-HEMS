@@ -4,6 +4,7 @@ from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 from test_daily_main_active_pipeline import setup
 from test_daily_main_charge_windows import inputs
 from test_daily_main_route_optimisation import fresh
@@ -138,9 +139,18 @@ def test_new_cheap_interval_can_fund_bridge_without_moving_main(tmp_path, monkey
     assert store.load_daily_assignments()[0] == completed
 
 
-def test_no_next_session_keeps_valid_execution_without_inventing_charge(tmp_path, monkeypatch):
+@pytest.mark.parametrize("shared_market", [False, True])
+def test_no_next_session_keeps_valid_execution_without_inventing_charge(
+    tmp_path, monkeypatch, shared_market,
+):
     store, pipeline, recover, source, _, _ = started(tmp_path, monkeypatch)
     owner = next(a for a in store.load_daily_assignments() if a.completed_at is None)
+    if shared_market:
+        from test_market_plan_binding import proposal
+
+        original = store.load_active_daily_main_plan(owner.execution_scope_id)
+        store.bind_market_plan(**proposal(store, original))
+    active = store.load_active_daily_main_plan(owner.execution_scope_id)
     segment = owner.main_segments[-1]
     store.save_daily_assignment(
         owner.observe_completion(
@@ -169,7 +179,38 @@ def test_no_next_session_keeps_valid_execution_without_inventing_charge(tmp_path
     monkeypatch.setattr(IndependentDailyReferenceAdapter, "bridge_windows", forbidden)
     result = pipeline.run(planning_input=recover(observation))
     assert result.evaluation.daily_bridge.status == "next_session_unknown"
-    assert result.execution_plan_set.plans[0].plan_id == owner.route_plan_id
+    assert result.execution_plan_set.plans[0].plan_id == active.plan_id
+    assert store.load_active_daily_main_plan(owner.execution_scope_id) == active
+    completed = store.load_daily_assignments()
+    restarted = ActivePlanCommitmentStore(tmp_path / "plans.json")
+    restored = _restore_daily_charge_context(
+        observation, restarted, local_timezone=ZoneInfo("UTC"),
+    )
+    pipeline = CanonicalPipeline(
+        commitment_store=restarted,
+        market_daily_planner_runtime=MarketDailyPlannerRuntime(inputs()["conversion_model"]),
+    )
+    repeated = pipeline.run(planning_input=restored)
+    assert repeated.evaluation.daily_bridge.status == "next_session_unknown"
+    assert repeated.execution_plan_set.plans[0].plan_id == active.plan_id
+    assert restarted.load_daily_assignments() == completed
+    if shared_market:
+        # Even a malformed ready snapshot must reach guarded error handling,
+        # never select an unrelated assignment or terminate the process.
+        context = restored.daily_charge_context
+        unlinked = replace(active, segments=tuple(
+            replace(s, retained_execution_origin=None) for s in active.segments
+        ))
+        broken = replace(restored, daily_charge_context=replace(
+            context, main_plans=tuple(
+                unlinked if p.plan_id == active.plan_id else p for p in context.main_plans
+            ),
+        ))
+        rejected = pipeline.run(planning_input=broken)
+        assert rejected.evaluation.status == "plan_retained"
+        assert "bridge_retained_plan_owner_missing" in rejected.evaluation.reason
+        assert restarted.load_active_daily_main_plan(owner.execution_scope_id) == active
+        assert restarted.load_daily_assignments() == completed
 
 
 def test_bridge_write_failure_does_not_partially_replace_plan(tmp_path, monkeypatch):

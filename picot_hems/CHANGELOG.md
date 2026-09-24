@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.270
+
+- Herstelt een plannercrash na voltooiing van het dagdoel bij een gecombineerd laad- en marktplan zonder bekende volgende hoofdlaadsessie.
+- De overbruggingscontrole volgt de bewaarde laadherkomst; bestaande plannen en voltooide dagdoelen blijven behouden.
+- Ontbrekende herkomst wordt expliciet gemeld zonder StopIteration-crash. Laadbeleid, prijsselectie en PV-terugval blijven ongewijzigd.
+
 ## 2.0.0-dev.269
 
 - Bij ontbrekende actuele PV kan vijf minuten betrouwbaar Shelly- en batterijbewijs een vermindering van netladen laten beoordelen.

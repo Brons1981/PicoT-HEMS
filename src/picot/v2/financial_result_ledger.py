@@ -15,6 +15,7 @@ from picot.domain.storage_energy_inventory import (
     StorageEnergyLot,
 )
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
+from picot.v2.financial_result_metrics import build_financial_metrics, financial_metric_value
 from picot.v2.independent_daily_tariff_adapter import (
     ENERGY_TAX_EX_VAT_EUR_PER_KWH,
     EXPORT_ADDITION_EUR_PER_KWH,
@@ -93,6 +94,7 @@ class FinancialResultLedger:
         history: PowerHistorySnapshot,
         *,
         price_points: tuple[PriceForecastPoint, ...] | None = None,
+        measurement_history: PowerHistorySnapshot | None = None,
     ) -> dict[str, object]:
         """Replace today's partial settlement from canonical measured history."""
         result = self._evaluate(
@@ -100,6 +102,27 @@ class FinancialResultLedger:
             history,
             price_points=(snapshot.price_points if price_points is None else price_points),
         )
+        try:
+            result["financial_metrics"] = build_financial_metrics(
+                history=measurement_history if measurement_history is not None else history,
+                settlement=result,
+                price_segments=self._price_segments(
+                    snapshot.price_points if price_points is None else price_points,
+                    history.starts_at, history.ends_at,
+                ),
+                wear_rate=self.wear_rate,
+                expected_starts_at=history.starts_at,
+                expected_ends_at=snapshot.captured_at,
+            )
+        except Exception as exc:
+            # This display assessment must not interrupt the existing cost-basis
+            # update consumed by planning. Retain explicit evidence of its failure.
+            result["financial_metrics"] = {
+                "method_version": "financial-metric-availability:v1",
+                "status": "incomplete", "reason": "financial_metric_evaluation_failed",
+                "error_type": type(exc).__name__, "values": {},
+                "observer_only": True, "selection_permitted": False,
+            }
         local_day = snapshot.captured_at.astimezone(self.local_timezone).date().isoformat()
         with self._lock:
             days = self._state.setdefault("days", {})
@@ -137,9 +160,14 @@ class FinancialResultLedger:
             if isinstance(days, dict)
             else []
         )
-        complete = [item for item in day_values if item.get("status") == "available"]
-        cumulative_battery = sum(float(item["net_battery_value_eur"]) for item in complete)
-        cumulative_picot = sum(float(item["net_picot_value_eur"]) for item in complete)
+        battery_values = [value for item in day_values
+                          if (value := financial_metric_value(item, "net_battery_value_eur"))
+                          is not None]
+        picot_values = [value for item in day_values
+                       if (value := financial_metric_value(item, "net_picot_value_eur"))
+                       is not None]
+        cumulative_battery = sum(battery_values)
+        cumulative_picot = sum(picot_values)
         latest = max(day_values, key=lambda item: str(item.get("day", "")), default=None)
         return {
             "available": latest is not None,
@@ -152,6 +180,10 @@ class FinancialResultLedger:
                 "battery_purchase_eur": self.purchase_eur,
                 "remaining_eur": round(max(0.0, self.purchase_eur - cumulative_battery), 4),
                 "repaid_fraction": max(0.0, min(1.0, cumulative_battery / self.purchase_eur)),
+                "included_battery_days": len(battery_values),
+                "excluded_battery_days": len(day_values) - len(battery_values),
+                "included_picot_days": len(picot_values),
+                "excluded_picot_days": len(day_values) - len(picot_values),
             },
             "wear_eur_per_discharge_kwh": self.wear_rate,
             "observer_only": True,

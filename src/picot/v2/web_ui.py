@@ -4217,73 +4217,160 @@ DASHBOARD_HTML = """<!doctype html>
       const container = element("financial-results");
       container.replaceChildren();
       const today = financial?.today;
-      if (!today || today.status !== "available") {
+      const days = financial.days ?? [];
+      const labels = {
+        pv_generation: "PV-productie", household_load: "Huisverbruik",
+        grid_import: "Netinkoop", grid_export: "Teruglevering",
+        battery_charge: "Batterijladen", battery_discharge: "Batterijontladen",
+      };
+      const reasons = {
+        measurement_coverage_incomplete: "Meetgegevens zijn onvolledig",
+        missing_measured_series: "Een benodigde meetreeks ontbreekt",
+        measurement_start_missing: "Beginwaarde ontbreekt",
+        measurement_unavailable: "Bron tijdelijk niet beschikbaar",
+        household_measurement_gap: "Onderbreking in huisverbruiksmetingen",
+        household_measurement_tail_missing: "Recente huisverbruiksmetingen ontbreken",
+        measurement_history_unavailable: "Meetgeschiedenis kon niet volledig worden gelezen",
+        measurement_period_mismatch: "Meetperioden sluiten niet op elkaar aan",
+        price_coverage_incomplete: "Niet alle prijzen zijn beschikbaar",
+        storage_physical_state_missing: "Batterijgegevens ontbreken",
+        financial_result_unavailable: "Resultaat nog niet te bepalen",
+        financial_metric_evaluation_failed: "Financiële meetcontrole kon niet worden afgerond",
+      };
+      const reasonText = reason => reasons[reason] ?? "Resultaat nog niet te bepalen";
+      const metric = (day, name) => {
+        if (day?.financial_metrics) return day.financial_metrics.values?.[name] ??
+          {status: "incomplete", reason: day.financial_metrics.reason};
+        return {status: day?.status, value_eur: day?.[name], reason: day?.reason};
+      };
+      const amount = item => item.status === "available" &&
+        typeof item.value_eur === "number" && Number.isFinite(item.value_eur)
+        ? item.value_eur : null;
+      const money = (day, name, sign=1) => {
+        const value = amount(metric(day, name));
+        return value === null ? "—" : formatCurrency(sign * value);
+      };
+      const todayStatus = today?.financial_metrics?.status ?? today?.status;
+      if (!today || todayStatus !== "available") {
         const empty = document.createElement("p");
         empty.className = "empty-panel";
-        empty.textContent = today?.reason
-          ? `Nog geen volledig resultaat: ${displayValue(today.reason)}.`
+        empty.textContent = today
+          ? "Dagresultaat onvolledig. Beschikbare bedragen blijven zichtbaar."
           : "Nog geen volledige financiële meetperiode beschikbaar.";
         container.append(empty);
-        return;
       }
-      const cards = document.createElement("section");
-      cards.className = "financial-grid";
-      const values = [
-        ["Netto energieresultaat vandaag", -Number(today.actual_energy_cost_eur)],
-        ["Kosten netinkoop", -Number(today.grid_import_cost_eur)],
-        ["Opbrengst teruglevering", Number(today.grid_export_revenue_eur)],
-        ["Totale energiebesparing netto", Number(today.net_total_energy_value_eur)],
-        ["Bruto batterijvoordeel", Number(today.gross_battery_value_eur)],
-        ["Slijtage batterij", -Number(today.battery_wear_eur)],
-        ["Netto batterijvoordeel", Number(today.net_battery_value_eur)],
-        ["Bruto extra PicoT-resultaat", Number(today.gross_picot_value_eur)],
-        ["Netto extra PicoT-resultaat", Number(today.net_picot_value_eur)],
-      ];
-      for (const [label, value] of values) {
-        const card = document.createElement("div");
-        card.className = "metric";
-        const title = document.createElement("span");
-        title.className = "muted";
-        title.textContent = label;
-        const amount = document.createElement("span");
-        amount.className = `value ${financialValueClass(value)}`;
-        amount.textContent = formatCurrency(value);
-        card.append(title, amount);
-        cards.append(card);
-      }
-      container.append(cards);
-      container.append(renderHouseholdEnergySources(today.household_energy_sources ?? {}));
-
-      const equation = document.createElement("section");
-      equation.className = "timeline-panel financial-equation";
-      equation.setAttribute(
-        "aria-label",
-        "Bruto batterijvoordeel − slijtage = netto batterijvoordeel"
-      );
-      for (const [label, value, symbol] of [
-        ["Bruto batterijvoordeel", today.gross_battery_value_eur, null],
-        [null, null, "−"],
-        ["Slijtage", today.battery_wear_eur, null],
-        [null, null, "="],
-        ["Netto batterijvoordeel", today.net_battery_value_eur, null],
-      ]) {
-        const part = document.createElement("div");
-        if (symbol) {
-          part.className = "financial-equation-symbol";
-          part.textContent = symbol;
-        } else {
-          part.className = "financial-equation-part";
-          const caption = document.createElement("span");
-          caption.className = "muted";
-          caption.textContent = label;
-          const amount = document.createElement("strong");
-          amount.className = "value";
-          amount.textContent = formatCurrency(value);
-          part.append(caption, amount);
+      if (today) {
+        const period = document.createElement("p");
+        period.className = "muted";
+        const measuredUntil = today.financial_metrics?.ends_at ?? today.ends_at;
+        period.textContent = measuredUntil
+          ? `Resultaat tot ${formatTimestamp(measuredUntil)}.` : `Dag: ${today.day ?? "onbekend"}.`;
+        container.append(period);
+        const cards = document.createElement("section");
+        cards.className = "financial-grid";
+        const values = [
+          ["Netto energieresultaat vandaag", "actual_energy_cost_eur", -1],
+          ["Kosten netinkoop", "grid_import_cost_eur", -1],
+          ["Opbrengst teruglevering", "grid_export_revenue_eur", 1],
+          ["Totale energiebesparing netto", "net_total_energy_value_eur", 1],
+          ["Bruto batterijvoordeel", "gross_battery_value_eur", 1],
+          ["Slijtage batterij", "battery_wear_eur", -1],
+          ["Netto batterijvoordeel", "net_battery_value_eur", 1],
+          ["Bruto extra PicoT-resultaat", "gross_picot_value_eur", 1],
+          ["Netto extra PicoT-resultaat", "net_picot_value_eur", 1],
+        ];
+        for (const [label, name, sign] of values) {
+          const item = metric(today, name);
+          const value = amount(item);
+          const card = document.createElement("div");
+          card.className = "metric";
+          const title = document.createElement("span");
+          title.className = "muted";
+          title.textContent = label;
+          const shownAmount = document.createElement("span");
+          shownAmount.className = "value " +
+            (value === null ? "muted" : financialValueClass(sign * value));
+          shownAmount.textContent = money(today, name, sign);
+          card.append(title, shownAmount);
+          if (value === null) {
+            const note = document.createElement("small");
+            note.className = "muted";
+            const sources = (item.missing_roles ?? []).map(role => labels[role] ?? role);
+            note.textContent = reasonText(item.reason) +
+              (sources.length ? `: ${sources.join(", ")}` : "");
+            card.append(note);
+          }
+          cards.append(card);
         }
-        equation.append(part);
+        container.append(cards);
+        const coverage = today.financial_metrics?.measurement_coverage ??
+          today.coverage_by_role ?? {};
+        const details = document.createElement("details");
+        const detailsTitle = document.createElement("summary");
+        detailsTitle.textContent = "Ontbrekende meetgegevens";
+        details.style.overflowWrap = "anywhere";
+        details.append(detailsTitle);
+        let gapCount = 0;
+        for (const [role, source] of Object.entries(coverage)) {
+          const gaps = source.gaps ?? (source.start_anchor_available === false ? [{
+            reason: "measurement_start_missing", starts_at: today.starts_at,
+            ends_at: source.first_point_at ?? today.ends_at,
+          }] : []);
+          for (const gap of gaps) {
+            const line = document.createElement("p");
+            line.textContent = `${labels[role] ?? role}: ${reasonText(gap.reason)} · ` +
+              `${formatTimestamp(gap.starts_at)} – ${formatTimestamp(gap.ends_at)}` +
+              (source.source_entity_id ? ` · ${source.source_entity_id}` : "");
+            details.append(line);
+            gapCount += 1;
+          }
+          if (source.omitted_gap_count) {
+            const more = document.createElement("p");
+            more.textContent = `${labels[role] ?? role}: ` +
+              `nog ${source.omitted_gap_count} onderbrekingen.`;
+            details.append(more);
+            gapCount += 1;
+          }
+        }
+        if (gapCount) container.append(details);
+        if (todayStatus === "available") {
+          container.append(renderHouseholdEnergySources(today.household_energy_sources ?? {}));
+        }
+
+        if (["gross_battery_value_eur", "battery_wear_eur", "net_battery_value_eur"]
+            .every(name => amount(metric(today, name)) !== null)) {
+          const equation = document.createElement("section");
+          equation.className = "timeline-panel financial-equation";
+          equation.setAttribute(
+            "aria-label",
+            "Bruto batterijvoordeel − slijtage = netto batterijvoordeel"
+          );
+          for (const [label, value, symbol] of [
+            ["Bruto batterijvoordeel", amount(metric(today, "gross_battery_value_eur")), null],
+            [null, null, "−"],
+            ["Slijtage", amount(metric(today, "battery_wear_eur")), null],
+            [null, null, "="],
+            ["Netto batterijvoordeel", amount(metric(today, "net_battery_value_eur")), null],
+          ]) {
+            const part = document.createElement("div");
+            if (symbol) {
+              part.className = "financial-equation-symbol";
+              part.textContent = symbol;
+            } else {
+              part.className = "financial-equation-part";
+              const caption = document.createElement("span");
+              caption.className = "muted";
+              caption.textContent = label;
+              const amount = document.createElement("strong");
+              amount.className = "value";
+              amount.textContent = formatCurrency(value);
+              part.append(caption, amount);
+            }
+            equation.append(part);
+          }
+          container.append(equation);
+        }
       }
-      container.append(equation);
 
       const cumulative = financial.cumulative ?? {};
       const payback = document.createElement("section");
@@ -4293,18 +4380,25 @@ DASHBOARD_HTML = """<!doctype html>
       const summary = document.createElement("p");
       const percentage = Math.max(0, Math.min(100,
         Number(cumulative.repaid_fraction ?? 0) * 100));
-      summary.textContent = [
+      const included = cumulative.included_battery_days ?? days.filter(
+        day => amount(metric(day, "net_battery_value_eur")) !== null).length;
+      const excluded = cumulative.excluded_battery_days ?? days.length - included;
+      summary.textContent = included ? [
         `${formatCurrency(cumulative.net_battery_value_eur)} netto terugverdiend`,
         `${formatCurrency(cumulative.remaining_eur)} resterend`,
         `${formatDutchNumber(percentage)}% van ${formatCurrency(cumulative.battery_purchase_eur)}`,
-      ].join(" · ");
+      ].join(" · ") : "Nog geen batterijresultaten om op te tellen.";
+      const coverageNote = document.createElement("p");
+      coverageNote.className = "muted";
+      coverageNote.textContent = `${included} dagresultaten meegeteld · ${excluded} onvolledig.`;
       const track = document.createElement("div");
       track.className = "payback-track";
       const fill = document.createElement("div");
       fill.className = "payback-fill";
       fill.style.width = `${percentage}%`;
       track.append(fill);
-      payback.append(heading, summary, track);
+      payback.append(heading, summary, coverageNote);
+      if (included) payback.append(track);
       container.append(payback);
 
       const historyHeading = document.createElement("h3");
@@ -4313,21 +4407,23 @@ DASHBOARD_HTML = """<!doctype html>
       const table = document.createElement("table");
       const head = document.createElement("thead");
       const header = document.createElement("tr");
-      for (const label of ["Dag", "Energieresultaat", "Batterij netto", "PicoT netto"]) {
+      for (const label of ["Dag", "Energieresultaat", "Batterij netto", "PicoT netto", "Status"]) {
         const cell = document.createElement("th");
         cell.textContent = label;
         header.append(cell);
       }
       head.append(header);
       const body = document.createElement("tbody");
-      for (const day of [...(financial.days ?? [])].reverse()) {
-        if (day.status !== "available") continue;
+      for (const day of [...days].reverse()) {
         const row = document.createElement("tr");
+        const status = day.financial_metrics?.status ?? day.status;
         for (const value of [
           day.day,
-          formatCurrency(-Number(day.actual_energy_cost_eur)),
-          formatCurrency(day.net_battery_value_eur),
-          formatCurrency(day.net_picot_value_eur),
+          money(day, "actual_energy_cost_eur", -1),
+          money(day, "net_battery_value_eur"),
+          money(day, "net_picot_value_eur"),
+          status === "available" ? "Beschikbaar" :
+            status === "partial" ? "Gedeeltelijk" : "Onvolledig",
         ]) {
           const cell = document.createElement("td");
           cell.textContent = value;
@@ -4336,7 +4432,10 @@ DASHBOARD_HTML = """<!doctype html>
         body.append(row);
       }
       table.append(head, body);
-      container.append(table);
+      const historyScroll = document.createElement("div");
+      historyScroll.style.overflowX = "auto";
+      historyScroll.append(table);
+      container.append(historyScroll);
     }
 
     async function markPlannerStress() {

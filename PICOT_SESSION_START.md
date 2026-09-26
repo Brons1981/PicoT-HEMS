@@ -490,3 +490,19 @@ automatische controles. Installatie en liveverificatie volgen afzonderlijk.
 Het financiële tabblad is daarna een
 afzonderlijk herstelpunt, vastgelegd in
 `docs/development_log/2026-09-26-financial-tab-triage.md`.
+
+### Vervolg — fix 3 na akkoord om 22:15
+
+Dev.272 is gepubliceerd via PR #669, merge
+`565150bdfe8caa0d9ebde512fcaad518d2843e64`. De diagnose van 22:09 bevestigt
+deze versie met een behouden actief plan om 22:07. Dit bewijst nog geen nieuwe
+belastingsproef van de herstelde laadcontinuïteit.
+
+Alex heeft de financiële herstelgrens bevestigd. Lees
+`docs/architecture/ADR-037.18-financial-result-availability.md` en
+`docs/development_log/2026-09-26-financial-availability.md`. Bedragen krijgen
+afzonderlijke meetdekking; historie en bestaande totalen blijven zichtbaar.
+De bestaande numerieke historie en voorraadkosten voor planning blijven gelijk.
+Lokaal geïmplementeerd en geverifieerd. Alex heeft om 22:39 akkoord gegeven op
+afzonderlijke publicatie als dev.273 via PR en automatische controles.
+Installatie en livecontrole van het financiële tabblad volgen daarna.

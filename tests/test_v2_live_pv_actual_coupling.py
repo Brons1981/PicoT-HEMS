@@ -457,6 +457,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         planning_incident_history: object,
         daily_pv_basis_decision: object,
         financial_result_ledger: object,
+        financial_measurement_history: object,
         planning_checkpoint: object,
         refresh_execution_input: object,
         monitor_diagnostics: dict[str, object],
@@ -464,6 +465,10 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
         ) -> None:
         assert callable(planning_checkpoint)
         assert callable(refresh_execution_input)
+        assert isinstance(power_history, live_runtime.PowerHistorySnapshot)
+        assert isinstance(financial_measurement_history, live_runtime.PowerHistorySnapshot)
+        assert financial_measurement_history.starts_at == power_history.starts_at
+        assert financial_measurement_history.ends_at == power_history.ends_at
         admission = monitor_diagnostics["admission"]
         assert isinstance(admission, dict)
         assert admission["fresh_snapshot_required"] is True
@@ -484,6 +489,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             planning_fallback_notifier,
             daily_pv_basis_decision,
             financial_result_ledger,
+            financial_measurement_history,
         )
         assert token == "supervisor-token"
         executed.append((bundle, pv_actual_diagnostics))

@@ -16,6 +16,7 @@ from picot.v2.power_history import (
     PowerHistoryPoint,
     PowerHistorySeries,
     PowerHistorySnapshot,
+    numeric_power_history,
 )
 
 
@@ -216,6 +217,179 @@ def test_missing_measured_role_never_produces_estimated_money(tmp_path) -> None:
     assert view["today"]["coverage_by_role"]["battery_charge"][
         "start_anchor_available"
     ] is True
+
+
+def test_missing_pv_anchor_keeps_independent_grid_results(tmp_path) -> None:
+    history = _history(
+        pv_generation=0.0, household_load=750.0, grid_import=1000.0,
+        grid_export=250.0, battery_charge=0.0, battery_discharge=0.0,
+    )
+    history = replace(history, series=tuple(
+        replace(series, points=series.points[1:])
+        if series.role == "pv_generation" else series for series in history.series
+    ))
+    ledger = _ledger(tmp_path)
+    view = ledger.update(_snapshot(), history)
+
+    metrics = view["today"]["financial_metrics"]
+    assert metrics["status"] == "partial"
+    assert metrics["values"]["grid_import_cost_eur"]["value_eur"] == 0.25
+    assert metrics["values"]["grid_export_revenue_eur"]["value_eur"] == 0.0625
+    assert metrics["values"]["actual_energy_cost_eur"]["value_eur"] == 0.1875
+    assert metrics["values"]["net_battery_value_eur"]["value_eur"] is None
+    assert metrics["values"]["net_picot_value_eur"]["value_eur"] is None
+    gap = metrics["measurement_coverage"]["pv_generation"]["gaps"][0]
+    assert gap["starts_at"] == history.starts_at.isoformat()
+    assert gap["ends_at"] == history.ends_at.isoformat()
+    assert ledger.storage_energy_inventory() is None
+    restored = _ledger(tmp_path).dashboard_view()
+    assert restored["today"] == view["today"]
+    assert restored["cumulative"]["excluded_battery_days"] == 1
+
+
+@pytest.mark.parametrize("role", [
+    "pv_generation", "household_load", "battery_charge", "battery_discharge",
+])
+def test_display_gaps_block_benefits_without_changing_inventory(tmp_path, role) -> None:
+    history = _history(
+        pv_generation=0.0, household_load=1000.0, grid_import=0.0,
+        grid_export=0.0, battery_charge=0.0, battery_discharge=1000.0,
+    )
+    gap_start = history.starts_at + timedelta(minutes=30)
+    gap_end = gap_start + timedelta(seconds=70)
+    raw = replace(history, series=tuple(
+        replace(series, points=(
+            series.points[0], PowerHistoryPoint(gap_start, float("nan"), "unavailable"),
+            PowerHistoryPoint(gap_end, series.points[0].power_w, "restored"), series.points[-1],
+        )) if series.role == role else series for series in history.series
+    ))
+    numeric = numeric_power_history(raw)
+    baseline = _ledger(tmp_path / "baseline")
+    baseline_view = baseline.update(_snapshot(), numeric)
+    ledger = _ledger(tmp_path / "changed")
+    view = ledger.update(_snapshot(), numeric, measurement_history=raw)
+    metrics = view["today"]["financial_metrics"]
+
+    assert metrics["values"]["actual_energy_cost_eur"]["value_eur"] == 0.0
+    for name in ["net_battery_value_eur", "net_picot_value_eur"]:
+        assert metrics["values"][name]["value_eur"] is None
+        assert metrics["values"][name]["missing_roles"] == [role]
+    assert metrics["measurement_coverage"][role]["gaps"][0]["starts_at"] == gap_start.isoformat()
+    assert metrics["measurement_coverage"][role]["gaps"][0]["ends_at"] == gap_end.isoformat()
+    assert ledger.storage_energy_inventory() == baseline.storage_energy_inventory()
+    assert {k: v for k, v in view["today"].items() if k != "financial_metrics"} == {
+        k: v for k, v in baseline_view["today"].items() if k != "financial_metrics"
+    }
+    assert view["cumulative"]["net_battery_value_eur"] == 0.0
+    assert view["cumulative"]["excluded_battery_days"] == 1
+
+
+def test_missing_export_does_not_hide_measured_import(tmp_path) -> None:
+    view = _ledger(tmp_path).update(_snapshot(), _history(grid_import=1000.0))
+    metrics = view["today"]["financial_metrics"]["values"]
+    assert metrics["grid_import_cost_eur"]["value_eur"] == 0.25
+    assert metrics["grid_export_revenue_eur"]["value_eur"] is None
+    assert metrics["actual_energy_cost_eur"]["value_eur"] is None
+
+
+def test_missing_prices_do_not_become_free_energy(tmp_path) -> None:
+    view = _ledger(tmp_path).update(_snapshot(), _history(
+        grid_import=1000.0, grid_export=0.0, battery_discharge=500.0,
+    ), price_points=())
+    metrics = view["today"]["financial_metrics"]["values"]
+    assert metrics["grid_import_cost_eur"]["value_eur"] is None
+    assert metrics["grid_import_cost_eur"]["reason"] == "price_coverage_incomplete"
+    assert metrics["grid_export_revenue_eur"]["value_eur"] is None
+    assert metrics["battery_wear_eur"]["value_eur"] == 0.025
+
+
+def test_independent_grid_amounts_follow_price_and_power_boundaries(tmp_path) -> None:
+    history = _history(grid_import=1000.0, grid_export=500.0)
+    middle = history.starts_at + timedelta(minutes=30)
+    history = replace(history, series=tuple(
+        replace(series, points=(series.points[0], PowerHistoryPoint(middle, 2000.0, "increase")))
+        if series.role == "grid_import" else series for series in history.series
+    ))
+    original = _snapshot().price_points[0]
+    prices = (replace(original, ends_at=middle, value_eur_per_kwh=-0.2),
+              replace(original, point_id="later", starts_at=middle, value_eur_per_kwh=0.4))
+    values = _ledger(tmp_path).update(
+        _snapshot(), history, price_points=prices,
+    )["today"]["financial_metrics"]["values"]
+    # Import: 0.5 kWh * -0.20 + 1 kWh * 0.40; export: 0.25 kWh at each price.
+    assert values["grid_import_cost_eur"]["value_eur"] == 0.3
+    assert values["grid_export_revenue_eur"]["value_eur"] == 0.05
+    assert values["actual_energy_cost_eur"]["value_eur"] == 0.25
+
+
+@pytest.mark.parametrize("price", [0.0, -0.2])
+def test_zero_and_negative_amounts_are_available_values(tmp_path, price) -> None:
+    values = _ledger(tmp_path).update(
+        _snapshot(price=price), _history(grid_import=1000.0, grid_export=250.0),
+    )["today"]["financial_metrics"]["values"]
+    assert values["grid_import_cost_eur"]["status"] == "available"
+    assert values["grid_import_cost_eur"]["value_eur"] == price
+    assert values["grid_export_revenue_eur"]["value_eur"] == price / 4
+
+
+@pytest.mark.parametrize("failure", ["read_error", "short_period"])
+def test_incomplete_history_read_does_not_claim_current_amounts(tmp_path, failure) -> None:
+    history = _history(grid_import=1000.0, grid_export=0.0)
+    raw = (replace(history, error="TimeoutError") if failure == "read_error" else
+           replace(history, ends_at=history.ends_at - timedelta(minutes=5)))
+    values = _ledger(tmp_path).update(
+        _snapshot(), history, measurement_history=raw,
+    )["today"]["financial_metrics"]["values"]
+    assert all(value["value_eur"] is None for value in values.values())
+
+
+def test_household_sample_gap_does_not_become_a_full_day_value(tmp_path) -> None:
+    history = _history(
+        pv_generation=0.0, household_load=1000.0, grid_import=1000.0,
+        grid_export=0.0, battery_charge=0.0, battery_discharge=0.0,
+    )
+    history = replace(history, series=tuple(
+        replace(series, history_semantics="sampled_linear")
+        if series.role == "household_load" else series for series in history.series
+    ))
+    values = _ledger(tmp_path).update(
+        _snapshot(), history,
+    )["today"]["financial_metrics"]["values"]
+    assert values["actual_energy_cost_eur"]["value_eur"] == 0.25
+    assert values["net_picot_value_eur"]["value_eur"] is None
+    assert values["net_picot_value_eur"]["missing_roles"] == ["household_load"]
+
+
+def test_display_assessment_failure_preserves_existing_inventory_update(tmp_path, monkeypatch):
+    history = _history(
+        pv_generation=0.0, household_load=1000.0, grid_import=0.0,
+        grid_export=0.0, battery_charge=0.0, battery_discharge=1000.0,
+    )
+    baseline = _ledger(tmp_path / "baseline")
+    baseline.update(_snapshot(), history)
+
+    def fail(**kwargs):
+        raise RuntimeError("injected display failure")
+
+    monkeypatch.setattr("picot.v2.financial_result_ledger.build_financial_metrics", fail)
+    ledger = _ledger(tmp_path / "changed")
+    view = ledger.update(_snapshot(), history)
+    assert view["today"]["financial_metrics"]["reason"] == "financial_metric_evaluation_failed"
+    assert view["today"]["financial_metrics"]["error_type"] == "RuntimeError"
+    assert view["cumulative"]["excluded_battery_days"] == 1
+    assert ledger.storage_energy_inventory() == baseline.storage_energy_inventory()
+    assert _ledger(tmp_path / "changed").storage_energy_inventory() == (
+        baseline.storage_energy_inventory()
+    )
+
+
+def test_zero_length_day_start_waits_for_a_measured_period(tmp_path):
+    history = _history(grid_import=0.0, grid_export=0.0)
+    history = replace(history, starts_at=history.ends_at)
+    values = _ledger(tmp_path).update(
+        _snapshot(), history,
+    )["today"]["financial_metrics"]["values"]
+    assert all(value["value_eur"] is None for value in values.values())
 
 
 def test_dashboard_contract_is_passive_and_persists_purchase_progress(tmp_path) -> None:

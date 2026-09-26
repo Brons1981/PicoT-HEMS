@@ -8,6 +8,7 @@ from test_daily_main_route_optimisation import fresh
 
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.canonical_execution_runtime import CanonicalDispatchOutcome, CanonicalExecutionRuntime
+from picot.v2.financial_result_ledger import FinancialResultLedger
 from picot.v2.live_runtime import _execute_planning_bundle
 from picot.v2.live_storage_mode_provenance import (
     LiveStorageModeProvenanceRuntime,
@@ -16,6 +17,12 @@ from picot.v2.live_storage_mode_provenance import (
 from picot.v2.opportunity_engine import PriceOpportunityConfig
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import PlanningInputBundle
+from picot.v2.power_history import (
+    PowerHistoryPoint,
+    PowerHistorySeries,
+    PowerHistorySnapshot,
+    numeric_power_history,
+)
 from picot.v2.storage_mode_transition_history import StorageModeTransitionHistoryStore
 from picot.v2.web_ui import WebViewStore
 
@@ -123,3 +130,56 @@ def test_switch_after_planning_uses_fresh_execution_reason(tmp_path, monkeypatch
     assert poll["evaluation"]["reason"] == "daily_main_route_retained_without_optimisation_trigger"
     assert poll["primitive_boundary"]["execution_reason"] == event.reason
     assert store.load_active_daily_main_plan("battery") == plan
+
+
+def test_financial_gap_display_preserves_canonical_records_and_plan_store(tmp_path, monkeypatch):
+    monkeypatch.setattr("picot.v2.live_runtime.HomeAssistantProjectionSink.publish",
+                        lambda *args: None)
+    canonical = []
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    seed_store, seed_pipeline, seed_recover = setup(seed, monkeypatch)
+    seed_pipeline.run(planning_input=seed_recover())
+    source = seed_recover()
+    saved_plans = seed_store._path.read_bytes()
+    for keep_gaps in [False, True]:
+        folder = tmp_path / str(keep_gaps)
+        folder.mkdir()
+        (folder / "plans.json").write_bytes(saved_plans)
+        store, pipeline, _ = setup(folder, monkeypatch)
+        before = store._path.read_bytes()
+        start = source.captured_at - timedelta(minutes=10)
+        gap_start = start + timedelta(minutes=5)
+        raw = PowerHistorySnapshot(
+            starts_at=start, ends_at=source.captured_at, status="available", error=None,
+            series=tuple(PowerHistorySeries(
+                series_id=role, role=role, source_entity_id=f"sensor.{role}",
+                transform="positive", points=(
+                    PowerHistoryPoint(start, 0.0, role + "-start"),
+                    PowerHistoryPoint(gap_start, float("nan") if role == "pv_generation"
+                                      else 0.0, role + "-middle"),
+                    PowerHistoryPoint(source.captured_at, 0.0, role + "-end"),
+                ),
+            ) for role in ["pv_generation", "household_load", "grid_import", "grid_export",
+                           "battery_charge", "battery_discharge"]),
+        )
+        web = WebViewStore()
+        incidents = PlanningIncidentHistory(folder / "incidents.jsonl")
+        _execute_planning_bundle(
+            token="test-token", canonical_pipeline=pipeline,
+            price_config=PriceOpportunityConfig(0.02, 0.02, "test"),
+            bundle=PlanningInputBundle(source, (), (), source.captured_at, source.captured_at),
+            web_view_store=web, power_history=numeric_power_history(raw),
+            financial_measurement_history=raw if keep_gaps else None,
+            financial_result_ledger=FinancialResultLedger(state_path=folder / "financial.json"),
+            planning_incident_history=incidents,
+        )
+        assert store._path.read_bytes() == before
+        poll = json.loads(incidents.path.read_text().splitlines()[0])["poll"]
+        canonical.append({key: poll[key] for key in [
+            "planning_input", "candidate_set", "outcomes", "evaluation",
+            "execution_plan_set", "execution_record", "primitive_boundary", "vendor_result",
+        ]})
+        metrics = json.loads(web.latest_json())["financial_results"]["today"]["financial_metrics"]
+        assert metrics["measurement_coverage"]["pv_generation"]["gap_count"] == int(keep_gaps)
+    assert canonical[0] == canonical[1]

@@ -16,6 +16,7 @@ from picot.domain.daily_reference_charge_window import (
     DailyMainChargeSegment,
     DailyMainChargeWindow,
     DailyMainChargeWindowSet,
+    DailyMainRejectedWindow,
     DailyReferenceChargeWindow,
     DailyReferenceChargeWindowSet,
     DailyRetainedMainSegment,
@@ -150,7 +151,7 @@ class IndependentDailyReferenceAdapter:
         if owner is None:
             raise DailyReferenceInputError("committed_expectation_owner_missing")
         inputs = self._inputs(
-            snapshot, horizon_end=plan.valid_until, maximum_duration=timedelta(hours=36),
+            snapshot, horizon_end=plan.valid_until, maximum_duration=timedelta(hours=49),
             extra_boundaries=tuple(t for s in plan.segments for t in (s.starts_at, s.ends_at)),
         )
         schedule, _ = self._retained_main_schedule(
@@ -198,7 +199,7 @@ class IndependentDailyReferenceAdapter:
             if owner is None:
                 raise DailyReferenceInputError("bridge_retained_plan_owner_missing")
             inputs = self._inputs(snapshot, horizon_end=plan.valid_until,
-                                  maximum_duration=timedelta(hours=36))
+                                  maximum_duration=timedelta(hours=49))
             schedule, _ = self._retained_main_schedule(
                 snapshot=snapshot, assignment=owner, inputs=inputs, supplied=None,
             )
@@ -214,7 +215,7 @@ class IndependentDailyReferenceAdapter:
         if not previous:
             return DailyBridgeAssessment("day_goal_not_completed")
         inputs = self._inputs(snapshot, horizon_end=plan.valid_until,
-                              maximum_duration=timedelta(hours=36))
+                              maximum_duration=timedelta(hours=49))
         schedule, _ = self._retained_main_schedule(
             snapshot=snapshot, assignment=owner, inputs=inputs, supplied=None,
         )
@@ -276,6 +277,7 @@ class IndependentDailyReferenceAdapter:
     def bridge_windows(
         self, *, snapshot: PlanningInputSnapshot, trigger: DailyBridgeTrigger,
         conversion_model: StorageConversionModel,
+        revision_schedule: DailyReferenceIntentSchedule | None = None,
     ) -> DailyMainChargeWindowSet:
         """Supplement the retained route; never discover a replacement main window."""
         context = snapshot.daily_charge_context
@@ -283,18 +285,25 @@ class IndependentDailyReferenceAdapter:
         owner = next(a for a in context.assignments if a.assignment_id == trigger.assignment_id)
         trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
         active = next(p for p in context.main_plans if p.plan_id == trigger.active_plan_id)
-        inputs = self._inputs(snapshot, horizon_end=active.valid_until,
-                              maximum_duration=timedelta(hours=36))
+        inputs = self._inputs(
+            snapshot, horizon_end=(revision_schedule.horizon_end if revision_schedule
+                                   else active.valid_until),
+            maximum_duration=timedelta(hours=49),
+        )
         baseline, retained = self._retained_main_schedule(
             snapshot=snapshot, assignment=owner, inputs=inputs, supplied=None,
         )
         assert baseline is not None
+        if revision_schedule is not None:
+            baseline = revision_schedule
         owned = tuple(r for r in retained if r.assignment_id == owner.assignment_id)
         others = tuple(r for r in retained if r.assignment_id != owner.assignment_id)
         free = tuple(n for n, i in enumerate(baseline.intervals)
                      if i.ends_at <= trigger.next_starts_at and not any(
                          r.segment.starts_at < i.ends_at and i.starts_at < r.segment.ends_at
-                         for r in retained))
+                         for r in retained)
+                     and (revision_schedule is None
+                          or i.intent is not DailyStorageIntent.STORAGE_EXPORT))
         if trigger.historical_completion_id is not None and not any(
             i.deficit_wh > 1e-6 for i in trigger.deficits
         ):
@@ -304,13 +313,16 @@ class IndependentDailyReferenceAdapter:
         simulations = 0
         projections: dict[str, DailyPlanningProjection] = {}
 
-        def add(intents: tuple[DailyReferenceIntentInterval, ...]) -> DailyReferenceIntentSchedule:
+        def add(
+            intents: tuple[DailyReferenceIntentInterval, ...], *, include: bool = True,
+        ) -> DailyReferenceIntentSchedule:
             schedule = replace(baseline, intervals=intents,
                                schedule_id="bridge:" + sha256(
                                    (snapshot.snapshot_id + repr(intents)).encode()
                                ).hexdigest()[:16])
-            schedules.setdefault(intents, schedule)
-            return schedules[intents]
+            if include:
+                schedules.setdefault(intents, schedule)
+            return schedules.get(intents, schedule)
 
         def project(schedule: DailyReferenceIntentSchedule) -> DailyPlanningProjection:
             nonlocal simulations
@@ -324,7 +336,8 @@ class IndependentDailyReferenceAdapter:
         # PV capture over the bridge, individual controllable intervals, and
         # minimum sufficient contiguous charging from each feasible start.
         # The same interval simulator evaluates all options; no ranking takes place here.
-        pv = tuple(replace(i, intent=DailyStorageIntent.NOM) if n in free else i
+        pv = tuple(replace(i, intent=DailyStorageIntent.NOM, storage_export_target_wh=0.0)
+                   if n in free else i
                    for n, i in enumerate(baseline.intervals))
         add(pv)
         # Direct grid support can preserve storage across a complete published
@@ -343,6 +356,10 @@ class IndependentDailyReferenceAdapter:
         for run in (*runs, list(free)):
             add(tuple(replace(i, intent=DailyStorageIntent.STANDBY)
                       if n in run else i for n, i in enumerate(pv)))
+        if revision_schedule is not None:
+            for run in runs:
+                add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT)
+                          if n in run else i for n, i in enumerate(pv)))
         for n in free:
             for intent in (DailyStorageIntent.GRID_REQUIREMENT, DailyStorageIntent.STANDBY):
                 add(tuple(replace(i, intent=intent) if k == n else i for k, i in enumerate(pv)))
@@ -355,7 +372,8 @@ class IndependentDailyReferenceAdapter:
             while lo < hi:
                 mid = (lo + hi) // 2
                 trial = add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT)
-                                  if k in consecutive[:mid] else i for k, i in enumerate(pv)))
+                                  if k in consecutive[:mid] else i for k, i in enumerate(pv)),
+                            include=revision_schedule is None)
                 deficit = energy_deficits(project(trial), trial, until=trigger.next_starts_at,
                                           maximum_discharge_output_power_w=
                                           inputs.maximum_discharge_output_power_w)
@@ -366,9 +384,19 @@ class IndependentDailyReferenceAdapter:
             add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT)
                       if k in consecutive[:lo] else i for k, i in enumerate(pv)))
         windows = []
+        rejected = []
+        main = tuple(DailyMainChargeSegment(
+            "bridge-main:" + sha256((baseline.schedule_id + r.segment.segment_id)
+                                    .encode()).hexdigest()[:16],
+            max(r.segment.starts_at, baseline.horizon_start), r.segment.ends_at,
+            DailyStorageIntent.GRID_REQUIREMENT
+            if r.segment.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+            else DailyStorageIntent.NOM,
+        ) for r in owned)
         for schedule in schedules.values():
             projection = project(schedule)
             reaches = {}
+            invalid = []
             for a in context.assignments:
                 if (a.completed_at is not None or not a.main_segments
                         or a.ends_at <= snapshot.captured_at):
@@ -379,27 +407,35 @@ class IndependentDailyReferenceAdapter:
                                 if main.starts_at <= at <= main.ends_at
                                 and energy + 1e-6 >= inputs.storage.usable_capacity_wh), None)
                 if reached is None:
-                    break
-                reaches[a.assignment_id] = reached
+                    invalid.append(f"daily_main_goal_unreachable:{a.assignment_id}")
+                else:
+                    reaches[a.assignment_id] = reached
+            if invalid:
+                rejected.append(DailyMainRejectedWindow(
+                    owner.assignment_id, "hybrid", schedule, main, projection,
+                    inputs.storage.usable_capacity_wh, tuple(invalid), others,
+                ))
             else:
-                main = tuple(DailyMainChargeSegment(
-                    "bridge-main:" + sha256((schedule.schedule_id + r.segment.segment_id)
-                                            .encode()).hexdigest()[:16],
-                    r.segment.starts_at, r.segment.ends_at,
-                    DailyStorageIntent.GRID_REQUIREMENT
-                    if r.segment.primitive is ExecutionPrimitive.CHARGE_AT_POWER
-                    else DailyStorageIntent.NOM,
-                ) for r in owned)
                 windows.append(DailyMainChargeWindow(
                     owner.assignment_id, "hybrid", schedule, main, projection,
                     reaches[owner.assignment_id], inputs.storage.usable_capacity_wh, others,
                 ))
-        windows = [attached for w in windows if (attached := attach_supplemental_goals(
-            w, snapshot, trigger)) is not None]
+        attached_windows = []
+        for window in windows:
+            attached = attach_supplemental_goals(window, snapshot, trigger)
+            if attached is not None:
+                attached_windows.append(attached)
+            else:
+                rejected.append(DailyMainRejectedWindow(
+                    window.assignment_id, window.family, window.schedule, window.main_segments,
+                    window.projection, window.target_storage_energy_wh,
+                    ("supplemental_goal_unreachable",), window.retained_main_segments,
+                ))
+        windows = attached_windows
         return DailyMainChargeWindowSet(
             owner.assignment_id, snapshot.snapshot_id, tuple(windows),
             "discovered" if windows else "unreachable", "reserve_bridge_alternatives",
-            simulations, purpose="bridge",
+            simulations, purpose="bridge", rejected_windows=tuple(rejected),
         )
 
     def main_route_shortfalls(
@@ -418,7 +454,7 @@ class IndependentDailyReferenceAdapter:
             raise DailyReferenceInputError("main_charge_active_plan_required_for_monitoring")
         plan = active[0]
         inputs = self._inputs(snapshot, horizon_end=plan.valid_until,
-                              maximum_duration=timedelta(hours=36))
+                              maximum_duration=timedelta(hours=49))
         schedule, _ = self._retained_main_schedule(
             snapshot=snapshot, assignment=pending[0], inputs=inputs, supplied=None,
         )
@@ -477,7 +513,7 @@ class IndependentDailyReferenceAdapter:
             return True
         plan = next(p for p in context.main_plans if p.plan_id == trigger.active_plan_id)
         inputs = self._inputs(
-            snapshot, horizon_end=plan.valid_until, maximum_duration=timedelta(hours=36),
+            snapshot, horizon_end=plan.valid_until, maximum_duration=timedelta(hours=49),
             extra_boundaries=(recovery_start, deadline),
         )
         schedule, _ = self._retained_main_schedule(
@@ -572,7 +608,7 @@ class IndependentDailyReferenceAdapter:
             .total_seconds() / 3600 for s in grid if s.requested_power_w is not None
         )
         inputs = self._inputs(snapshot, horizon_end=plan.valid_until,
-                              maximum_duration=timedelta(hours=36))
+                              maximum_duration=timedelta(hours=49))
         schedule, _ = self._retained_main_schedule(
             snapshot=snapshot, assignment=assignment, inputs=inputs, supplied=None,
         )
@@ -637,7 +673,7 @@ class IndependentDailyReferenceAdapter:
             raise DailyReferenceInputError("main_charge_incumbent_requires_one_active_plan")
         plan = active[0]
         inputs = self._inputs(snapshot, horizon_end=horizon_end,
-                              maximum_duration=timedelta(hours=36))
+                              maximum_duration=timedelta(hours=49))
         schedule, retained = self._retained_main_schedule(
             snapshot=snapshot, assignment=assignment, inputs=inputs, supplied=None,
             allow_uncovered_incumbent=True,
@@ -716,11 +752,13 @@ class IndependentDailyReferenceAdapter:
         conversion_model: StorageConversionModel,
         retained_schedule: DailyReferenceIntentSchedule | None = None,
         optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None,
+        revision_schedule: DailyReferenceIntentSchedule | None = None,
     ) -> DailyMainChargeWindowSet:
         """Canonical input seam for first main-route Candidate construction.
 
         The daily obligation does not truncate the household simulation. The
-        complete published horizon (up to 36 hours) remains in every candidate.
+        Complete published coverage remains in every candidate: initially up
+        to 36 hours, or the longer already committed horizon during a repair.
         Selection and binding to an execution plan belong downstream.
         """
         if assignment.completed_at is not None:
@@ -741,7 +779,13 @@ class IndependentDailyReferenceAdapter:
             raise DailyReferenceInputError("main_charge_existing_route_requires_optimisation")
         if snapshot.horizon_end is None:
             raise DailyReferenceInputError("daily_reference_horizon_missing")
-        maximum_end = min(snapshot.horizon_end, snapshot.captured_at + timedelta(hours=36))
+        maximum_end = snapshot.captured_at + timedelta(hours=36)
+        if optimisation_trigger is not None and snapshot.daily_charge_context is not None:
+            active = next(p for p in snapshot.daily_charge_context.main_plans
+                          if p.plan_id == optimisation_trigger.active_plan_id)
+            maximum_end = max(maximum_end, active.valid_until)
+        maximum_end = (revision_schedule.horizon_end if revision_schedule else
+                       min(snapshot.horizon_end, maximum_end))
         tariff_adapter = IndependentDailyTariffAdapter()
         published_end = tariff_adapter.published_horizon_end(
             snapshot, maximum_horizon_end=maximum_end
@@ -752,13 +796,30 @@ class IndependentDailyReferenceAdapter:
         # Candidate discovery does not infer or manufacture tariff values.
         tariff_adapter.build(snapshot, horizon_end=published_end)
         inputs = self._inputs(
-            snapshot, horizon_end=published_end, maximum_duration=timedelta(hours=36)
+            snapshot, horizon_end=published_end,
+            maximum_duration=timedelta(hours=49) if optimisation_trigger else timedelta(hours=36),
         )
         retained_schedule, retained_main = self._retained_main_schedule(
             snapshot=snapshot, assignment=assignment, inputs=inputs,
             supplied=retained_schedule,
             revising_assignment_id=assignment.assignment_id if optimisation_trigger else None,
         )
+        if revision_schedule is not None:
+            if optimisation_trigger is None or (
+                revision_schedule.snapshot_id != snapshot.snapshot_id
+                or revision_schedule.horizon_start != snapshot.captured_at
+                or revision_schedule.horizon_end != published_end
+            ):
+                raise DailyReferenceInputError("market_revision_requires_matching_replanning_basis")
+            # The explicit market seed changes only export. Own grid segments
+            # are rediscovered over NOM using the existing main-charge rules.
+            retained_schedule = replace(revision_schedule, intervals=tuple(
+                replace(i, intent=DailyStorageIntent.NOM, storage_export_target_wh=0.0)
+                if i.intent is DailyStorageIntent.GRID_REQUIREMENT and any(
+                    s.starts_at <= i.starts_at and i.ends_at <= s.ends_at
+                    for s in assignment.main_segments
+                ) else i for i in revision_schedule.intervals
+            ))
         result = IndependentDailyChargeWindowDiscoverer().discover_main_charge(
             snapshot_id=snapshot.snapshot_id,
             assignment=assignment,

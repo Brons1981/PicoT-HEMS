@@ -11,6 +11,7 @@ from picot.domain.daily_reference_intent import (
 )
 from picot.domain.daily_reference_simulation import DailyPlanningProjection, PVScenario
 from picot.domain.execution_plan import ExecutionPlanSegment
+from picot.domain.market_revision_comparison import MarketRevisionBasis
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
 
 
@@ -228,6 +229,28 @@ class DailyMainChargeWindow:
 
 
 @dataclass(frozen=True, slots=True)
+class DailyMainRejectedWindow:
+    """A simulated complete attempt with failed goals, never an executable window."""
+
+    assignment_id: str
+    family: str
+    schedule: DailyReferenceIntentSchedule
+    main_segments: tuple[DailyMainChargeSegment, ...]
+    projection: DailyPlanningProjection
+    target_storage_energy_wh: float
+    invalidity_reasons: tuple[str, ...]
+    retained_main_segments: tuple[DailyRetainedMainSegment, ...] = ()
+    supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.invalidity_reasons or (
+            self.schedule.snapshot_id != self.projection.snapshot_id
+            or self.schedule.schedule_id != self.projection.intent_schedule_id
+        ):
+            raise ValueError("rejected route requires matching simulation and explicit reasons")
+
+
+@dataclass(frozen=True, slots=True)
 class DailyMainChargeWindowSet:
     assignment_id: str
     snapshot_id: str
@@ -236,6 +259,8 @@ class DailyMainChargeWindowSet:
     reason: str
     simulation_count: int
     purpose: str = "main_charge"
+    rejected_windows: tuple[DailyMainRejectedWindow, ...] = ()
+    market_revision: MarketRevisionBasis | None = None
 
     def __post_init__(self) -> None:
         if self.purpose not in {"main_charge", "bridge"}:

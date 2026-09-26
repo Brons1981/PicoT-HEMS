@@ -24,6 +24,66 @@ class Projection:
     projection_ms: float
 
 
+def project_market_revision_comparison(run: CanonicalPipelineRun) -> dict[str, object] | None:
+    """Present producer evidence and the canonical choice without valuing paths."""
+    evidence = run.outcomes.market_revision_evidence
+    if not evidence:
+        return None
+    evaluation = run.evaluation
+    paths = {c.candidate_id: c.energy_path_id for c in run.candidate_set.candidates}
+    rejected = {
+        item.candidate_id: item.reasons
+        for item in (
+            evaluation.canonical_record.invalid_candidates
+            if evaluation.canonical_record is not None else ()
+        )
+    }
+    return {
+        "snapshot_id": run.planning_input.snapshot_id,
+        "comparison_captured_at": run.planning_input.captured_at.isoformat(),
+        "retained": False,
+        "candidate_set_id": run.outcomes.candidate_set_id,
+        "evaluation_id": evaluation.evaluation_id,
+        "status": evaluation.status,
+        "winning_candidate_id": evaluation.winning_candidate_id,
+        "incumbent_candidate_id": evaluation.incumbent_candidate_id,
+        "decisive_step": evaluation.decisive_step,
+        "reason": evaluation.reason,
+        "execution_plans": [
+            {"plan_id": plan.plan_id, "energy_path_id": plan.winning_energy_path_id}
+            for plan in run.execution_plan_set.plans
+        ],
+        "alternatives": [
+            {
+                "candidate_id": item.candidate_id,
+                "energy_path_id": paths[item.candidate_id],
+                "assignment_id": item.assignment_id,
+                "variant": item.variant,
+                "incumbent": item.candidate_id == evaluation.incumbent_candidate_id,
+                "selected": item.candidate_id == evaluation.winning_candidate_id,
+                "horizon_start": item.horizon_start.isoformat(),
+                "horizon_end": item.horizon_end.isoformat(),
+                "days": [
+                    {"delivery_date": day.delivery_date,
+                     "import_cost_eur": day.import_cost_eur,
+                     "export_revenue_eur": day.export_revenue_eur}
+                    for day in item.days
+                ],
+                "grid_charge_wh": item.grid_charge_wh,
+                "terminal_storage_wh": item.terminal_storage_wh,
+                "minimum_storage_wh": item.minimum_storage_wh,
+                "wear_cost_eur": item.wear_cost_eur,
+                "comparable_result_eur": item.comparable_result_eur,
+                "delta_from_incumbent_eur": item.delta_from_incumbent_eur,
+                "invalidity_reasons": list(item.invalidity_reasons),
+                "evaluation_invalidity_reasons": list(rejected.get(item.candidate_id, ())),
+                "evidence_ids": list(item.evidence_ids),
+            }
+            for item in evidence
+        ],
+    }
+
+
 def project(run: CanonicalPipelineRun) -> Projection:
     started = perf_counter()
     p = run.planning_input
@@ -661,6 +721,7 @@ def project(run: CanonicalPipelineRun) -> Projection:
                 "evaluated_candidate_ids": list(e.evaluated_candidate_ids),
                 "decisive_step": e.decisive_step,
                 "reason": e.reason,
+                "market_revision_comparison": project_market_revision_comparison(run),
                 "daily_main_input_shortfalls": [
                     {"assignment_id": t.assignment_id, "snapshot_id": t.snapshot_id,
                      "projected_main_peak_wh": t.projected_main_peak_wh,

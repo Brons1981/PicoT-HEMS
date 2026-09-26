@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from collections import deque
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from picot.v2.contracts import CanonicalPipelineRun
@@ -94,6 +94,81 @@ def _entity_observations(bundle: PlanningInputBundle) -> list[dict[str, object]]
     return observations
 
 
+def _compact_market_records(run: CanonicalPipelineRun) -> dict[str, object]:
+    """Keep replay inputs elsewhere in the poll; retain every comparison outcome.
+
+    Alternative paths repeat the same long trajectories thousands of times.
+    Only winner/incumbent path detail is retained here, explicitly labelled.
+    Evidence dictionaries are lossless: a referenced sequence reconstructs as
+    base[:prefix_count] + middle + base[suffix_start:]. Bases are earlier raw
+    sequences, so readers never need recursive or cyclic reference resolution.
+    """
+    retained_candidates = {
+        run.evaluation.winning_candidate_id, run.evaluation.incumbent_candidate_id,
+    } - {None}
+    retained_path_ids = {
+        candidate.energy_path_id for candidate in run.candidate_set.candidates
+        if candidate.candidate_id in retained_candidates
+    }
+    paths = tuple(path for path in run.candidate_set.energy_paths
+                  if path.path_id in retained_path_ids)
+    candidate_record = asdict(replace(run.candidate_set, energy_paths=paths))
+    candidate_record["energy_path_detail_scope"] = "winner_and_incumbent"
+    candidate_record["energy_path_count"] = len(run.candidate_set.energy_paths)
+    candidate_record["omitted_alternative_energy_path_count"] = (
+        len(run.candidate_set.energy_paths) - len(paths)
+    )
+    dictionary: dict[str, dict[str, object]] = {}
+    references: dict[tuple[str, ...], str] = {}
+    bases: dict[int, tuple[str, ...]] = {}
+
+    def evidence_reference(sequence: tuple[str, ...]) -> str:
+        if sequence in references:
+            return references[sequence]
+        reference = f"e{len(references)}"
+        base = bases.get(len(sequence))
+        prefix = suffix = 0
+        if base is not None:
+            while prefix < len(sequence) and sequence[prefix] == base[prefix]:
+                prefix += 1
+            while (suffix < len(sequence) - prefix
+                   and sequence[-suffix - 1] == base[-suffix - 1]):
+                suffix += 1
+        if base is not None and prefix + suffix > 8:
+            dictionary[reference] = {
+                "base": references[base], "prefix_count": prefix,
+                "middle": list(sequence[prefix:len(sequence) - suffix]),
+                "suffix_start": len(base) - suffix,
+            }
+        else:
+            dictionary[reference] = {"ids": list(sequence)}
+            bases.setdefault(len(sequence), sequence)
+        references[sequence] = reference
+        return reference
+
+    def encode(value: object) -> object:
+        if is_dataclass(value) and not isinstance(value, type):
+            result: dict[str, object] = {}
+            for item in fields(value):
+                content = getattr(value, item.name)
+                if item.name == "evidence_ids" and content:
+                    result["evidence_ids_ref"] = evidence_reference(content)
+                else:
+                    result[item.name] = encode(content)
+            return result
+        if isinstance(value, (tuple, list)):
+            return [encode(item) for item in value]
+        return value
+
+    outcomes = cast(dict[str, object], encode(run.outcomes))
+    return {
+        "comparison_detail_format": "market-revision-compact:v1",
+        "candidate_set": candidate_record,
+        "outcomes": outcomes,
+        "comparison_evidence_dictionary": dictionary,
+    }
+
+
 def _poll_snapshot(
     bundle: PlanningInputBundle,
     run: CanonicalPipelineRun,
@@ -103,6 +178,9 @@ def _poll_snapshot(
 ) -> dict[str, object]:
     captured_at = bundle.snapshot.captured_at
     household = bundle.snapshot.household_load_forecast
+    comparison = (_compact_market_records(run) if run.outcomes.market_revision_evidence else {
+        "candidate_set": asdict(run.candidate_set), "outcomes": asdict(run.outcomes),
+    })
     return {
         "captured_at_utc": captured_at.astimezone(UTC).isoformat(),
         "captured_at_local": captured_at.astimezone(local_timezone).isoformat(),
@@ -124,8 +202,7 @@ def _poll_snapshot(
             asdict(bundle.snapshot.household_load_guard)
             if bundle.snapshot.household_load_guard is not None else None
         ),
-        "candidate_set": asdict(run.candidate_set),
-        "outcomes": asdict(run.outcomes),
+        **comparison,
         "evaluation": asdict(run.evaluation),
         "execution_plan_set": asdict(run.execution_plan_set),
         "execution_record": asdict(run.execution_record),

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.271
+
+- Herstelt de NOM-terugval bij overbrugging: omzetting van export naar NOM wist ook het exportdoel.
+- Bestaande marktroutes kunnen bij een toegelaten herplanning behouden, ingekort of verwijderd worden, met aanvullend laden als dat voordeliger is.
+- Financiële selectie vergelijkt de resterende uren van vandaag én morgen, inclusief laadkosten, ingestelde slijtage en gelijkwaardige eindvoorraad. Dagdoelen, reserve en bescherming van lopend laden blijven vereist.
+- Ontbrekende prijzen, prognosedekking of een nog ongebonden dagdoel leveren geen fictief financieel voordeel op; een geldige uitvoering en toegelaten laadreparatie blijven mogelijk.
+- Dashboard en diagnose tonen de financiële alternatieven en afwijsredenen. Geselecteerde revisies bewaren het oorspronkelijke dagbudget en de uitvoeringshistorie, ook na herstart.
+- Het afzonderlijke onderzoek naar de schakelingen rond 15:25–15:31 is geen onderdeel van deze release. Dev.268 blijft de afgesproken eerste terugvalbasis.
+
 ## 2.0.0-dev.270
 
 - Herstelt een plannercrash na voltooiing van het dagdoel bij een gecombineerd laad- en marktplan zonder bekende volgende hoofdlaadsessie.

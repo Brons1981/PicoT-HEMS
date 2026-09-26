@@ -141,8 +141,8 @@ class CanonicalExecutionRuntime:
             for binding in self.commitment_store.load_market_plan_bindings():
                 if binding.execution_scope_id != scope_id:
                     continue
-                plan = self.commitment_store.load_market_original_plan(binding)
-                ids = binding.original_segment_ids or binding.segment_ids
+                plan = self.commitment_store.load_market_bound_plan(binding.assignment_id)
+                ids = binding.segment_ids
                 parts = tuple(s for s in plan.segments if s.segment_id in ids)
                 if not parts or not parts[0].starts_at <= snapshot.captured_at < parts[-1].ends_at:
                     continue

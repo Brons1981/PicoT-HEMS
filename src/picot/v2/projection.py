@@ -809,6 +809,7 @@ def project(run: CanonicalPipelineRun) -> Projection:
                     else None
                 ),
                 "mapping_status": pb.mapping_status,
+                "execution_reason": pb.execution_reason,
                 "source_entity_id": pb.source_entity_id,
                 "current_vendor_mode": pb.current_vendor_mode,
                 "planned_vendor_mode": pb.planned_vendor_mode,

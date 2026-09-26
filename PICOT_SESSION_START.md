@@ -473,3 +473,20 @@ gedrag, verse verificatie, replays en beperkingen. Alex heeft om 20:50 akkoord
 gegeven op afzonderlijke release dev.271 via PR en CI. Installatie en livebewijs
 volgen daarna; het schakelpunt van 15:25–15:31 wordt vervolgens afzonderlijk
 onderzocht. Dev.268 blijft de operationele terugvalbasis.
+
+### Vervolg — fix 2 na akkoord om 21:34
+
+Dev.271 is gepubliceerd via PR #668, merge
+`b5920fc046858fa07aaf2edaa91fb4c6160f1bad`. Alex meldt weer een actief plan;
+volledig nieuw live-diagnosebewijs is nog niet ontvangen.
+
+Het schakelonderzoek staat in
+`docs/development_log/2026-09-26-switching-investigation.md`.
+De goedgekeurde beperkte reparatie is lokaal geïmplementeerd; lees
+`docs/development_log/2026-09-26-charge-continuity-implementation.md` voor
+kandidaatcontinuïteit, uitvoeringsreden, replays en verificatiestatus. Alex heeft
+om 21:50 akkoord gegeven op afzonderlijke publicatie als dev.272 via PR en
+automatische controles. Installatie en liveverificatie volgen afzonderlijk.
+Het financiële tabblad is daarna een
+afzonderlijk herstelpunt, vastgelegd in
+`docs/development_log/2026-09-26-financial-tab-triage.md`.

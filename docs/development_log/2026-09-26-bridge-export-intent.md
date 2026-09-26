@@ -124,3 +124,9 @@ implementatie, vervanging van de voorbarige publicatietest en actuele
 verificatieresultaten staan in
 `docs/development_log/2026-09-26-market-revision-implementation.md`.
 De eerdere statussen hierboven blijven het verslag van de toenmalige onderzoeksstappen.
+
+Het vervolgonderzoek van fix 2 staat in
+`docs/development_log/2026-09-26-switching-investigation.md`. De oorspronkelijke
+snapshots reproduceren nu ook de kandidaatblokkade vóór het verstrijken van de
+laadgrens: eerst alleen PV-opties, daarna uitsluiting op laadcontinuïteit zonder
+aanvullende netlaadopties. Dit onderzoek wijzigt geen productiecode.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.272
+
+- Bij herplanning tijdens beschermd netladen biedt PicoT behoud en ononderbroken verlenging van het laadblok aan, ook als latere PV op papier het dagdoel kan halen.
+- Herstelt de kandidaatuitputting achter de onderbreking rond 15:25 op 26 september. De replay kiest nu doorladen; de bestaande financiële selectie bepaalt de beste geldige optie.
+- De schakelhistorie toont de werkelijke uitvoeringsreden. De afzonderlijke plankeuzereden blijft beschikbaar in de diagnose.
+- Het 100%-dagdoel, andere beschermde intervallen en de bestaande financiële regels blijven gelden. Het financiële tabblad volgt als afzonderlijk herstelpunt.
+
 ## 2.0.0-dev.271
 
 - Herstelt de NOM-terugval bij overbrugging: omzetting van export naar NOM wist ook het exportdoel.

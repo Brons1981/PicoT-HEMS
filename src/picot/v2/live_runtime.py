@@ -2291,7 +2291,7 @@ def _execute_planning_bundle(
                     previous_vendor_mode=provenance.observed_vendor_mode,
                     requested_vendor_mode=run.vendor_result.planned_vendor_mode,
                     source="canonical_execution",
-                    reason=run.evaluation.reason,
+                    reason=run.primitive_boundary.execution_reason or run.evaluation.reason,
                     confidence=_winning_plan_confidence(run),
                     run_id=run.planning_input.run_id,
                     snapshot_id=run.planning_input.snapshot_id,

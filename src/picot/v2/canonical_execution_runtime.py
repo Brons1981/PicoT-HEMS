@@ -831,6 +831,7 @@ class CanonicalExecutionRuntime:
                 planned_vendor_mode=outcome.planned_vendor_mode,
                 status=outcome.status,
                 blockers=(outcome.failure_reason,) if outcome.failure_reason else (),
+                execution_reason=outcome.reason or "active canonical MEP segment boundary",
             ),
             adapter_boundary=replace(
                 run.adapter_boundary,

@@ -795,9 +795,16 @@ class IndependentDailyReferenceAdapter:
         # Validate prices through their existing owner, including gaps/overlaps;
         # Candidate discovery does not infer or manufacture tariff values.
         tariff_adapter.build(snapshot, horizon_end=published_end)
+        protected_end = self._protected_grid_end(
+            snapshot, assignment, net_balance_review=(
+                isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
+                and optimisation_trigger.net_balance_evidence_id is not None
+            ),
+        )
         inputs = self._inputs(
             snapshot, horizon_end=published_end,
             maximum_duration=timedelta(hours=49) if optimisation_trigger else timedelta(hours=36),
+            extra_boundaries=(protected_end,) if protected_end is not None else (),
         )
         retained_schedule, retained_main = self._retained_main_schedule(
             snapshot=snapshot, assignment=assignment, inputs=inputs,
@@ -833,6 +840,7 @@ class IndependentDailyReferenceAdapter:
             maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
             retained_schedule=retained_schedule,
             optimisation_trigger=optimisation_trigger,
+            required_grid_until=protected_end,
         )
         windows = tuple(
             replace(window, retained_main_segments=retained_main) for window in result.windows
@@ -885,12 +893,6 @@ class IndependentDailyReferenceAdapter:
             if not feasible:
                 return replace(result, windows=(), status="unreachable",
                                reason="pv_comparison_has_no_admissible_grid_reduction")
-        protected_end = self._protected_grid_end(
-            snapshot, assignment, net_balance_review=(
-                isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
-                and optimisation_trigger.net_balance_evidence_id is not None
-            ),
-        )
         if protected_end is not None:
             feasible = tuple(w for w in feasible if all(
                 i.intent is DailyStorageIntent.GRID_REQUIREMENT

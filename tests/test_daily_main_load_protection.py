@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import timedelta
 
+import pytest
 from test_daily_main_active_pipeline import setup
 from test_daily_main_charge_windows import inputs
 from test_daily_main_route_optimisation import fresh
@@ -107,6 +108,55 @@ def test_repair_candidates_keep_active_grid_segment(tmp_path, monkeypatch):
             if i.starts_at < grid.ends_at
         )
         assert window.target_storage_energy_wh == 8160
+    assert owner.completed_at is None
+
+
+@pytest.mark.parametrize("quality", ["reliable", "unknown"])
+def test_later_pv_does_not_exhaust_repairs_for_protected_charging(
+    tmp_path, monkeypatch, quality,
+):
+    source, grid = bound_grid(tmp_path, monkeypatch)
+    # The old short main window cannot refill this battery. Later PV can,
+    # but replacing the already-running grid prefix by NOM is inadmissible.
+    source = replace(
+        source,
+        current_storage_states=tuple(
+            replace(s, current_soc=0.1) for s in source.current_storage_states
+        ),
+        household_load_guard=replace(source.household_load_guard, quality=quality),
+        pv_energy_timeline=replace(
+            source.pv_energy_timeline,
+            intervals=tuple(replace(
+                i, pv_energy_wh=800.0 if i.starts_at >= grid.ends_at else 0.0,
+                forecast_lower_energy_wh=800.0 if i.starts_at >= grid.ends_at else 0.0,
+                forecast_central_energy_wh=800.0 if i.starts_at >= grid.ends_at else 0.0,
+                forecast_upper_energy_wh=800.0 if i.starts_at >= grid.ends_at else 0.0,
+            ) for i in source.pv_energy_timeline.intervals),
+        ),
+    )
+    adapter = IndependentDailyReferenceAdapter()
+    conversion = inputs()["conversion_model"]
+    trigger = adapter.main_route_shortfalls(snapshot=source, conversion_model=conversion)[0]
+    owner = source.daily_charge_context.assignments[0]
+    result = adapter.main_charge_windows(
+        snapshot=source, assignment=owner, conversion_model=conversion,
+        optimisation_trigger=trigger,
+    )
+    assert result.windows, result.reason
+    grid_ends = set()
+    for window in result.windows:
+        prefix = [s for s in window.main_segments
+                  if s.intent is DailyStorageIntent.GRID_REQUIREMENT]
+        assert len(prefix) == 1
+        assert prefix[0].starts_at == source.captured_at
+        assert prefix[0].ends_at >= grid.ends_at
+        grid_ends.add(prefix[0].ends_at)
+        assert any(i.ends_at == window.reached_at and i.storage_energy_at_end_wh >= 8160
+                   for i in window.projection.intervals)
+    # Both the protected prefix + later NOM and uninterrupted extensions are
+    # available for canonical Evaluation; generation selects neither of them.
+    assert grid.ends_at in grid_ends
+    assert any(end > grid.ends_at for end in grid_ends)
     assert owner.completed_at is None
 
 

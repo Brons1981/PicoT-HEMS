@@ -1506,6 +1506,7 @@ class ExecutionPrimitiveBoundary:
     mapping_method_version: str | None = None
     blockers: tuple[str, ...] = ()
     pv_charge_progress: PVChargeProgressEvidence | None = None
+    execution_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -62,6 +62,7 @@ class IndependentDailyChargeWindowDiscoverer:
         retained_schedule: DailyReferenceIntentSchedule | None = None,
         optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None,
         protected_intervals: tuple[tuple[datetime, datetime], ...] = (),
+        required_grid_until: datetime | None = None,
     ) -> DailyMainChargeWindowSet:
         """Discover the first main route under an existing daily identity.
 
@@ -145,6 +146,19 @@ class IndependentDailyChargeWindowDiscoverer:
         )
         if not indexes:
             return result((), "unreachable", "no_remaining_delivery_day_intervals")
+        required_grid: dict[int, DailyStorageIntent] = {}
+        if required_grid_until is not None:
+            if not household.horizon_start < required_grid_until <= household.horizon_end:
+                raise ValueError("required grid continuity must be inside the remaining horizon")
+            required_grid = {
+                i: DailyStorageIntent.GRID_REQUIREMENT
+                for i, interval in enumerate(household.intervals)
+                if interval.starts_at < required_grid_until
+            }
+            if not set(required_grid).issubset(indexes) or (
+                household.intervals[max(required_grid)].ends_at != required_grid_until
+            ):
+                return result((), "unreachable", "required_grid_continuity_not_covered")
         pv_indexes = tuple(
             i
             for i in indexes
@@ -166,6 +180,7 @@ class IndependentDailyChargeWindowDiscoverer:
             return None
 
         def propose(owned: dict[int, DailyStorageIntent]) -> DailyReferenceIntentSchedule:
+            owned = {**owned, **required_grid}
             intervals = tuple(
                 replace(interval, intent=owned[i]) if i in owned else interval
                 for i, interval in enumerate(baseline.intervals)
@@ -183,13 +198,19 @@ class IndependentDailyChargeWindowDiscoverer:
             family: str,
             projection: DailyPlanningProjection | None = None,
         ) -> bool:
+            owned = {**owned, **required_grid}
             if projection is None:
                 projection = simulate(propose(owned))
             completion = reached(projection, set(owned))
             if completion is None:
                 return False
             last, _ = completion
+            # A simulated full battery does not release an already committed
+            # prefix: only observed full SOC can release this constraint.
+            last = max(last, max(required_grid, default=last))
             owned = {i: intent for i, intent in owned.items() if i <= last}
+            if required_grid:
+                family = "hybrid" if DailyStorageIntent.NOM in owned.values() else "grid"
             schedule = propose(owned)
             if schedule.schedule_id in windows:
                 return True
@@ -241,7 +262,7 @@ class IndependentDailyChargeWindowDiscoverer:
             admit(
                 {i: DailyStorageIntent.NOM for i in indexes if start <= i <= pv_indexes[-1]}, "pv"
             )
-        if windows:
+        if windows and not required_grid:
             return result(tuple(windows.values()), "discovered", "pv_only_covers_main_goal")
 
         # Keep PV capture as a base, and let explicit grid charging take
@@ -251,6 +272,32 @@ class IndependentDailyChargeWindowDiscoverer:
             for i in indexes
             if pv_indexes and pv_indexes[0] <= i <= pv_indexes[-1]
         }
+        if required_grid:
+            # The active action cannot move to a later start. Offer its exact
+            # protected prefix and uninterrupted extensions, including when PV
+            # could otherwise finish the goal. Evaluation owns their ranking.
+            contiguous: list[int] = []
+            for i in indexes:
+                if i != len(contiguous):
+                    break
+                contiguous.append(i)
+            for end in contiguous:
+                if end < max(required_grid):
+                    continue
+                owned = {
+                    **pv_owned,
+                    **{i: DailyStorageIntent.GRID_REQUIREMENT for i in contiguous if i <= end},
+                }
+                projection = simulate(propose(owned))
+                admit(owned, "hybrid", projection)
+                completion = reached(projection, set(owned))
+                if completion is not None and completion[0] <= end:
+                    break
+            return result(
+                tuple(windows.values()),
+                "discovered" if windows else "unreachable",
+                "protected_grid_windows" if windows else "insufficient_remaining_charge_capacity",
+            )
         for start in indexes:
             if start != 0 and not self._is_market_quarter(household.intervals[start].starts_at):
                 continue

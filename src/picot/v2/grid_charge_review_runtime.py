@@ -43,6 +43,10 @@ class GridChargeReviewObserver:
         discharge_efficiency: float,
         wear_eur_per_kwh: float,
         timezone: str = "Europe/Amsterdam",
+        financial_review: Callable[
+            [PlanningInputSnapshot, PowerHistorySnapshot, tuple[PriceForecastPoint, ...],
+             ReviewSettings, bool], None,
+        ] | None = None,
     ) -> None:
         self.path, self.reader, self.attach_household, self.publish = (
             path,
@@ -63,6 +67,7 @@ class GridChargeReviewObserver:
         self.charge_efficiency = charge_efficiency
         self.discharge_efficiency = discharge_efficiency
         self.wear = wear_eur_per_kwh
+        self.financial_review = financial_review
         self.lock = Lock()
         self.last_attempt: datetime | None = None
         self.last_day: str | None = None
@@ -231,6 +236,16 @@ class GridChargeReviewObserver:
                 )
                 for p in ctx["prices"].values()
             )
+            if self.financial_review is not None:
+                try:
+                    self.financial_review(
+                        snapshot, history, known_prices, ReviewSettings(**ctx["settings"]),
+                        bool(ctx["settings_changed"]),
+                    )
+                except Exception as exc:
+                    # An auxiliary financial failure must not suppress strict review/SOC.
+                    print(json.dumps({"event": "picot_financial_inference_error",
+                                      "day": key, "error": type(exc).__name__}), flush=True)
             owner = next(
                 (
                     a

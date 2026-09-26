@@ -506,3 +506,27 @@ De bestaande numerieke historie en voorraadkosten voor planning blijven gelijk.
 Lokaal geïmplementeerd en geverifieerd. Alex heeft om 22:39 akkoord gegeven op
 afzonderlijke publicatie als dev.273 via PR en automatische controles.
 Installatie en livecontrole van het financiële tabblad volgen daarna.
+
+### Vervolg — financiële afleiding na akkoord om 23:23
+
+Dev.273 is gepubliceerd via PR #670, merge
+`1feaa9b049222fdf25bb9efdfbb2974c006ad369`. Alex bevestigt installatie; de
+diagnose van 23:16 toont deze versie met een behouden actief plan om 23:05.
+De resterende ontbrekende financiële waarden volgen uit nachtelijke PV en korte
+brononderbrekingen. Lees
+`docs/architecture/ADR-037.19-financial-measurement-inference.md` en
+`docs/development_log/2026-09-26-financial-measurement-inference.md`.
+
+De goedgekeurde afleiding is lokaal geïmplementeerd op
+`fix/financial-measurement-inference`: nachtbewijs, begrensde korte gaten,
+afgeleid huisverbruik en herkenbare financiële kwaliteit. Oorspronkelijke
+dagvelden, voorraad, strikte terugblik en planning blijven gelijk. Het oude
+archief bevat geen zonhistorie: volledige historische nachtresultaten zijn
+daarmee nog niet geverifieerd. Geen nieuwe release, commit, push of livewijziging;
+eerst de lokale uitkomst bespreken.
+
+
+Releasevoorbereiding: Alex heeft op 27 september 2026 om 00:23
+Europe/Amsterdam akkoord gegeven op publicatie als dev.274 via PR en CI.
+Dit vervangt de eerdere lokale publicatiestatus; installatie en livecontrole
+volgen na geslaagde publicatie afzonderlijk.

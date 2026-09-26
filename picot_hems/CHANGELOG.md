@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.273
+
+- Financiële historie en bestaande totalen blijven zichtbaar als het resultaat van de huidige dag onvolledig is.
+- Netinkoop, teruglevering en het gezamenlijke energieresultaat worden afzonderlijk getoond zodra hun eigen metingen en prijzen compleet zijn.
+- Ontbrekende batterij- en PicoT-voordelen blijven onbekend. Het tabblad toont welke bronnen en meetperioden ontbreken en hoeveel dagen meetellen in de totalen.
+- De oorspronkelijke numerieke historie en voorraadkosten voor planning blijven behouden; ontbrekende metingen worden niet ingevuld.
+
 ## 2.0.0-dev.272
 
 - Bij herplanning tijdens beschermd netladen biedt PicoT behoud en ononderbroken verlenging van het laadblok aan, ook als latere PV op papier het dagdoel kan halen.

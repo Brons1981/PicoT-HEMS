@@ -73,3 +73,13 @@ actieve plan en de actuele financiële brondekking.
 
 Het schakelpunt van 15:25–15:31 blijft het afzonderlijke tweede onderzoek uit
 `2026-09-26-bridge-export-intent.md`; er is hier geen schakelbeleid gewijzigd.
+
+## Vervolg met nieuw bewijs en akkoord
+
+De diagnose van 22:09 bevestigt dezelfde financiële blokkade op dev.272:
+28 beschikbare oudere dagen en drie onvolledige dagen. De strikte terugblik
+heeft nu 57 berekende en 32 onbruikbare tijdvakken voor vandaag. Netmetingen
+hebben geen onderbreking; PV mist nog steeds het middernachtanker.
+Alex heeft om 22:15 het afzonderlijk beschikbaar maken van netbedragen,
+behouden historie en expliciete meetgaten bevestigd. Uitvoering en verificatie:
+`2026-09-26-financial-availability.md`; contract: ADR-037.18.

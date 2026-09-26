@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from hashlib import sha256
 from math import isfinite
@@ -302,6 +302,22 @@ def replace_snapshot_error(
         error=error,
         series=snapshot.series,
         method_version=snapshot.method_version,
+    )
+
+
+def numeric_power_history(snapshot: PowerHistorySnapshot) -> PowerHistorySnapshot:
+    """Keep the original numeric-only history contract for existing consumers.
+
+    Filter before rebasing so an unavailable pre-midnight point cannot replace
+    the numeric anchor previously supplied to financial inventory and charts.
+    """
+    series = tuple(replace(item, points=tuple(
+        point for point in item.points if isfinite(point.power_w)
+    )) for item in snapshot.series)
+    return replace(
+        snapshot, series=series,
+        status=(snapshot.status if snapshot.status == "unavailable"
+                else "available" if any(item.points for item in series) else "empty"),
     )
 
 

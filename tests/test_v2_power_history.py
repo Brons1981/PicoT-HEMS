@@ -9,6 +9,7 @@ from picot.v2.power_history import (
     PowerHistorySeries,
     PowerHistorySnapshot,
     PowerSeriesSpec,
+    numeric_power_history,
     rebase_power_history,
 )
 
@@ -16,6 +17,52 @@ START = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 END = START + timedelta(hours=12)
 P1 = "sensor.p1_power"
 PV = "sensor.pv_power"
+
+
+def test_preserved_unavailability_keeps_legacy_numeric_cache_identical(monkeypatch) -> None:
+    requested_start = START - timedelta(minutes=15)
+    payload = [[{
+        "entity_id": PV, "state": state, "last_updated": at.isoformat(),
+    } for at, state in [
+        (requested_start, "0"), (START - timedelta(minutes=5), "unavailable"),
+        (START + timedelta(minutes=10), "50"),
+        (START + timedelta(hours=2), "unknown"),
+        (START + timedelta(hours=2, minutes=1), "500"),
+        (START + timedelta(hours=3), "0"),
+    ]]]
+    calls = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self):
+            return json.dumps(payload).encode()
+
+    def read(request, timeout):
+        calls.append(request.full_url)
+        return Response()
+
+    monkeypatch.setattr(power_history, "urlopen", read)
+    reader = power_history.HomeAssistantPowerHistoryReader("test-token")
+    specs = (PowerSeriesSpec("pv", "pv_generation", PV, "positive"),)
+    original = PowerHistoryCache()
+    retained = PowerHistoryCache(preserve_unavailable=True)
+    for end in [START + timedelta(hours=3), START + timedelta(hours=4)]:
+        calls.clear()
+        numeric = original.update(reader, specs=specs, starts_at=requested_start, ends_at=end)
+        original_calls = calls.copy()
+        calls.clear()
+        raw = retained.update(reader, specs=specs, starts_at=requested_start, ends_at=end)
+        assert calls == original_calls
+        assert numeric_power_history(raw) == numeric
+        assert rebase_power_history(numeric_power_history(raw), starts_at=START) == (
+            rebase_power_history(numeric, starts_at=START)
+        )
+        assert len(raw.series[0].points) > len(numeric.series[0].points)
 
 
 def test_rebase_keeps_only_latest_proven_pre_midnight_anchor() -> None:

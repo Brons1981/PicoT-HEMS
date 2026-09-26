@@ -112,6 +112,7 @@ from picot.v2.power_history import (
     PowerHistorySeries,
     PowerHistorySnapshot,
     PowerSeriesSpec,
+    numeric_power_history,
     rebase_power_history,
 )
 from picot.v2.price_plan_reference import PricePlanReference
@@ -2211,6 +2212,7 @@ def _execute_planning_bundle(
     planning_incident_history: PlanningIncidentHistory | None = None,
     daily_pv_basis_decision: DailyPVBasisDecision | None = None,
     financial_result_ledger: FinancialResultLedger | None = None,
+    financial_measurement_history: PowerHistorySnapshot | None = None,
     planning_checkpoint: Callable[[], None] | None = None,
     refresh_execution_input: Callable[[], PlanningInputSnapshot] | None = None,
     monitor_diagnostics: dict[str, object] | None = None,
@@ -2437,6 +2439,7 @@ def _execute_planning_bundle(
                 bundle.snapshot,
                 power_history,
                 price_points=display_price_points,
+                measurement_history=financial_measurement_history,
             )
         except Exception as exc:
             print(
@@ -2613,7 +2616,7 @@ def main() -> None:
     pv_history_reader = HomeAssistantPVHistoryReader(token)
     soc_history_recovery = HistoricalSOCRecovery(token)
     power_history_reader = HomeAssistantPowerHistoryReader(token)
-    power_history_cache = PowerHistoryCache()
+    power_history_cache = PowerHistoryCache(preserve_unavailable=True)
     pv_actual_cache = LivePVActualCache()
     storage_mode_provenance_runtime = LiveStorageModeProvenanceRuntime(
         StorageModeProvenanceStore(STORAGE_MODE_PROVENANCE_PATH)
@@ -3091,7 +3094,7 @@ def main() -> None:
 
     def read_power_history(
         bundle: PlanningInputBundle,
-    ) -> tuple[PowerHistorySnapshot, float]:
+    ) -> tuple[PowerHistorySnapshot, PowerHistorySnapshot, float]:
         captured_at = bundle.snapshot.captured_at
         history_starts_at = captured_at.astimezone(
             pv_sunset_timezone
@@ -3103,19 +3106,22 @@ def main() -> None:
             starts_at=history_starts_at - FINANCIAL_ANCHOR_LOOKBACK,
             ends_at=captured_at,
         )
+        measurement_history = rebase_power_history(power_history, starts_at=history_starts_at)
         power_history = rebase_power_history(
-            power_history,
-            starts_at=history_starts_at,
+            numeric_power_history(power_history), starts_at=history_starts_at,
         )
+        household_observations = household_load_history.load()
         power_history = _attach_household_power_history(
-            power_history,
-            household_load_history.load(),
+            power_history, household_observations,
+        )
+        measurement_history = _attach_household_power_history(
+            measurement_history, household_observations,
         )
         power_history_read_ms = round(
             (perf_counter() - power_history_started) * 1000.0,
             3,
         )
-        return power_history, power_history_read_ms
+        return power_history, measurement_history, power_history_read_ms
 
     def publish_input_sources(bundle: PlanningInputBundle) -> None:
         web_view_store.publish_planning_input_sources(
@@ -3168,13 +3174,14 @@ def main() -> None:
 
     def refresh_unchanged(bundle: PlanningInputBundle) -> None:
         refresh_soc_expectation(bundle)
-        power_history, _ = read_power_history(bundle)
+        power_history, measurement_history, _ = read_power_history(bundle)
         web_view_store.publish_power_history(power_history)
         try:
             web_view_store.publish_financial_results(
                 financial_result_ledger.update(
                     bundle.snapshot,
                     power_history,
+                    measurement_history=measurement_history,
                     price_points=tuple(
                         point
                         for evidence in bundle.evidence
@@ -3210,7 +3217,7 @@ def main() -> None:
             poll_interval_seconds=poll_interval_seconds,
             next_check_at=bundle.snapshot.captured_at,
         )
-        power_history, power_history_read_ms = read_power_history(bundle)
+        power_history, measurement_history, power_history_read_ms = read_power_history(bundle)
         timeline = bundle.snapshot.pv_energy_timeline
         pv_sunset_source = pv_sunset_reader.read(
             local_timezone=pv_sunset_timezone
@@ -3288,6 +3295,7 @@ def main() -> None:
             runtime_monitor=runtime_monitor,
             daily_pv_basis_decision=latest_daily_pv_basis_decision,
             financial_result_ledger=financial_result_ledger,
+            financial_measurement_history=measurement_history,
         )
         if completed:
             refresh_soc_expectation(bundle)

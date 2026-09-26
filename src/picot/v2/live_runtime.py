@@ -52,6 +52,7 @@ from picot.v2.energy_device_cards import (
     HomeAssistantEnergyDeviceCatalogReader,
 )
 from picot.v2.fast_grid_power_observation import FastGridPowerObserver
+from picot.v2.financial_measurement_observer import FinancialMeasurementObserver
 from picot.v2.financial_result_ledger import FinancialResultLedger
 from picot.v2.grid_charge_review_runtime import GridChargeReviewObserver
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
@@ -2849,6 +2850,12 @@ def main() -> None:
         discharge_efficiency=market_daily_conversion_model.discharge_efficiency,
         wear_eur_per_kwh=market_daily_trading_policy.wear_eur_per_export_kwh,
         timezone=str(options.get("pv_local_timezone", "Europe/Amsterdam")),
+        financial_review=FinancialMeasurementObserver(
+            ledger=financial_result_ledger,
+            solar_reader=HomeAssistantSolarHistoryReader(token),
+            publish=web_view_store.publish_financial_results,
+            pv_maximum_power_w=float(options.get("financial_pv_maximum_power_w", 4200.0)),
+        ),
     )
 
     pv_installation_scope_id = str(

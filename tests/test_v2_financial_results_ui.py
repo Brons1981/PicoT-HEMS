@@ -96,3 +96,30 @@ def test_empty_history_has_no_invented_payback():
     texts = [node["text"] for node in _render({})]
     assert "Nog geen batterijresultaten om op te tellen." in texts
     assert not any("€" in text or "NaN" in text for text in texts)
+
+
+def test_estimated_amounts_and_cumulative_days_have_explicit_quality_labels():
+    today = {"day": "2026-09-26", "status": "incomplete", "financial_metrics": {
+        "status": "estimated", "ends_at": "2026-09-26T21:00:00+00:00",
+        "values": {
+            "actual_energy_cost_eur": {"status": "available", "value_eur": 1.5},
+            "net_battery_value_eur": {"status": "estimated", "value_eur": .25},
+            "net_picot_value_eur": {"status": "estimated", "value_eur": -.1},
+        },
+        "inferences": [{"role": "pv_generation", "kind": "night_zero",
+                        "starts_at": "2026-09-25T22:00:00+00:00",
+                        "ends_at": "2026-09-26T05:30:00+00:00"}],
+        "maximum_estimation_error_wh": .3,
+    }}
+    nodes = _render({"today": today, "days": [today], "cumulative": {
+        "included_battery_days": 1, "excluded_battery_days": 0,
+        "estimated_battery_days": 1,
+    }})
+    texts = [node["text"] for node in nodes]
+    assert "≈ €0.25" in texts and "≈ €-0.1" in texts
+    assert "€-1.5" in texts
+    assert "Afgeleid" in texts
+    assert "Afgeleide meetgegevens" in texts
+    assert any("1 met afgeleide bedragen" in t for t in texts)
+    assert any("0.3 Wh" in t for t in texts)
+    assert not any("Dagresultaat onvolledig" in t for t in texts)

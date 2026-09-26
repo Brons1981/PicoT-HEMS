@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.274
+
+- Financiële nacalculatie kan ontbrekende nacht-PV met zonhistorie afleiden en korte PV-/batterijonderbrekingen begrensd aanvullen.
+- Ontbrekend huisverbruik kan uit de geïntegreerde energiebalans worden afgeleid. Afgeleide bedragen krijgen ≈, bronperioden en uitleg over onzekerheid.
+- Ontbrekende zonhistorie en resterende meetgaten blijven zichtbaar; onbekende bedragen worden niet als nul getoond.
+- De bestaande achtergrondberekening verwerkt vandaag en gisteren. Oorspronkelijke metingen, planningvoorraad, MEP en de strikte terugblik blijven behouden.
+
 ## 2.0.0-dev.273
 
 - Financiële historie en bestaande totalen blijven zichtbaar als het resultaat van de huidige dag onvolledig is.

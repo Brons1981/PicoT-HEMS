@@ -32,12 +32,37 @@ def financial_metric_value(day: Mapping[str, Any], name: str) -> float | None:
     metrics = day.get("financial_metrics")
     if isinstance(metrics, dict):
         metric = metrics.get("values", {}).get(name, {})
-        value = metric.get("value_eur") if metric.get("status") == "available" else None
+        value = metric.get("value_eur") if metric.get("status") in {
+            "available", "estimated",
+        } else None
     else:
         value = day.get(name) if day.get("status") == "available" else None
     if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value):
         return float(value)
     return None
+
+
+def financial_measurement_coverage(history: PowerHistorySnapshot) -> dict[str, Any]:
+    """Combine contiguous reports for display; leave the strict replay unchanged."""
+    result = measurement_coverage(history)
+    for value in result.values():
+        gaps: list[dict[str, Any]] = []
+        for gap in value["gaps"]:
+            if gap["duration_seconds"] <= 0:
+                continue
+            start, end = (datetime.fromisoformat(gap[key]) for key in ("starts_at", "ends_at"))
+            if (gaps and gaps[-1]["reason"] == gap["reason"]
+                    and start <= datetime.fromisoformat(gaps[-1]["ends_at"])):
+                end = max(end, datetime.fromisoformat(gaps[-1]["ends_at"]))
+                gaps[-1]["ends_at"] = end.isoformat()
+                gaps[-1]["duration_seconds"] = (
+                    end - datetime.fromisoformat(gaps[-1]["starts_at"])
+                ).total_seconds()
+            else:
+                gaps.append(dict(gap))
+        value["gaps"] = gaps
+        value["gap_count"] = len(gaps) + value["omitted_gap_count"]
+    return result
 
 
 def _priced_power(series: PowerHistorySeries, segments: PriceSegments, *, export: bool) -> float:
@@ -72,14 +97,9 @@ def build_financial_metrics(
 ) -> dict[str, Any]:
     """Gate each amount on its own sources, preserving the legacy inventory path."""
     coverage = {
-        role: value for role, value in measurement_coverage(history).items()
+        role: value for role, value in financial_measurement_coverage(history).items()
         if role in SETTLEMENT_ROLES
     }
-    # An unavailable observation exactly at the right boundary has no duration
-    # in this settlement. It must not invalidate the preceding measured energy.
-    for value in coverage.values():
-        value["gaps"] = [gap for gap in value["gaps"] if gap["duration_seconds"] > 0]
-        value["gap_count"] = len(value["gaps"]) + value["omitted_gap_count"]
     by_role = {series.role: series for series in history.series}
     history_reason = None
     if history.status != "available" or history.error is not None:

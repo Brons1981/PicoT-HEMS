@@ -14,7 +14,12 @@ from picot.domain.storage_energy_inventory import (
     StorageEnergyInventory,
     StorageEnergyLot,
 )
-from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
+from picot.v2.contracts import (
+    CurrentStorageState,
+    PlanningInputSnapshot,
+    PriceForecastPoint,
+    StoragePhysicalLimits,
+)
 from picot.v2.financial_result_metrics import build_financial_metrics, financial_metric_value
 from picot.v2.independent_daily_tariff_adapter import (
     ENERGY_TAX_EX_VAT_EUR_PER_KWH,
@@ -44,6 +49,15 @@ class _MutableStorageEnergyLot:
     acquisition_cost_eur: float | None
     acquired_at: datetime
     evidence_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FinancialPhysicalContext:
+    """Measured closing state for display; never a canonical planning snapshot."""
+
+    captured_at: datetime
+    current_storage_states: tuple[CurrentStorageState, ...]
+    storage_physical_limits: tuple[StoragePhysicalLimits, ...]
 
 
 class FinancialResultLedger:
@@ -127,6 +141,10 @@ class FinancialResultLedger:
         with self._lock:
             days = self._state.setdefault("days", {})
             assert isinstance(days, dict)
+            previous = days.get(local_day, {})
+            for key in ("financial_estimate", "financial_inference_status"):
+                if key in previous:
+                    result[key] = previous[key]
             days[local_day] = result
             self._save()
             return self._dashboard_view_locked()
@@ -134,6 +152,77 @@ class FinancialResultLedger:
     def dashboard_view(self) -> dict[str, object]:
         with self._lock:
             return self._dashboard_view_locked()
+
+    def evaluate_display_history(
+        self, context: FinancialPhysicalContext, history: PowerHistorySnapshot,
+        price_points: tuple[PriceForecastPoint, ...],
+    ) -> dict[str, object]:
+        """Reuse financial formulas without storing a derived inventory or snapshot."""
+        return self._evaluate(context, history, price_points=price_points)
+
+    def store_financial_estimate(
+        self, day: str, metrics: dict[str, Any], context: dict[str, Any],
+    ) -> None:
+        """Attach optional display evidence; original day fields remain authoritative."""
+        with self._lock:
+            record = self._state.get("days", {}).get(day)
+            if not isinstance(record, dict):
+                return
+            previous = record.get("financial_estimate", {})
+            if previous and datetime.fromisoformat(previous["ends_at"]) > datetime.fromisoformat(
+                metrics["ends_at"]
+            ):
+                return
+            record["financial_estimate"] = metrics
+            record["financial_inference_status"] = {
+                "status": "available", "attempted_at": context["attempted_at"],
+            }
+            contexts = self._state.setdefault("financial_measurement_context", {})
+            contexts[day] = context
+            for old in sorted(contexts)[:-2]:
+                del contexts[old]
+            self._save()
+
+    def record_financial_inference_error(self, day: str, at: datetime, reason: str) -> None:
+        with self._lock:
+            record = self._state.get("days", {}).get(day)
+            if isinstance(record, dict):
+                record["financial_inference_status"] = {
+                    "status": "unavailable", "attempted_at": at.isoformat(), "reason": reason,
+                }
+                self._save()
+
+    @staticmethod
+    def _display_day(day: dict[str, Any]) -> dict[str, Any]:
+        result = dict(day)
+        estimate = day.get("financial_estimate")
+        raw = day.get("financial_metrics", {})
+        if not isinstance(estimate, dict) or not estimate.get("ends_at"):
+            return result
+        lag = (datetime.fromisoformat(day["ends_at"])
+               - datetime.fromisoformat(estimate["ends_at"])).total_seconds()
+        if lag > 900:
+            result["financial_inference_status"] = {
+                **day.get("financial_inference_status", {}),
+                "status": "unavailable", "reason": "financial_inference_stale",
+            }
+            return result
+        if (datetime.fromisoformat(estimate["starts_at"])
+                != datetime.fromisoformat(day["starts_at"])):
+            return result
+
+        def count(values: dict[str, Any]) -> int:
+            return sum(item.get("status") in {"available", "estimated"}
+                       for item in values.get("values", {}).values())
+        # Keep the same period for all amounts; disclose the observer's timestamp.
+        # A new raw result with equal/better coverage takes precedence.
+        if count(estimate) > count(raw) or (
+            count(estimate) == count(raw) and lag <= 0
+        ):
+            result["financial_metrics"] = estimate
+            if "household_energy_sources" in estimate:
+                result["household_energy_sources"] = estimate["household_energy_sources"]
+        return result
 
     def storage_energy_inventory(self) -> StorageEnergyInventory | None:
         """Return the latest measured cost basis without granting planner authority."""
@@ -156,7 +245,7 @@ class FinancialResultLedger:
     def _dashboard_view_locked(self) -> dict[str, object]:
         days = self._state.get("days", {})
         day_values = (
-            [item for item in days.values() if isinstance(item, dict)]
+            [self._display_day(item) for item in days.values() if isinstance(item, dict)]
             if isinstance(days, dict)
             else []
         )
@@ -184,6 +273,16 @@ class FinancialResultLedger:
                 "excluded_battery_days": len(day_values) - len(battery_values),
                 "included_picot_days": len(picot_values),
                 "excluded_picot_days": len(day_values) - len(picot_values),
+                "estimated_battery_days": sum(
+                    item.get("financial_metrics", {}).get("values", {}).get(
+                        "net_battery_value_eur", {}
+                    ).get("status") == "estimated" for item in day_values
+                ),
+                "estimated_picot_days": sum(
+                    item.get("financial_metrics", {}).get("values", {}).get(
+                        "net_picot_value_eur", {}
+                    ).get("status") == "estimated" for item in day_values
+                ),
             },
             "wear_eur_per_discharge_kwh": self.wear_rate,
             "observer_only": True,
@@ -194,7 +293,7 @@ class FinancialResultLedger:
 
     def _evaluate(
         self,
-        snapshot: PlanningInputSnapshot,
+        snapshot: PlanningInputSnapshot | FinancialPhysicalContext,
         history: PowerHistorySnapshot,
         *,
         price_points: tuple[PriceForecastPoint, ...],
@@ -332,7 +431,8 @@ class FinancialResultLedger:
             initial_stored_energy_wh=initial_energy,
             starts_at=history.starts_at,
             segments=inventory_segments,
-            opening_inventory=self._prior_storage_inventory(local_day),
+            opening_inventory=(None if isinstance(snapshot, FinancialPhysicalContext)
+                               else self._prior_storage_inventory(local_day)),
         )
         nom_cost, nom_discharge = self._simulate_nom(
             by_role=by_role,

@@ -4236,6 +4236,9 @@ DASHBOARD_HTML = """<!doctype html>
         storage_physical_state_missing: "Batterijgegevens ontbreken",
         financial_result_unavailable: "Resultaat nog niet te bepalen",
         financial_metric_evaluation_failed: "Financiële meetcontrole kon niet worden afgerond",
+        financial_settings_changed_during_day: "Instellingen zijn tijdens de dag veranderd",
+        financial_closing_soc_missing: "Batterijstand aan het einde van de meetperiode ontbreekt",
+        financial_inference_stale: "De aanvullende berekening is meer dan 15 minuten achtergelopen",
       };
       const reasonText = reason => reasons[reason] ?? "Resultaat nog niet te bepalen";
       const metric = (day, name) => {
@@ -4243,15 +4246,16 @@ DASHBOARD_HTML = """<!doctype html>
           {status: "incomplete", reason: day.financial_metrics.reason};
         return {status: day?.status, value_eur: day?.[name], reason: day?.reason};
       };
-      const amount = item => item.status === "available" &&
+      const amount = item => ["available", "estimated"].includes(item.status) &&
         typeof item.value_eur === "number" && Number.isFinite(item.value_eur)
         ? item.value_eur : null;
       const money = (day, name, sign=1) => {
         const value = amount(metric(day, name));
-        return value === null ? "—" : formatCurrency(sign * value);
+        return value === null ? "—" :
+          (metric(day, name).status === "estimated" ? "≈ " : "") + formatCurrency(sign * value);
       };
       const todayStatus = today?.financial_metrics?.status ?? today?.status;
-      if (!today || todayStatus !== "available") {
+      if (!today || !["available", "estimated"].includes(todayStatus)) {
         const empty = document.createElement("p");
         empty.className = "empty-panel";
         empty.textContent = today
@@ -4299,6 +4303,11 @@ DASHBOARD_HTML = """<!doctype html>
             note.textContent = reasonText(item.reason) +
               (sources.length ? `: ${sources.join(", ")}` : "");
             card.append(note);
+          } else if (item.status === "estimated") {
+            const note = document.createElement("small");
+            note.className = "muted";
+            note.textContent = "Afgeleid; bevat nachtwaarden of begrensde schattingen.";
+            card.append(note);
           }
           cards.append(card);
         }
@@ -4333,7 +4342,46 @@ DASHBOARD_HTML = """<!doctype html>
           }
         }
         if (gapCount) container.append(details);
-        if (todayStatus === "available") {
+        const solarStatus = today.financial_metrics?.solar_history_status;
+        if (coverage.pv_generation?.gap_count && solarStatus && solarStatus !== "available") {
+          const note = document.createElement("p");
+          note.className = "muted";
+          note.textContent = "Ontbrekende PV kan niet als nachtwaarde worden afgeleid: " +
+            "zonhistorie is niet beschikbaar.";
+          container.append(note);
+        }
+        const inferences = today.financial_metrics?.inferences ?? [];
+        if (inferences.length) {
+          const inferred = document.createElement("details");
+          const title = document.createElement("summary");
+          title.textContent = "Afgeleide meetgegevens";
+          inferred.append(title);
+          const kinds = {night_zero: "Nachtelijke PV als 0 W afgeleid",
+            bounded_gap: "Korte onderbreking begrensd geschat",
+            flow_balance: "Huisverbruik afgeleid uit de energiebalans"};
+          for (const item of inferences) {
+            const line = document.createElement("p");
+            line.textContent = `${labels[item.role] ?? item.role}: ` +
+              `${kinds[item.kind] ?? "Afgeleid"} · ${formatTimestamp(item.starts_at)} – ` +
+              `${formatTimestamp(item.ends_at)}`;
+            inferred.append(line);
+          }
+          const uncertainty = document.createElement("p");
+          uncertainty.textContent = "Maximale energieafwijking door korte brononderbrekingen: " +
+            `${formatDutchNumber(today.financial_metrics.maximum_estimation_error_wh ?? 0)} Wh. ` +
+            "Dit begrenst alleen korte brononderbrekingen. Nachtwaarden blijven een afleiding; " +
+            "meet- en modelonzekerheid zijn niet meegerekend.";
+          inferred.append(uncertainty);
+          container.append(inferred);
+        }
+        if (today.financial_inference_status?.status === "unavailable") {
+          const note = document.createElement("p");
+          note.className = "muted";
+          note.textContent = "Aanvullende financiële afleiding niet beschikbaar: " +
+            reasonText(today.financial_inference_status.reason) + ".";
+          container.append(note);
+        }
+        if (["available", "estimated"].includes(todayStatus)) {
           container.append(renderHouseholdEnergySources(today.household_energy_sources ?? {}));
         }
 
@@ -4345,12 +4393,12 @@ DASHBOARD_HTML = """<!doctype html>
             "aria-label",
             "Bruto batterijvoordeel − slijtage = netto batterijvoordeel"
           );
-          for (const [label, value, symbol] of [
-            ["Bruto batterijvoordeel", amount(metric(today, "gross_battery_value_eur")), null],
+          for (const [label, name, symbol] of [
+            ["Bruto batterijvoordeel", "gross_battery_value_eur", null],
             [null, null, "−"],
-            ["Slijtage", amount(metric(today, "battery_wear_eur")), null],
+            ["Slijtage", "battery_wear_eur", null],
             [null, null, "="],
-            ["Netto batterijvoordeel", amount(metric(today, "net_battery_value_eur")), null],
+            ["Netto batterijvoordeel", "net_battery_value_eur", null],
           ]) {
             const part = document.createElement("div");
             if (symbol) {
@@ -4363,7 +4411,7 @@ DASHBOARD_HTML = """<!doctype html>
               caption.textContent = label;
               const amount = document.createElement("strong");
               amount.className = "value";
-              amount.textContent = formatCurrency(value);
+              amount.textContent = money(today, name);
               part.append(caption, amount);
             }
             equation.append(part);
@@ -4391,6 +4439,10 @@ DASHBOARD_HTML = """<!doctype html>
       const coverageNote = document.createElement("p");
       coverageNote.className = "muted";
       coverageNote.textContent = `${included} dagresultaten meegeteld · ${excluded} onvolledig.`;
+      if (cumulative.estimated_battery_days) {
+        coverageNote.textContent +=
+          ` Daarvan ${cumulative.estimated_battery_days} met afgeleide bedragen.`;
+      }
       const track = document.createElement("div");
       track.className = "payback-track";
       const fill = document.createElement("div");
@@ -4423,7 +4475,8 @@ DASHBOARD_HTML = """<!doctype html>
           money(day, "net_battery_value_eur"),
           money(day, "net_picot_value_eur"),
           status === "available" ? "Beschikbaar" :
-            status === "partial" ? "Gedeeltelijk" : "Onvolledig",
+            status === "estimated" ? "Afgeleid" :
+              status === "partial" ? "Gedeeltelijk" : "Onvolledig",
         ]) {
           const cell = document.createElement("td");
           cell.textContent = value;

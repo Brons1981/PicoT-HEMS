@@ -306,6 +306,42 @@ def test_missing_tariffs_and_missing_main_membership_fail_closed():
     assert review_day(history(), prices(), SETTINGS, ())["reason"] == "main_window_evidence_missing"
 
 
+def test_financial_callback_and_its_failure_preserve_strict_review_and_raw_archive(tmp_path):
+    import gzip
+
+    from test_financial_result_ledger import _snapshot
+
+    snapshot = replace(_snapshot(), captured_at=START + timedelta(hours=3))
+    source = history()
+    before = repr(snapshot), repr(source)
+    outputs, archives, called = [], [], []
+
+    class Reader:
+        def read(self, **kwargs):
+            return replace(source, starts_at=kwargs["starts_at"], ends_at=kwargs["ends_at"])
+
+    def failing_financial(snapshot, raw, prices, settings, changed):
+        called.append((snapshot, raw, prices, settings, changed))
+        raise ValueError("financial-only failure")
+
+    for name, callback in [("baseline", None), ("financial-error", failing_financial)]:
+        folder = tmp_path / name
+        folder.mkdir()
+        observer = GridChargeReviewObserver(
+            path=folder / "review.json", reader=Reader(), specs=(), soc_entity_id="sensor.soc",
+            attach_household=lambda h: h, publish=outputs.append,
+            charge_efficiency=1, discharge_efficiency=1, wear_eur_per_kwh=0,
+            financial_review=callback,
+        )
+        observer.refresh(snapshot, prices(), (), ())
+        with gzip.open(folder / "review_measurements_today.json.gz", "rt") as stream:
+            archives.append(json.load(stream))
+    assert len(called) == 1
+    assert outputs[0] == outputs[1]
+    assert archives[0] == archives[1]
+    assert (repr(snapshot), repr(source)) == before
+
+
 def test_daily_peak_alone_cannot_hide_a_lower_closing_inventory():
     values = {
         "pv_generation": [0, 0, 0, 0],

@@ -454,3 +454,22 @@ geen directe plan-ID-gelijkheid veronderstellen. Ontbrekende herkomst geeft een
 gecontroleerde fout. Laadbeleid, marktroute en opslag blijven gelijk.
 Alex heeft release dev.270 aangevraagd; publicatie via PR en CI. Installatie
 en liveverificatie volgen afzonderlijk. Dev.268 blijft de afgesproken terugvalbasis.
+
+## 2026-09-26 — besloten financiële herziening marktroute
+
+Lees `docs/architecture/ADR-019.5-financial-market-revision.md`.
+Alex heeft het wijzigingsvoorstel bevestigd: behoud, inkorten en verwijderen
+zichtbaar vergelijken over de resterende uren van vandaag en morgen, met eerlijke
+eindvoorraad en behoud van laadverplichtingen. Het absolute exportbehoud wordt
+vervangen door canonieke financiële selectie; opslag controleert de verwerking.
+Het oorspronkelijke incident en het voorafgaande overleg staan in
+`docs/development_log/2026-09-26-bridge-export-intent.md`.
+
+De technische uitvoeringsvolgorde en acceptatiegevallen staan in
+`docs/development_log/2026-09-26-market-revision-implementation-plan.md`.
+Alex gaf om 19:55 akkoord op uitvoering. De implementatie is nu lokaal aanwezig;
+lees `docs/development_log/2026-09-26-market-revision-implementation.md` voor
+gedrag, verse verificatie, replays en beperkingen. Alex heeft om 20:50 akkoord
+gegeven op afzonderlijke release dev.271 via PR en CI. Installatie en livebewijs
+volgen daarna; het schakelpunt van 15:25–15:31 wordt vervolgens afzonderlijk
+onderzocht. Dev.268 blijft de operationele terugvalbasis.

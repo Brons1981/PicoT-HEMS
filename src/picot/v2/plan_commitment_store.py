@@ -15,11 +15,13 @@ from picot.architecture_ownership import architecture_ownership
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.daily_reference_charge_window import DailyMainChargeWindow
 from picot.domain.energy_path import RetainedExecutionOrigin, SocConstraint
+from picot.domain.evaluation import EvaluationRecord
 from picot.domain.execution_plan import ExecutionPlan, ExecutionPlanLifecycle, ExecutionPlanSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.market_daily_assignment import MarketAssignmentStatus, MarketDailyAssignment
 from picot.domain.market_execution import MarketExecutionProgress
 from picot.domain.market_plan_binding import MarketPlanBinding
+from picot.domain.market_plan_revision import MarketPlanRevision
 from picot.domain.market_user_rule import MarketUserRule
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.planner.market_route_admission import MarketAdmission
@@ -411,6 +413,7 @@ class ActivePlanCommitmentStore:
         pv_comparison_basis: DailyPVComparisonBasis | None = None,
         market_binding: MarketPlanBinding | None = None,
         market_admission: MarketAdmission | None = None,
+        market_revisions: tuple[MarketPlanRevision, ...] = (),
     ) -> DailyChargeAssignment:
         """Bind explicit winning source segments, never infer ownership from mode.
 
@@ -418,6 +421,10 @@ class ActivePlanCommitmentStore:
         The full immutable execution plan and ownership are written atomically.
         This does not admit execution or complete the daily goal from a forecast.
         """
+        if market_revisions and (
+            not activate or market_binding is not None or market_admission is not None
+        ):
+            raise ValueError("market revision requires exclusive atomic active publication")
         assignment = next(
             (a for a in self.load_daily_assignments() if a.assignment_id == window.assignment_id),
             None,
@@ -450,6 +457,16 @@ class ActivePlanCommitmentStore:
             assignment.revision_evidence_id, assignment.revised_at,
         ):
             raise ValueError("winning plan does not match the stored daily revision evidence")
+        if same_binding and market_revisions:
+            payload = self._load_payload()
+            recorded = payload.get("market_plan_revisions", {}).get(plan.plan_id, ())
+            if (not activate or self.load_active_daily_main_plan(plan.execution_scope_id) != plan
+                    or [r["evidence"] for r in recorded]
+                    != [self._market_revision_evidence(r) for r in market_revisions]):
+                raise ValueError("repeated market revision must match its admitted evidence")
+            for revision in market_revisions:
+                revision.validate_plan(plan)
+            return assignment
         if optimisation_trigger is not None:
             optimisation_trigger.validate(assignment, plan.snapshot_id, plan.created_at)
             if optimisation_trigger.target_wh != window.target_storage_energy_wh:
@@ -613,7 +630,11 @@ class ActivePlanCommitmentStore:
                 ],
             }
         if activate:
-            self._preserve_market_bindings(payload, plan)
+            self._apply_market_revisions(payload, plan, market_revisions)
+            self._preserve_market_bindings(
+                payload, plan,
+                revised_ids=frozenset(r.previous_binding.assignment_id for r in market_revisions),
+            )
         self._bind_supplemental(payload, plan, window)
         if market_binding is not None:
             if not activate or market_admission is None:
@@ -876,6 +897,46 @@ class ActivePlanCommitmentStore:
             )
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise ValueError("saved bridge assessment is invalid") from exc
+
+    def record_retained_bridge_assessment(
+        self, *, trigger: DailyBridgeTrigger, snapshot_id: str, assessed_at: datetime,
+        deficits: tuple[BridgeEnergyInterval, ...], evaluation_record: EvaluationRecord,
+    ) -> None:
+        """Persist a selected incumbent's bridge evidence without changing its plan."""
+        owner = next((a for a in self.load_daily_assignments()
+                      if a.assignment_id == trigger.assignment_id), None)
+        if owner is None:
+            raise ValueError("retained bridge assessment requires its daily owner")
+        trigger.validate(owner, snapshot_id, assessed_at)
+        active = self.load_active_daily_main_plan(owner.execution_scope_id)
+        record = evaluation_record
+        if (active is None or active.plan_id != trigger.active_plan_id
+                or (record.snapshot_id, record.created_at) != (snapshot_id, assessed_at)
+                or record.winning_candidate_id is None
+                or record.winning_candidate_id not in record.evaluated_candidate_ids
+                or any(i.candidate_id == record.winning_candidate_id
+                       for i in record.invalid_candidates)
+                or not deficits or deficits[0].starts_at != assessed_at
+                or min(s.starts_at for s in owner.main_segments) != trigger.next_starts_at):
+            raise ValueError("retained bridge assessment must match current selected ownership")
+        DailyBridgeState(owner.assignment_id, active.plan_id, trigger.next_starts_at, deficits)
+        payload = self._load_payload()
+        state = {
+            "plan_id": active.plan_id,
+            "next_starts_at": trigger.next_starts_at.isoformat(),
+            "accepted_deficits": [
+                {"starts_at": i.starts_at.isoformat(), "ends_at": i.ends_at.isoformat(),
+                 "deficit_wh": i.deficit_wh} for i in deficits
+            ],
+            "evaluation_id": record.evaluation_id,
+            "snapshot_id": snapshot_id,
+            "assessed_at": assessed_at.isoformat(),
+            "winning_candidate_id": record.winning_candidate_id,
+        }
+        states = payload.setdefault("daily_bridge_states", {})
+        if states.get(owner.assignment_id) != state:
+            states[owner.assignment_id] = state
+            self._write(payload)
 
     def load_daily_pv_comparison(self, assignment_id: str) -> DailyPVComparisonState:
         """Unavailable optional comparison evidence cannot erase the main route."""
@@ -1293,7 +1354,10 @@ class ActivePlanCommitmentStore:
         if assignment is None:
             raise ValueError("market progress requires its daily assignment")
         previous = self.load_market_progress(progress.assignment_id)
-        if progress == previous:
+        if progress == previous and not (
+            assignment.status == "pending" and progress.started_at is None
+            and progress.stop_requested_at is not None
+        ):
             return
         if assignment.status != "pending":
             raise ValueError("closed market execution cannot be overwritten")
@@ -1330,7 +1394,7 @@ class ActivePlanCommitmentStore:
             assignment = assignment.close(
                 status="completed"
                 if progress.measured_export_wh is not None
-                and progress.measured_export_wh >= binding.expected_export_wh
+                and progress.measured_export_wh >= binding.approved_export_wh
                 else "stopped",
                 at=progress.stopped_at,
                 measured_export_wh=progress.measured_export_wh,
@@ -1375,7 +1439,92 @@ class ActivePlanCommitmentStore:
             except (KeyError, TypeError, ValueError, AttributeError) as exc:
                 raise ValueError("invalid stored market plan binding") from exc
             result.append(binding)
+        self._validate_market_revision_history(payload, assignments, tuple(result))
         return tuple(sorted(result, key=lambda b: b.assignment_id))
+
+    def _validate_market_revision_history(
+        self, payload: dict[str, Any], assignments: dict[str, MarketDailyAssignment],
+        bindings: tuple[MarketPlanBinding, ...],
+    ) -> None:
+        """Restart checks selected lineage and volume, never repeats economic selection."""
+        history = payload.get("market_plan_revisions", {})
+        latest: dict[str, tuple[datetime, MarketPlanBinding]] = {}
+
+        def binding_from(raw: dict[str, Any]) -> MarketPlanBinding:
+            values = dict(raw)
+            for field in ("segment_ids", "segment_export_wh", "original_segment_ids"):
+                values[field] = tuple(values.get(field, ()))
+            return MarketPlanBinding(**values)
+
+        try:
+            if not isinstance(history, dict):
+                raise ValueError("market revision history must be an object")
+            for plan_id, records in history.items():
+                plan = _registered_execution_plan(payload, plan_id)
+                seen = set()
+                if not records:
+                    raise ValueError("market revision history cannot omit selected evidence")
+                for record in records:
+                    evidence = record["evidence"]
+                    evaluation = evidence["evaluation_record"]
+                    old = binding_from(evidence["previous_binding"])
+                    if old.assignment_id in seen:
+                        raise ValueError("market revision history duplicates assignment ownership")
+                    seen.add(old.assignment_id)
+                    assignment = assignments[old.assignment_id]
+                    self._validate_market_binding(
+                        old, assignment, _registered_execution_plan(payload, old.plan_id),
+                    )
+                    if (evaluation["evaluation_id"], evaluation["snapshot_id"],
+                        evaluation["strategy_version"], evaluation["winning_candidate_id"],
+                        evaluation["created_at"], evidence["winning_energy_path_id"]) != (
+                            plan.evaluation_id, plan.snapshot_id, plan.strategy_version,
+                            plan.winning_candidate_id, plan.created_at.isoformat(),
+                            plan.winning_energy_path_id,
+                    ) or (plan.winning_candidate_id not in evaluation["evaluated_candidate_ids"]
+                          or any(i["candidate_id"] == plan.winning_candidate_id
+                                 for i in evaluation["invalid_candidates"])):
+                        raise ValueError("stored market revision differs from selected plan")
+                    if any(not isfinite(record[f]) or record[f] < 0 for f in (
+                        "elapsed_planned_export_wh", "cancelled_export_wh", "remaining_export_wh",
+                    )) or abs(record["elapsed_planned_export_wh"]
+                           + record["cancelled_export_wh"] + record["remaining_export_wh"]
+                           - old.expected_export_wh) > 1e-6:
+                        raise ValueError("stored market revision volume is inconsistent")
+                    raw_bound = evidence["new_binding"]
+                    if raw_bound is None:
+                        if any(s.purpose == old.assignment_id for s in plan.segments):
+                            raise ValueError("removed market revision still has execution")
+                        progress = payload.get("market_execution_progress", {}).get(
+                            old.assignment_id, {},
+                        )
+                        if not progress.get("stop_requested_at"):
+                            raise ValueError("removed market revision requires stop evidence")
+                    else:
+                        bound = binding_from(raw_bound)
+                        self._validate_market_binding(bound, assignment, plan)
+                        if (bound.expected_export_wh != old.expected_export_wh
+                                or bound.cancelled_export_wh < old.cancelled_export_wh
+                                or bound.elapsed_planned_export_wh < old.elapsed_planned_export_wh
+                                or abs(bound.cancelled_export_wh
+                                       - record["cancelled_export_wh"]) > 1e-6
+                                or abs(bound.elapsed_planned_export_wh
+                                       - record["elapsed_planned_export_wh"]) > 1e-6):
+                            raise ValueError("stored market revision replenishes its allocation")
+                        known = latest.get(bound.assignment_id)
+                        if known is None or plan.created_at >= known[0]:
+                            latest[bound.assignment_id] = (plan.created_at, bound)
+            for binding in bindings:
+                previous = latest.get(binding.assignment_id)
+                if previous is None:
+                    if binding.cancelled_export_wh:
+                        raise ValueError("cancelled market volume requires revision history")
+                elif binding.cancelled_export_wh != previous[1].cancelled_export_wh or (
+                    binding.plan_id == previous[1].plan_id and binding != previous[1]
+                ):
+                    raise ValueError("current market binding differs from revision history")
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise ValueError("invalid stored market revision history") from exc
 
     def load_market_bound_plan(self, assignment_id: str) -> ExecutionPlan:
         binding = next(
@@ -1455,10 +1604,123 @@ class ActivePlanCommitmentStore:
         if cursor != proposed.valid_until:
             raise ValueError("shared execution plan omits remaining execution")
 
-    def _preserve_market_bindings(self, payload: dict[str, Any], plan: ExecutionPlan) -> None:
+    @staticmethod
+    def _market_revision_evidence(revision: MarketPlanRevision) -> dict[str, Any]:
+        record = asdict(revision)
+        record["evaluation_record"]["created_at"] = (
+            revision.evaluation_record.created_at.isoformat()
+        )
+        # Persisted tuples are JSON arrays; normalize before idempotence comparisons.
+        return cast(dict[str, Any], json.loads(json.dumps(record)))
+
+    def _apply_market_revisions(
+        self, payload: dict[str, Any], plan: ExecutionPlan,
+        revisions: tuple[MarketPlanRevision, ...],
+    ) -> None:
+        if not revisions:
+            return
+        ids = [r.previous_binding.assignment_id for r in revisions]
+        if len(ids) != len(set(ids)):
+            raise ValueError("one selected revision per market assignment is required")
+        active = self.load_active_daily_main_plan(plan.execution_scope_id)
+        bindings = {b.assignment_id: b for b in self.load_market_plan_bindings()}
+        assignments = {a.assignment_id: a for a in self.load_market_daily_assignments()}
+        history = payload.setdefault("market_plan_revisions", {})
+        if plan.plan_id in history or plan.plan_id in payload.get("execution_plans", {}):
+            raise ValueError("market revision history is immutable")
+        records = []
+        for revision in revisions:
+            revision.validate_plan(plan)
+            old = revision.previous_binding
+            assignment = assignments.get(old.assignment_id)
+            progress = self.load_market_progress(old.assignment_id)
+            if (active is None or active.plan_id != revision.previous_active_plan_id
+                    or bindings.get(old.assignment_id) != old
+                    or assignment is None or assignment.status != "pending"
+                    or (progress is not None and progress.stop_requested_at is not None)):
+                raise ValueError("market revision requires current pending ownership")
+            old_plan = _registered_execution_plan(payload, old.plan_id)
+            parts = tuple(s for s in old_plan.segments if s.segment_id in old.segment_ids)
+            if parts[-1].ends_at <= plan.created_at:
+                raise ValueError("market revision requires remaining execution")
+            available = sum(
+                amount * max(0.0, (s.ends_at - max(s.starts_at, plan.created_at)).total_seconds())
+                / (s.ends_at - s.starts_at).total_seconds()
+                for s, amount in zip(parts, old.segment_export_wh, strict=True)
+            )
+            elapsed = max(0.0, old.expected_export_wh - old.cancelled_export_wh - available)
+            bound = revision.new_binding
+            if bound is not None:
+                self._validate_market_binding(bound, assignment, plan)
+                retained = tuple(s for s in plan.segments if s.segment_id in bound.segment_ids)
+                if (bound.original_plan_id != (old.original_plan_id or old.plan_id)
+                        or bound.original_segment_ids
+                        != (old.original_segment_ids or old.segment_ids)
+                        or abs(bound.elapsed_planned_export_wh - elapsed) > 1e-6
+                        or sum(bound.segment_export_wh) > available + 1e-6
+                        or any(s.starts_at < plan.created_at for s in retained)
+                        or (progress is not None and progress.started_at is not None
+                            and retained[0].starts_at != max(parts[0].starts_at, plan.created_at))):
+                    raise ValueError("market revision must preserve elapsed and remaining volume")
+                for segment, amount in zip(retained, bound.segment_export_wh, strict=True):
+                    source = next((p for p in parts if p.starts_at <= segment.starts_at
+                                   < segment.ends_at <= p.ends_at), None)
+                    if source is None or any(getattr(segment, f) != getattr(source, f) for f in (
+                        "primitive", "capability_id", "requested_power_w", "soc_constraint",
+                        "energy_profile_id", "charge_source_policy",
+                    )):
+                        raise ValueError("market revision can only retain or shorten export")
+                    limit = old.segment_export_wh[old.segment_ids.index(source.segment_id)] * (
+                        (segment.ends_at - segment.starts_at).total_seconds()
+                        / (source.ends_at - source.starts_at).total_seconds()
+                    )
+                    if amount > limit + 1e-6:
+                        raise ValueError("market revision cannot replenish a segment export target")
+                cancelled = bound.cancelled_export_wh
+                payload["market_plan_bindings"][old.assignment_id] = asdict(bound)
+            else:
+                if any(s.purpose == old.assignment_id for s in plan.segments):
+                    raise ValueError("removed market revision cannot retain execution segments")
+                cancelled = old.cancelled_export_wh + available
+                previous_progress = progress or MarketExecutionProgress(old.assignment_id)
+                stopped = replace(previous_progress, stop_requested_at=plan.created_at,
+                                  reason=revision.reason)
+                values = asdict(stopped)
+                for field in ("started_at", "stop_requested_at", "stopped_at"):
+                    value = getattr(stopped, field)
+                    values[field] = value.isoformat() if value is not None else None
+                payload.setdefault("market_execution_progress", {})[old.assignment_id] = values
+                if stopped.started_at is None and plan.created_at < parts[0].starts_at:
+                    assignment = assignment.close(
+                        status="skipped", at=plan.created_at,
+                        evidence_id=f"market-revision:{plan.evaluation_id}:{old.assignment_id}",
+                    )
+                    payload["market_daily_assignments"][old.assignment_id] = (
+                        self._market_assignment_payload(assignment)
+                    )
+                # The old binding remains available to the existing measurement/stop
+                # observer. It is no longer attached to the newly active plan.
+            records.append({
+                "evidence": self._market_revision_evidence(revision),
+                "elapsed_planned_export_wh": elapsed,
+                "cancelled_export_wh": cancelled,
+                "remaining_export_wh": sum(bound.segment_export_wh) if bound else 0.0,
+                "previous_progress": None if progress is None else {
+                    **asdict(progress),
+                    **{f: getattr(progress, f).isoformat() if getattr(progress, f) else None
+                       for f in ("started_at", "stop_requested_at", "stopped_at")},
+                },
+            })
+        history[plan.plan_id] = records
+
+    def _preserve_market_bindings(
+        self, payload: dict[str, Any], plan: ExecutionPlan,
+        *, revised_ids: frozenset[str] = frozenset(),
+    ) -> None:
         assignments = {a.assignment_id: a for a in self.load_market_daily_assignments()}
         for old in self.load_market_plan_bindings():
-            if old.execution_scope_id != plan.execution_scope_id:
+            if (old.execution_scope_id != plan.execution_scope_id
+                    or old.assignment_id in revised_ids):
                 continue
             original = _deserialize_execution_plan(payload["execution_plans"][old.plan_id])
             parts = tuple(s for s in original.segments if s.segment_id in old.segment_ids)
@@ -1504,7 +1766,7 @@ class ActivePlanCommitmentStore:
                 cursor = segment.ends_at
             if not retained or cursor != parts[-1].ends_at:
                 raise ValueError("pending market window cannot be removed or relocated")
-            elapsed_export_wh = old.expected_export_wh - sum(energy)
+            elapsed_export_wh = old.expected_export_wh - old.cancelled_export_wh - sum(energy)
             # Match the binding energy-balance tolerance; do not hide real over-allocation.
             if -1e-6 <= elapsed_export_wh < 0:
                 elapsed_export_wh = 0.0

@@ -21,6 +21,7 @@ from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.market_execution import MarketExecutionProgress
 from picot.domain.market_plan_binding import MarketPlanBinding
+from picot.domain.market_revision_comparison import MarketRevisionCandidateEvidence
 from picot.domain.market_user_rule import MarketUserRule
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.v2.daily_bridge import DailyBridgeAssessment, DailyBridgeState
@@ -1347,6 +1348,7 @@ class CandidateOutcomeSet:
     candidate_ids: tuple[str, ...]
     outcomes: tuple[DelegatedStorageCandidateOutcome | MepCandidateOutcome, ...] = ()
     canonical_outcomes: tuple[CanonicalCandidateOutcome, ...] = ()
+    market_revision_evidence: tuple[MarketRevisionCandidateEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         if self.canonical_outcomes and self.candidate_ids != tuple(
@@ -1357,6 +1359,11 @@ class CandidateOutcomeSet:
             outcome.candidate_id for outcome in self.outcomes
         ):
             raise ValueError("Candidate Outcome IDs must match detailed outcomes")
+        revision_ids = tuple(item.candidate_id for item in self.market_revision_evidence)
+        if len(revision_ids) != len(set(revision_ids)) or not set(revision_ids).issubset(
+            self.candidate_ids
+        ):
+            raise ValueError("Market revision evidence must identify unique outcome candidates")
 
 
 @dataclass(frozen=True, slots=True)

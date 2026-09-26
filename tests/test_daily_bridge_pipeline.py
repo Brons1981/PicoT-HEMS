@@ -139,6 +139,47 @@ def test_new_cheap_interval_can_fund_bridge_without_moving_main(tmp_path, monkey
     assert store.load_daily_assignments()[0] == completed
 
 
+def test_bridge_with_retained_export_builds_consistent_alternatives(tmp_path, monkeypatch):
+    from test_market_plan_binding import proposal
+
+    from picot.domain.daily_reference_intent import DailyStorageIntent
+    from picot.planner.independent_daily_intent_simulator import IndependentDailyIntentSimulator
+
+    store, _, recover, source, _, _ = started(tmp_path, monkeypatch)
+    original = store.load_active_daily_main_plan("battery")
+    proposed = proposal(store, original)
+    amount = 504.5251533820346  # First export interval in the 26 September incident.
+    proposed["binding"] = replace(proposed["binding"], expected_export_wh=amount,
+                                  segment_export_wh=(amount,))
+    proposed["admission"] = replace(proposed["admission"], expected_export_wh=amount)
+    store.bind_market_plan(**proposed)
+    before = (tmp_path / "plans.json").read_bytes()
+    schedules = []
+    simulate = IndependentDailyIntentSimulator.simulate_planning_basis
+
+    def record(self, **kwargs):
+        schedules.append(kwargs["intent_schedule"])
+        return simulate(self, **kwargs)
+
+    monkeypatch.setattr(IndependentDailyIntentSimulator, "simulate_planning_basis", record)
+    snapshot = recover(source)
+    adapter = IndependentDailyReferenceAdapter()
+    conversion = inputs()["conversion_model"]
+    assessment = adapter.bridge_assessment(snapshot=snapshot, conversion_model=conversion)
+    assert assessment.status == "energy_shortfall"
+    windows = adapter.bridge_windows(snapshot=snapshot, trigger=assessment.trigger,
+                                     conversion_model=conversion)
+    assert windows.windows
+    assert any(any(i.intent is DailyStorageIntent.STORAGE_EXPORT for i in s.intervals)
+               for s in schedules)
+    assert any(all(i.storage_export_target_wh == 0 for i in s.intervals) for s in schedules)
+    assert all(i.storage_export_target_wh == 0
+               for s in schedules for i in s.intervals
+               if i.intent is not DailyStorageIntent.STORAGE_EXPORT)
+    assert sum(i.storage_export_target_wh for i in schedules[0].intervals) == pytest.approx(amount)
+    assert (tmp_path / "plans.json").read_bytes() == before
+
+
 @pytest.mark.parametrize("shared_market", [False, True])
 def test_no_next_session_keeps_valid_execution_without_inventing_charge(
     tmp_path, monkeypatch, shared_market,

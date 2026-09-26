@@ -26,9 +26,8 @@ def guarded_market_primitive(
         if binding.execution_scope_id != scope_id:
             continue
         assignment = assignments[binding.assignment_id]
-        plan = store.load_market_original_plan(binding)
-        original_ids = binding.original_segment_ids or binding.segment_ids
-        parts = tuple(s for s in plan.segments if s.segment_id in original_ids)
+        plan = store.load_market_bound_plan(binding.assignment_id)
+        parts = tuple(s for s in plan.segments if s.segment_id in binding.segment_ids)
         start, end = parts[0].starts_at, parts[-1].ends_at
         due = start <= now < end
         if assignment.status != "pending":
@@ -55,6 +54,16 @@ def guarded_market_primitive(
             confirmed_at = changed if changed is not None and start <= changed <= now else now
             progress = replace(progress, started_at=confirmed_at)
         if progress.started_at is None:
+            if progress.stop_requested_at is not None:
+                # A selected removal during a due window cannot infer that no
+                # export happened solely from an absent start observation.
+                if (not export_mode_confirmed and mode is not None and mode.status == "available"
+                        and mode.current_vendor_mode is not None
+                        and mode.current_vendor_mode.lower() not in {"unknown", "unavailable"}):
+                    store.save_market_progress(progress)
+                if due:
+                    result = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                continue
             if due and measured_market_export(snapshot.market_power_history, now, now) is None:
                 result = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
                 continue
@@ -119,7 +128,7 @@ def guarded_market_primitive(
                 else "market_minimum_soc_reached"
                 if state.current_soc <= limits.minimum_soc
                 else "market_export_budget_reached"
-                if measured is not None and measured >= binding.expected_export_wh
+                if measured is not None and measured >= binding.approved_export_wh
                 else "market_export_measurement_unavailable"
                 if measured is None
                 else None

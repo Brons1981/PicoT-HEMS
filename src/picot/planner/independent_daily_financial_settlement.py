@@ -307,6 +307,8 @@ class IndependentDailyFinancialSettlement:
         starts_at: datetime,
         ends_at: datetime,
     ) -> DailyReferenceInterval:
+        if (starts_at, ends_at) == (physical.starts_at, physical.ends_at):
+            return physical
         total_seconds = (physical.ends_at - physical.starts_at).total_seconds()
         offset_fraction = (
             (starts_at - physical.starts_at).total_seconds() / total_seconds

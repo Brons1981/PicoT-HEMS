@@ -28,6 +28,11 @@ from picot.planner.market_daily_planner import (
     MarketDailyPlan,
     MarketRouteAssessment,
 )
+from picot.planner.market_revision_candidates import (
+    MarketRevisionCoverageUnavailable,
+    market_revision_available,
+    market_revision_windows,
+)
 from picot.planner.mep_candidate_outcomes import (
     produce_main_charge_portfolio,
     produce_mep_comparable_portfolio,
@@ -1301,6 +1306,7 @@ def _build_daily_main_run(
     canonical_set = None
     planning_blocked = False
     optional_pv_review = False
+    retain_grid_continuity = False
     retained = tuple(
         p
         for p in context.main_plans
@@ -1384,7 +1390,12 @@ def _build_daily_main_run(
                                 if a.assignment_id == optimisation_trigger.assignment_id)]
         if pending:
             optional_pv_review = isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
-            if isinstance(optimisation_trigger, DailyBridgeTrigger):
+            if optimisation_trigger is not None and market_revision_available(snapshot):
+                windows = market_revision_windows(
+                    snapshot=snapshot, trigger=optimisation_trigger, conversion_model=conversion,
+                    wear_eur_per_kwh=market_policy.wear_eur_per_export_kwh,
+                )
+            elif isinstance(optimisation_trigger, DailyBridgeTrigger):
                 windows = adapter.bridge_windows(
                     snapshot=snapshot, trigger=optimisation_trigger, conversion_model=conversion,
                 )
@@ -1393,7 +1404,12 @@ def _build_daily_main_run(
                     snapshot=snapshot, assignment=pending[0], conversion_model=conversion,
                     optimisation_trigger=optimisation_trigger,
                 )
-            if not windows.windows:
+            retain_grid_continuity = bool(
+                retained and not windows.windows and windows.rejected_windows
+                and all("ongoing_load_requires_committed_grid_continuity"
+                        in w.invalidity_reasons for w in windows.rejected_windows)
+            )
+            if not windows.windows and windows.market_revision is None:
                 if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
                     commitment_store.record_daily_pv_assessment(
                         assignment_id=optimisation_trigger.assignment_id,
@@ -1412,20 +1428,28 @@ def _build_daily_main_run(
                 else:
                     raise ValueError(windows.reason or "daily_main_no_feasible_window")
             else:
+                comparison_end = (windows.market_revision.horizon_end if windows.market_revision
+                                  else windows.windows[0].schedule.horizon_end)
                 tariffs = IndependentDailyTariffAdapter().build(
-                    snapshot, horizon_end=windows.windows[0].schedule.horizon_end,
+                    snapshot, horizon_end=comparison_end,
                 )
                 comparable = produce_main_charge_portfolio(
                     snapshot=snapshot, windows=windows, tariffs=tariffs,
                     opportunity_ids=opportunities.opportunity_ids,
                     incumbent=adapter.main_charge_incumbent(
                         snapshot=snapshot, assignment=pending[0], conversion_model=conversion,
-                        horizon_end=windows.windows[0].schedule.horizon_end,
+                        horizon_end=comparison_end,
                     ) if optimisation_trigger is not None
-                    and not isinstance(optimisation_trigger, DailyBridgeTrigger) else None,
+                    and (windows.market_revision is not None or not isinstance(
+                        optimisation_trigger, DailyBridgeTrigger)) else None,
                 )
         elif not retained:
             raise ValueError("daily_main_active_plan_unavailable")
+    except MarketRevisionCoverageUnavailable as exc:
+        # Missing valuation coverage is not evidence that current execution is
+        # invalid. Monitoring above has checked its goals on the full physical plan.
+        planning_blocked = bool(input_shortfalls) or not retained
+        reason = str(exc)
     except (ValueError, OSError) as exc:
         planning_blocked = not optional_pv_review
         reason = str(exc) or exc.__class__.__name__
@@ -1445,6 +1469,18 @@ def _build_daily_main_run(
             result.record.winning_candidate_id == comparable.incumbent_candidate_id
         ):
             reason = "daily_main_incumbent_retained"
+            if isinstance(optimisation_trigger, DailyBridgeTrigger):
+                assert commitment_store is not None
+                try:
+                    commitment_store.record_retained_bridge_assessment(
+                        trigger=optimisation_trigger, snapshot_id=snapshot.snapshot_id,
+                        assessed_at=snapshot.captured_at,
+                        deficits=optimisation_trigger.deficits, evaluation_record=result.record,
+                    )
+                except (ValueError, OSError) as exc:
+                    # A failed evidence write leaves the same valid incumbent
+                    # executable; the next observation repeats the assessment.
+                    reason = str(exc) or exc.__class__.__name__
             if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
                 assert commitment_store is not None
                 try:
@@ -1464,8 +1500,11 @@ def _build_daily_main_run(
             )
             reason = result.record.decisive_step or "daily_main_winner_selected"
         else:
-            planning_blocked = not isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
-            reason = "daily_main_evaluation_has_no_winner"
+            planning_blocked = not retain_grid_continuity and not isinstance(
+                optimisation_trigger, DailyMainPVSurplusTrigger,
+            )
+            reason = ("ongoing_load_requires_committed_grid_continuity"
+                      if retain_grid_continuity else "daily_main_evaluation_has_no_winner")
             if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
                 assert commitment_store is not None
                 try:
@@ -1496,12 +1535,18 @@ def _build_daily_main_run(
             pv_basis = DailyPVComparisonBasis.capture(snapshot, selected_owner) if (
                 selected_owner.revision == 0
             ) else None
+            from picot.v2.market_plan_revision import build_market_plan_revisions
+
             commitment_store.bind_daily_main_plan(
                 plan=proposed.plans[0],
                 window=selected_window,
                 activate=True,
                 optimisation_trigger=optimisation_trigger,
                 pv_comparison_basis=pv_basis,
+                market_revisions=build_market_plan_revisions(
+                    snapshot=snapshot, plan=proposed.plans[0], window=selected_window,
+                    evaluation_record=result.record,
+                ) if comparable is not None and comparable.market_revision_evidence else (),
                 bridge_deficits=energy_deficits(
                     selected_window.projection, selected_window.schedule,
                     until=optimisation_trigger.next_starts_at,
@@ -1714,6 +1759,8 @@ def _build_daily_main_run(
         outcome_set_id=_id("daily-main-outcomes", candidate_set_id),
         candidate_ids=tuple(c.candidate_id for c in candidates),
         canonical_outcomes=comparable.outcome_set.outcomes if comparable is not None else (),
+        market_revision_evidence=comparable.market_revision_evidence if comparable is not None
+        else (),
     )
     evaluation = EvaluationRecord(
         run_id=snapshot.run_id,

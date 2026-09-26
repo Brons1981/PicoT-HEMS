@@ -27,7 +27,7 @@ from picot.v2.contracts import (
 from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.price_plan_reference import PricePlanReference
-from picot.v2.projection import Projection
+from picot.v2.projection import Projection, project_market_revision_comparison
 from picot.v2.soc_projection_cache import SOCDisplayHistory, SOCProjectionCache
 from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
 
@@ -3031,6 +3031,74 @@ DASHBOARD_HTML = """<!doctype html>
       container.replaceChildren(fragment);
     }
 
+    function renderMarketRevisionComparison(comparison, addCard) {
+      const alternatives = comparison?.alternatives;
+      if (!Array.isArray(alternatives) || !alternatives.length) return;
+      const card = addCard("Marktroute: financiële vergelijking", [
+        ["Berekend", formatTimestamp(comparison.comparison_captured_at)],
+        ["Weergave", comparison.retained
+          ? "Laatste vergelijking voor dit plan; niet opnieuw berekend"
+          : "Vergelijking bij deze planbeslissing"],
+        ["Beslisregel", comparison.decisive_step],
+        ["Reden", comparison.reason],
+      ], true);
+      const note = document.createElement("p");
+      note.textContent = "Verwachte bedragen vanaf het rekenmoment. " +
+        "Verschillen zijn ten opzichte van behoud van het bestaande plan.";
+      card.append(note);
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const heading = document.createElement("tr");
+      for (const label of [
+        "Alternatief", "Gekozen", "Vergelijkingsperiode", "Afname en export per dag",
+        "Netladen", "Eindvoorraad", "Minimumvoorraad", "Slijtage",
+        "Vergelijkbaar resultaat", "Verschil met behoud", "Afwijsreden",
+      ]) {
+        const cell = document.createElement("th");
+        cell.textContent = label;
+        heading.append(cell);
+      }
+      head.append(heading);
+      const body = document.createElement("tbody");
+      const labels = {retained: "Behouden", shortened: "Inkorten", removed: "Verwijderen"};
+      for (const alternative of alternatives) {
+        const row = document.createElement("tr");
+        row.dataset.candidateId = alternative.candidate_id;
+        const reasons = [...new Set([
+          ...(alternative.invalidity_reasons ?? []),
+          ...(alternative.evaluation_invalidity_reasons ?? []),
+        ])];
+        const days = (alternative.days ?? []).map(day => (
+          `${day.delivery_date}: afname ${formatCurrency(day.import_cost_eur)}, ` +
+          `export ${formatCurrency(day.export_revenue_eur)}`
+        ));
+        for (const value of [
+          (labels[alternative.variant] ?? alternative.variant) +
+            (alternative.incumbent ? " (bestaand plan)" : ""),
+          alternative.selected ? "Ja" : "Nee",
+          `${formatTimestamp(alternative.horizon_start)} – ` +
+            formatTimestamp(alternative.horizon_end),
+          days.join("; "),
+          formatMeasurement(alternative.grid_charge_wh, "Wh"),
+          formatMeasurement(alternative.terminal_storage_wh, "Wh"),
+          formatMeasurement(alternative.minimum_storage_wh, "Wh"),
+          formatCurrency(alternative.wear_cost_eur),
+          alternative.comparable_result_eur === null
+            ? "Onvoldoende vergelijkingsbewijs"
+            : formatCurrency(alternative.comparable_result_eur),
+          formatCurrency(alternative.delta_from_incumbent_eur),
+          reasons.length ? reasons.join("; ") : "—",
+        ]) {
+          const cell = document.createElement("td");
+          cell.textContent = displayValue(value);
+          row.append(cell);
+        }
+        body.append(row);
+      }
+      table.append(head, body);
+      card.append(table);
+    }
+
     function renderPlanningStatus(status) {
       const container = element("planning-status");
       if (!status) {
@@ -3247,6 +3315,7 @@ DASHBOARD_HTML = """<!doctype html>
       segmentTable.append(segmentHead, segmentBody);
       chosenCard.append(segmentTable);
 
+      renderMarketRevisionComparison(status.market_revision_comparison, addCard);
       const alternatives = Array.isArray(status.alternatives)
         ? status.alternatives : [];
       const card = addCard("Kandidaten", [], true);
@@ -4874,6 +4943,10 @@ class WebViewStore:
                     )
                     current_status["soc_projection_retained"] = True
                     view = {**view, "planning_status": current_status}
+                carried = self._retain_market_comparison(current_status, previous_status)
+                if carried is not current_status:
+                    current_status = carried
+                    view = {**view, "planning_status": current_status}
             status = view.get("planning_status")
             if self._soc_cache is not None and isinstance(status, dict):
                 decision = status.get("decision") or {}
@@ -4898,6 +4971,40 @@ class WebViewStore:
             if self._price_reference is not None:
                 view = {**view, "original_price_plan": self._price_reference.read()}
             self._replace_latest_locked(view)
+
+    @staticmethod
+    def _retain_market_comparison(
+        current: dict[str, object], previous: dict[str, object],
+    ) -> dict[str, object]:
+        """Carry original evidence only while its exact execution plans still govern."""
+        decision = current.get("decision")
+        comparison = previous.get("market_revision_comparison")
+        if (current.get("market_revision_comparison") is not None
+                or not isinstance(decision, dict)
+                or decision.get("status") != "plan_retained"
+                or not isinstance(comparison, dict)
+                or comparison.get("status") not in {"winner_selected", "plan_retained"}):
+            return current
+
+        def identities(value: object) -> set[tuple[str, str]] | None:
+            if not isinstance(value, list) or not value:
+                return None
+            result = set()
+            for row in value:
+                if not isinstance(row, dict):
+                    return None
+                plan_id, path_id = row.get("plan_id"), row.get("energy_path_id")
+                if not isinstance(plan_id, str) or not isinstance(path_id, str):
+                    return None
+                if not plan_id or not path_id:
+                    return None
+                result.add((plan_id, path_id))
+            return result if len(result) == len(value) else None
+
+        governed = identities(comparison.get("execution_plans"))
+        if governed is None or governed != identities(current.get("execution_plans")):
+            return current
+        return {**current, "market_revision_comparison": {**comparison, "retained": True}}
 
     @staticmethod
     def _overlay_soc_expectation(
@@ -6160,6 +6267,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "decisive_step": run.evaluation.decisive_step,
             "confidence": (winning_outcome.confidence if winning_outcome is not None else None),
         },
+        "market_revision_comparison": project_market_revision_comparison(run),
         "storage_target": {
             "required_energy_wh": (
                 requirement.required_energy_wh if requirement is not None else None
@@ -6215,6 +6323,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
         "execution_plans": [
             {
                 "plan_id": plan.plan_id,
+                "energy_path_id": plan.winning_energy_path_id,
                 "execution_scope_id": plan.execution_scope_id,
                 "valid_from": plan.valid_from.isoformat(),
                 "valid_until": plan.valid_until.isoformat(),

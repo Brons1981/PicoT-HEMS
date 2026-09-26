@@ -17,11 +17,14 @@ class MarketPlanBinding:
     elapsed_planned_export_wh: float = 0.0
     original_plan_id: str | None = None
     original_segment_ids: tuple[str, ...] = ()
+    cancelled_export_wh: float = 0.0
 
     def __post_init__(self) -> None:
         if (
             not isfinite(self.elapsed_planned_export_wh)
             or self.elapsed_planned_export_wh < 0
+            or not isfinite(self.cancelled_export_wh)
+            or self.cancelled_export_wh < 0
             or bool(self.original_plan_id) != bool(self.original_segment_ids)
         ):
             raise ValueError("retained market execution requires complete original lineage")
@@ -44,8 +47,14 @@ class MarketPlanBinding:
             or abs(
                 sum(self.segment_export_wh)
                 + self.elapsed_planned_export_wh
+                + self.cancelled_export_wh
                 - self.expected_export_wh
             )
             > 1e-6
         ):
             raise ValueError("market segment energy must cover the complete export allocation")
+
+    @property
+    def approved_export_wh(self) -> float:
+        """Current total planned allocation; elapsed planning is never a measurement."""
+        return self.expected_export_wh - self.cancelled_export_wh

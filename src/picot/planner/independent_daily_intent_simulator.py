@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta
+from functools import lru_cache
 from math import isfinite
 
 from picot.domain.current_storage_state import CurrentStorageState
@@ -120,7 +121,32 @@ class IndependentDailyIntentSimulator:
         ):
             raise ValueError("planning LOWER must not exceed CENTRAL")
         method = "pv-lower-central-arithmetic-midpoint:v1"
-        basis = replace(
+        basis = self._planning_basis(lower, central)
+        intervals, _ = self._simulate_timeline(
+            household=household,
+            pv_timeline=basis,
+            storage_state=storage_state,
+            conversion_model=conversion_model,
+            intent_schedule=intent_schedule,
+            minimum_storage_energy_wh=minimum_storage_energy_wh,
+            target_storage_energy_wh=target_storage_energy_wh,
+            maximum_charge_input_power_w=maximum_charge_input_power_w,
+            maximum_discharge_output_power_w=maximum_discharge_output_power_w,
+        )
+        return DailyPlanningProjection(
+            snapshot_id=snapshot_id,
+            intent_schedule_id=intent_schedule.schedule_id,
+            basis_timeline=basis,
+            intervals=intervals,
+            basis_method=method,
+        )
+
+    @staticmethod
+    @lru_cache(maxsize=4)
+    def _planning_basis(lower: PVEnergyTimeline, central: PVEnergyTimeline) -> PVEnergyTimeline:
+        """Reuse an identical immutable midpoint; input validation still runs per path."""
+        method = "pv-lower-central-arithmetic-midpoint:v1"
+        return replace(
             lower,
             timeline_id=f"{method}:{lower.timeline_id}:{central.timeline_id}",
             intervals=tuple(
@@ -144,25 +170,6 @@ class IndependentDailyIntentSimulator:
                 for a, b in zip(lower.intervals, central.intervals, strict=True)
             ),
         )
-        intervals, _ = self._simulate_timeline(
-            household=household,
-            pv_timeline=basis,
-            storage_state=storage_state,
-            conversion_model=conversion_model,
-            intent_schedule=intent_schedule,
-            minimum_storage_energy_wh=minimum_storage_energy_wh,
-            target_storage_energy_wh=target_storage_energy_wh,
-            maximum_charge_input_power_w=maximum_charge_input_power_w,
-            maximum_discharge_output_power_w=maximum_discharge_output_power_w,
-        )
-        return DailyPlanningProjection(
-            snapshot_id=snapshot_id,
-            intent_schedule_id=intent_schedule.schedule_id,
-            basis_timeline=basis,
-            intervals=intervals,
-            basis_method=method,
-        )
-
     def _simulate_scenario(
         self,
         *,

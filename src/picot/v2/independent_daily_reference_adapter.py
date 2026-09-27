@@ -1613,6 +1613,8 @@ class IndependentDailyReferenceAdapter:
                and snapshot.household_load_guard.active
                and snapshot.household_load_guard.extra_power_w > 0
                and snapshot.household_load_guard.quality != "unknown" else ())
+            # Every active plan boundary matters, including after its last
+            # market binding has been removed. Never straddle two intents.
             + tuple(
                 boundary
                 for plan in (
@@ -1621,7 +1623,6 @@ class IndependentDailyReferenceAdapter:
                     else ()
                 )
                 if snapshot.daily_charge_context is not None
-                and snapshot.daily_charge_context.market_plan_bindings
                 and plan.plan_id in snapshot.daily_charge_context.active_main_plan_ids
                 for segment in plan.segments
                 for boundary in (segment.starts_at, segment.ends_at)

@@ -429,3 +429,49 @@ def test_unbound_tomorrow_cannot_provide_free_goal_in_market_comparison(tmp_path
                 if p.path_id == second.evaluation.winning_energy_path_id)
     assert max(state.battery_soc for state in path.projected_states
                if state.at >= tomorrow.starts_at) == 1.0
+
+
+@pytest.mark.parametrize("real_gap", [False, True])
+def test_removed_market_preserves_non_quarter_plan_boundaries(tmp_path, real_gap):
+    from picot.domain.daily_reference_intent import DailyStorageIntent
+    from picot.domain.execution_primitive import ExecutionPrimitive
+    from picot.v2.independent_daily_reference_adapter import DailyReferenceInputError
+
+    _, snapshot, plan = scenario(tmp_path)
+    # A removed trade leaves NOM with a non-quarter end, followed by discharge.
+    boundary = plan.segments[2].ends_at - timedelta(minutes=2, microseconds=123456)
+    segments = list(plan.segments)
+    segments[2] = replace(
+        segments[2], ends_at=boundary,
+        primitive=ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+        requested_power_w=None, purpose="retained-route",
+    )
+    segments[3] = replace(
+        segments[3], starts_at=boundary + (timedelta(seconds=1) if real_gap else timedelta()),
+    )
+    plan = replace(plan, segments=tuple(segments))
+    snapshot = replace(snapshot, daily_charge_context=replace(
+        snapshot.daily_charge_context, market_plan_bindings=(),
+        main_plans=(plan,),
+    ))
+    adapter = IndependentDailyReferenceAdapter()
+    if real_gap:
+        with pytest.raises(DailyReferenceInputError, match="retained_main_plan_has_a_schedule_gap"):
+            adapter.main_route_shortfalls(
+                snapshot=snapshot, conversion_model=inputs()["conversion_model"],
+            )
+        return
+    adapter.main_route_shortfalls(
+        snapshot=snapshot, conversion_model=inputs()["conversion_model"],
+    )
+    projection, schedule = adapter.committed_plan_projection(
+        snapshot=snapshot, plan=plan, conversion_model=inputs()["conversion_model"],
+    )
+    before = next(i for i in schedule.intervals if i.ends_at == boundary)
+    after = next(i for i in schedule.intervals if i.starts_at == boundary)
+    assert before.intent is DailyStorageIntent.NOM
+    assert after.intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+    assert projection.intervals[-1].ends_at == plan.valid_until
+    assert all(a.ends_at == b.starts_at for a, b in zip(
+        schedule.intervals, schedule.intervals[1:], strict=False,
+    ))

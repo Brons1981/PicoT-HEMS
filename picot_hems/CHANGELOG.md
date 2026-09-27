@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.0-dev.275
+
+- Herstelt onterechte terugval na het verwijderen van de laatste marktroute: de herberekening behoudt alle werkelijke planovergangen, ook buiten klokkwartieren.
+- Werkelijke gaten blijven afgewezen. Moduskeuze, financiële berekening en marktselectie blijven ongewijzigd.
+
 ## 2.0.0-dev.274
 
 - Financiële nacalculatie kan ontbrekende nacht-PV met zonhistorie afleiden en korte PV-/batterijonderbrekingen begrensd aanvullen.

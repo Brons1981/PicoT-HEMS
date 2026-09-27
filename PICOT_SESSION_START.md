@@ -530,3 +530,10 @@ Releasevoorbereiding: Alex heeft op 27 september 2026 om 00:23
 Europe/Amsterdam akkoord gegeven op publicatie als dev.274 via PR en CI.
 Dit vervangt de eerdere lokale publicatiestatus; installatie en livecontrole
 volgen na geslaagde publicatie afzonderlijk.
+
+
+Release dev.275: Alex heeft op 27 september 2026 om 16:13 Europe/Amsterdam
+akkoord gegeven op publicatie van de geïsoleerde planovergangenreparatie via PR
+en CI. Zie `docs/development_log/2026-09-27-retained-plan-boundaries.md`.
+Financiële meetverwerking, planuitleg en NOM-vervanging blijven vervolgstappen.
+Installatie en livecontrole volgen na publicatie.

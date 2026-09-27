@@ -79,7 +79,7 @@ def test_failed_main_goal_has_valid_repair_without_reopening_completed_day(tmp_p
                    adapter.main_route_shortfalls(snapshot=restored, conversion_model=conversion))
 
 
-def test_incomplete_tomorrow_coverage_cannot_admit_changed_export(tmp_path):
+def test_priced_recovery_can_compare_export_without_the_rest_of_tomorrow(tmp_path):
     store, snapshot, plan = scenario(tmp_path, complete=False)
     run = CanonicalPipeline(
         commitment_store=store,
@@ -92,10 +92,10 @@ def test_incomplete_tomorrow_coverage_cannot_admit_changed_export(tmp_path):
     assert winner_evidence.variant == "retained"
     changed = tuple(e for e in evidence if e.variant in {"shortened", "removed"})
     assert changed
-    assert all("market_revision_today_tomorrow_coverage_incomplete" in e.invalidity_reasons
-               for e in changed)
+    assert winner_evidence.comparable_result_eur is not None
+    assert not winner_evidence.invalidity_reasons
     outcomes = {outcome.candidate_id: outcome for outcome in run.outcomes.canonical_outcomes}
-    assert all(outcomes[e.candidate_id].validity is CandidateValidity.INVALID for e in changed)
+    assert any(outcomes[e.candidate_id].validity is CandidateValidity.VALID for e in changed)
     active = store.load_active_daily_main_plan("battery")
     assert active is not None
     if run.evaluation.status == "plan_retained":
@@ -293,11 +293,11 @@ def test_missing_forecast_only_beyond_valid_active_plan_cannot_force_fallback(tm
     assert sum(binding.segment_export_wh) == sum(previous_binding.segment_export_wh)
     evidence = run.outcomes.market_revision_evidence
     assert evidence
-    assert all(e.comparable_result_eur is None for e in evidence)
+    assert all(e.comparable_result_eur is not None for e in evidence)
+    assert all(e.horizon_end < active_end for e in evidence)
     changed = tuple(e for e in evidence if e.variant in {"shortened", "removed"})
     assert changed
-    assert all("market_revision_today_tomorrow_coverage_incomplete" in e.invalidity_reasons
-               for e in changed)
+    assert all("market_recovery_not_proven" not in e.invalidity_reasons for e in changed)
     completed = next(a for a in owners if a.completed_at is not None)
     assert next(a for a in store.load_daily_assignments()
                 if a.completed_at is not None) == completed
@@ -406,7 +406,7 @@ def test_unbound_tomorrow_cannot_provide_free_goal_in_market_comparison(tmp_path
     assert sum(after.segment_export_wh) == sum(before.segment_export_wh)
     evidence = first.outcomes.market_revision_evidence
     assert evidence
-    reason = f"market_revision_daily_goal_not_planned:{tomorrow.assignment_id}"
+    reason = "market_recovery_not_proven"
     assert all(reason in e.invalidity_reasons for e in evidence)
     assert all(e.comparable_result_eur is None and e.delta_from_incumbent_eur is None
                for e in evidence)

@@ -1,4 +1,4 @@
-"""Producer-owned evidence for a remaining today/tomorrow market comparison."""
+"""Producer-owned evidence for one trade and its own recovery cycle."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,6 +15,8 @@ class MarketRevisionBasis:
     export_intervals: tuple[tuple[datetime, datetime], ...]
     wear_eur_per_kwh: float = 0.0
     unplanned_assignment_ids: tuple[str, ...] = ()
+    recovery_assignment_id: str | None = None
+    recovery_intervals: tuple[tuple[datetime, datetime], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

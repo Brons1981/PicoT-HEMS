@@ -50,6 +50,41 @@ class MarketAdmission:
     incremental_cash_eur: float | None = None
     incremental_net_profit_eur: float | None = None
     net_margin_eur_per_export_kwh: float | None = None
+    recovery_ends_at: datetime | None = None
+
+
+def common_market_recovery(
+    *, projections: tuple[DailyPlanningProjection, ...],
+    recovery_segments: tuple[MarketRecoverySegment, ...], after: datetime,
+) -> MarketRecoverySegment | None:
+    """Find a priced-path boundary where the trade's stock difference is gone.
+
+    The caller supplies owned charge cycles, not an invented midnight target.
+    Use the whole cycle so differences in its last charging actions are valued.
+    Later unrelated actions remain in the physical path but not this comparison.
+    """
+    if not projections:
+        return None
+    for segment in sorted(recovery_segments, key=lambda s: (s.ends_at, s.starts_at)):
+        if segment.starts_at < after:
+            continue
+        ends = []
+        for projection in projections:
+            finish = next((i for i in projection.intervals if i.ends_at == segment.ends_at), None)
+            reached = any(
+                segment.starts_at <= at <= segment.ends_at
+                and energy + 1e-6 >= segment.target_storage_energy_wh
+                for i in projection.intervals for at, energy in (
+                    (i.starts_at, i.storage_energy_at_start_wh),
+                    (i.ends_at, i.storage_energy_at_end_wh),
+                )
+            )
+            if finish is None or not reached:
+                break
+            ends.append(finish.storage_energy_at_end_wh)
+        if len(ends) == len(projections) and max(ends) - min(ends) <= 1e-6:
+            return segment
+    return None
 
 
 def assess_market_route(
@@ -63,7 +98,7 @@ def assess_market_route(
     tariffs: DailyReferenceTariffSchedule | None = None,
     wear_eur_per_export_kwh: float = 0.0,
 ) -> MarketAdmission:
-    """No recovery-price requirement when the user's recovery option is off.
+    """Admit automatic trade only with actual, comparable recovery economics.
 
     The caller supplies the same household/PV inputs and initial energy for
     both paths. A physically curtailed export is not silently admitted as a
@@ -130,6 +165,7 @@ def assess_market_route(
         incremental_cash_eur: float | None = None,
         incremental_net_profit_eur: float | None = None,
         net_margin_eur_per_export_kwh: float | None = None,
+        recovery_ends_at: datetime | None = None,
     ) -> MarketAdmission:
         return MarketAdmission(
             assignment.assignment_id,
@@ -141,6 +177,7 @@ def assess_market_route(
             incremental_cash_eur,
             incremental_net_profit_eur,
             net_margin_eur_per_export_kwh,
+            recovery_ends_at,
         )
 
     if assignment.status != "pending":
@@ -158,25 +195,10 @@ def assess_market_route(
         < minimum_storage_energy_wh
     ):
         return result("rejected", "minimum_soc_violated")
-    if not assignment.rule.recovery_required:
-        return result("admissible", "user_conditions_met_recovery_not_required")
-    recovery = next(
-        (
-            segment
-            for segment in sorted(recovery_segments, key=lambda s: s.starts_at)
-            if segment.starts_at >= end
-            and segment.target_storage_energy_wh == assignment.usable_capacity_wh
-            and any(
-                segment.starts_at <= at <= segment.ends_at
-                and energy + 1e-6 >= assignment.usable_capacity_wh
-                for i in proposed.intervals
-                for at, energy in (
-                    (i.starts_at, i.storage_energy_at_start_wh),
-                    (i.ends_at, i.storage_energy_at_end_wh),
-                )
-            )
-        ),
-        None,
+    recovery = common_market_recovery(
+        projections=(baseline, proposed), after=end,
+        recovery_segments=tuple(s for s in recovery_segments
+                                if s.target_storage_energy_wh == assignment.usable_capacity_wh),
     )
     if recovery is None:
         return result("insufficient_evidence", "future_owned_charge_does_not_prove_full_recovery")
@@ -187,20 +209,31 @@ def assess_market_route(
             recovery_assignment_id=recovery.assignment_id,
         )
     settlement = IndependentDailyFinancialSettlement()
-    before = settlement.settle_planning_basis(projection=baseline, tariffs=tariffs)
-    after = settlement.settle_planning_basis(projection=proposed, tariffs=tariffs)
+    before = settlement.settle_planning_basis(
+        projection=baseline, tariffs=tariffs, horizon_end=recovery.ends_at)
+    after = settlement.settle_planning_basis(
+        projection=proposed, tariffs=tariffs, horizon_end=recovery.ends_at)
     cash = after.cash_result_eur - before.cash_result_eur
-    profit = cash - export / 1000 * wear_eur_per_export_kwh
+    profit = cash - (
+        settlement.storage_discharge_cost(proposed, wear_eur_per_export_kwh,
+                                          horizon_end=recovery.ends_at)
+        - settlement.storage_discharge_cost(baseline, wear_eur_per_export_kwh,
+                                            horizon_end=recovery.ends_at)
+    )
     margin = profit / (export / 1000)
+    required_margin = (assignment.rule.minimum_net_margin_eur_per_export_kwh
+                       if assignment.rule.recovery_required else 0.0)
+    profitable = profit > 0 and margin >= required_margin
     return result(
         "admissible"
-        if margin >= assignment.rule.minimum_net_margin_eur_per_export_kwh
+        if profitable
         else "rejected",
         "recovery_and_net_margin_met"
-        if margin >= assignment.rule.minimum_net_margin_eur_per_export_kwh
+        if profitable
         else "recovery_net_margin_not_met",
         recovery_assignment_id=recovery.assignment_id,
         incremental_cash_eur=cash,
         incremental_net_profit_eur=profit,
         net_margin_eur_per_export_kwh=margin,
+        recovery_ends_at=recovery.ends_at,
     )

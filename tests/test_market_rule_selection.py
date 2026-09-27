@@ -67,11 +67,51 @@ def trading_source(source):
     )
 
 
+def with_next_day_recovery(source):
+    """Known next-day prices/forecasts after publication, within the 36h view."""
+    at = source.captured_at.replace(hour=13)
+    start = at.replace(hour=0)
+    end = start + timedelta(days=2)
+
+    def extend(intervals):
+        last = intervals[-1]
+        duration = last.ends_at - last.starts_at
+        return intervals + tuple(replace(
+            last, interval_id=f"next:{last.interval_id}:{n}",
+            starts_at=last.ends_at + n * duration, ends_at=last.ends_at + (n + 1) * duration,
+        ) for n in range(int((end - last.ends_at) / duration)))
+
+    return replace(
+        source, captured_at=at, horizon_end=end, daily_charge_context=None,
+        capability_snapshot_set=replace(source.capability_snapshot_set, captured_at=at),
+        current_storage_states=tuple(replace(s, measured_at=at)
+                                     for s in source.current_storage_states),
+        price_points=tuple(replace(
+            source.price_points[0], point_id=f"price:{n}",
+            starts_at=start + timedelta(minutes=15 * n),
+            ends_at=start + timedelta(minutes=15 * (n + 1)),
+            value_eur_per_kwh=0.8 if n % 96 in range(60, 64) else 0.1,
+        ) for n in range(192)),
+        household_load_forecast=replace(source.household_load_forecast,
+                                        intervals=extend(source.household_load_forecast.intervals)),
+        pv_energy_timeline=replace(source.pv_energy_timeline,
+            # A known PV cycle has enough headroom to restore both alternatives
+            # under the same committed charge. Grid extension has separate tests.
+            intervals=tuple(replace(
+                i, pv_energy_wh=4000, forecast_lower_energy_wh=4000,
+                forecast_central_energy_wh=4000, forecast_upper_energy_wh=4000,
+            ) if i.starts_at.date() > at.date() and 10 <= i.starts_at.hour < 12 else i
+                for i in extend(source.pv_energy_timeline.intervals))),
+    )
+
+
 def test_real_pipeline_selects_trade_and_keeps_charge_identity(tmp_path, monkeypatch):
     store, pipeline, recover = setup(tmp_path, monkeypatch)
-    source = recover(trading_source(recover()))
+    source = recover(with_next_day_recovery(trading_source(recover())))
     first = pipeline.run(planning_input=source)
     assert first.execution_plan_set.plans, first.evaluation.reason
+    next_day = pipeline.run(planning_input=recover(source))
+    assert next_day.execution_plan_set.plans, next_day.evaluation.reason
     original = store.load_active_daily_main_plan("battery")
     owners = store.load_daily_assignments()
     second = pipeline.run(planning_input=recover(source))
@@ -89,7 +129,7 @@ def test_market_uses_full_publication_after_live_input_removes_elapsed_quarters(
     tmp_path, monkeypatch,
 ):
     store, pipeline, recover = setup(tmp_path, monkeypatch)
-    source = trading_source(recover())
+    source = with_next_day_recovery(trading_source(recover()))
     source = replace(
         source,
         published_price_points=source.price_points,
@@ -98,6 +138,7 @@ def test_market_uses_full_publication_after_live_input_removes_elapsed_quarters(
     assert len(source.price_points) < len(source.published_price_points)
     first = pipeline.run(planning_input=recover(source))
     assert first.execution_plan_set.plans
+    pipeline.run(planning_input=recover(source))
     owners = store.load_daily_assignments()
     second = pipeline.run(planning_input=recover(source))
     assert second.evaluation.reason == "user_market_rule_selected", second.evaluation.reason
@@ -114,7 +155,7 @@ def test_market_with_rolling_household_boundaries_preserves_trade_volume(
     tmp_path, monkeypatch, varying_load,
 ):
     store, pipeline, recover = setup(tmp_path, monkeypatch)
-    source = trading_source(recover())
+    source = with_next_day_recovery(trading_source(recover()))
     forecast = source.household_load_forecast
     # Live forecasts start at the poll timestamp, not a clock quarter.
     offset = timedelta(minutes=6, seconds=24, microseconds=686799)
@@ -137,16 +178,51 @@ def test_market_with_rolling_household_boundaries_preserves_trade_volume(
     source = replace(source, household_load_forecast=replace(forecast, intervals=tuple(intervals)))
     first = pipeline.run(planning_input=recover(source))
     assert first.execution_plan_set.plans
+    pipeline.run(planning_input=recover(source))
     owners = store.load_daily_assignments()
     selected = pipeline.run(planning_input=recover(source))
     assert selected.evaluation.reason == "user_market_rule_selected", selected.evaluation.reason
     binding, = store.load_market_plan_bindings()
     assert sum(binding.segment_export_wh) == pytest.approx(binding.expected_export_wh)
-    assert store.load_daily_assignments() == owners
+    updated = store.load_daily_assignments()
+    assert [a.assignment_id for a in updated] == [a.assignment_id for a in owners]
+    assert updated[0] == owners[0]
+    assert all(a.completed_at is None for a in updated)
+    from test_daily_main_charge_windows import inputs
+
+    from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
+
+    assert not IndependentDailyReferenceAdapter().main_route_shortfalls(
+        snapshot=recover(source), conversion_model=inputs()["conversion_model"])
     plan = store.load_active_daily_main_plan("battery")
     assert binding.plan_id == plan.plan_id
     assert plan.winning_candidate_id == selected.evaluation.winning_candidate_id
     assert all(s.starts_at.hour == 15 for s in plan.segments if s.segment_id in binding.segment_ids)
+
+
+def test_new_trade_waits_then_can_be_admitted_after_recovery_prices_arrive(tmp_path, monkeypatch):
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    published = with_next_day_recovery(trading_source(recover()))
+    tomorrow = published.captured_at.replace(hour=0) + timedelta(days=1)
+    pending = replace(published, price_points=tuple(
+        p for p in published.price_points if p.ends_at <= tomorrow))
+    first = pipeline.run(planning_input=recover(pending))
+    assert first.execution_plan_set.plans, first.evaluation.reason
+    charge_plan = store.load_active_daily_main_plan("battery")
+    waiting = pipeline.run(planning_input=recover(pending))
+    assert waiting.evaluation.status == "plan_retained", waiting.evaluation.reason
+    assert "future_owned_charge_does_not_prove_full_recovery" in waiting.evaluation.reason
+    assert store.load_active_daily_main_plan("battery") == charge_plan
+    assert store.load_market_plan_bindings() == ()
+    assert all(a.status == "pending" for a in store.load_market_daily_assignments())
+
+    next_day = pipeline.run(planning_input=recover(published))
+    assert next_day.execution_plan_set.plans, next_day.evaluation.reason
+    selected = pipeline.run(planning_input=recover(published))
+    assert selected.evaluation.reason == "user_market_rule_selected", selected.evaluation.reason
+    binding, = store.load_market_plan_bindings()
+    assert binding.expected_export_wh > 0
+    assert len(store.load_daily_assignments()) == 2
 
 
 def test_missing_published_tariff_keeps_charge_plan_without_trade(tmp_path, monkeypatch):

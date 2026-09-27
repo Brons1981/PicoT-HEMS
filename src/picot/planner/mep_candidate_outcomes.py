@@ -85,6 +85,7 @@ from picot.planner.market_daily_planner import (
     MarketDailyCandidatePortfolio,
     MarketRouteAssessment,
 )
+from picot.planner.market_route_admission import MarketRecoverySegment, common_market_recovery
 from picot.v2.contracts import (
     MepCandidateOutcome,
     PlanningInputSnapshot,
@@ -1427,16 +1428,32 @@ def produce_main_charge_portfolio(
                                    and not market_basis.unplanned_assignment_ids)
     incomplete_comparison = (() if market_basis is None else (
         (() if market_basis.horizon_complete else (
-            "market_revision_today_tomorrow_coverage_incomplete",))
+            "market_revision_recovery_coverage_incomplete",))
         + tuple(f"market_revision_daily_goal_not_planned:{assignment_id}"
                 for assignment_id in market_basis.unplanned_assignment_ids)
     ))
     if market_basis is not None:
         if incumbent is None:
             raise ValueError("market revision requires a freshly simulated incumbent")
+    recovery = None
+    if financial_market_comparison and market_basis is not None:
+        projections = tuple(w.projection for w in windows.windows)
+        if incumbent is not None and not incumbent.invalidity_reasons:
+            projections += (incumbent.projection,)
+        recovery = common_market_recovery(
+            projections=projections,
+            recovery_segments=tuple(MarketRecoverySegment(
+                market_basis.recovery_assignment_id or market_basis.assignment_id, start, end,
+                snapshot.current_storage_states[0].usable_capacity_wh,
+            ) for start, end in market_basis.recovery_intervals),
+            after=max(end for _, end in market_basis.export_intervals),
+        )
+    financial_market_comparison = recovery is not None
+    if market_basis is not None and recovery is None:
+        incomplete_comparison += ("market_recovery_not_proven",)
     if financial_market_comparison:
         strategy = replace(
-            strategy, mapping_version=strategy.mapping_version + ";ADR-019.5",
+            strategy, mapping_version=strategy.mapping_version + ";ADR-019.6",
             objectives=(WeightedObjective(ObjectiveKind.FINANCIAL_RESULT, ObjectiveWeight(1000)),),
         )
     storage = snapshot.current_storage_states[0]
@@ -1463,20 +1480,12 @@ def produce_main_charge_portfolio(
     ] = (*windows.windows, *windows.rejected_windows)
     if incumbent is not None:
         compared += (incumbent,)
-    reference_terminal = None
-    if market_basis is not None and incumbent is not None:
-        reference_terminal = incumbent.projection.intervals[-1].storage_energy_at_end_wh
-        if incumbent.invalidity_reasons and windows.windows:
-            # A failed old goal cannot set a low inventory target that vetoes
-            # every feasible repair. Use an attainable common physical basis;
-            # choosing the financial winner still belongs entirely to Evaluation.
-            reference_terminal = max(w.projection.intervals[-1].storage_energy_at_end_wh
-                                     for w in windows.windows)
     incumbent_result = None
-    if market_basis is not None and incumbent is not None:
+    if market_basis is not None and incumbent is not None and recovery is not None:
         incumbent_result = settlement.settle_planning_basis(
-            projection=incumbent.projection, tariffs=tariffs,
-        ).cash_result_eur - _market_wear_cost(incumbent.projection, market_basis.wear_eur_per_kwh)
+            projection=incumbent.projection, tariffs=tariffs, horizon_end=recovery.ends_at,
+        ).cash_result_eur - settlement.storage_discharge_cost(
+            incumbent.projection, market_basis.wear_eur_per_kwh, horizon_end=recovery.ends_at)
     for window in compared:
         if market_basis is not None and isinstance(window, DailyMainChargeWindow):
             # A removed trade may become part of this owner's new main window.
@@ -1514,6 +1523,9 @@ def produce_main_charge_portfolio(
             tariffs=tariffs,
             main_intervals=tuple((s.starts_at, s.ends_at) for s in window.main_segments),
         )
+        market_financial = (settlement.settle_planning_basis(
+            projection=window.projection, tariffs=tariffs, horizon_end=recovery.ends_at,
+        ) if recovery is not None else financial)
         confidence = min(i.confidence for i in financial.intervals)
         candidate_id = _id("main-charge-candidate", window.schedule.schedule_id)
         evidence = tuple(dict.fromkeys((window.assignment_id, *financial.evidence_ids)))
@@ -1597,7 +1609,9 @@ def produce_main_charge_portfolio(
         wear = 0.0
         if market_basis is not None:
             assert incumbent is not None
-            wear = _market_wear_cost(window.projection, market_basis.wear_eur_per_kwh)
+            wear = settlement.storage_discharge_cost(
+                window.projection, market_basis.wear_eur_per_kwh,
+                horizon_end=recovery.ends_at if recovery else window.schedule.horizon_end)
             remaining_export = sum(
                 i.storage_export_target_wh for i in window.schedule.intervals
                 if any(start <= i.starts_at < i.ends_at <= end
@@ -1615,11 +1629,6 @@ def produce_main_charge_portfolio(
             if not isinstance(window, DailyMainIncumbentAssessment):
                 if export_changed:
                     invalid += incomplete_comparison
-                assert reference_terminal is not None
-                if financial_market_comparison and (
-                    abs(intervals[-1].storage_energy_at_end_wh - reference_terminal) > 1e-6
-                ):
-                    invalid += ("market_revision_terminal_inventory_not_comparable",)
         price = financial.acquisition_eur_per_stored_kwh
         objectives = _objective_outcomes(
             financial=financial.cash_result_eur,
@@ -1635,7 +1644,7 @@ def produce_main_charge_portfolio(
         # inventory differs between routes; it cannot price that inventory.
         if financial_market_comparison:
             objectives = (ObjectiveOutcome(
-                ObjectiveKind.FINANCIAL_RESULT, round(financial.cash_result_eur - wear, 12),
+                ObjectiveKind.FINANCIAL_RESULT, round(market_financial.cash_result_eur - wear, 12),
                 ComparisonDirection.HIGHER_IS_BETTER, "EUR", confidence, evidence,
             ),)
         elif windows.purpose == "bridge":
@@ -1693,21 +1702,24 @@ def produce_main_charge_portfolio(
                        if abs(remaining - market_basis.original_remaining_export_wh) <= 1e-6
                        else "shortened")
             day_totals: dict[str, tuple[float, float]] = {}
-            for i in financial.intervals:
+            for i in market_financial.intervals:
                 day = i.starts_at.astimezone(ZoneInfo("Europe/Amsterdam")).date().isoformat()
                 costs, revenue = day_totals.get(day, (0.0, 0.0))
                 day_totals[day] = (costs + i.grid_import_cost_eur,
                                    revenue + i.grid_export_result_eur)
             comparable_result = None if invalid or not financial_market_comparison else (
-                financial.cash_result_eur - wear)
+                market_financial.cash_result_eur - wear)
+            valued_intervals = tuple(i for i in intervals
+                                    if recovery is None or i.ends_at <= recovery.ends_at)
             market_evidence.append(MarketRevisionCandidateEvidence(
                 candidate_id, market_basis.assignment_id, variant,
-                window.schedule.horizon_start, window.schedule.horizon_end,
+                window.schedule.horizon_start,
+                recovery.ends_at if recovery is not None else window.schedule.horizon_end,
                 tuple(MarketRevisionDayResult(day, *values) for day, values in day_totals.items()),
-                sum(i.grid_to_storage_input_wh for i in intervals),
-                intervals[-1].storage_energy_at_end_wh,
+                sum(i.grid_to_storage_input_wh for i in valued_intervals),
+                valued_intervals[-1].storage_energy_at_end_wh,
                 min(min(i.storage_energy_at_start_wh, i.storage_energy_at_end_wh)
-                    for i in intervals), wear, comparable_result,
+                    for i in valued_intervals), wear, comparable_result,
                 comparable_result - incumbent_result
                 if comparable_result is not None and incumbent_result is not None
                 and incumbent is not None and not incumbent.invalidity_reasons else None,
@@ -1728,11 +1740,6 @@ def produce_main_charge_portfolio(
         if incumbent is not None else None,
         tuple(market_evidence),
     )
-
-
-def _market_wear_cost(projection: DailyPlanningProjection, rate: float) -> float:
-    return sum(i.storage_to_household_output_wh + i.storage_to_grid_output_wh
-               + i.storage_discharge_loss_wh for i in projection.intervals) * rate / 1000
 
 
 def _main_charge_energy_path(

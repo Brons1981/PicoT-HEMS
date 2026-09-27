@@ -1390,7 +1390,9 @@ def _build_daily_main_run(
                                 if a.assignment_id == optimisation_trigger.assignment_id)]
         if pending:
             optional_pv_review = isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
-            if optimisation_trigger is not None and market_revision_available(snapshot):
+            if optimisation_trigger is not None and market_revision_available(
+                snapshot, optimisation_trigger,
+            ):
                 windows = market_revision_windows(
                     snapshot=snapshot, trigger=optimisation_trigger, conversion_model=conversion,
                     wear_eur_per_kwh=market_policy.wear_eur_per_export_kwh,
@@ -1432,6 +1434,9 @@ def _build_daily_main_run(
                                   else windows.windows[0].schedule.horizon_end)
                 tariffs = IndependentDailyTariffAdapter().build(
                     snapshot, horizon_end=comparison_end,
+                    saldering_energy_tax_credit_enabled=(
+                        market_policy.saldering_energy_tax_credit_enabled
+                        if windows.market_revision is not None else True),
                 )
                 comparable = produce_main_charge_portfolio(
                     snapshot=snapshot, windows=windows, tariffs=tariffs,

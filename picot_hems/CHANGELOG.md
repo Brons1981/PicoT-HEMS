@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0-dev.276
+
+- Een herstelvraag van vandaag heropent niet de marktroute na de laadopdracht van morgen. Dagelijkse laadopdrachten en de volledige fysieke SOC-controle blijven behouden.
+- Behoud, inkorten en verwijderen worden financieel vergeleken tot het relevante laadherstel. De hoogste eindvoorraad aan het einde van morgen bepaalt niet meer welke alternatieven mogen meedoen.
+- Nieuwe marktroutes wachten op bekende herstelprijzen, vergelijkbaar herstel en een positieve bijdrage na herstelkosten en ingestelde slijtage. Het gewone laadplan kan tijdens het wachten doorgaan.
+- Eerste toelating en herziening gebruiken dezelfde financiële grondslag. De bestaande hersteloptie stelt voortaan alleen een aanvullende minimale nettomarge in; de toelichting in het instellingenscherm is aangepast.
+- Ontbrekend economisch bewijs alleen wist geen geldige bestaande route. Een reeds verwijderde marktopdracht wordt door deze update niet automatisch opnieuw geopend.
+
 ## 2.0.0-dev.275
 
 - Herstelt onterechte terugval na het verwijderen van de laatste marktroute: de herberekening behoudt alle werkelijke planovergangen, ook buiten klokkwartieren.

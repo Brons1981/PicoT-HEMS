@@ -28,6 +28,14 @@ METHOD_VERSION = "independent-daily-financial-settlement:v2"
 class IndependentDailyFinancialSettlement:
     """Settle complete paths without ranking or changing physical allocation."""
 
+    @staticmethod
+    def storage_discharge_cost(
+        projection: DailyPlanningProjection, rate: float, *, horizon_end: datetime,
+    ) -> float:
+        return sum(i.storage_to_household_output_wh + i.storage_to_grid_output_wh
+                   + i.storage_discharge_loss_wh for i in projection.intervals
+                   if i.ends_at <= horizon_end) * rate / 1000
+
     def settle(
         self,
         *,
@@ -136,6 +144,7 @@ class IndependentDailyFinancialSettlement:
         projection: DailyPlanningProjection,
         tariffs: DailyReferenceTariffSchedule,
         main_intervals: tuple[tuple[datetime, datetime], ...] | None = None,
+        horizon_end: datetime | None = None,
     ) -> DailyPlanningFinancialResult:
         """Use the same interval settlement and fiscal allocation as scenarios."""
         if projection.snapshot_id != tariffs.snapshot_id:
@@ -145,6 +154,27 @@ class IndependentDailyFinancialSettlement:
             or projection.basis_timeline.horizon_end != tariffs.horizon_end
         ):
             raise ValueError("planning tariff must cover the exact projection horizon")
+        if horizon_end is not None and horizon_end != tariffs.horizon_end:
+            if not tariffs.horizon_start < horizon_end < tariffs.horizon_end or not any(
+                i.ends_at == horizon_end for i in projection.intervals
+            ):
+                raise ValueError("financial recovery boundary must align with the physical path")
+            projection = replace(
+                projection,
+                basis_timeline=replace(
+                    projection.basis_timeline, horizon_end=horizon_end,
+                    intervals=tuple(i for i in projection.basis_timeline.intervals
+                                    if i.ends_at <= horizon_end),
+                ),
+                intervals=tuple(i for i in projection.intervals if i.ends_at <= horizon_end),
+            )
+            tariffs = replace(tariffs, horizon_end=horizon_end, intervals=tuple(
+                replace(i, ends_at=min(i.ends_at, horizon_end))
+                for i in tariffs.intervals if i.starts_at < horizon_end
+            ))
+            if main_intervals is not None:
+                main_intervals = tuple((start, min(end, horizon_end))
+                                       for start, end in main_intervals if start < horizon_end)
         indexed = self._index_tariffs(projection.intervals, tariffs)
         intervals = self._settle_intervals(
             projection.intervals, tariffs_by_physical_interval=indexed

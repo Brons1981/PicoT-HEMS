@@ -8,6 +8,19 @@ This file is a routing index and guardrail.  The linked Accepted ADR files are
 the architectural authority.  Current code, tests, comments, diagnostics and
 earlier assistant memory are evidence, but they do not redefine ownership.
 
+## Financiële kwartierbalans en nachtstatus — lokaal, 2026-09-27
+
+Alex heeft om 20:43 Europe/Amsterdam de gerichte financiële reparatie bevestigd.
+Lees `docs/architecture/ADR-037.20-financial-quarter-and-night-evidence.md` en
+`docs/development_log/2026-09-27-financial-quarter-night.md`. De financiële
+afleiding gebruikt volledige getroffen klokkwartieren en geregistreerde
+dag/nachtstatus van `sun.sun`. MEP, voorraadkosten en ruwe metingen blijven gelijk.
+De echte diagnose van vandaag levert lokaal 9 van 9 bedragen; oude zonstatussen
+ontbreken in de ZIP en worden niet verzonnen. Dev.276 is door Alex live bevestigd.
+Alex heeft om 21:00 Europe/Amsterdam akkoord gegeven op afzonderlijke publicatie
+als dev.277 via PR en CI. Installatie en controle van de historische nachtbron
+volgen afzonderlijk. Dev.268 blijft de eerste terugvalbasis.
+
 ## Daggebonden marktherstel — 2026-09-27
 
 Alex koos voor wachten op bekende herstelprijzen vóór een nieuwe marktroute.

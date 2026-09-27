@@ -4306,7 +4306,7 @@ DASHBOARD_HTML = """<!doctype html>
           } else if (item.status === "estimated") {
             const note = document.createElement("small");
             note.className = "muted";
-            note.textContent = "Afgeleid; bevat nachtwaarden of begrensde schattingen.";
+            note.textContent = "Afgeleid uit bronmetingen, nachtstatus of korte onderbrekingen.";
             card.append(note);
           }
           cards.append(card);
@@ -4358,7 +4358,7 @@ DASHBOARD_HTML = """<!doctype html>
           inferred.append(title);
           const kinds = {night_zero: "Nachtelijke PV als 0 W afgeleid",
             bounded_gap: "Korte onderbreking begrensd geschat",
-            flow_balance: "Huisverbruik afgeleid uit de energiebalans"};
+            flow_balance: "Huisverbruik afgeleid uit volledige kwartierbalansen"};
           for (const item of inferences) {
             const line = document.createElement("p");
             line.textContent = `${labels[item.role] ?? item.role}: ` +

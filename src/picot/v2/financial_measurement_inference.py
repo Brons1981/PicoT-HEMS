@@ -9,14 +9,12 @@ from typing import Any
 
 from picot.v2.financial_result_metrics import financial_measurement_coverage
 from picot.v2.power_history import PowerHistoryPoint, PowerHistorySeries, PowerHistorySnapshot
-from picot.v2.pv_solar_history import SolarHistoryReadResult
-from picot.v2.review_alignment import FLOW_SIGNS, _integrals
+from picot.v2.review_alignment import FLOW_SIGNS, QUARTER_SECONDS, aligned_measurements
+from picot.v2.sun_state_history import SunStateHistoryReadResult
 
 MAX_GAP_SECONDS = 120.0
 MAX_GAP_UNCERTAINTY_WH = 100.0
 MAX_DAY_UNCERTAINTY_WH = 500.0
-MAX_SOLAR_SPACING = timedelta(minutes=30)
-MAX_NIGHT_TAIL = timedelta(minutes=15)
 
 
 @dataclass(frozen=True)
@@ -37,52 +35,32 @@ class FinancialInferredHistory:
 
 
 def financial_night_windows(
-    solar: SolarHistoryReadResult, starts_at: datetime, ends_at: datetime,
+    solar: SunStateHistoryReadResult, starts_at: datetime, ends_at: datetime,
 ) -> tuple[FinancialNightWindow, ...]:
-    """Use bracketing HA solar observations, without forecasts or fixed clock hours."""
+    """Use recorded day/night states only inside the successfully read window."""
     if solar.status != "available" or solar.error or solar.source_entity_id != "sun.sun":
         return ()
-    starts_at, ends_at = starts_at.astimezone(UTC), ends_at.astimezone(UTC)
+    starts_at = max(starts_at.astimezone(UTC), solar.starts_at.astimezone(UTC))
+    ends_at = min(ends_at.astimezone(UTC), solar.ends_at.astimezone(UTC))
     points = sorted((replace(p, sampled_at=p.sampled_at.astimezone(UTC))
                      for p in solar.observations), key=lambda p: p.sampled_at)
+    if any(a.sampled_at == b.sampled_at and a.state != b.state
+           for a, b in zip(points, points[1:], strict=False)):
+        return ()
     result: list[FinancialNightWindow] = []
-    for left, right in zip(points, points[1:], strict=False):
-        duration = right.sampled_at - left.sampled_at
-        a, b = left.solar_elevation_degrees, right.solar_elevation_degrees
-        if not timedelta(0) < duration <= MAX_SOLAR_SPACING or not all(
-            isfinite(v) and -90 <= v <= 90 for v in (a, b)
-        ) or min(a, b) >= 0:
+    for index, point in enumerate(points):
+        following = points[index + 1] if index + 1 < len(points) else None
+        start = max(starts_at, point.sampled_at)
+        end = min(ends_at, following.sampled_at) if following else ends_at
+        if point.state != "below_horizon" or not point.evidence_id or end <= start:
             continue
-        start, end = left.sampled_at, right.sampled_at
-        if a >= 0 or b >= 0:
-            crossing = left.sampled_at + duration * (-a / (b - a))
-            if a >= 0:
-                start = crossing
-            else:
-                end = crossing
-        start, end = max(start, starts_at), min(end, ends_at)
-        if end <= start:
-            continue
-        evidence = (left.evidence_id, right.evidence_id)
+        evidence = (point.evidence_id, *((following.evidence_id,) if following else ()))
         if result and result[-1].ends_at == start:
             previous = result[-1]
-            result[-1] = FinancialNightWindow(
-                previous.starts_at, end, (previous.evidence_ids[0], right.evidence_id),
-            )
+            result[-1] = FinancialNightWindow(previous.starts_at, end,
+                tuple(dict.fromkeys((*previous.evidence_ids, *evidence))))
         else:
             result.append(FinancialNightWindow(start, end, evidence))
-    # Allow only a short modelled tail from a recent deep-night observation.
-    # Near the horizon both sides are required; no extrapolated dawn boundary.
-    if points:
-        last = points[-1]
-        if (isfinite(last.solar_elevation_degrees) and -90 <= last.solar_elevation_degrees <= -6
-                and timedelta(0) < ends_at - last.sampled_at <= MAX_NIGHT_TAIL):
-            start = max(starts_at, last.sampled_at)
-            if start < ends_at:
-                if result and result[-1].ends_at == start:
-                    result[-1] = replace(result[-1], ends_at=ends_at)
-                else:
-                    result.append(FinancialNightWindow(start, ends_at, (last.evidence_id,)))
     return tuple(result)
 
 
@@ -206,35 +184,37 @@ def infer_financial_measurements(
             start, end = (datetime.fromisoformat(gap[k]) for k in ("starts_at", "ends_at"))
             household = _replace_span(household, start, end, float("nan"), "missing_household")
         household = replace(household, history_semantics="state_hold")
-        for gap in gaps["gaps"]:
-            start, end = (datetime.fromisoformat(gap[k]) for k in ("starts_at", "ends_at"))
-            times = [start]
-            tick = (int(start.timestamp()) // 900 + 1) * 900
-            while tick < end.timestamp():
-                times.append(datetime.fromtimestamp(tick, UTC))
-                tick += 900
-            times.append(end)
-            energies = {role: _integrals(series[role], times) for role in FLOW_SIGNS}
-            for index, (lo, hi) in enumerate(zip(times, times[1:], strict=False)):
-                if any(energies[role][1][index] is not None for role in FLOW_SIGNS):
-                    continue
-                balance = sum(FLOW_SIGNS[role] * float(energies[role][0][index] or 0)
-                              for role in FLOW_SIGNS)
-                if balance < 0:
-                    rejected.append(_event("household_load", "negative_household_energy_balance",
-                                           lo, hi, balance_wh=balance))
-                    continue
-                household = _replace_span(
-                    household, lo, hi, balance * 3600 / (hi - lo).total_seconds(), "flow_balance",
-                )
-                if (events and events[-1]["kind"] == "flow_balance"
-                        and events[-1]["ends_at"] == lo.isoformat()):
-                    events[-1]["ends_at"] = hi.isoformat()
-                    events[-1]["duration_seconds"] += (hi - lo).total_seconds()
-                    events[-1]["energy_wh"] += balance
-                else:
-                    events.append(_event("household_load", "flow_balance", lo, hi,
-                                         source_roles=list(FLOW_SIGNS), energy_wh=balance))
+        gap_spans = [(datetime.fromisoformat(g["starts_at"]), datetime.fromisoformat(g["ends_at"]))
+                     for g in gaps["gaps"]]
+        aligned = aligned_measurements(view())
+        for interval in aligned["intervals"]:
+            lo, hi = (datetime.fromisoformat(interval[k]) for k in ("starts_at", "ends_at"))
+            if not any(start < hi and end > lo for start, end in gap_spans):
+                continue
+            reason = interval["reason"]
+            if (hi - lo).total_seconds() != QUARTER_SECONDS:
+                reason = "household_quarter_not_closed"
+            if reason:
+                rejected.append(_event("household_load", reason, lo, hi,
+                    balance_wh=interval["household_balance_wh"],
+                    source_errors=interval["source_errors"]))
+                continue
+            balance = interval["household_energy_wh"]
+            # One complete quarter replaces the financial copy once, including its
+            # sampled fragments. Mixing those fragments with a gap-only balance
+            # would reintroduce asynchronous sensor bias and double-count energy.
+            household = _replace_span(
+                household, lo, hi, balance * 3600 / QUARTER_SECONDS, "flow_balance",
+            )
+            if (events and events[-1]["kind"] == "flow_balance"
+                    and events[-1]["ends_at"] == lo.isoformat()):
+                events[-1]["ends_at"] = hi.isoformat()
+                events[-1]["duration_seconds"] += QUARTER_SECONDS
+                events[-1]["energy_wh"] += balance
+            else:
+                events.append(_event("household_load", "flow_balance", lo, hi,
+                    source_roles=list(FLOW_SIGNS), energy_wh=balance,
+                    interval_seconds=QUARTER_SECONDS, method_version=aligned["method_version"]))
         series["household_load"] = household
     return FinancialInferredHistory(
         view(), tuple(events), frozenset(item["role"] for item in events), uncertainty,

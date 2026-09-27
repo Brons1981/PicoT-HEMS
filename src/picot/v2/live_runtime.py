@@ -157,6 +157,7 @@ from picot.v2.storage_mode_transition_history import (
     StorageModeTransitionEvent,
     StorageModeTransitionHistoryStore,
 )
+from picot.v2.sun_state_history import HomeAssistantSunStateHistoryReader
 from picot.v2.user_rules import UserRuleProfile, UserRuleStore
 from picot.v2.web_ui import (
     WebViewStore,
@@ -2852,7 +2853,7 @@ def main() -> None:
         timezone=str(options.get("pv_local_timezone", "Europe/Amsterdam")),
         financial_review=FinancialMeasurementObserver(
             ledger=financial_result_ledger,
-            solar_reader=HomeAssistantSolarHistoryReader(token),
+            night_reader=HomeAssistantSunStateHistoryReader(token),
             publish=web_view_store.publish_financial_results,
             pv_maximum_power_w=float(options.get("financial_pv_maximum_power_w", 4200.0)),
         ),

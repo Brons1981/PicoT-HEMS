@@ -27,8 +27,11 @@ from picot.v2.financial_result_metrics import (
 )
 from picot.v2.grid_charge_review import ReviewSettings
 from picot.v2.power_history import PowerHistoryPoint, PowerHistorySnapshot
-from picot.v2.pv_solar_history import HomeAssistantSolarHistoryReader, SolarHistoryReadResult
 from picot.v2.review_alignment import _integrals
+from picot.v2.sun_state_history import (
+    HomeAssistantSunStateHistoryReader,
+    SunStateHistoryReadResult,
+)
 
 
 def _tariff_integrated_history(
@@ -59,12 +62,12 @@ class FinancialMeasurementObserver:
     """At most today's/yesterday's solar reads; never starts a thread or changes plans."""
 
     def __init__(
-        self, *, ledger: FinancialResultLedger, solar_reader: HomeAssistantSolarHistoryReader,
+        self, *, ledger: FinancialResultLedger, night_reader: HomeAssistantSunStateHistoryReader,
         publish: Callable[[dict[str, object]], None], pv_maximum_power_w: float,
     ) -> None:
-        self.ledger, self.solar_reader, self.publish = ledger, solar_reader, publish
+        self.ledger, self.night_reader, self.publish = ledger, night_reader, publish
         self.pv_maximum_power_w = pv_maximum_power_w
-        self._solar_cache: dict[str, SolarHistoryReadResult] = {}
+        self._night_cache: dict[str, SunStateHistoryReadResult] = {}
 
     def __call__(
         self, snapshot: PlanningInputSnapshot, history: PowerHistorySnapshot,
@@ -105,22 +108,17 @@ class FinancialMeasurementObserver:
                       key=lambda p: p.sampled_at, default=None) if soc else None
         if closing is None or not isfinite(closing.power_w) or not 0 <= closing.power_w <= 100:
             raise ValueError("financial_closing_soc_missing")
-        solar = self._solar_cache.get(day)
-        if (solar is None or solar.ends_at < history.ends_at or solar.status != "available"
-                or not solar.observations
-                or solar.observations[0].sampled_at > history.starts_at
-                or history.ends_at - solar.observations[-1].sampled_at > timedelta(minutes=30)
-                or any(b.sampled_at - a.sampled_at > timedelta(minutes=30)
-                       for a, b in zip(solar.observations, solar.observations[1:], strict=False))):
-            solar = self.solar_reader.read(
-                starts_at=history.starts_at - timedelta(minutes=30), ends_at=history.ends_at,
-                local_timezone=self.ledger.local_timezone,
+        solar = self._night_cache.get(day)
+        if (solar is None or solar.starts_at > history.starts_at
+                or solar.ends_at < history.ends_at or solar.status != "available"):
+            solar = self.night_reader.read(
+                starts_at=history.starts_at, ends_at=history.ends_at,
             )
             if len(solar.observations) > 4096:
                 raise ValueError("financial_solar_history_resource_limit")
-            self._solar_cache[day] = solar
-        for old in sorted(self._solar_cache)[:-2]:
-            del self._solar_cache[old]
+            self._night_cache[day] = solar
+        for old in sorted(self._night_cache)[:-2]:
+            del self._night_cache[old]
         nights = financial_night_windows(solar, history.starts_at, history.ends_at)
         prepared = infer_financial_measurements(
             history, night_windows=nights, pv_maximum_power_w=self.pv_maximum_power_w,
@@ -173,19 +171,20 @@ class FinancialMeasurementObserver:
         if metrics["status"] == "available" and prepared.inferred_roles:
             metrics["status"] = "estimated"
         metrics.update({
-            "method_version": "financial-measurement-inference:v1",
+            "method_version": "financial-measurement-inference:v2",
             "inferences": list(prepared.inferences), "rejected_inferences": list(prepared.rejected),
             "raw_measurement_coverage": prepared.raw_coverage,
             "maximum_estimation_error_wh": round(prepared.uncertainty_wh, 6),
             "solar_history_status": solar.status, "solar_history_error": solar.error,
+            "solar_history_method_version": solar.method_version,
             "household_energy_sources": settlement.get("household_energy_sources", {}),
         })
         solar_evidence: dict[str, Any] = {
             "source_entity_id": solar.source_entity_id, "status": solar.status,
             "error": solar.error, "starts_at": solar.starts_at.isoformat(),
             "ends_at": solar.ends_at.isoformat(), "method_version": solar.method_version,
-            "observations": [{**asdict(o), "sampled_at": o.sampled_at.isoformat(),
-                              "sunset_at": o.sunset_at.isoformat()} for o in solar.observations],
+            "observations": [{**asdict(o), "sampled_at": o.sampled_at.isoformat()}
+                             for o in solar.observations],
         }
         self.ledger.store_financial_estimate(day, metrics, {
             "attempted_at": snapshot.captured_at.isoformat(), "settings": asdict(settings),

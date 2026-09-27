@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0-dev.277
+
+- Financiële nacalculatie herstelt ontbrekend huisverbruik met de bestaande volledige kwartierbalans. Een korte negatieve deelbalans laat een geldig kwartier niet meer verdwijnen; afgeleide energie wordt eenmaal meegeteld.
+- Nachtelijke PV-afleiding gebruikt de geregistreerde dag/nachtstatus van Home Assistant. Historische zonattributen die Home Assistant niet bewaart, zijn daarvoor niet meer nodig.
+- Afgeleide bedragen blijven herkenbaar. Onvolledige bronnen, negatieve volledige kwartieren en nog niet gesloten kwartieren blijven onbekend.
+- Herstelt in de diagnose van 27 september alle negen financiële bedragen van vandaag. Oude nachtgegevens moeten na installatie uit Home Assistant beschikbaar komen.
+- MEP, oorspronkelijke metingen, financiële tariefformules, planningvoorraad en de strikte netlaadterugblik blijven ongewijzigd.
+
 ## 2.0.0-dev.276
 
 - Een herstelvraag van vandaag heropent niet de marktroute na de laadopdracht van morgen. Dagelijkse laadopdrachten en de volledige fysieke SOC-controle blijven behouden.

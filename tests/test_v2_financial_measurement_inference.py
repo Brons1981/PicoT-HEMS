@@ -15,7 +15,7 @@ from picot.v2.financial_result_ledger import FinancialPhysicalContext, Financial
 from picot.v2.financial_result_metrics import financial_measurement_coverage
 from picot.v2.grid_charge_review import ReviewSettings
 from picot.v2.power_history import PowerHistoryPoint, PowerHistorySeries, numeric_power_history
-from picot.v2.pv_solar_history import SolarContextObservation, SolarHistoryReadResult
+from picot.v2.sun_state_history import SunStateHistoryReadResult, SunStateObservation
 
 
 def test_financial_coverage_combines_one_continuous_outage(tmp_path):
@@ -60,15 +60,11 @@ def _infer(history, **kwargs):
     )
 
 
-def _solar(history, elevation=-20):
-    at = history.starts_at - timedelta(minutes=30)
-    points = []
-    while at <= history.ends_at:
-        points.append(SolarContextObservation(str(at), at, 180, elevation,
-                                              history.ends_at + timedelta(hours=6)))
-        at += timedelta(minutes=15)
-    return SolarHistoryReadResult("sun.sun", history.starts_at - timedelta(minutes=30),
-                                  history.ends_at, "available", None, tuple(points), "test-solar")
+def _solar(history, state="below_horizon"):
+    # A stable Recorder state is evidence until the next state change, not a heartbeat.
+    at = history.starts_at - timedelta(hours=2)
+    return SunStateHistoryReadResult("sun.sun", history.starts_at, history.ends_at,
+        "available", None, (SunStateObservation("sun-anchor", at, state),))
 
 
 def _night_history():
@@ -96,10 +92,11 @@ def test_night_reconstructs_missing_household_from_equal_energy_intervals():
     assert repr(h) == before
 
 
-@pytest.mark.parametrize("solar_status,elevation", [("unavailable", -20), ("available", 20)])
-def test_clock_time_and_forecasts_never_substitute_for_night_evidence(solar_status, elevation):
+@pytest.mark.parametrize("solar_status,state", [
+    ("unavailable", "below_horizon"), ("available", "above_horizon")])
+def test_clock_time_and_forecasts_never_substitute_for_night_evidence(solar_status, state):
     h = _night_history()
-    solar = replace(_solar(h, elevation), status=solar_status)
+    solar = replace(_solar(h, state), status=solar_status)
     result = _infer(h, night_windows=financial_night_windows(solar, h.starts_at, h.ends_at))
     assert financial_measurement_coverage(result.history)["pv_generation"]["gap_count"] == 1
     assert "pv_generation" not in result.inferred_roles
@@ -162,33 +159,39 @@ def test_negative_household_balance_is_not_clipped_or_declared_measured():
     assert any(r["kind"] == "negative_household_energy_balance" for r in result.rejected)
 
 
-def test_solar_crossing_is_interpolated_and_sparse_solar_data_is_not_a_whole_night():
+def test_recorded_sunrise_closes_night_without_interpolating_unrecorded_elevation():
     h = _base()
     solar = _solar(h)
-    at = h.starts_at
-    left = replace(solar.observations[0], sampled_at=at, solar_elevation_degrees=-1)
-    right = replace(left, sampled_at=at + timedelta(minutes=10), solar_elevation_degrees=1,
-                    evidence_id="right")
-    windows = financial_night_windows(replace(solar, observations=(left, right)),
+    sunrise = h.starts_at + timedelta(minutes=10)
+    right = SunStateObservation("sunrise", sunrise, "above_horizon")
+    windows = financial_night_windows(replace(solar, observations=(*solar.observations, right)),
                                       h.starts_at, h.ends_at)
     assert len(windows) == 1
-    assert windows[0].ends_at == at + timedelta(minutes=5)
-    assert not financial_night_windows(
-        replace(solar, observations=(left, replace(right, sampled_at=at + timedelta(hours=1)))),
-        h.starts_at, h.ends_at,
-    )
+    assert windows[0].ends_at == sunrise
 
 
-@pytest.mark.parametrize("elevation,age_minutes,admitted", [
-    (-6, 15, True), (-6, 16, False), (-1, 1, False), (-200, 1, False),
-])
-def test_unfinished_night_tail_requires_recent_valid_deep_night(elevation, age_minutes, admitted):
+def test_night_requires_start_evidence_and_never_extends_beyond_history_response():
     h = _base()
     solar = _solar(h)
-    last = replace(solar.observations[-1], sampled_at=h.ends_at-timedelta(minutes=age_minutes),
-                   solar_elevation_degrees=elevation)
-    windows = financial_night_windows(replace(solar, observations=(last,)), h.starts_at, h.ends_at)
-    assert bool(windows) == admitted
+    first = SunStateObservation("late", h.starts_at + timedelta(minutes=10), "below_horizon")
+    end = h.ends_at - timedelta(minutes=10)
+    windows = financial_night_windows(replace(solar, observations=(first,), ends_at=end),
+                                      h.starts_at, h.ends_at)
+    assert len(windows) == 1
+    assert windows[0].starts_at == first.sampled_at
+    assert windows[0].ends_at == end
+
+
+@pytest.mark.parametrize("state", ["unknown", "unavailable", "unexpected"])
+def test_unavailable_sun_state_interrupts_night_until_recorded_recovery(state):
+    h = _base()
+    solar = _solar(h)
+    missing = SunStateObservation("missing", h.starts_at + timedelta(minutes=10), state)
+    restored = SunStateObservation("restored", h.starts_at + timedelta(minutes=30), "below_horizon")
+    windows = financial_night_windows(replace(solar,
+        observations=(*solar.observations, missing, restored)), h.starts_at, h.ends_at)
+    assert [(w.starts_at, w.ends_at) for w in windows] == [
+        (h.starts_at, missing.sampled_at), (restored.sampled_at, h.ends_at)]
 
 
 @pytest.mark.parametrize("day,hours", [(datetime(2026, 3, 29), 23), (datetime(2026, 10, 25), 25)])
@@ -201,7 +204,10 @@ def test_inference_uses_elapsed_time_over_dutch_dst_days(day, hours):
         replace(s, points=(replace(s.points[0], sampled_at=start),
                            replace(s.points[-1], sampled_at=end))) for s in h.series
     ))
-    result = _infer(h)
+    nights = financial_night_windows(_solar(h), start, end)
+    assert len(nights) == 1
+    assert (nights[0].ends_at - nights[0].starts_at).total_seconds() == hours * 3600
+    result = _infer(h, night_windows=nights)
     assert (result.history.ends_at - result.history.starts_at).total_seconds() == hours * 3600
     assert result.history.starts_at.tzinfo == UTC
 
@@ -233,7 +239,7 @@ def test_observer_persists_derived_values_without_changing_original_inventory(tm
     before = ledger.update(snapshot, numeric, measurement_history=h)
     inventory = ledger.storage_energy_inventory()
     solar_reader = _SolarReader(_solar(h))
-    observer = FinancialMeasurementObserver(ledger=ledger, solar_reader=solar_reader,
+    observer = FinancialMeasurementObserver(ledger=ledger, night_reader=solar_reader,
         publish=lambda _: None, pv_maximum_power_w=4200)
     settings = ReviewSettings(8160, .1, 1, 2400, 2400, 1, 1, .05)
     snapshot_before = repr(snapshot)
@@ -266,7 +272,7 @@ def test_night_observer_recovers_benefits_but_keeps_the_original_day_incomplete(
     ))
     snapshot = _snapshot(price=price)
     ledger.update(snapshot, raw, measurement_history=h)
-    observer = FinancialMeasurementObserver(ledger=ledger, solar_reader=_SolarReader(_solar(h)),
+    observer = FinancialMeasurementObserver(ledger=ledger, night_reader=_SolarReader(_solar(h)),
         publish=lambda _: None, pv_maximum_power_w=4200)
     observer(snapshot, h, snapshot.price_points, ReviewSettings(8160, .1, 1, 2400, 2400, 1, 1, .05),
              False)
@@ -303,7 +309,7 @@ def test_historical_closing_soc_does_not_inherit_todays_ha_read_envelope(tmp_pat
         current_storage_states=(replace(original.current_storage_states[0], measured_at=now,
             state_valid_since=now - timedelta(minutes=1), state_read_at=now),))
     before = repr(current)
-    observer = FinancialMeasurementObserver(ledger=ledger, solar_reader=_SolarReader(_solar(h)),
+    observer = FinancialMeasurementObserver(ledger=ledger, night_reader=_SolarReader(_solar(h)),
         publish=lambda _: None, pv_maximum_power_w=4200)
     observer(current, h, original.price_points, ReviewSettings(8160, .1, 1, 2400, 2400, 1, 1, .05),
              False)
@@ -364,7 +370,7 @@ def test_delayed_observer_preserves_newer_raw_result_and_expires_stale_estimates
             assert resume.wait(5)
             return super().read(**kwargs)
 
-    observer = FinancialMeasurementObserver(ledger=ledger, solar_reader=Reader(_solar(h)),
+    observer = FinancialMeasurementObserver(ledger=ledger, night_reader=Reader(_solar(h)),
         publish=lambda _: None, pv_maximum_power_w=4200)
     worker = Thread(target=observer, args=(snapshot, h, snapshot.price_points,
                     ReviewSettings(8160, .1, 1, 2400, 2400, 1, 1, .05), False))
@@ -410,7 +416,7 @@ def test_observer_failures_never_turn_missing_values_into_full_results(tmp_path,
         h = replace(h, series=tuple(s for s in h.series if s.role != "storage_soc"))
     elif failure == "duplicate":
         h = replace(h, series=(*h.series, h.series[0]))
-    observer = FinancialMeasurementObserver(ledger=ledger, solar_reader=Reader(_solar(h)),
+    observer = FinancialMeasurementObserver(ledger=ledger, night_reader=Reader(_solar(h)),
         publish=lambda _: None, pv_maximum_power_w=4200)
     observer(snapshot, h, () if failure == "prices" else snapshot.price_points,
              ReviewSettings(8160, .1, 1, 2400, 2400, 1, 1, .05), failure == "settings")

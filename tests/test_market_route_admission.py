@@ -159,11 +159,11 @@ def inputs(*, recovery=False, pv=False, soc=1.0, export_target=1200.0, load=600.
     )
 
 
-def test_recovery_off_does_not_require_future_prices_or_recovery_proof():
+def test_legacy_recovery_off_cannot_bypass_automatic_recovery_proof():
     args = inputs()
     args.update(tariffs=None, recovery_segments=())
     result = assess_market_route(**args)
-    assert result.status == "admissible"
+    assert result.status == "insufficient_evidence"
     assert result.net_margin_eur_per_export_kwh is None
 
 

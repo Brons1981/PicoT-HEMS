@@ -1,9 +1,8 @@
 """Unranked market revisions through the existing daily physical simulator."""
 
 from dataclasses import replace
-from datetime import UTC, datetime, time, timedelta
+from datetime import timedelta
 from hashlib import sha256
-from zoneinfo import ZoneInfo
 
 from picot.domain.daily_reference_charge_window import (
     DailyMainChargeSegment,
@@ -13,6 +12,8 @@ from picot.domain.daily_reference_charge_window import (
 )
 from picot.domain.daily_reference_intent import DailyReferenceIntentInterval
 from picot.domain.daily_reference_intent import DailyStorageIntent as Intent
+from picot.domain.execution_plan import ExecutionPlanSegment
+from picot.domain.market_plan_binding import MarketPlanBinding
 from picot.domain.market_revision_comparison import MarketRevisionBasis
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.v2.contracts import PlanningInputSnapshot
@@ -30,16 +31,50 @@ class MarketRevisionCoverageUnavailable(ValueError):
     """No priced comparison can cover the already committed next daily goal."""
 
 
-def market_revision_available(snapshot: PlanningInputSnapshot) -> bool:
+def _eligible_bindings(
+    snapshot: PlanningInputSnapshot,
+    trigger: DailyBridgeTrigger | DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None,
+) -> tuple[tuple[MarketPlanBinding, tuple[ExecutionPlanSegment, ...]], ...]:
     context = snapshot.daily_charge_context
-    return context is not None and any(
-        binding.plan_id in context.active_main_plan_ids
-        and not any(p.assignment_id == binding.assignment_id and p.stop_requested_at is not None
-                    for p in context.market_execution_progress)
-        and any(s.segment_id in binding.segment_ids and s.ends_at > snapshot.captured_at
-                for p in context.main_plans if p.plan_id == binding.plan_id for s in p.segments)
-        for binding in context.market_plan_bindings
-    )
+    if context is None:
+        return ()
+    owner = next((a for a in context.assignments
+                  if trigger is not None and a.assignment_id == trigger.assignment_id), None)
+    if trigger is not None:
+        if owner is None:
+            return ()
+        trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
+    available = []
+    for binding in context.market_plan_bindings:
+        if (binding.plan_id not in context.active_main_plan_ids
+            or trigger is not None and binding.plan_id != trigger.active_plan_id) or any(
+            p.assignment_id == binding.assignment_id and p.stop_requested_at is not None
+            for p in context.market_execution_progress
+        ):
+            continue
+        parts = tuple(s for p in context.main_plans if p.plan_id == binding.plan_id
+                      for s in p.segments if s.segment_id in binding.segment_ids
+                      and s.ends_at > snapshot.captured_at)
+        if not parts:
+            continue
+        # A bridge owns the need before the next charge. A daily repair owns
+        # its delivery day, never the export after another day's full charge.
+        if isinstance(trigger, DailyBridgeTrigger):
+            if parts[-1].ends_at > trigger.next_starts_at:
+                continue
+        elif owner is not None and parts[-1].ends_at > owner.ends_at:
+            continue
+        available.append((binding, parts))
+    return tuple(available)
+
+
+def market_revision_available(
+    snapshot: PlanningInputSnapshot,
+    trigger: (
+        DailyBridgeTrigger | DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None
+    ) = None,
+) -> bool:
+    return bool(_eligible_bindings(snapshot, trigger))
 
 
 def market_revision_windows(
@@ -51,7 +86,7 @@ def market_revision_windows(
 
     Other trades retain their identity and segments. Repeated admitted reviews
     may revisit the resulting plan; this search never creates another day budget.
-    Missing tomorrow coverage is evidence against economic revision, not an
+    Missing recovery coverage is evidence against economic revision, not an
     invented forecast or an exception that destroys valid current execution.
     """
     context = snapshot.daily_charge_context
@@ -59,23 +94,24 @@ def market_revision_windows(
     owner = next(a for a in context.assignments if a.assignment_id == trigger.assignment_id)
     trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
     active = next(p for p in context.main_plans if p.plan_id == trigger.active_plan_id)
-    available = tuple((binding, tuple(s for s in active.segments
-                                      if s.segment_id in binding.segment_ids
-                                      and s.ends_at > snapshot.captured_at))
-                      for binding in context.market_plan_bindings
-                      if binding.plan_id == active.plan_id and not any(
-                          p.assignment_id == binding.assignment_id
-                          and p.stop_requested_at is not None
-                          for p in context.market_execution_progress))
-    binding, parts = min((pair for pair in available if pair[1]),
-                         key=lambda pair: pair[1][0].starts_at)
-    local_day = snapshot.captured_at.astimezone(ZoneInfo("Europe/Amsterdam")).date()
-    required_end = datetime.combine(local_day + timedelta(days=2), time.min,
-                                    ZoneInfo("Europe/Amsterdam")).astimezone(UTC)
+    available = _eligible_bindings(snapshot, trigger)
+    if not available:
+        raise ValueError("market_revision_outside_trigger_scope")
+    binding, parts = min(available, key=lambda pair: pair[1][0].starts_at)
+    # Recovery must belong to an unchanged subsequent charge cycle. The
+    # charging repair remains available even if no comparable cycle is known.
+    recovery = next(iter(sorted((a for a in context.assignments
+        if a.completed_at is None and a.main_segments
+        and a.execution_scope_id == owner.execution_scope_id
+        and min(s.starts_at for s in a.main_segments) >= parts[-1].ends_at
+        and (isinstance(trigger, DailyBridgeTrigger) or a.assignment_id != owner.assignment_id)),
+        key=lambda a: min(s.starts_at for s in a.main_segments))), None)
+    required_end = (max(s.ends_at for s in recovery.main_segments)
+                    if recovery is not None else active.valid_until)
     assert snapshot.horizon_end is not None
     tariff_adapter = IndependentDailyTariffAdapter()
     end = tariff_adapter.published_horizon_end(
-        snapshot, maximum_horizon_end=min(required_end, snapshot.horizon_end),
+        snapshot, maximum_horizon_end=snapshot.horizon_end,
     )
     if end < max(s.ends_at for s in owner.main_segments):
         raise MarketRevisionCoverageUnavailable(
@@ -89,9 +125,8 @@ def market_revision_windows(
             "daily_reference_pv_coverage_incomplete", "daily_reference_pv_range_incomplete",
         }:
             raise
-        # Only the financial extension is unavailable. Revalidate the full
-        # committed horizon and allow ordinary charge repair there; the partial
-        # basis below cannot establish a financial reason to change export.
+        # Missing forecasts beyond the committed plan do not erase that plan.
+        # Revalidate its full horizon; recovery inside it may still be priced.
         end = active.valid_until
         inputs = adapter._inputs(snapshot, horizon_end=end, maximum_duration=timedelta(hours=49))
     baseline, retained = adapter._retained_main_schedule(
@@ -102,7 +137,8 @@ def market_revision_windows(
                            if i.intent is Intent.STORAGE_EXPORT and any(
                                s.starts_at <= i.starts_at < i.ends_at <= s.ends_at for s in parts))
     basis = MarketRevisionBasis(
-        binding.assignment_id, active.plan_id, end, required_end, end == required_end,
+        binding.assignment_id, active.plan_id, end, required_end,
+        recovery is not None and end >= required_end,
         sum(baseline.intervals[n].storage_export_target_wh for n in export_indexes),
         tuple((baseline.intervals[n].starts_at, baseline.intervals[n].ends_at)
               for n in export_indexes), wear_eur_per_kwh,
@@ -110,6 +146,9 @@ def market_revision_windows(
               if a.execution_scope_id == owner.execution_scope_id
               and a.completed_at is None and a.route_plan_id is None
               and a.starts_at < required_end and a.ends_at > snapshot.captured_at),
+        recovery.assignment_id if recovery is not None else None,
+        ((min(s.starts_at for s in recovery.main_segments), required_end),)
+        if recovery is not None else (),
     )
     seeds = [baseline]
     # A future window can be shortened at either edge; a begun action cannot

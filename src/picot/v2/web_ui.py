@@ -1121,9 +1121,9 @@ DASHBOARD_HTML = """<!doctype html>
         </label>
         <label class="strategy-rule">
           <span><input id="rule-market-recovery" type="checkbox">
-            Herstel en nettowinst vereist</span>
-          <span class="muted">Toets of een toekomstig laadsegment 100% bereikt
-            met voldoende nettowinst.</span>
+            Extra nettomarge eisen</span>
+          <span class="muted">Nieuwe handel wacht altijd op bekend herstel en een
+            positief resultaat. Hiermee geldt ook de onderstaande minimummarge.</span>
         </label>
         <label class="strategy-rule">
           <strong>Minimale nettowinst bij herstel (€/export-kWh)</strong>

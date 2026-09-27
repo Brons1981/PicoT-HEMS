@@ -8,6 +8,20 @@ This file is a routing index and guardrail.  The linked Accepted ADR files are
 the architectural authority.  Current code, tests, comments, diagnostics and
 earlier assistant memory are evidence, but they do not redefine ownership.
 
+## Daggebonden marktherstel — 2026-09-27
+
+Alex koos voor wachten op bekende herstelprijzen vóór een nieuwe marktroute.
+ADR-019.6 (`docs/architecture/ADR-019.6-daily-market-recovery.md`) preciseert
+ADR-019.5 en vervangt de optionele toelating zonder herstelbewijs uit ADR-019.1.
+Een herstelvraag van vandaag heropent geen export na het laden van morgen.
+Fysieke vooruitblik en financiële herstelgrens zijn afzonderlijke grenzen.
+Zie `docs/development_log/2026-09-27-market-day-recovery-contract.md` voor
+de lokale wijziging, verificatie en grenzen. Dit is geen releaseverklaring.
+
+Alex heeft op 27 september 2026 om 20:00 Europe/Amsterdam akkoord gegeven
+op de vervolgstap. Publicatie als dev.276 verloopt via PR en CI. Installatie
+en livecontrole volgen afzonderlijk; dev.268 blijft de eerste terugvalbasis.
+
 ## Actuele eerste terugvalbasis — 2026-09-23
 
 Alex heeft **2.0.0-dev.268** aangewezen als eerste terugvalbasis:

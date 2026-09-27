@@ -10,8 +10,6 @@ from hashlib import sha256
 
 from picot.domain.candidate import (
     Candidate,
-    CandidateExclusion,
-    CandidateExclusionKind,
     CandidateFamily,
     CandidateSet,
 )
@@ -144,7 +142,7 @@ def market_rule_portfolio(
     data = adapter.build_inputs(
         snapshot,
         horizon_end=plan.valid_until,
-        maximum_duration=timedelta(hours=36),
+        maximum_duration=timedelta(hours=49),
         extra_boundaries=boundaries,
     )
     base_schedule, _ = adapter._retained_main_schedule(
@@ -192,11 +190,11 @@ def market_rule_portfolio(
     )
     candidates, paths, outcomes, evidence, reasons = [], [], [], [], []
     recovery = tuple(
-        MarketRecoverySegment(a.assignment_id, s.starts_at, s.ends_at, storage.usable_capacity_wh)
+        MarketRecoverySegment(a.assignment_id, min(s.starts_at for s in a.main_segments),
+                              max(s.ends_at for s in a.main_segments), storage.usable_capacity_wh)
         for a in context.assignments
-        if a.completed_at is None
-        for s in a.main_segments
-        if s.ends_at > snapshot.captured_at
+        if a.completed_at is None and a.main_segments
+        and max(s.ends_at for s in a.main_segments) > snapshot.captured_at
     ) + tuple(
         MarketRecoverySegment(
             g.assignment_id, g.starts_at, g.ends_at, g.target_soc * storage.usable_capacity_wh
@@ -258,30 +256,20 @@ def market_rule_portfolio(
     # physical schedule at those cuts before assigning one tariff to each part.
     tariff_boundaries = tuple(t for p in prices.intervals for t in (p.starts_at, p.ends_at))
     priced = sorted(((window_price(w), w) for w in windows), key=lambda item: -item[0])
-    admitted_price: float | None = None
-    dominated = False
-    for price_bound, window in priced:
+    for _, window in priced:
         if planning_checkpoint is not None:
             planning_checkpoint()
-        # Candidate dominance, not a new winner selector: a strictly lower
-        # export price cannot beat an already admitted candidate under this
-        # explicit one-objective user rule. All arithmetic ties still reach
-        # the existing Evaluation Engine and its declared tie-breakers.
-        if (
-            not assignment.rule.recovery_required
-            and admitted_price is not None
-            and price_bound < admitted_price - 1e-12
-        ):
-            dominated = True
-            continue
         first, last = window[0].starts_at, window[-1].ends_at
+        if not any(r.starts_at >= last and r.ends_at <= plan.valid_until for r in recovery):
+            reasons.append("future_owned_charge_does_not_prove_full_recovery")
+            continue
         candidate_id = identity(
             "market-candidate", f"{snapshot.snapshot_id}|{assignment.assignment_id}|{first}|{last}"
         )
         refined = adapter.build_inputs(
             snapshot,
             horizon_end=plan.valid_until,
-            maximum_duration=timedelta(hours=36),
+            maximum_duration=timedelta(hours=49),
             extra_boundaries=boundaries + tariff_boundaries + (first, last),
         )
         schedule, _ = adapter._retained_main_schedule(
@@ -472,28 +460,21 @@ def market_rule_portfolio(
             )
             proposed = charge_window.projection
             proposed_schedule = charge_window.schedule
-        actual_tariffs = (
-            tariffs_adapter.build(
-                snapshot,
-                horizon_end=plan.valid_until,
-                saldering_energy_tax_credit_enabled=saldering_energy_tax_credit_enabled,
-            )
-            if assignment.rule.recovery_required
-            else None
+        actual_tariffs = tariffs_adapter.build(
+            snapshot,
+            horizon_end=plan.valid_until,
+            saldering_energy_tax_credit_enabled=saldering_energy_tax_credit_enabled,
         )
         recovery_for_candidate = (
             recovery
             if charge_window is None
             else tuple(r for r in recovery if r.assignment_id != charge_window.assignment_id)
-            + tuple(
-                MarketRecoverySegment(
-                    charge_window.assignment_id,
-                    seg.starts_at,
-                    seg.ends_at,
-                    storage.usable_capacity_wh,
-                )
-                for seg in charge_window.main_segments
-            )
+            + (MarketRecoverySegment(
+                charge_window.assignment_id,
+                min(s.starts_at for s in charge_window.main_segments),
+                max(s.ends_at for s in charge_window.main_segments),
+                storage.usable_capacity_wh,
+            ),)
         )
         admission = assess_market_route(
             assignment=assignment,
@@ -508,6 +489,14 @@ def market_rule_portfolio(
         if admission.status != "admissible":
             reasons.append(admission.reason)
             continue
+        assert admission.incremental_net_profit_eur is not None
+        assert admission.recovery_assignment_id is not None
+        assert admission.recovery_ends_at is not None
+        recovery_evidence = tuple(dict.fromkeys((
+            assignment.assignment_id, admission.recovery_assignment_id,
+            *(e for t in actual_tariffs.intervals if t.ends_at <= admission.recovery_ends_at
+              for e in t.evidence_ids),
+        )))
         if not goals_reached(proposed, charge_window):
             reasons.append("market_and_retained_charge_goals_unreachable")
             continue
@@ -587,7 +576,7 @@ def market_rule_portfolio(
             (storage.capability_id,),
             strategy.strategy_version,
             plan.mapping_version,
-            ("user-rule export; import reference is fictitious",),
+            ("user spread filter; financial result includes actual recovery",),
             confidence,
         )
         if charge_window is not None:
@@ -627,6 +616,11 @@ def market_rule_portfolio(
                 for segment in path.segments
                 if segment.purpose == assignment.assignment_id
             ]
+        path = replace(path, assumptions=(*path.assumptions,
+            f"market_recovery_assignment:{admission.recovery_assignment_id}",
+            f"market_recovery_ends_at:{admission.recovery_ends_at.isoformat()}",
+            "market_result:incremental_cash_after_wear",
+        ))
         candidates.append(
             Candidate(
                 candidate_id,
@@ -648,14 +642,11 @@ def market_rule_portfolio(
                 (
                     ObjectiveOutcome(
                         ObjectiveKind.FINANCIAL_RESULT,
-                        admission.incremental_net_profit_eur
-                        if assignment.rule.recovery_required
-                        and admission.incremental_net_profit_eur is not None
-                        else spread.export_window.average_eur_per_kwh,
+                        admission.incremental_net_profit_eur,
                         ComparisonDirection.HIGHER_IS_BETTER,
-                        "EUR" if assignment.rule.recovery_required else "EUR/export-kWh",
+                        "EUR",
                         confidence,
-                        (assignment.assignment_id,),
+                        recovery_evidence,
                     ),
                 ),
                 confidence,
@@ -664,7 +655,7 @@ def market_rule_portfolio(
                 max(0, len(segments) - 1),
                 "market-segments:v1",
                 CandidateValidity.VALID,
-                evidence_ids=(assignment.assignment_id,),
+                evidence_ids=recovery_evidence,
             )
         )
         traded = tuple(i for i in proposed.intervals if first <= i.starts_at < i.ends_at <= last)
@@ -680,24 +671,12 @@ def market_rule_portfolio(
                 battery_draw,
             )
         )
-        admitted_price = max(
-            admitted_price if admitted_price is not None else price_bound, price_bound
-        )
     candidate_set = CandidateSet(
         snapshot.snapshot_id,
         strategy.strategy_version,
         tuple(candidates),
         tuple(paths),
-        (
-            CandidateExclusion(
-                CandidateFamily.MARKET_ROUTE,
-                CandidateExclusionKind.DOMINATED,
-                "lower weighted export price than an admissible same-volume candidate",
-                (assignment.assignment_id,),
-            ),
-        )
-        if dominated
-        else (),
+        (),
     )
     outcome_set = CandidateOutcomeSet(
         snapshot.snapshot_id,

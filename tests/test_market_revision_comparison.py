@@ -1,8 +1,8 @@
-"""ADR-019.5 with real simulation, settlement, Evaluation and publication.
+"""ADR-019.6 with real simulation, settlement, Evaluation and publication.
 
 The old admitted plan is an explicit fixture: today's charge has completed,
 1000 Wh export is due at 18:00 UTC, tomorrow's main charge runs 02:00–06:00.
-The 400 W household and equal terminal state make price effects inspectable.
+The 400 W household and equal recovered stock make price effects inspectable.
 """
 
 from dataclasses import asdict, replace
@@ -162,22 +162,43 @@ def test_joint_financial_comparison_can_keep_shorten_or_remove(tmp_path, prices,
     assert not winner.invalidity_reasons
     assert winner.horizon_end == windows.market_revision.required_horizon_end
     assert len(winner.days) == 2
-    assert winner.terminal_storage_wh == pytest.approx(1760)
+    # Financial recovery ends at the full charge, not tomorrow's midnight.
+    assert winner.terminal_storage_wh == pytest.approx(8160)
+    assert winner.horizon_end < windows.market_revision.horizon_end
     assert winner.comparable_result_eur == pytest.approx(sum(
         day.export_revenue_eur - day.import_cost_eur for day in winner.days) - winner.wear_cost_eur)
     assert any(e.variant == "retained" and e.grid_charge_wh > 9600
                for e in evidence)
 
 
-def test_incomplete_tomorrow_prices_allow_charge_repair_but_keep_export(tmp_path):
+def test_prices_through_recovery_suffice_without_all_of_tomorrow(tmp_path):
     _, snapshot, _ = scenario(tmp_path, complete=False)
     _, portfolio, result = comparison(snapshot)
     selected = next(e for e in portfolio.market_revision_evidence
                     if e.candidate_id == result.record.winning_candidate_id)
     assert selected.variant == "retained"
-    assert selected.comparable_result_eur is None
-    assert any("market_revision_today_tomorrow_coverage_incomplete" in e.invalidity_reasons
-               for e in portfolio.market_revision_evidence if e.variant == "removed")
+    assert selected.comparable_result_eur is not None
+    assert selected.horizon_end == snapshot.captured_at + timedelta(hours=20)
+    assert not selected.invalidity_reasons
+
+
+def test_unrelated_prices_after_recovery_do_not_change_market_economics(tmp_path):
+    _, snapshot, _ = scenario(tmp_path)
+    windows, before, result = comparison(snapshot)
+    recovery_end = windows.market_revision.required_horizon_end
+    changed = replace(snapshot, price_points=tuple(
+        replace(p, value_eur_per_kwh=p.value_eur_per_kwh + 5)
+        if p.starts_at >= recovery_end else p for p in snapshot.price_points
+    ))
+    _, after, revised = comparison(changed)
+    assert revised.record.winning_candidate_id == result.record.winning_candidate_id
+    assert [(e.candidate_id, e.comparable_result_eur, e.days)
+            for e in before.market_revision_evidence] == [
+                (e.candidate_id, e.comparable_result_eur, e.days)
+                for e in after.market_revision_evidence]
+    # Only valuation is bounded: simulation still covers the full retained plan.
+    assert all(p.segments[-1].ends_at == snapshot.horizon_end
+               for p in after.candidate_set.energy_paths)
 
 
 @pytest.mark.parametrize("prices,expected", [((0.8, 0.8), "pending"),

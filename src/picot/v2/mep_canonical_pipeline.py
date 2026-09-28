@@ -59,6 +59,7 @@ from picot.v2.daily_pv_comparison import (
     DailyMainPVSurplusTrigger,
     DailyPVComparisonBasis,
 )
+from picot.v2.daily_recalculation import DailyMainRecalculationTrigger
 from picot.v2.execution_plan_projection import _project_plan, project_execution_plan_set
 from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
 from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
@@ -1298,7 +1299,8 @@ def _build_daily_main_run(
     reason = "daily_main_route_retained_without_optimisation_trigger"
     selected_window = None
     optimisation_trigger: (
-        DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | DailyBridgeTrigger | None
+        DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | DailyBridgeTrigger
+        | DailyMainRecalculationTrigger | None
     ) = None
     pv_comparison = None
     bridge_assessment = None
@@ -1308,6 +1310,8 @@ def _build_daily_main_run(
     future_goal_unresolved = False
     optional_pv_review = False
     retain_grid_continuity = False
+    manual_request = context.recalculation_request
+    manual_owner = None
     retained = tuple(
         p
         for p in context.main_plans
@@ -1319,6 +1323,18 @@ def _build_daily_main_run(
             raise ValueError(context.reason or "daily_charge_recovery_blocked")
         if commitment_store is None:
             raise ValueError("daily_charge_store_unavailable")
+        if manual_request is not None:
+            manual_owner = next((a for a in context.assignments
+                                 if a.assignment_id == manual_request.assignment_ids[0]), None)
+            if (manual_owner is None or manual_owner.completed_at is not None
+                    or manual_owner.ends_at <= snapshot.captured_at):
+                commitment_store.finish_daily_recalculation(
+                    request_id=manual_request.request_id,
+                    assignment_id=manual_request.assignment_ids[0], status="retained",
+                    reason="daily_goal_already_completed_or_expired", plan_id=None,
+                    snapshot_id=snapshot.snapshot_id,
+                )
+                manual_owner = None
         if (
             not snapshot.price_points
             or snapshot.pv_energy_timeline is None
@@ -1344,7 +1360,20 @@ def _build_daily_main_run(
         triggers = tuple(t for t in triggers if adapter.main_repair_required(
             snapshot=snapshot, trigger=t, conversion_model=conversion,
         ))
-        if triggers:
+        if manual_owner is not None:
+            assert manual_request is not None and manual_owner.route_plan_id is not None
+            active = next((p for p in retained
+                           if p.execution_scope_id == manual_owner.execution_scope_id), None)
+            if active is None:
+                raise ValueError("manual_recalculation_current_plan_unavailable")
+            optimisation_trigger = DailyMainRecalculationTrigger(
+                manual_owner.assignment_id, manual_owner.route_plan_id, manual_owner.revision,
+                active.plan_id, snapshot.snapshot_id, snapshot.captured_at,
+                snapshot.current_storage_states[0].usable_capacity_wh, manual_request,
+            )
+            optimisation_trigger.validate(manual_owner, snapshot.snapshot_id, snapshot.captured_at)
+            pending = [manual_owner]
+        elif triggers:
             owners = {a.assignment_id: a for a in context.assignments}
             optimisation_trigger = min(triggers, key=lambda t: (
                 owners[t.assignment_id].delivery_date, owners[t.assignment_id].execution_scope_id,
@@ -1352,7 +1381,7 @@ def _build_daily_main_run(
             ))
             pending = [next(a for a in context.assignments
                             if a.assignment_id == optimisation_trigger.assignment_id)]
-        if not triggers:
+        if not triggers and manual_owner is None:
             optional_pv_review = bool(retained) and not pending
             for state in context.pv_comparison_states:
                 owner = next(
@@ -1391,7 +1420,14 @@ def _build_daily_main_run(
                                 if a.assignment_id == optimisation_trigger.assignment_id)]
         if pending:
             optional_pv_review = isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
-            if optimisation_trigger is not None and market_revision_available(
+            if isinstance(optimisation_trigger, DailyMainRecalculationTrigger):
+                # An explicit rebuild uses normal daily Candidate discovery.
+                # Market obligations remain constraints, not a reset trade budget.
+                windows = adapter.main_charge_windows(
+                    snapshot=snapshot, assignment=pending[0], conversion_model=conversion,
+                    optimisation_trigger=optimisation_trigger,
+                )
+            elif optimisation_trigger is not None and market_revision_available(
                 snapshot, optimisation_trigger,
             ):
                 windows = market_revision_windows(
@@ -1413,7 +1449,10 @@ def _build_daily_main_run(
                         in w.invalidity_reasons for w in windows.rejected_windows)
             )
             if not windows.windows and windows.market_revision is None:
-                if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
+                if isinstance(optimisation_trigger, DailyMainRecalculationTrigger):
+                    reason = windows.reason or "manual_recalculation_no_feasible_route"
+                    planning_blocked = True
+                elif isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
                     commitment_store.record_daily_pv_assessment(
                         assignment_id=optimisation_trigger.assignment_id,
                         basis_id=optimisation_trigger.basis_id,
@@ -1466,6 +1505,7 @@ def _build_daily_main_run(
                         snapshot=snapshot, assignment=pending[0], conversion_model=conversion,
                         horizon_end=comparison_end,
                     ) if optimisation_trigger is not None
+                    and not isinstance(optimisation_trigger, DailyMainRecalculationTrigger)
                     and (windows.market_revision is not None or not isinstance(
                         optimisation_trigger, DailyBridgeTrigger)) else None,
                 )
@@ -1590,6 +1630,7 @@ def _build_daily_main_run(
     if (
         not planning_blocked
         and not future_goal_unresolved
+        and manual_owner is None
         and canonical_set is None
         and len(retained) == 1
         and snapshot.market_user_rule is not None
@@ -1695,6 +1736,35 @@ def _build_daily_main_run(
                     reason = "market_not_admitted:" + str(exc)
         except (ValueError, OSError) as exc:
             reason = "market_not_admitted:" + str(exc)
+    if manual_owner is not None and manual_request is not None and commitment_store is not None:
+        retained_manual_plan = next(
+            (p for p in retained if p.execution_scope_id == manual_owner.execution_scope_id), None,
+        )
+        if planning_blocked and retained_manual_plan is not None:
+            # A failed explicit rebuild is not evidence that the stored plan is
+            # unsafe. Reuse the existing physical proof, never bypass execution guards.
+            try:
+                manual_conversion, _ = planner_runtime.planning_configuration(snapshot)
+                planning_blocked = bool(
+                    IndependentDailyReferenceAdapter().committed_execution_invalidity_reasons(
+                        snapshot=snapshot, plan=retained_manual_plan,
+                        conversion_model=manual_conversion,
+                    )
+                )
+            except (ValueError, OSError):
+                planning_blocked = True
+        try:
+            waiting = commitment_store.load_daily_recalculation_request()
+            if (waiting is not None and waiting.request_id == manual_request.request_id
+                    and manual_owner.assignment_id in waiting.assignment_ids):
+                commitment_store.finish_daily_recalculation(
+                    request_id=manual_request.request_id, assignment_id=manual_owner.assignment_id,
+                    status="failed", reason=reason,
+                    plan_id=retained_manual_plan.plan_id if retained_manual_plan else None,
+                    snapshot_id=snapshot.snapshot_id,
+                )
+        except (ValueError, OSError) as exc:
+            reason = "manual_recalculation_result_not_saved:" + str(exc)
     candidate_set_id = (comparable.outcome_set.candidate_set_reference
                         if comparable is not None
                         else _id("daily-main-candidates", snapshot.snapshot_id))

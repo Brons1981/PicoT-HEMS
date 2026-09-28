@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.280
+
+- De bestaande knop heet **Planning opnieuw berekenen** en herberekent nu werkelijk de opgeslagen dagplannen. De oude reset bereikte alleen de eerdere commitmentregistratie.
+- Dagdoelen, behaalde 100%-doelen, marktopdrachten en historie blijven behouden. Een geldige vervanger wordt via de bestaande MEP-keten gekozen en samen met de verzoekstatus opgeslagen.
+- Het verzoek blijft na een herstart beschikbaar en dubbele klikken starten geen tweede herberekening. Het dashboard toont of de aanvraag is verwerkt, niet van toepassing is of is mislukt.
+- Een mislukte herberekening wist het bestaande plan niet. Een aantoonbaar geldige uitvoering blijft beschikbaar; de bestaande veiligheidscontroles blijven gelden. Het dashboard koppelt geen SOC-lijn van een niet opgeslagen vervanger aan het behouden plan.
+- Bij bestaande tekorten op beide dagen kan vandaag eerst worden hersteld en morgen daarna. De afzonderlijke 100%-doelen en bescherming van lopend netladen blijven vereist.
+- Een eerder opgeslagen plan wordt na installatie niet automatisch herbouwd. Gebruik daarvoor eenmalig **Planning opnieuw berekenen**. De diagnose-replay vervangt de oude nacht-NOM en standby, met behoud van marktroute en een haalbaar 100%-dagdoel.
+
 ## 2.0.0-dev.279
 
 - Een marktvariant zonder voldoende herstelbewijs blokkeert niet meer alle geldige alternatieven. PicoT vergelijkt herstel en financieel resultaat per kandidaat, met aantoonbaar gelijke voorraad en herstelgrens.

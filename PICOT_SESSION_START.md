@@ -8,6 +8,20 @@ This file is a routing index and guardrail.  The linked Accepted ADR files are
 the architectural authority.  Current code, tests, comments, diagnostics and
 earlier assistant memory are evidence, but they do not redefine ownership.
 
+## Expliciet opnieuw berekenen — release dev.280, 2026-09-29
+
+Alex heeft om 23:48 Europe/Amsterdam reparatie van de bestaande resetknop
+gevraagd. Lees `docs/development_log/2026-09-28-daily-plan-recalculation.md`.
+De oude knop wiste alleen legacy-commitments en bereikte het opgeslagen native
+dagplan niet. De knop vraagt nu expliciete dagelijkse herberekening aan via de
+bestaande Monitor/MEP-keten. Dagidentiteiten, werkelijk behaalde doelen, andere
+dagverplichtingen en historie blijven behouden. Het verzoek en de vervangende
+planversie worden gezamenlijk afgehandeld in Plan Store. Werkbranch:
+`fix/daily-plan-recalculation`, vanaf dev.279. Alex heeft op 29 september om
+00:23 Europe/Amsterdam release dev.280 aangevraagd via PR en CI. Installatie en
+livecontrole volgen afzonderlijk. Gebruik na installatie eenmalig **Planning
+opnieuw berekenen** om een eerder opgeslagen plan expliciet te laten herzien.
+
 ## Begrensd MEP-herstel — release dev.279, 2026-09-28
 
 Voor het latere, om 22:23 goedgekeurde lokale hersteltraject: lees eerst

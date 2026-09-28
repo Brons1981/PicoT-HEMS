@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.278
+
+- Herstelt een leeg dashboard bij grote marktroutevergelijkingen. Gedeelde bronverwijzingen worden compact en verliesvrij doorgegeven; alle alternatieven, bedragen en afwijsredenen blijven beschikbaar.
+- De volledige vergelijking staat eenmaal in het webantwoord. In de diagnose van 28 september daalt het plandeel van 10,5 naar 1,93 miljoen tekens, binnen de bestaande grens van 8 miljoen.
+- Bij te veel extra schermdetail blijven het actieve plan, de segmenten en de uitvoeringsstatus zichtbaar. Een melding legt uit dat een deel van de extra informatie niet wordt getoond.
+- MEP, planselectie, aansturing en financiële meetverwerking blijven ongewijzigd. Werkelijke meetgaten blijven als onvolledig herkenbaar.
+
 ## 2.0.0-dev.277
 
 - Financiële nacalculatie herstelt ontbrekend huisverbruik met de bestaande volledige kwartierbalans. Een korte negatieve deelbalans laat een geldig kwartier niet meer verdwijnen; afgeleide energie wordt eenmaal meegeteld.

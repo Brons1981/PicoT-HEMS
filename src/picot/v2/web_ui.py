@@ -967,6 +967,8 @@ DASHBOARD_HTML = """<!doctype html>
       <div id="execution-mode" class="observer">Status wordt geladen</div>
     </header>
 
+    <p id="dashboard-status" class="planning-attention" role="status" hidden></p>
+
     <nav class="dashboard-tabs" aria-label="Dashboardweergave">
       <button
         class="tab-button" type="button" data-tab="overview"
@@ -4763,8 +4765,15 @@ DASHBOARD_HTML = """<!doctype html>
       });
     }
 
+    function renderDashboardStatus(status) {
+      const notice = element("dashboard-status");
+      notice.hidden = status?.status !== "details_limited";
+      notice.textContent = status?.message_nl ?? "";
+    }
+
     function renderView(view) {
       const dashboardState = captureDashboardState();
+      renderDashboardStatus(view.dashboard_status);
       element("version").textContent = displayValue(view.picot_version);
       element("run-id").textContent = displayValue(view.run_id);
       element("captured-at").textContent = displayValue(view.captured_at);
@@ -4948,6 +4957,65 @@ DASHBOARD_HTML = """<!doctype html>
 """
 
 
+def _bounded_dashboard_view(view: dict[str, object]) -> dict[str, object]:
+    """Reserve room for the current plan before optional observer detail (ADR-028)."""
+    essential = {
+        "schema_version", "observer_only", "picot_version", "run_id", "snapshot_id",
+        "captured_at", "pipeline_health", "zendure_now",
+    }
+    bounded = {key: value for key, value in view.items() if key in essential}
+    optional = {key: value for key, value in view.items()
+                if key not in essential | {"planning_status", "pipeline", "dashboard_status"}}
+    planning = view.get("planning_status")
+    if isinstance(planning, dict):
+        detail_keys = {"alternatives", "market_revision_comparison", "soc_timeline",
+                       "soc_expectation"}
+        bounded["planning_status"] = {
+            key: value for key, value in planning.items() if key not in detail_keys
+        }
+        optional.update({f"planning_status.{key}": value
+                         for key, value in planning.items() if key in detail_keys})
+    pipeline = view.get("pipeline")
+    if isinstance(pipeline, list):
+        bounded["pipeline"] = [
+            {**card, "attributes": {
+                key: value for key, value in card.get("attributes", {}).items()
+                if not isinstance(value, (dict, list, tuple)) or key == "blockers"
+            }} for card in pipeline
+        ]
+        optional["pipeline"] = pipeline
+    prior_status = view.get("dashboard_status")
+    omitted = set(prior_status.get("omitted_sections", ())
+                  if isinstance(prior_status, dict) else ())
+    omitted.update(optional)
+    notice: dict[str, object] = {
+        "status": "details_limited", "reason": "dashboard_payload_limit",
+        "message_nl": "Een deel van de extra scherminformatie is te groot en wordt niet getoond. "
+                      "De plan- en uitvoeringsstatus blijven zichtbaar. "
+                      "Volledige onderbouwing staat in de diagnose.",
+        "omitted_sections": sorted(omitted),
+    }
+    bounded["dashboard_status"] = notice
+    # Small sections first prevents one large detail section displacing every other tab.
+    for section in sorted(optional, key=lambda key: len(json.dumps(optional[key]))):
+        parent, _, key = section.partition(".")
+        target = bounded.get(parent) if key else bounded
+        assert isinstance(target, dict)
+        key = key or parent
+        previous = target.get(key)
+        existed = key in target
+        target[key] = optional[section]
+        notice["omitted_sections"] = sorted(omitted - {section})
+        if len(json.dumps(bounded, separators=(",", ":"))) <= MAX_WEB_VIEW_CHARACTERS:
+            omitted.discard(section)
+        elif existed:
+            target[key] = previous
+        else:
+            target.pop(key)
+        notice["omitted_sections"] = sorted(omitted)
+    return bounded
+
+
 class WebViewStore:
     """Thread-safe in-memory store for the latest serialized web view."""
 
@@ -5026,21 +5094,7 @@ class WebViewStore:
             view["energy_device_placements"] = dict(self._energy_device_placements)
         serialized = json.dumps(view, separators=(",", ":"))
         if len(serialized) > MAX_WEB_VIEW_CHARACTERS:
-            bounded = dict(view)
-            bounded["power_history"] = {
-                "available": False,
-                "status": "payload_bounded",
-                "error": "dashboard_payload_limit",
-                "series": [],
-                "pv_actual_display_points": [],
-            }
-            bounded["self_consumption_history"] = {
-                "available": False,
-                "status": "payload_bounded",
-                "error": "dashboard_payload_limit",
-                "series": [],
-            }
-            bounded.pop("retired_comparison_history", None)
+            bounded = _bounded_dashboard_view(view)
             serialized = json.dumps(bounded, separators=(",", ":"))
         if len(serialized) > MAX_WEB_VIEW_CHARACTERS:
             serialized = json.dumps(
@@ -6906,6 +6960,20 @@ def build_web_view(
         }
         for stage, card in enumerate(projection.cards, start=1)
     ]
+    # The comparison belongs to planning_status in the web payload. Keep its
+    # lineage on the technical card without serializing every alternative twice.
+    for card in pipeline:
+        attributes = card["attributes"]
+        assert isinstance(attributes, dict)
+        comparison = attributes.get("market_revision_comparison")
+        if isinstance(comparison, dict):
+            attributes["market_revision_comparison"] = {
+                key: value for key, value in comparison.items()
+                if key not in {"alternatives", "evidence_dictionary"}
+            } | {
+                "details_reference": "planning_status.market_revision_comparison",
+                "alternative_count": len(comparison.get("alternatives", ())),
+            }
     healthy_count = sum(item["health"] == "healthy" for item in pipeline)
     pipeline_health = {
         "healthy": healthy_count == len(pipeline),

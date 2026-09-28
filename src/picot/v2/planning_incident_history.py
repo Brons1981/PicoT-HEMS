@@ -13,6 +13,7 @@ from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from picot.v2.contracts import CanonicalPipelineRun
+from picot.v2.evidence_sequences import EvidenceSequenceEncoder
 from picot.v2.planning_input import PlanningInputBundle
 
 SCHEMA_VERSION = 1
@@ -118,33 +119,7 @@ def _compact_market_records(run: CanonicalPipelineRun) -> dict[str, object]:
     candidate_record["omitted_alternative_energy_path_count"] = (
         len(run.candidate_set.energy_paths) - len(paths)
     )
-    dictionary: dict[str, dict[str, object]] = {}
-    references: dict[tuple[str, ...], str] = {}
-    bases: dict[int, tuple[str, ...]] = {}
-
-    def evidence_reference(sequence: tuple[str, ...]) -> str:
-        if sequence in references:
-            return references[sequence]
-        reference = f"e{len(references)}"
-        base = bases.get(len(sequence))
-        prefix = suffix = 0
-        if base is not None:
-            while prefix < len(sequence) and sequence[prefix] == base[prefix]:
-                prefix += 1
-            while (suffix < len(sequence) - prefix
-                   and sequence[-suffix - 1] == base[-suffix - 1]):
-                suffix += 1
-        if base is not None and prefix + suffix > 8:
-            dictionary[reference] = {
-                "base": references[base], "prefix_count": prefix,
-                "middle": list(sequence[prefix:len(sequence) - suffix]),
-                "suffix_start": len(base) - suffix,
-            }
-        else:
-            dictionary[reference] = {"ids": list(sequence)}
-            bases.setdefault(len(sequence), sequence)
-        references[sequence] = reference
-        return reference
+    evidence = EvidenceSequenceEncoder()
 
     def encode(value: object) -> object:
         if is_dataclass(value) and not isinstance(value, type):
@@ -152,7 +127,7 @@ def _compact_market_records(run: CanonicalPipelineRun) -> dict[str, object]:
             for item in fields(value):
                 content = getattr(value, item.name)
                 if item.name == "evidence_ids" and content:
-                    result["evidence_ids_ref"] = evidence_reference(content)
+                    result["evidence_ids_ref"] = evidence.reference(content)
                 else:
                     result[item.name] = encode(content)
             return result
@@ -165,7 +140,7 @@ def _compact_market_records(run: CanonicalPipelineRun) -> dict[str, object]:
         "comparison_detail_format": "market-revision-compact:v1",
         "candidate_set": candidate_record,
         "outcomes": outcomes,
-        "comparison_evidence_dictionary": dictionary,
+        "comparison_evidence_dictionary": evidence.dictionary,
     }
 
 

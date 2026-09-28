@@ -8,6 +8,18 @@ This file is a routing index and guardrail.  The linked Accepted ADR files are
 the architectural authority.  Current code, tests, comments, diagnostics and
 earlier assistant memory are evidence, but they do not redefine ownership.
 
+## Dashboard bij grote marktroutevergelijking — lokaal, 2026-09-28
+
+Alex heeft om 20:17 Europe/Amsterdam de gerichte dashboardfix goedgekeurd.
+Lees `docs/development_log/2026-09-28-dashboard-market-payload.md` voor contract,
+reproductie en verificatie. Gedeelde verliesvrije bewijsreeksen en één volledige
+webvergelijking voorkomen de 8M-overschrijding. Bij te veel extra schermdetail
+blijven het plan en de uitvoeringsstatus behouden, met een zichtbare beperking.
+MEP, aansturing en financiële afleiding blijven gelijk. 832 tests geslaagd,
+1 overgeslagen; beide echte planstatussen publiceren compleet. Alex heeft om
+20:37 Europe/Amsterdam release dev.278 aangevraagd via PR en CI. Installatie
+en livecontrole volgen afzonderlijk; dev.268 blijft de eerste terugvalbasis.
+
 ## Financiële kwartierbalans en nachtstatus — lokaal, 2026-09-27
 
 Alex heeft om 20:43 Europe/Amsterdam de gerichte financiële reparatie bevestigd.

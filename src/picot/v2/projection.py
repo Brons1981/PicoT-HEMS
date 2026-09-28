@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from time import perf_counter
 
 from picot.v2.contracts import CanonicalPipelineRun, DelegatedStorageCandidateOutcome
+from picot.v2.evidence_sequences import EvidenceSequenceEncoder
 from picot.v2.storage_energy_source_need import (
     derive_storage_energy_source_need,
 )
@@ -29,6 +30,7 @@ def project_market_revision_comparison(run: CanonicalPipelineRun) -> dict[str, o
     evidence = run.outcomes.market_revision_evidence
     if not evidence:
         return None
+    sequences = EvidenceSequenceEncoder()
     evaluation = run.evaluation
     paths = {c.candidate_id: c.energy_path_id for c in run.candidate_set.candidates}
     rejected = {
@@ -38,7 +40,7 @@ def project_market_revision_comparison(run: CanonicalPipelineRun) -> dict[str, o
             if evaluation.canonical_record is not None else ()
         )
     }
-    return {
+    comparison = {
         "snapshot_id": run.planning_input.snapshot_id,
         "comparison_captured_at": run.planning_input.captured_at.isoformat(),
         "retained": False,
@@ -77,11 +79,13 @@ def project_market_revision_comparison(run: CanonicalPipelineRun) -> dict[str, o
                 "delta_from_incumbent_eur": item.delta_from_incumbent_eur,
                 "invalidity_reasons": list(item.invalidity_reasons),
                 "evaluation_invalidity_reasons": list(rejected.get(item.candidate_id, ())),
-                "evidence_ids": list(item.evidence_ids),
+                "evidence_ids_ref": sequences.reference(item.evidence_ids),
             }
             for item in evidence
         ],
     }
+    return {**comparison, "evidence_format": "prefix-middle-suffix:v1",
+            "evidence_dictionary": sequences.dictionary}
 
 
 def project(run: CanonicalPipelineRun) -> Projection:

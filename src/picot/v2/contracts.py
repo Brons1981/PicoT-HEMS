@@ -31,6 +31,7 @@ from picot.v2.daily_pv_comparison import (
     DailyPVComparison,
     DailyPVComparisonState,
 )
+from picot.v2.daily_recalculation import DailyPlanRecalculationRequest
 from picot.v2.household_planning_regime import (
     HouseholdPlanningRegime,
     UserObjectiveProfile,
@@ -677,6 +678,8 @@ class DailyChargePlanningContext:
     market_plan_bindings: tuple[MarketPlanBinding, ...] = ()
     market_execution_progress: tuple[MarketExecutionProgress, ...] = ()
     duration_ms: float = 0.0
+
+    recalculation_request: DailyPlanRecalculationRequest | None = None
 
     def __post_init__(self) -> None:
         if self.status not in {"ready", "blocked"}:

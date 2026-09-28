@@ -966,6 +966,7 @@ def _restore_daily_charge_context(
     plans: list[ExecutionPlan] = []
     active_main_plan_ids: list[str] = []
     status, reason = "ready", None
+    recalculation_request = None
     scopes = {
         state.execution_scope_id for state in snapshot.current_storage_states
     } | {limits.execution_scope_id for limits in snapshot.storage_physical_limits}
@@ -1036,6 +1037,7 @@ def _restore_daily_charge_context(
             state for a in assignments
             if (state := store.load_daily_bridge_state(a.assignment_id)) is not None
         )
+        recalculation_request = store.load_daily_recalculation_request()
     except (ValueError, OSError) as exc:
         status, reason = "blocked", str(exc) or exc.__class__.__name__
     context = DailyChargePlanningContext(
@@ -1057,6 +1059,7 @@ def _restore_daily_charge_context(
             if a.route_plan_id is not None
         ),
         duration_ms=round((perf_counter() - started) * 1000, 3),
+        recalculation_request=recalculation_request,
     )
     return replace(snapshot, daily_charge_context=context)
 
@@ -1494,13 +1497,31 @@ class PlanningResetBarrier:
         with self._lock:
             return cycle()
 
-    def reset(self, clear_state: Callable[[], Any]) -> tuple[int, Any]:
-        """Clear state after any older cycle and advance the durable boundary."""
+    def reset(self, update_state: Callable[[], Any]) -> tuple[int, Any]:
+        """Persist an explicit change after any older cycle has finished."""
 
         with self._lock:
-            result = clear_state()
+            result = update_state()
             self._generation += 1
             return self._generation, result
+
+
+def _request_daily_recalculation_and_replan(
+    *, store: ActivePlanCommitmentStore, barrier: PlanningResetBarrier,
+    replan_requested: Event, web_view_store: WebViewStore,
+    request_id: str, requested_at: datetime,
+) -> dict[str, object]:
+    def persist_request() -> dict[str, object]:
+        result = store.request_daily_recalculation(
+            request_id=request_id, requested_at=requested_at,
+        )
+        web_view_store.publish_planning_recalculation(result)
+        if result["status"] == "pending":
+            replan_requested.set()
+        return result
+
+    generation, result = barrier.reset(persist_request)
+    return {**result, "reset_generation": generation}
 
 
 def _project_cumulative_pv_evidence(
@@ -2746,30 +2767,11 @@ def main() -> None:
     )
 
     def reset_planning(reset_id: str) -> dict[str, object]:
-        if not reset_id.strip():
-            raise ValueError("reset_id must be explicit")
-
-        def clear_planning_state() -> tuple[ActivePlanCommitment, ...]:
-            removed = active_plan_commitment_store.clear_all()
-            active_plan_commitment_store.record_manual_reset(
-                reset_id=reset_id,
-                removed=removed,
-            )
-            canonical_execution_runtime.reset_pending_state()
-            return removed
-
-        reset_generation, removed = planning_reset_barrier.reset(
-            clear_planning_state
+        return _request_daily_recalculation_and_replan(
+            store=active_plan_commitment_store, barrier=planning_reset_barrier,
+            replan_requested=planning_reset_requested, web_view_store=web_view_store,
+            request_id=reset_id, requested_at=datetime.now(UTC),
         )
-        planning_reset_requested.set()
-        return {
-            "status": "manual_planning_reset_requested",
-            "reset_id": reset_id,
-            "reset_generation": reset_generation,
-            "removed_commitment_count": len(removed),
-            "removed_plan_ids": [item.plan_id for item in removed],
-            "history_preserved": True,
-        }
 
     web_view_store.set_planning_reset(reset_planning)
 
@@ -3131,7 +3133,15 @@ def main() -> None:
         )
         return power_history, measurement_history, power_history_read_ms
 
+    def publish_recalculation_status() -> None:
+        try:
+            status = active_plan_commitment_store.daily_recalculation_status()
+        except (ValueError, OSError):
+            status = {"status": "failed", "reason": "recalculation_state_unavailable"}
+        web_view_store.publish_planning_recalculation(status)
+
     def publish_input_sources(bundle: PlanningInputBundle) -> None:
+        publish_recalculation_status()
         web_view_store.publish_planning_input_sources(
             _planning_input_sources(bundle)
         )
@@ -3307,6 +3317,7 @@ def main() -> None:
         )
         if completed:
             refresh_soc_expectation(bundle)
+        publish_recalculation_status()
         return completed
 
     def advance_clock_boundaries(bundle: PlanningInputBundle) -> bool:

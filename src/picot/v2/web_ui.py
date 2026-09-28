@@ -1205,10 +1205,10 @@ DASHBOARD_HTML = """<!doctype html>
 
     <section id="planning-reset" class="status" aria-live="polite">
       <span id="planning-reset-result">
-        Huidige en toekomstige planning kan handmatig opnieuw worden opgebouwd.
+        Open dagplannen opnieuw berekenen met behoud van dagdoelen en historie.
       </span>
       <button id="reset-planning" type="button">
-        Planning resetten
+        Planning opnieuw berekenen
       </button>
     </section>
 
@@ -3422,13 +3422,37 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
+    function renderPlanningRecalculation(result) {
+      const status = result?.status ?? "idle";
+      const results = Object.values(result?.results ?? {});
+      const rebuilt = results.filter((item) => item.status === "replanned").length;
+      const messages = {
+        idle: "Open dagplannen opnieuw berekenen met behoud van dagdoelen en historie.",
+        pending: "Verzoek opgeslagen. PicoT berekent de open dagplannen opnieuw.",
+        completed: rebuilt > 0
+          ? `${rebuilt} dagplan(nen) opnieuw berekend. Dagdoelen en historie zijn behouden.`
+          : "Geen herberekening meer nodig: de aangevraagde dagdoelen zijn afgerond of verstreken.",
+        failed: rebuilt > 0
+          ? `${rebuilt} dagplan(nen) opnieuw berekend. ` +
+            "Niet voor alle dagplannen is een geldige vervanger gevonden."
+          : "Herberekening niet gelukt. Er is geen nieuw plan opgeslagen. " +
+            "Dagdoelen en historie zijn behouden.",
+        not_applicable: "Er is geen open vastgelegd dagplan om opnieuw te berekenen. " +
+          "Behaalde doelen blijven behouden.",
+      };
+      const unavailable = result?.reason === "recalculation_state_unavailable";
+      element("planning-reset-result").textContent = unavailable
+        ? "De status van de herberekening kan niet worden gelezen. Bekijk de diagnose."
+        : (messages[status] ?? "De status van de herberekening is onbekend.");
+      element("reset-planning").disabled = status === "pending";
+    }
+
     async function resetPlanning() {
       const resetButton = element("reset-planning");
       const confirmed = globalThis.confirm(
-        "Alle huidige en toekomstige plannen worden beëindigd. PicoT maakt " +
-        "direct een nieuw plan met actuele gegevens. Historie, leerdata en " +
-        "instellingen blijven behouden. Een actieve laadplanning kan worden " +
-        "afgebroken. Doorgaan?"
+        "PicoT berekent de open dagplannen opnieuw met actuele gegevens. " +
+        "Dagdoelen, behaalde 100%-doelen en historie blijven behouden. " +
+        "Een bestaand plan wordt pas vervangen als een geldig nieuw plan klaar is. Doorgaan?"
       );
       if (!confirmed) return;
       resetButton.disabled = true;
@@ -3439,17 +3463,14 @@ DASHBOARD_HTML = """<!doctype html>
           body: JSON.stringify({ reset_id: storageModeResetId() })
         });
         if (!response.ok) {
-          throw new Error(`Planningreset geweigerd (${response.status})`);
+          throw new Error(`Herberekening geweigerd (${response.status})`);
         }
         const result = await response.json();
-        element("planning-reset-result").textContent =
-          `Reset geaccepteerd; ${result.removed_commitment_count ?? 0} ` +
-          "commitment(s) verwijderd. Nieuwe planning wordt opgebouwd.";
+        renderPlanningRecalculation(result);
         await loadView();
       } catch (error) {
         element("planning-reset-result").textContent =
-          error instanceof Error ? error.message : "Planningreset mislukt.";
-      } finally {
+          error instanceof Error ? error.message : "Herberekening mislukt.";
         resetButton.disabled = false;
       }
     }
@@ -4774,6 +4795,7 @@ DASHBOARD_HTML = """<!doctype html>
     function renderView(view) {
       const dashboardState = captureDashboardState();
       renderDashboardStatus(view.dashboard_status);
+      renderPlanningRecalculation(view.planning_recalculation);
       element("version").textContent = displayValue(view.picot_version);
       element("run-id").textContent = displayValue(view.run_id);
       element("captured-at").textContent = displayValue(view.captured_at);
@@ -5034,6 +5056,7 @@ class WebViewStore:
         self._financial_results: dict[str, object] | None = None
         self._grid_charge_review: dict[str, object] | None = None
         self._user_rules: dict[str, object] | None = None
+        self._planning_recalculation: dict[str, object] | None = None
         self._energy_device_catalog: dict[str, object] | None = None
         self._energy_device_placements: dict[str, object] | None = None
         self._soc_expectation: dict[str, object] | None = None
@@ -5088,6 +5111,8 @@ class WebViewStore:
             view["grid_charge_review"] = dict(self._grid_charge_review)
         if self._user_rules is not None:
             view["user_rules"] = dict(self._user_rules)
+        if self._planning_recalculation is not None:
+            view["planning_recalculation"] = dict(self._planning_recalculation)
         if self._energy_device_catalog is not None:
             view["energy_device_catalog"] = dict(self._energy_device_catalog)
         if self._energy_device_placements is not None:
@@ -5407,6 +5432,15 @@ class WebViewStore:
             latest: object = json.loads(self._latest_json)
             if isinstance(latest, dict):
                 self._replace_latest_locked(latest)
+
+    def publish_planning_recalculation(self, status: dict[str, object]) -> None:
+        copied = json.loads(json.dumps(status))
+        with self._condition:
+            if copied == self._planning_recalculation:
+                return
+            self._planning_recalculation = copied
+            if self._latest_json is not None:
+                self._replace_latest_locked(json.loads(self._latest_json))
 
     def publish_user_rules(self, user_rules: dict[str, object]) -> None:
         copied = json.loads(json.dumps(user_rules))
@@ -6319,6 +6353,14 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
     winning_execution_plan = (
         winning_execution_plans[0] if len(winning_execution_plans) == 1 else None
     )
+    if (run.evaluation.status == "plan_retained" and winning_execution_plan is not None
+            and winning_candidate_id != run.evaluation.incumbent_candidate_id
+            and winning_candidate_id != winning_execution_plan.winning_candidate_id):
+        # Evaluation may have selected a replacement that Builder/Store could
+        # not publish. Its comparison remains evidence, not the retained plan's SOC path.
+        winning_candidate = None
+        winning_outcome = None
+        winning_energy_path = None
     winning_commitment = (
         next(
             (

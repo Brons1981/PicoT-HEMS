@@ -115,6 +115,7 @@ class MaterialReplanningObservationProducer:
             tuple((a.assignment_id, a.route_plan_id, a.revision, a.completed_at)
                   for a in context.assignments),
             context.supplemental_assignments,
+            context.recalculation_request,
         )
         changed = identity != self._daily_context_identity
         self._daily_context_identity = identity
@@ -179,6 +180,11 @@ class MaterialReplanningObservationProducer:
             )
         if context.status != "ready":
             return ()
+        if context.recalculation_request is not None:
+            return observation(
+                "explicit_user_recalculation", RuntimeObservationKind.COMMITMENT_CHANGED,
+                (context.recalculation_request.request_id,),
+            )
         if any(a.route_plan_id is None and a.completed_at is None
                and a.ends_at > snapshot.captured_at for a in context.assignments):
             return observation(

@@ -38,6 +38,10 @@ from picot.v2.daily_pv_comparison import (
     DailyPVComparisonBasis,
     DailyPVComparisonState,
 )
+from picot.v2.daily_recalculation import (
+    DailyMainRecalculationTrigger,
+    DailyPlanRecalculationRequest,
+)
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("plan_store", __name__)
 COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v9"
@@ -407,7 +411,8 @@ class ActivePlanCommitmentStore:
         window: DailyMainChargeWindow,
         activate: bool = False,
         optimisation_trigger: (
-            DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | DailyBridgeTrigger | None
+            DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | DailyBridgeTrigger
+            | DailyMainRecalculationTrigger | None
         ) = None,
         bridge_deficits: tuple[BridgeEnergyInterval, ...] = (),
         pv_comparison_basis: DailyPVComparisonBasis | None = None,
@@ -469,6 +474,9 @@ class ActivePlanCommitmentStore:
             return assignment
         if optimisation_trigger is not None:
             optimisation_trigger.validate(assignment, plan.snapshot_id, plan.created_at)
+            if isinstance(optimisation_trigger, DailyMainRecalculationTrigger):
+                if self.load_daily_recalculation_request() != optimisation_trigger.request:
+                    raise ValueError("manual recalculation request is no longer pending")
             if optimisation_trigger.target_wh != window.target_storage_energy_wh:
                 raise ValueError("shortfall trigger and revised target must match")
             active_plan = self.load_active_daily_main_plan(plan.execution_scope_id)
@@ -557,6 +565,10 @@ class ActivePlanCommitmentStore:
             triggers[plan.plan_id] = {
                 **asdict(optimisation_trigger),
                 "assessed_at": optimisation_trigger.assessed_at.isoformat(),
+                **({"request": {
+                    **asdict(optimisation_trigger.request),
+                    "requested_at": optimisation_trigger.request.requested_at.isoformat(),
+                }} if isinstance(optimisation_trigger, DailyMainRecalculationTrigger) else {}),
                 **({
                     "next_starts_at": optimisation_trigger.next_starts_at.isoformat(),
                     "deficits": [
@@ -690,6 +702,13 @@ class ActivePlanCommitmentStore:
                 plan.plan_id
             )
             payload.setdefault("execution_plans", {})[plan.plan_id] = serialized
+        if isinstance(optimisation_trigger, DailyMainRecalculationTrigger):
+            self._finish_daily_recalculation(
+                payload, request_id=optimisation_trigger.request.request_id,
+                assignment_id=bound.assignment_id, status="replanned",
+                reason="explicit_user_recalculation", plan_id=plan.plan_id,
+                snapshot_id=plan.snapshot_id,
+            )
         self._write(payload)
         return bound
 
@@ -1293,6 +1312,96 @@ class ActivePlanCommitmentStore:
             payload["commitments"] = {}
             self._write(payload)
         return removed
+
+    def daily_recalculation_status(self) -> dict[str, Any]:
+        record = self._load_payload().get("daily_recalculation")
+        if record is None:
+            return {"status": "idle"}
+        if not isinstance(record, dict) or record.get("status") not in {
+            "pending", "completed", "failed", "not_applicable",
+        } or not isinstance(record.get("results"), dict):
+            raise ValueError("daily recalculation state is unreadable")
+        return cast(dict[str, Any], record)
+
+    def load_daily_recalculation_request(self) -> DailyPlanRecalculationRequest | None:
+        record = self.daily_recalculation_status()
+        if record["status"] != "pending":
+            return None
+        try:
+            if not isinstance(record["pending_assignment_ids"], list):
+                raise ValueError("remaining daily owners must be a list")
+            return DailyPlanRecalculationRequest(
+                request_id=record["request_id"],
+                requested_at=datetime.fromisoformat(record["requested_at"]),
+                assignment_ids=tuple(record["pending_assignment_ids"]),
+            )
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            raise ValueError("saved recalculation request is invalid") from exc
+
+    def request_daily_recalculation(
+        self, *, request_id: str, requested_at: datetime,
+    ) -> dict[str, Any]:
+        """Persist user intent; do not erase a goal or release an execution plan."""
+        if not request_id.strip() or requested_at.utcoffset() is None:
+            raise ValueError("recalculation requires explicit identity and aware time")
+        existing = self.daily_recalculation_status()
+        if existing.get("request_id") == request_id or existing["status"] == "pending":
+            return existing
+        archived = self._load_payload().get("daily_recalculation_history", {}).get(request_id)
+        if archived is not None:
+            return cast(dict[str, Any], archived)
+        owners = tuple(sorted((a for a in self.load_daily_assignments()
+                               if a.completed_at is None and a.route_plan_id is not None
+                               and a.ends_at > requested_at),
+                              key=lambda a: (a.delivery_date, a.execution_scope_id)))
+        # Validate the real current owners before acknowledging the request.
+        for owner in owners:
+            self.load_daily_main_plan(owner.assignment_id)
+            if self.load_active_daily_main_plan(owner.execution_scope_id) is None:
+                raise ValueError("recalculation requires a current execution plan")
+        record: dict[str, Any] = {
+            "request_id": request_id, "requested_at": requested_at.isoformat(),
+            "status": "pending" if owners else "not_applicable",
+            "pending_assignment_ids": [a.assignment_id for a in owners],
+            "results": {}, "history_preserved": True,
+        }
+        payload = self._load_payload()
+        if existing.get("request_id"):
+            payload.setdefault("daily_recalculation_history", {})[existing["request_id"]] = existing
+        payload["daily_recalculation"] = record
+        self._write(payload)
+        return record
+
+    @staticmethod
+    def _finish_daily_recalculation(
+        payload: dict[str, Any], *, request_id: str, assignment_id: str,
+        status: str, reason: str, plan_id: str | None, snapshot_id: str,
+    ) -> None:
+        record = payload.get("daily_recalculation", {})
+        if record.get("request_id") != request_id or (
+            assignment_id not in record.get("pending_assignment_ids", ())
+        ) or status not in {"replanned", "retained", "failed"}:
+            raise ValueError("recalculation result must match a pending daily request")
+        record["results"][assignment_id] = {
+            "status": status, "reason": reason, "plan_id": plan_id,
+            "snapshot_id": snapshot_id,
+        }
+        record["pending_assignment_ids"].remove(assignment_id)
+        if not record["pending_assignment_ids"]:
+            record["status"] = "failed" if any(
+                item["status"] == "failed" for item in record["results"].values()
+            ) else "completed"
+
+    def finish_daily_recalculation(
+        self, *, request_id: str, assignment_id: str, status: str,
+        reason: str, plan_id: str | None, snapshot_id: str,
+    ) -> None:
+        payload = self._load_payload()
+        self._finish_daily_recalculation(
+            payload, request_id=request_id, assignment_id=assignment_id,
+            status=status, reason=reason, plan_id=plan_id, snapshot_id=snapshot_id,
+        )
+        self._write(payload)
 
     def record_manual_reset(
         self,

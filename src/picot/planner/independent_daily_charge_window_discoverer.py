@@ -34,6 +34,7 @@ from picot.planner.independent_daily_intent_simulator import (
 from picot.planner.independent_daily_simulator import ScenarioTimeline
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
 from picot.v2.daily_pv_comparison import DailyMainPVSurplusTrigger
+from picot.v2.daily_recalculation import DailyMainRecalculationTrigger
 
 METHOD_VERSION = "independent-daily-charge-window-discoverer:v5"
 BASELINE_INTENT = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
@@ -60,7 +61,10 @@ class IndependentDailyChargeWindowDiscoverer:
         maximum_charge_input_power_w: float,
         maximum_discharge_output_power_w: float,
         retained_schedule: DailyReferenceIntentSchedule | None = None,
-        optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None,
+        optimisation_trigger: (
+            DailyMainShortfallTrigger | DailyMainPVSurplusTrigger
+            | DailyMainRecalculationTrigger | None
+        ) = None,
         protected_intervals: tuple[tuple[datetime, datetime], ...] = (),
         required_grid_until: datetime | None = None,
     ) -> DailyMainChargeWindowSet:

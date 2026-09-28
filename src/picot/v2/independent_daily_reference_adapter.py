@@ -85,6 +85,7 @@ from picot.v2.daily_bridge import (
 )
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
 from picot.v2.daily_pv_comparison import DailyMainPVSurplusTrigger, DailyPVComparison
+from picot.v2.daily_recalculation import DailyMainRecalculationTrigger
 from picot.v2.independent_daily_tariff_adapter import (
     IndependentDailyTariffAdapter,
 )
@@ -846,7 +847,10 @@ class IndependentDailyReferenceAdapter:
         assignment: DailyChargeAssignment,
         conversion_model: StorageConversionModel,
         retained_schedule: DailyReferenceIntentSchedule | None = None,
-        optimisation_trigger: DailyMainShortfallTrigger | DailyMainPVSurplusTrigger | None = None,
+        optimisation_trigger: (
+            DailyMainShortfallTrigger | DailyMainPVSurplusTrigger
+            | DailyMainRecalculationTrigger | None
+        ) = None,
         revision_schedule: DailyReferenceIntentSchedule | None = None,
     ) -> DailyMainChargeWindowSet:
         """Canonical input seam for first main-route Candidate construction.
@@ -905,6 +909,9 @@ class IndependentDailyReferenceAdapter:
             snapshot=snapshot, assignment=assignment, inputs=inputs,
             supplied=retained_schedule,
             revising_assignment_id=assignment.assignment_id if optimisation_trigger else None,
+            recalculate_free_intervals=isinstance(
+                optimisation_trigger, DailyMainRecalculationTrigger,
+            ),
         )
         if revision_schedule is not None:
             if optimisation_trigger is None or (
@@ -952,7 +959,9 @@ class IndependentDailyReferenceAdapter:
         # keeps its owner and gets its own turn; it cannot veto this day's repair.
         # Healthy retained goals and all earlier goals still have to remain feasible.
         deferred_ids: set[str] = set()
-        if isinstance(optimisation_trigger, DailyMainShortfallTrigger) and pending:
+        if isinstance(optimisation_trigger, (
+            DailyMainShortfallTrigger, DailyMainRecalculationTrigger,
+        )) and pending:
             # Use monitoring of the complete active route, not the discovery
             # baseline where the selected owner's actions have been removed.
             existing_shortfalls = {t.assignment_id for t in self.main_route_shortfalls(
@@ -1011,6 +1020,7 @@ class IndependentDailyReferenceAdapter:
         inputs: _DailyReferenceInputs, supplied: DailyReferenceIntentSchedule | None,
         revising_assignment_id: str | None = None,
         allow_uncovered_incumbent: bool = False,
+        recalculate_free_intervals: bool = False,
     ) -> tuple[DailyReferenceIntentSchedule | None, tuple[DailyRetainedMainSegment, ...]]:
         context = snapshot.daily_charge_context
         if context is None:
@@ -1140,6 +1150,13 @@ class IndependentDailyReferenceAdapter:
                     # like the feasibility trial that admitted this revision.
                     # Only challengers use this baseline; the incumbent stays exact.
                     intent = DailyStorageIntent.NOM
+            if (recalculate_free_intervals and retained_main is None
+                    and intent is not DailyStorageIntent.STORAGE_EXPORT):
+                # An explicit rebuild releases the old free-interval layout.
+                # Owned other-day charging and admitted trade remain constraints;
+                # normal discovery supplies PV capture and required grid charging.
+                intent = DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+                export_wh = 0.0
             intervals.append(DailyReferenceIntentInterval(
                 grid.starts_at, grid.ends_at, intent, storage_export_target_wh=export_wh,
             ))

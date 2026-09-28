@@ -26,6 +26,7 @@ class DailyChargeRevisionReason(StrEnum):
     NET_BALANCE_REDUCTION = "net_balance_allows_grid_reduction"
     LOAD = "additional_load_with_execution_impact"
     RESERVE = "projected_reserve_shortfall"
+    MANUAL_RECALCULATION = "explicit_user_recalculation"
 
 
 @dataclass(frozen=True, slots=True)

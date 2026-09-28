@@ -259,6 +259,73 @@ class IndependentDailyReferenceAdapter:
             owner.assignment_id, until, deficits, trigger,
         )
 
+    def committed_execution_invalidity_reasons(
+        self, *, snapshot: PlanningInputSnapshot, plan: ExecutionPlan,
+        conversion_model: StorageConversionModel,
+    ) -> tuple[str, ...]:
+        """Prove the existing execution independently of unbound future discovery.
+
+        No target is completed here. Bound main and supplemental goals still
+        use the incumbent's fresh physical checks, including a completed day's
+        remaining route when that day no longer needs its own charge segment.
+        """
+        context = snapshot.daily_charge_context
+        if context is None or context.status != "ready":
+            raise DailyReferenceInputError("committed_expectation_context_unavailable")
+        if (plan not in context.main_plans or plan.plan_id not in context.active_main_plan_ids
+                or not plan.valid_from <= snapshot.captured_at < plan.valid_until):
+            return ("committed_expectation_plan_not_due",)
+        owner = next((a for a in context.assignments
+                      if a.execution_scope_id == plan.execution_scope_id
+                      and a.route_plan_id is not None), None)
+        if owner is None:
+            return ("committed_expectation_owner_missing",)
+        assessment = self.main_charge_incumbent(
+            snapshot=snapshot, assignment=owner, conversion_model=conversion_model,
+            horizon_end=plan.valid_until,
+        )
+        invalid = [r for r in assessment.invalidity_reasons
+                   if not (owner.completed_at is not None
+                           and r == "daily_main_remaining_segments_missing")]
+        storage = snapshot.current_storage_states[0]
+        limits = next(i for i in snapshot.storage_physical_limits
+                      if i.capability_id == storage.capability_id
+                      and i.execution_scope_id == storage.execution_scope_id)
+        assert snapshot.capability_snapshot_set is not None
+        capability = next(i for i in snapshot.capability_snapshot_set.capabilities
+                          if i.capability_id == storage.capability_id
+                          and i.execution_scope_id == storage.execution_scope_id)
+        for segment in plan.segments:
+            if segment.ends_at <= snapshot.captured_at:
+                continue
+            if segment.primitive not in capability.supported_primitives:
+                invalid.append(f"unsupported_primitive:{segment.primitive.value}")
+            if (segment.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                    and segment.requested_power_w != limits.maximum_charge_input_power_w):
+                invalid.append("incumbent_charge_power_not_supported_by_fresh_simulation")
+            if (segment.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+                    and (segment.requested_power_w is None
+                         or segment.requested_power_w > limits.maximum_discharge_output_power_w)):
+                invalid.append("incumbent_discharge_power_exceeds_current_limit")
+            if (segment.soc_constraint is None or segment.soc_constraint.minimum is None
+                    or segment.soc_constraint.maximum is None
+                    or segment.soc_constraint.minimum < limits.minimum_soc
+                    or segment.soc_constraint.maximum > limits.maximum_soc):
+                invalid.append("incumbent_soc_constraints_require_revision")
+        current_until = min((a.starts_at for a in context.assignments
+                             if a.route_plan_id is None and a.starts_at > snapshot.captured_at),
+                            default=plan.valid_until)
+        if any(i.starts_at < current_until and i.deficit_wh > 1e-6 for i in energy_deficits(
+            assessment.projection, assessment.schedule, until=plan.valid_until,
+            maximum_discharge_output_power_w=limits.maximum_discharge_output_power_w,
+        )):
+            invalid.append("household_bridge_unreachable")
+        if any(i.storage_to_grid_output_wh + 1e-6 < intent.storage_export_target_wh
+               for i, intent in zip(assessment.projection.intervals,
+                                    assessment.schedule.intervals, strict=True)):
+            invalid.append("market_export_target_unreachable")
+        return tuple(dict.fromkeys(invalid))
+
     @staticmethod
     def _bridge_projection(
         snapshot: PlanningInputSnapshot, inputs: _DailyReferenceInputs,
@@ -333,13 +400,30 @@ class IndependentDailyReferenceAdapter:
                 simulations += 1
             return projections[schedule.schedule_id]
 
-        # PV capture over the bridge, individual controllable intervals, and
-        # minimum sufficient contiguous charging from each feasible start.
-        # The same interval simulator evaluates all options; no ranking takes place here.
+        # NOM requires actual forecast PV surplus. A local repair must not
+        # repaint all surrounding support intervals merely to get a PV option.
+        baseline_projection = project(baseline)
+        pv_surplus = {n for n, i in enumerate(baseline_projection.intervals)
+                      if i.usable_pv_wh > i.household_demand_wh + 1e-6}
         pv = tuple(replace(i, intent=DailyStorageIntent.NOM, storage_export_target_wh=0.0)
-                   if n in free else i
+                   if n in free and n in pv_surplus else i
                    for n, i in enumerate(baseline.intervals))
         add(pv)
+        # Standby is a household bridge option, not permission to preserve stock
+        # solely for trade. Use the same physical inputs with export removed to
+        # establish that independent household need; Evaluation still compares
+        # complete real alternatives, never this diagnostic counterfactual.
+        household_schedule = add(tuple(
+            replace(i, intent=DailyStorageIntent.NOM if n in pv_surplus
+                    else DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
+                    storage_export_target_wh=0.0)
+            if i.intent is DailyStorageIntent.STORAGE_EXPORT else i
+            for n, i in enumerate(baseline.intervals)
+        ), include=False)
+        household_need = any(i.deficit_wh > 1e-6 for i in energy_deficits(
+            project(household_schedule), household_schedule, until=trigger.next_starts_at,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+        ))
         # Direct grid support can preserve storage across a complete published
         # constant-price run, not merely one isolated simulation interval.
         runs: list[list[int]] = []
@@ -353,36 +437,47 @@ class IndependentDailyReferenceAdapter:
                 runs.append([])
             runs[-1].append(n)
             previous_price = price
-        for run in (*runs, list(free)):
-            add(tuple(replace(i, intent=DailyStorageIntent.STANDBY)
-                      if n in run else i for n, i in enumerate(pv)))
-        if revision_schedule is not None:
-            for run in runs:
-                add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT)
-                          if n in run else i for n, i in enumerate(pv)))
-        for n in free:
-            for intent in (DailyStorageIntent.GRID_REQUIREMENT, DailyStorageIntent.STANDBY):
-                add(tuple(replace(i, intent=intent) if k == n else i for k, i in enumerate(pv)))
-            consecutive: list[int] = []
-            for end in free[free.index(n):]:
-                if consecutive and end != consecutive[-1] + 1:
-                    break
-                consecutive.append(end)
-            lo, hi = 1, len(consecutive)
-            while lo < hi:
-                mid = (lo + hi) // 2
-                trial = add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT)
-                                  if k in consecutive[:mid] else i for k, i in enumerate(pv)),
-                            include=revision_schedule is None)
-                deficit = energy_deficits(project(trial), trial, until=trigger.next_starts_at,
-                                          maximum_discharge_output_power_w=
-                                          inputs.maximum_discharge_output_power_w)
-                if any(i.deficit_wh > 1e-6 for i in deficit):
-                    lo = mid + 1
-                else:
-                    hi = mid
-            add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT)
-                      if k in consecutive[:lo] else i for k, i in enumerate(pv)))
+        for surrounding in dict.fromkeys((baseline.intervals, pv)):
+            if household_need:
+                for run in (*runs, list(free)):
+                    add(tuple(replace(i, intent=DailyStorageIntent.STANDBY,
+                                      storage_export_target_wh=0.0)
+                              if n in run else i for n, i in enumerate(surrounding)))
+            if revision_schedule is not None:
+                for run in runs:
+                    add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT,
+                                      storage_export_target_wh=0.0)
+                              if n in run else i for n, i in enumerate(surrounding)))
+            for n in free:
+                intents: tuple[DailyStorageIntent, ...] = (DailyStorageIntent.GRID_REQUIREMENT,)
+                if household_need:
+                    intents += (DailyStorageIntent.STANDBY,)
+                for intent in intents:
+                    add(tuple(replace(i, intent=intent, storage_export_target_wh=0.0)
+                              if k == n else i for k, i in enumerate(surrounding)))
+                consecutive: list[int] = []
+                for end in free[free.index(n):]:
+                    if consecutive and end != consecutive[-1] + 1:
+                        break
+                    consecutive.append(end)
+                lo, hi = 1, len(consecutive)
+                while lo < hi:
+                    mid = (lo + hi) // 2
+                    trial = add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT,
+                                              storage_export_target_wh=0.0)
+                                      if k in consecutive[:mid] else i
+                                      for k, i in enumerate(surrounding)),
+                                include=revision_schedule is None)
+                    deficit = energy_deficits(project(trial), trial, until=trigger.next_starts_at,
+                                              maximum_discharge_output_power_w=
+                                              inputs.maximum_discharge_output_power_w)
+                    if any(i.deficit_wh > 1e-6 for i in deficit):
+                        lo = mid + 1
+                    else:
+                        hi = mid
+                add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT,
+                                  storage_export_target_wh=0.0)
+                          if k in consecutive[:lo] else i for k, i in enumerate(surrounding)))
         windows = []
         rejected = []
         main = tuple(DailyMainChargeSegment(
@@ -902,6 +997,8 @@ class IndependentDailyReferenceAdapter:
             if not feasible:
                 return replace(result, windows=(), status="unreachable",
                                reason="ongoing_load_requires_committed_grid_continuity")
+        if not feasible:
+            return result
         feasible = tuple(attached for w in feasible
                          if (attached := attach_supplemental_goals(w, snapshot)) is not None)
         return replace(result, windows=feasible) if feasible else replace(

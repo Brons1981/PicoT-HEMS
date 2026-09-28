@@ -1,0 +1,47 @@
+{
+  "kind": "source_verification_evidence",
+  "base_commit": "ea5a4588257e974d68d544fe0a6a0e324106b809",
+  "source_sha256": {
+    "src/picot/planner/market_revision_candidates.py": "4696741a6ff6c7d010e906deefb85a83942469a9b241006d7fa2cc93bfc7e4ec",
+    "src/picot/planner/mep_candidate_outcomes.py": "133c1f910df80ac2b20e4247d276c8b3571e5eb98758370887f6358a4fbea7ef",
+    "src/picot/v2/independent_daily_reference_adapter.py": "419d8ee122bd232dc8a673715b8ab9493c2d9dd85dda617be0f10e6d88607a38",
+    "src/picot/v2/market_execution_guard.py": "4c25c6eac928f7b5c46d5f0c8a3cde2a4c7acd64cea9bcbff8376af0c0de6880",
+    "src/picot/v2/market_rule_planning.py": "17083b6b562bb2aa9143435cc120f3e9271608ed7ede02f5d5c02fff3b3cb983",
+    "src/picot/v2/mep_canonical_pipeline.py": "09ef604d0fb9f52409c345cbce4ecdc82cd01faf4bac9f01fd95e36587d1adc2"
+  },
+  "verification": {
+    "pytest_targeted": {
+      "passed": 99,
+      "seconds": 379.47
+    },
+    "pytest_complement": {
+      "passed": 1770,
+      "skipped": 1,
+      "seconds": 344.54
+    },
+    "combined": {
+      "passed": 1869,
+      "skipped": 1,
+      "failed": 0
+    },
+    "ruff": "passed; all production sources and affected tests",
+    "mypy": "passed; 234 production source files",
+    "git_diff_check": "passed",
+    "independent_review": "two financial findings closed on final source",
+    "status": "LOCAL_VERIFIED before separately authorized dev.279 publication; no live deployment verified"
+  },
+  "release_checks": {
+    "version_packaging_architecture_passed": 27,
+    "seconds": 1.06,
+    "functional_source_hashes_unchanged": true
+  },
+  "offline_replay_checks": {
+    "original_decision_reproduced": true,
+    "repaired_version_retains_existing_plan": true,
+    "no_added_nighttime_nom_or_export_only_standby": true,
+    "conditional_followup_and_restart_keep_plan_identity": true,
+    "dashboard_and_diagnostic_sizes_within_existing_limits": true,
+    "live_verified": false,
+    "note": "Detailed diagnostic payload, household settings, recorded schedules and financial observations are excluded from this public evidence."
+  }
+}

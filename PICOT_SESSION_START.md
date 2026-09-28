@@ -8,6 +8,20 @@ This file is a routing index and guardrail.  The linked Accepted ADR files are
 the architectural authority.  Current code, tests, comments, diagnostics and
 earlier assistant memory are evidence, but they do not redefine ownership.
 
+## Begrensd MEP-herstel — release dev.279, 2026-09-28
+
+Voor het latere, om 22:23 goedgekeurde lokale hersteltraject: lees eerst
+`docs/development_log/2026-09-28-mep-recovery-boundaries.md` en
+`docs/architecture/ADR-037.21-bounded-recovery-and-execution-continuity.md`.
+Vijf bewezen grenzen zijn in de bestaande keten lokaal hersteld en gezamenlijk
+geverifieerd: 1.869 tests geslaagd, één overgeslagen; typecontrole, onafhankelijke
+review, diagnose-replay en herstartcontrole geslaagd. De oorspronkelijke code
+reproduceert het opgenomen plan van 19:01 exact; het herstel behoudt de eerdere
+route zonder extra nacht-NOM of exportgerichte standby. De werkbranch is
+`fix/mep-recovery-boundaries`. Alex heeft om 23:04 Europe/Amsterdam afzonderlijk
+release dev.279 aangevraagd via PR en CI. Installatie en livecontrole volgen
+afzonderlijk.
+
 ## Dashboard bij grote marktroutevergelijking — lokaal, 2026-09-28
 
 Alex heeft om 20:17 Europe/Amsterdam de gerichte dashboardfix goedgekeurd.

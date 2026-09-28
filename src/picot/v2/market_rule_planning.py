@@ -10,6 +10,8 @@ from hashlib import sha256
 
 from picot.domain.candidate import (
     Candidate,
+    CandidateExclusion,
+    CandidateExclusionKind,
     CandidateFamily,
     CandidateSet,
 )
@@ -189,6 +191,7 @@ def market_rule_portfolio(
         objectives=(WeightedObjective(ObjectiveKind.FINANCIAL_RESULT, ObjectiveWeight(100)),),
     )
     candidates, paths, outcomes, evidence, reasons = [], [], [], [], []
+    exclusions: list[CandidateExclusion] = []
     recovery = tuple(
         MarketRecoverySegment(a.assignment_id, min(s.starts_at for s in a.main_segments),
                               max(s.ends_at for s in a.main_segments), storage.usable_capacity_wh)
@@ -263,7 +266,7 @@ def market_rule_portfolio(
         if not any(r.starts_at >= last and r.ends_at <= plan.valid_until for r in recovery):
             reasons.append("future_owned_charge_does_not_prove_full_recovery")
             continue
-        candidate_id = identity(
+        export_candidate_id = identity(
             "market-candidate", f"{snapshot.snapshot_id}|{assignment.assignment_id}|{first}|{last}"
         )
         refined = adapter.build_inputs(
@@ -319,13 +322,15 @@ def market_rule_portfolio(
             )
         if not price_coverage_complete:
             continue
-        proposed_schedule = replace(schedule, schedule_id=candidate_id, intervals=tuple(parts))
+        proposed_schedule = replace(
+            schedule, schedule_id=export_candidate_id, intervals=tuple(parts)
+        )
         proposed = adapter._bridge_projection(snapshot, refined, proposed_schedule, conversion)
         spread = replace(seeds[0], export_window=MarketPriceWindow(tuple(price_parts), False))
         if not spread.meets_spread:
             reasons.append("user_spread_not_met")
             continue
-        charge_window = None
+        charge_windows: tuple[DailyMainChargeWindow | None, ...] = (None,)
         charge_trigger = None
 
         def main_peak(
@@ -356,6 +361,11 @@ def market_rule_portfolio(
                 and main_peak(a) + 1e-6 < storage.usable_capacity_wh
             ),
             None,
+        )
+        actual_tariffs = tariffs_adapter.build(
+            snapshot,
+            horizon_end=plan.valid_until,
+            saldering_energy_tax_credit_enabled=saldering_energy_tax_credit_enabled,
         )
         if short is not None:
             assert short.route_plan_id is not None
@@ -432,251 +442,279 @@ def market_rule_portfolio(
             if not revised.windows:
                 reasons.append("market_and_charge_physically_unreachable")
                 continue
-            charge_prices = tariffs_adapter.build(
-                snapshot,
-                horizon_end=plan.valid_until,
-                saldering_energy_tax_credit_enabled=saldering_energy_tax_credit_enabled,
-            )
             charge_portfolio = produce_main_charge_portfolio(
                 snapshot=snapshot,
                 windows=revised,
-                tariffs=charge_prices,
+                tariffs=actual_tariffs,
                 opportunity_ids=opportunity_ids,
             )
-            charge_result = EvaluationEngine().evaluate(
-                charge_portfolio.candidate_set,
-                charge_portfolio.strategy,
-                charge_portfolio.outcome_set,
-                created_at=snapshot.captured_at,
+            # Preserve canonical capability and feasibility checks, but do not
+            # choose a charge winner by acquisition price. Only complete market
+            # outcomes may decide among these export/recovery combinations.
+            valid_ids = {
+                outcome.candidate_id for outcome in charge_portfolio.outcome_set.outcomes
+                if outcome.validity is CandidateValidity.VALID
+            }
+            charge_windows = tuple(
+                row.window for row in charge_portfolio.sources
+                if row.candidate_id in valid_ids and row.window is not None
             )
-            if charge_result.winning_energy_path is None:
-                reasons.append("market_charge_optimisation_has_no_winner")
+            for outcome in charge_portfolio.outcome_set.outcomes:
+                if outcome.validity is CandidateValidity.INVALID:
+                    reasons.extend(outcome.invalidity_reasons)
+                    exclusions.append(CandidateExclusion(
+                        CandidateFamily.MARKET_ROUTE,
+                        CandidateExclusionKind.HARD_BOUNDARY,
+                        ",".join(outcome.invalidity_reasons),
+                        (export_candidate_id, outcome.candidate_id, assignment.assignment_id),
+                    ))
+        for charge_window in charge_windows:
+            if planning_checkpoint is not None:
+                planning_checkpoint()
+            candidate_id = export_candidate_id
+            if charge_window is not None:
+                candidate_id = identity(
+                    "market-candidate",
+                    f"{export_candidate_id}|{charge_window.schedule.schedule_id}",
+                )
+                proposed = charge_window.projection
+                proposed_schedule = charge_window.schedule
+            recovery_for_candidate = (
+                recovery
+                if charge_window is None
+                else tuple(r for r in recovery if r.assignment_id != charge_window.assignment_id)
+                + (MarketRecoverySegment(
+                    charge_window.assignment_id,
+                    min(s.starts_at for s in charge_window.main_segments),
+                    max(s.ends_at for s in charge_window.main_segments),
+                    storage.usable_capacity_wh,
+                ),)
+            )
+            admission = assess_market_route(
+                assignment=assignment,
+                spread=spread,
+                baseline=baseline,
+                proposed=proposed,
+                minimum_storage_energy_wh=refined.minimum_storage_energy_wh,
+                recovery_segments=recovery_for_candidate,
+                tariffs=actual_tariffs,
+                wear_eur_per_export_kwh=wear_eur_per_export_kwh,
+            )
+            if admission.status != "admissible":
+                reasons.append(admission.reason)
+                exclusion_kind = CandidateExclusionKind.HARD_BOUNDARY
+                if admission.reason in {
+                    "user_spread_not_met", "recovery_net_margin_not_met",
+                    "daily_market_assignment_already_closed",
+                }:
+                    exclusion_kind = CandidateExclusionKind.USER_RULE
+                elif admission.reason == "requested_export_not_physically_deliverable":
+                    exclusion_kind = CandidateExclusionKind.OBJECTIVELY_IMPOSSIBLE
+                exclusions.append(CandidateExclusion(
+                    CandidateFamily.MARKET_ROUTE,
+                    exclusion_kind,
+                    admission.reason,
+                    (candidate_id, assignment.assignment_id),
+                ))
                 continue
-            charge_window = next(
-                row.window
-                for row in charge_portfolio.sources
-                if row.candidate_id == charge_result.record.winning_candidate_id
-                and row.window is not None
-            )
-            proposed = charge_window.projection
-            proposed_schedule = charge_window.schedule
-        actual_tariffs = tariffs_adapter.build(
-            snapshot,
-            horizon_end=plan.valid_until,
-            saldering_energy_tax_credit_enabled=saldering_energy_tax_credit_enabled,
-        )
-        recovery_for_candidate = (
-            recovery
-            if charge_window is None
-            else tuple(r for r in recovery if r.assignment_id != charge_window.assignment_id)
-            + (MarketRecoverySegment(
-                charge_window.assignment_id,
-                min(s.starts_at for s in charge_window.main_segments),
-                max(s.ends_at for s in charge_window.main_segments),
-                storage.usable_capacity_wh,
-            ),)
-        )
-        admission = assess_market_route(
-            assignment=assignment,
-            spread=spread,
-            baseline=baseline,
-            proposed=proposed,
-            minimum_storage_energy_wh=refined.minimum_storage_energy_wh,
-            recovery_segments=recovery_for_candidate,
-            tariffs=actual_tariffs,
-            wear_eur_per_export_kwh=wear_eur_per_export_kwh,
-        )
-        if admission.status != "admissible":
-            reasons.append(admission.reason)
-            continue
-        assert admission.incremental_net_profit_eur is not None
-        assert admission.recovery_assignment_id is not None
-        assert admission.recovery_ends_at is not None
-        recovery_evidence = tuple(dict.fromkeys((
-            assignment.assignment_id, admission.recovery_assignment_id,
-            *(e for t in actual_tariffs.intervals if t.ends_at <= admission.recovery_ends_at
-              for e in t.evidence_ids),
-        )))
-        if not goals_reached(proposed, charge_window):
-            reasons.append("market_and_retained_charge_goals_unreachable")
-            continue
-        segments: list[PathSegment] = []
-        segment_energy: list[tuple[str, float]] = []
-        for old in plan.segments:
-            cuts = sorted(
-                {old.starts_at, old.ends_at}
-                | {
-                    t
-                    for p in price_parts
-                    for t in (p.starts_at, p.ends_at)
-                    if old.starts_at < t < old.ends_at
-                }
-            )
-            for left, right in zip(cuts, cuts[1:], strict=False):
-                price_part = next(
-                    (p for p in price_parts if p.starts_at == left and p.ends_at == right), None
+            assert admission.incremental_net_profit_eur is not None
+            assert admission.recovery_assignment_id is not None
+            assert admission.recovery_ends_at is not None
+            recovery_evidence = tuple(dict.fromkeys((
+                assignment.assignment_id, admission.recovery_assignment_id,
+                *(e for t in actual_tariffs.intervals if t.ends_at <= admission.recovery_ends_at
+                  for e in t.evidence_ids),
+            )))
+            if not goals_reached(proposed, charge_window):
+                reasons.append("market_and_retained_charge_goals_unreachable")
+                exclusions.append(CandidateExclusion(
+                    CandidateFamily.MARKET_ROUTE,
+                    CandidateExclusionKind.OBJECTIVELY_IMPOSSIBLE,
+                    "market_and_retained_charge_goals_unreachable",
+                    (candidate_id, assignment.assignment_id),
+                ))
+                continue
+            segments: list[PathSegment] = []
+            segment_energy: list[tuple[str, float]] = []
+            for old in plan.segments:
+                cuts = sorted(
+                    {old.starts_at, old.ends_at}
+                    | {
+                        t
+                        for p in price_parts
+                        for t in (p.starts_at, p.ends_at)
+                        if old.starts_at < t < old.ends_at
+                    }
                 )
-                is_trade = price_part is not None
-                origin = old.retained_execution_origin or (
-                    RetainedExecutionOrigin(plan.plan_id, old.segment_id)
-                    if old.main_assignment_id
-                    else None
-                )
-                source_id = identity("market-path-segment", f"{candidate_id}|{left}|{right}")
-                segments.append(
-                    PathSegment(
-                        source_id,
-                        len(segments) + 1,
-                        plan.execution_scope_id,
-                        left,
-                        right,
-                        ExecutionPrimitive.DISCHARGE_AT_POWER if is_trade else old.primitive,
-                        old.capability_id,
-                        assignment.assignment_id if is_trade else old.purpose,
-                        (assignment.assignment_id, proposed_schedule.schedule_id),
-                        requested_power_w=limits.maximum_discharge_output_power_w
-                        if is_trade
-                        else old.requested_power_w,
-                        soc_constraint=old.soc_constraint,
-                        energy_profile_id=old.energy_profile_id,
-                        charge_source_policy=None if is_trade else old.charge_source_policy,
-                        main_assignment_id=old.main_assignment_id,
-                        retained_execution_origin=origin,
+                for left, right in zip(cuts, cuts[1:], strict=False):
+                    price_part = next(
+                        (p for p in price_parts if p.starts_at == left and p.ends_at == right), None
                     )
-                )
-                if price_part is not None:
-                    segment_energy.append((source_id, price_part.grid_energy_wh))
-        confidence = min(i.confidence for i in proposed.intervals)
-        states = (
-            ProjectedEnergyState(
-                at=proposed.intervals[0].starts_at,
-                confidence=confidence,
-                storage_energy_wh=storage.current_stored_energy_wh,
-                battery_soc=storage.current_soc,
-            ),
-        ) + tuple(
-            ProjectedEnergyState(
-                at=i.ends_at,
-                confidence=i.confidence,
-                storage_energy_wh=i.storage_energy_at_end_wh,
-                battery_soc=min(1, i.storage_energy_at_end_wh / storage.usable_capacity_wh),
-            )
-            for i in proposed.intervals
-        )
-        path = EnergyPath(
-            identity("market-path", candidate_id),
-            snapshot.snapshot_id,
-            CandidateFamily.MARKET_ROUTE,
-            plan.valid_from,
-            plan.valid_until,
-            tuple(segments),
-            states,
-            opportunity_ids,
-            (assignment.rule.rule_id,),
-            (storage.capability_id,),
-            strategy.strategy_version,
-            plan.mapping_version,
-            ("user spread filter; financial result includes actual recovery",),
-            confidence,
-        )
-        if charge_window is not None:
-            path = _main_charge_energy_path(
-                snapshot=snapshot,
-                window=charge_window,
-                candidate_id=candidate_id,
-                family=CandidateFamily.MARKET_ROUTE,
-                confidence=confidence,
-                opportunity_ids=opportunity_ids,
-                strategy_version=strategy.strategy_version,
-            )
-            path = replace(
-                path,
-                segments=tuple(
-                    replace(segment, purpose=assignment.assignment_id)
-                    if segment.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
-                    and first <= segment.starts_at < segment.ends_at <= last
-                    else segment
-                    for segment in path.segments
+                    is_trade = price_part is not None
+                    origin = old.retained_execution_origin or (
+                        RetainedExecutionOrigin(plan.plan_id, old.segment_id)
+                        if old.main_assignment_id
+                        else None
+                    )
+                    source_id = identity("market-path-segment", f"{candidate_id}|{left}|{right}")
+                    segments.append(
+                        PathSegment(
+                            source_id,
+                            len(segments) + 1,
+                            plan.execution_scope_id,
+                            left,
+                            right,
+                            ExecutionPrimitive.DISCHARGE_AT_POWER if is_trade else old.primitive,
+                            old.capability_id,
+                            assignment.assignment_id if is_trade else old.purpose,
+                            (assignment.assignment_id, proposed_schedule.schedule_id),
+                            requested_power_w=limits.maximum_discharge_output_power_w
+                            if is_trade
+                            else old.requested_power_w,
+                            soc_constraint=old.soc_constraint,
+                            energy_profile_id=old.energy_profile_id,
+                            charge_source_policy=None if is_trade else old.charge_source_policy,
+                            main_assignment_id=old.main_assignment_id,
+                            retained_execution_origin=origin,
+                        )
+                    )
+                    if price_part is not None:
+                        segment_energy.append((source_id, price_part.grid_energy_wh))
+            confidence = min(i.confidence for i in proposed.intervals)
+            states = (
+                ProjectedEnergyState(
+                    at=proposed.intervals[0].starts_at,
+                    confidence=confidence,
+                    storage_energy_wh=storage.current_stored_energy_wh,
+                    battery_soc=storage.current_soc,
                 ),
-            )
-            segment_energy = [
-                (
-                    segment.segment_id,
-                    sum(
-                        part.grid_energy_wh
-                        * (
-                            min(part.ends_at, segment.ends_at)
-                            - max(part.starts_at, segment.starts_at)
-                        ).total_seconds()
-                        / (part.ends_at - part.starts_at).total_seconds()
-                        for part in price_parts
-                        if part.starts_at < segment.ends_at and segment.starts_at < part.ends_at
-                    ),
+            ) + tuple(
+                ProjectedEnergyState(
+                    at=i.ends_at,
+                    confidence=i.confidence,
+                    storage_energy_wh=i.storage_energy_at_end_wh,
+                    battery_soc=min(1, i.storage_energy_at_end_wh / storage.usable_capacity_wh),
                 )
-                for segment in path.segments
-                if segment.purpose == assignment.assignment_id
-            ]
-        path = replace(path, assumptions=(*path.assumptions,
-            f"market_recovery_assignment:{admission.recovery_assignment_id}",
-            f"market_recovery_ends_at:{admission.recovery_ends_at.isoformat()}",
-            "market_result:incremental_cash_after_wear",
-        ))
-        candidates.append(
-            Candidate(
-                candidate_id,
+                for i in proposed.intervals
+            )
+            path = EnergyPath(
+                identity("market-path", candidate_id),
                 snapshot.snapshot_id,
-                path.family,
-                path.path_id,
-                path.opportunity_ids,
-                path.constraint_ids,
-                path.strategy_version,
-                path.capability_ids,
-                path.assumptions,
+                CandidateFamily.MARKET_ROUTE,
+                plan.valid_from,
+                plan.valid_until,
+                tuple(segments),
+                states,
+                opportunity_ids,
+                (assignment.rule.rule_id,),
+                (storage.capability_id,),
+                strategy.strategy_version,
+                plan.mapping_version,
+                ("user spread filter; financial result includes actual recovery",),
                 confidence,
             )
-        )
-        paths.append(path)
-        outcomes.append(
-            CandidateOutcome(
-                candidate_id,
-                (
-                    ObjectiveOutcome(
-                        ObjectiveKind.FINANCIAL_RESULT,
-                        admission.incremental_net_profit_eur,
-                        ComparisonDirection.HIGHER_IS_BETTER,
-                        "EUR",
-                        confidence,
-                        recovery_evidence,
+            if charge_window is not None:
+                path = _main_charge_energy_path(
+                    snapshot=snapshot,
+                    window=charge_window,
+                    candidate_id=candidate_id,
+                    family=CandidateFamily.MARKET_ROUTE,
+                    confidence=confidence,
+                    opportunity_ids=opportunity_ids,
+                    strategy_version=strategy.strategy_version,
+                )
+                path = replace(
+                    path,
+                    segments=tuple(
+                        replace(segment, purpose=assignment.assignment_id)
+                        if segment.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+                        and first <= segment.starts_at < segment.ends_at <= last
+                        else segment
+                        for segment in path.segments
                     ),
-                ),
-                confidence,
-                None,
-                len(segments),
-                max(0, len(segments) - 1),
-                "market-segments:v1",
-                CandidateValidity.VALID,
-                evidence_ids=recovery_evidence,
+                )
+                segment_energy = [
+                    (
+                        segment.segment_id,
+                        sum(
+                            part.grid_energy_wh
+                            * (
+                                min(part.ends_at, segment.ends_at)
+                                - max(part.starts_at, segment.starts_at)
+                            ).total_seconds()
+                            / (part.ends_at - part.starts_at).total_seconds()
+                            for part in price_parts
+                            if part.starts_at < segment.ends_at and segment.starts_at < part.ends_at
+                        ),
+                    )
+                    for segment in path.segments
+                    if segment.purpose == assignment.assignment_id
+                ]
+            path = replace(path, assumptions=(*path.assumptions,
+                f"market_recovery_assignment:{admission.recovery_assignment_id}",
+                f"market_recovery_ends_at:{admission.recovery_ends_at.isoformat()}",
+                "market_result:incremental_cash_after_wear",
+            ))
+            candidates.append(
+                Candidate(
+                    candidate_id,
+                    snapshot.snapshot_id,
+                    path.family,
+                    path.path_id,
+                    path.opportunity_ids,
+                    path.constraint_ids,
+                    path.strategy_version,
+                    path.capability_ids,
+                    path.assumptions,
+                    confidence,
+                )
             )
-        )
-        traded = tuple(i for i in proposed.intervals if first <= i.starts_at < i.ends_at <= last)
-        battery_draw = traded[0].storage_energy_at_start_wh - traded[-1].storage_energy_at_end_wh
-        evidence.append(
-            MarketCandidateEvidence(
-                candidate_id,
-                spread,
-                admission,
-                tuple(segment_energy),
-                charge_window,
-                charge_trigger,
-                battery_draw,
+            paths.append(path)
+            outcomes.append(
+                CandidateOutcome(
+                    candidate_id,
+                    (
+                        ObjectiveOutcome(
+                            ObjectiveKind.FINANCIAL_RESULT,
+                            admission.incremental_net_profit_eur,
+                            ComparisonDirection.HIGHER_IS_BETTER,
+                            "EUR",
+                            confidence,
+                            recovery_evidence,
+                        ),
+                    ),
+                    confidence,
+                    None,
+                    len(segments),
+                    max(0, len(segments) - 1),
+                    "market-segments:v1",
+                    CandidateValidity.VALID,
+                    evidence_ids=recovery_evidence,
+                )
             )
-        )
+            traded = tuple(
+                i for i in proposed.intervals if first <= i.starts_at < i.ends_at <= last
+            )
+            battery_draw = (
+                traded[0].storage_energy_at_start_wh - traded[-1].storage_energy_at_end_wh
+            )
+            evidence.append(
+                MarketCandidateEvidence(
+                    candidate_id,
+                    spread,
+                    admission,
+                    tuple(segment_energy),
+                    charge_window,
+                    charge_trigger,
+                    battery_draw,
+                )
+            )
     candidate_set = CandidateSet(
         snapshot.snapshot_id,
         strategy.strategy_version,
         tuple(candidates),
         tuple(paths),
-        (),
+        tuple(exclusions),
     )
     outcome_set = CandidateOutcomeSet(
         snapshot.snapshot_id,

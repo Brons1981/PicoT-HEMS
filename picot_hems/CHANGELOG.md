@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.279
+
+- Een marktvariant zonder voldoende herstelbewijs blokkeert niet meer alle geldige alternatieven. PicoT vergelijkt herstel en financieel resultaat per kandidaat, met aantoonbaar gelijke voorraad en herstelgrens.
+- Volledige combinaties van laden en export blijven beschikbaar voor de bestaande eindvergelijking. Een voorselectie op alleen laadkosten kan een geldige marktroute niet meer verdringen.
+- De afsluiting van een oude exportopdracht overschrijft geen geldige nieuwe laad- of ontlaadactie. Ontbrekende afsluitmetingen blijven zichtbaar, ook na een herstart.
+- Lokale overbrugging behoudt de omliggende modi. Extra NOM vraagt verwacht PV-overschot; standby vraagt een zelfstandige huishoudelijke reden en wordt niet toegevoegd om alleen export mogelijk te maken.
+- Een uitsluitend toekomstig onhaalbaar dagdoel onderbreekt geen aantoonbaar geldige huidige uitvoering. Het toekomstige doel blijft zichtbaar onopgelost; de bestaande reserve-, veiligheids- en 100%-controles blijven gelden.
+- De opgenomen situatie van 28 september behoudt in de replay de eerdere route zonder extra nacht-NOM of exportgerichte standby. Lokale verificatie: 1.869 tests geslaagd, één bestaande optionele test overgeslagen; livegedrag volgt na installatie.
+
 ## 2.0.0-dev.278
 
 - Herstelt een leeg dashboard bij grote marktroutevergelijkingen. Gedeelde bronverwijzingen worden compact en verliesvrij doorgegeven; alle alternatieven, bedragen en afwijsredenen blijven beschikbaar.

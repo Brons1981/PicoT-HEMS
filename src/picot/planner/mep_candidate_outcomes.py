@@ -21,7 +21,11 @@ from picot.domain.candidate import (
 from picot.domain.candidate import (
     CandidateSet as DomainCandidateSet,
 )
-from picot.domain.capability_snapshot import CapabilityAvailability, CapabilityHealth
+from picot.domain.capability_snapshot import (
+    CapabilityAvailability,
+    CapabilityHealth,
+    LogicalCapabilitySnapshot,
+)
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.daily_reference_candidate import (
     DailyReferenceCandidate,
@@ -60,6 +64,7 @@ from picot.domain.evaluation import (
     ComparisonDirection,
     ObjectiveOutcome,
 )
+from picot.domain.execution_plan import ExecutionPlanSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.market_revision_comparison import (
     MarketRevisionCandidateEvidence,
@@ -92,6 +97,7 @@ from picot.v2.contracts import (
     ProjectedHouseholdEnergyBalance,
     ProjectedHouseholdEnergyBalanceInterval,
     StorageEnergyRequirement,
+    StoragePhysicalLimits,
 )
 from picot.v2.energy_requirements import derive_storage_energy_requirement
 from picot.v2.independent_daily_reference_adapter import (
@@ -1404,6 +1410,42 @@ class MainChargeComparablePortfolio:
     market_revision_evidence: tuple[MarketRevisionCandidateEvidence, ...] = ()
 
 
+def _main_charge_segment_invalidity(
+    segments: tuple[PathSegment | ExecutionPlanSegment, ...],
+    capability: LogicalCapabilitySnapshot, limits: StoragePhysicalLimits, *, incumbent: bool,
+) -> tuple[str, ...]:
+    """One canonical check for comparison references and final outcomes alike."""
+    invalid = tuple(sorted({
+        f"unsupported_primitive:{s.primitive.value}"
+        for s in segments if s.primitive not in capability.supported_primitives
+    }))
+    if (capability.availability is not CapabilityAvailability.AVAILABLE
+            or capability.health is not CapabilityHealth.HEALTHY):
+        invalid += ("storage_capability_unavailable",)
+    if limits.maximum_soc < 1.0:
+        invalid += ("configured_maximum_conflicts_with_daily_100_percent",)
+    if not incumbent:
+        return invalid
+    if any(s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+           and s.requested_power_w is not None
+           and s.requested_power_w > limits.maximum_charge_input_power_w for s in segments):
+        invalid += ("incumbent_charge_power_exceeds_current_limit",)
+    if any(s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+           and s.requested_power_w != limits.maximum_charge_input_power_w for s in segments):
+        invalid += ("incumbent_charge_power_not_supported_by_fresh_simulation",)
+    if any(s.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
+           and (s.requested_power_w is None
+                or s.requested_power_w > limits.maximum_discharge_output_power_w)
+           for s in segments):
+        invalid += ("incumbent_discharge_power_exceeds_current_limit",)
+    if any(s.soc_constraint is None or s.soc_constraint.minimum is None
+           or s.soc_constraint.maximum is None
+           or s.soc_constraint.minimum < limits.minimum_soc
+           or s.soc_constraint.maximum > limits.maximum_soc for s in segments):
+        invalid += ("incumbent_soc_constraints_require_revision",)
+    return invalid
+
+
 def produce_main_charge_portfolio(
     *,
     snapshot: PlanningInputSnapshot,
@@ -1423,6 +1465,18 @@ def produce_main_charge_portfolio(
     ):
         raise ValueError("main charge capability lineage must match the snapshot")
     strategy = _strategy(snapshot)
+    storage = snapshot.current_storage_states[0]
+    limits = next(item for item in snapshot.storage_physical_limits
+                  if item.execution_scope_id == storage.execution_scope_id
+                  and item.capability_id == storage.capability_id)
+    capability = next(item for item in snapshot.capability_snapshot_set.capabilities
+                      if item.execution_scope_id == storage.execution_scope_id
+                      and item.capability_id == storage.capability_id)
+    incumbent_invalidity = (() if incumbent is None else incumbent.invalidity_reasons
+        + _main_charge_segment_invalidity(tuple(
+            s for s in incumbent.plan.segments if s.ends_at > incumbent.schedule.horizon_start
+            and s.starts_at < incumbent.schedule.horizon_end
+        ), capability, limits, incumbent=True))
     market_basis = windows.market_revision
     financial_market_comparison = (market_basis is not None and market_basis.horizon_complete
                                    and not market_basis.unplanned_assignment_ids)
@@ -1436,18 +1490,72 @@ def produce_main_charge_portfolio(
         if incumbent is None:
             raise ValueError("market revision requires a freshly simulated incumbent")
     recovery = None
+    recovered_schedule_ids: set[str] = set()
     if financial_market_comparison and market_basis is not None:
-        projections = tuple(w.projection for w in windows.windows)
-        if incumbent is not None and not incumbent.invalidity_reasons:
-            projections += (incumbent.projection,)
-        recovery = common_market_recovery(
-            projections=projections,
-            recovery_segments=tuple(MarketRecoverySegment(
+        assert incumbent is not None
+        # The owned charge cycle fixes the comparison boundary. Each alternative
+        # supplies its own proof; an unrelated failed alternative has no veto.
+        segments = tuple(MarketRecoverySegment(
                 market_basis.recovery_assignment_id or market_basis.assignment_id, start, end,
                 snapshot.current_storage_states[0].usable_capacity_wh,
-            ) for start, end in market_basis.recovery_intervals),
-            after=max(end for _, end in market_basis.export_intervals),
-        )
+            ) for start, end in market_basis.recovery_intervals)
+        after = max(end for _, end in market_basis.export_intervals)
+        reference_valid = not incumbent_invalidity
+        if reference_valid:
+            recovery = common_market_recovery(
+                projections=(incumbent.projection,), recovery_segments=segments, after=after,
+            )
+            if recovery is not None:
+                recovered_schedule_ids.add(incumbent.schedule.schedule_id)
+        else:
+            # An invalid incumbent supplies neither savings nor a stock value.
+            # Its repairs still share the owned, unchanged recovery cycle.
+            recovery = next((s for s in sorted(segments, key=lambda s: s.ends_at)
+                             if s.starts_at >= after), None)
+        if recovery is not None:
+            reference_projection = incumbent.projection if reference_valid else None
+            recovery_intents = tuple(i for i in incumbent.schedule.intervals
+                                     if i.starts_at < recovery.ends_at
+                                     and i.ends_at > recovery.starts_at)
+            recovery_input = tuple((i.starts_at, i.ends_at, i.household_demand_wh, i.usable_pv_wh)
+                                   for i in incumbent.projection.intervals
+                                   if i.starts_at < recovery.ends_at
+                                   and i.ends_at > recovery.starts_at)
+            for alternative in windows.windows:
+                if (tuple(i for i in alternative.schedule.intervals
+                          if i.starts_at < recovery.ends_at and i.ends_at > recovery.starts_at)
+                        != recovery_intents
+                        or tuple((i.starts_at, i.ends_at, i.household_demand_wh, i.usable_pv_wh)
+                                 for i in alternative.projection.intervals
+                                 if i.starts_at < recovery.ends_at
+                                 and i.ends_at > recovery.starts_at) != recovery_input
+                        or _main_charge_segment_invalidity((), capability, limits, incumbent=False)
+                        or any(_primitive(i.intent) not in capability.supported_primitives
+                               for i in alternative.schedule.intervals)
+                        or min(min(i.storage_energy_at_start_wh, i.storage_energy_at_end_wh)
+                               for i in alternative.projection.intervals) + 1e-6
+                        < limits.minimum_soc * storage.usable_capacity_wh):
+                    continue
+                if common_market_recovery(
+                    projections=(alternative.projection,),
+                    recovery_segments=(recovery,), after=after,
+                ) is None:
+                    continue
+                # With identical input and recovery actions, stored energy is
+                # the simulator's only carried state. Once both paths reach
+                # full they coincide, including subsequent household use.
+                # This is a physical reference, never a financial winner or a
+                # savings baseline for an invalid incumbent. Check equality
+                # explicitly; full stock at the cycle's end is not required.
+                if reference_projection is None:
+                    reference_projection = alternative.projection
+                if common_market_recovery(
+                    projections=(alternative.projection, reference_projection),
+                    recovery_segments=(recovery,), after=after,
+                ) is not None:
+                    recovered_schedule_ids.add(alternative.schedule.schedule_id)
+            if not recovered_schedule_ids:
+                recovery = None
     financial_market_comparison = recovery is not None
     if market_basis is not None and recovery is None:
         incomplete_comparison += ("market_recovery_not_proven",)
@@ -1456,19 +1564,6 @@ def produce_main_charge_portfolio(
             strategy, mapping_version=strategy.mapping_version + ";ADR-019.6",
             objectives=(WeightedObjective(ObjectiveKind.FINANCIAL_RESULT, ObjectiveWeight(1000)),),
         )
-    storage = snapshot.current_storage_states[0]
-    limits = next(
-        item
-        for item in snapshot.storage_physical_limits
-        if item.execution_scope_id == storage.execution_scope_id
-        and item.capability_id == storage.capability_id
-    )
-    capability = next(
-        item
-        for item in snapshot.capability_snapshot_set.capabilities
-        if item.execution_scope_id == storage.execution_scope_id
-        and item.capability_id == storage.capability_id
-    )
     candidates: list[DomainCandidate] = []
     paths: list[DomainEnergyPath] = []
     outcomes: list[DomainCandidateOutcome] = []
@@ -1481,7 +1576,8 @@ def produce_main_charge_portfolio(
     if incumbent is not None:
         compared += (incumbent,)
     incumbent_result = None
-    if market_basis is not None and incumbent is not None and recovery is not None:
+    if (market_basis is not None and incumbent is not None and recovery is not None
+            and incumbent.schedule.schedule_id in recovered_schedule_ids):
         incumbent_result = settlement.settle_planning_basis(
             projection=incumbent.projection, tariffs=tariffs, horizon_end=recovery.ends_at,
         ).cash_result_eur - settlement.storage_discharge_cost(
@@ -1564,47 +1660,13 @@ def produce_main_charge_portfolio(
             )
         )
         paths.append(path)
-        invalid = tuple(
-            sorted(
-                {
-                    f"unsupported_primitive:{s.primitive.value}"
-                    for s in path.segments
-                    if s.primitive not in capability.supported_primitives
-                }
-            )
+        invalid = _main_charge_segment_invalidity(
+            path.segments, capability, limits, incumbent=False,
         )
-        if (
-            capability.availability is not CapabilityAvailability.AVAILABLE
-            or capability.health is not CapabilityHealth.HEALTHY
-        ):
-            invalid += ("storage_capability_unavailable",)
-        if limits.maximum_soc < 1.0:
-            invalid += ("configured_maximum_conflicts_with_daily_100_percent",)
         if isinstance(window, DailyMainRejectedWindow):
             invalid += window.invalidity_reasons
         if isinstance(window, DailyMainIncumbentAssessment):
-            invalid += window.invalidity_reasons
-            if any(s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
-                   and s.requested_power_w is not None
-                   and s.requested_power_w > limits.maximum_charge_input_power_w
-                   for s in path.segments):
-                invalid += ("incumbent_charge_power_exceeds_current_limit",)
-            if any(s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
-                   and s.requested_power_w != limits.maximum_charge_input_power_w
-                   for s in path.segments):
-                invalid += ("incumbent_charge_power_not_supported_by_fresh_simulation",)
-            if any(s.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
-                   and (s.requested_power_w is None
-                        or s.requested_power_w > limits.maximum_discharge_output_power_w)
-                   for s in path.segments):
-                invalid += ("incumbent_discharge_power_exceeds_current_limit",)
-            if any(s.soc_constraint is None
-                   or s.soc_constraint.minimum is None
-                   or s.soc_constraint.maximum is None
-                   or s.soc_constraint.minimum < limits.minimum_soc
-                   or s.soc_constraint.maximum > limits.maximum_soc
-                   for s in path.segments):
-                invalid += ("incumbent_soc_constraints_require_revision",)
+            invalid = incumbent_invalidity
         intervals = window.projection.intervals
         wear = 0.0
         if market_basis is not None:
@@ -1629,6 +1691,10 @@ def produce_main_charge_portfolio(
             if not isinstance(window, DailyMainIncumbentAssessment):
                 if export_changed:
                     invalid += incomplete_comparison
+            if financial_market_comparison and window.schedule.schedule_id not in (
+                recovered_schedule_ids
+            ):
+                invalid += ("market_recovery_not_proven",)
         price = financial.acquisition_eur_per_stored_kwh
         objectives = _objective_outcomes(
             financial=financial.cash_result_eur,
@@ -1646,7 +1712,7 @@ def produce_main_charge_portfolio(
             objectives = (ObjectiveOutcome(
                 ObjectiveKind.FINANCIAL_RESULT, round(market_financial.cash_result_eur - wear, 12),
                 ComparisonDirection.HIGHER_IS_BETTER, "EUR", confidence, evidence,
-            ),)
+            ),) if window.schedule.schedule_id in recovered_schedule_ids else ()
         elif windows.purpose == "bridge":
             objectives = _objective_outcomes(
                 financial=financial.cash_result_eur,
@@ -1722,7 +1788,7 @@ def produce_main_charge_portfolio(
                     for i in valued_intervals), wear, comparable_result,
                 comparable_result - incumbent_result
                 if comparable_result is not None and incumbent_result is not None
-                and incumbent is not None and not incumbent.invalidity_reasons else None,
+                and incumbent is not None and not incumbent_invalidity else None,
                 tuple(dict.fromkeys(invalid + incomplete_comparison)), evidence,
             ))
     candidate_set = DomainCandidateSet(

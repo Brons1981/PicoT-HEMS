@@ -1305,6 +1305,7 @@ def _build_daily_main_run(
     input_shortfalls: tuple[DailyMainShortfallTrigger, ...] = ()
     canonical_set = None
     planning_blocked = False
+    future_goal_unresolved = False
     optional_pv_review = False
     retain_grid_continuity = False
     retained = tuple(
@@ -1427,6 +1428,26 @@ def _build_daily_main_run(
                     # charging action until its own end, with the shortfall
                     # still visible; NOM fallback would defeat this protection.
                     reason = windows.reason
+                elif (
+                    optimisation_trigger is None and not input_shortfalls
+                    and len(retained) == 1 and pending[0].starts_at > snapshot.captured_at
+                    and windows.status == "unreachable"
+                    and windows.reason in {
+                        "insufficient_remaining_charge_capacity",
+                        "configured_maximum_conflicts_with_daily_100_percent",
+                        "supplemental_goal_unreachable",
+                    }
+                    and not adapter.committed_execution_invalidity_reasons(
+                        snapshot=snapshot, plan=retained[0], conversion_model=conversion,
+                    )
+                ):
+                    # Only the new future obligation failed. The fresh retained
+                    # route is executable; no future goal, winner or completion
+                    # is manufactured to keep its current action running.
+                    future_goal_unresolved = True
+                    reason = (
+                        f"future_daily_goal_unresolved:{pending[0].assignment_id}:{windows.reason}"
+                    )
                 else:
                     raise ValueError(windows.reason or "daily_main_no_feasible_window")
             else:
@@ -1568,6 +1589,7 @@ def _build_daily_main_run(
             reason = str(exc) or exc.__class__.__name__
     if (
         not planning_blocked
+        and not future_goal_unresolved
         and canonical_set is None
         and len(retained) == 1
         and snapshot.market_user_rule is not None

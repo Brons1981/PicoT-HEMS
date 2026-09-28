@@ -7,6 +7,7 @@ import pytest
 from test_daily_main_active_pipeline import setup
 from test_supplemental_charge_commitment import charged
 
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.v2.canonical_execution_runtime import CanonicalDispatchOutcome, CanonicalExecutionRuntime
 from picot.v2.live_runtime import _poll_live_cycle
 from picot.v2.live_storage_mode_provenance import (
@@ -28,6 +29,7 @@ from picot.v2.zendure_mode_capabilities import (
         ("supplemental", "normal"),
         ("supplemental", "manual"),
         ("supplemental", "late_measurement"),
+        ("supplemental", "below_reserve"),
     ],
 )
 def test_poll_dispatch_feedback_and_completion(tmp_path, monkeypatch, kind, condition):
@@ -47,6 +49,11 @@ def test_poll_dispatch_feedback_and_completion(tmp_path, monkeypatch, kind, cond
         target = goal.target_soc
     following = next(s for s in plan.segments if s.starts_at == old.ends_at)
     assert following.primitive != old.primitive
+    following_mode = ("Alleen slim ontladen"
+                      if following.primitive is ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+                      else "Nul op de meter")
+    minimum = source.storage_physical_limits[0].minimum_soc
+    assert minimum < target
     initial_main = store.load_daily_assignments()
     provenance = LiveStorageModeProvenanceRuntime(
         StorageModeProvenanceStore(tmp_path / "mode.json")
@@ -89,7 +96,7 @@ def test_poll_dispatch_feedback_and_completion(tmp_path, monkeypatch, kind, cond
 
     for second in (-1, 1, 2, 3):
         at = old.ends_at + timedelta(seconds=second)
-        mode = "Nul op de meter" if second == 3 else "Snel opladen"
+        mode = following_mode if second == 3 else "Snel opladen"
         changed = old.ends_at + timedelta(seconds=2.5) if second == 3 else old.starts_at
         if condition == "manual" and second == 2:
             mode, changed = "Standby", at
@@ -100,7 +107,7 @@ def test_poll_dispatch_feedback_and_completion(tmp_path, monkeypatch, kind, cond
             {
                 "state": mode,
                 "last_changed": changed.isoformat(),
-                "attributes": {"options": ["Snel opladen", "Nul op de meter", "Standby"]},
+                "attributes": {"options": ["Snel opladen", following_mode, "Standby"]},
             },
             captured_at=at,
             source_entity_id="input_select.test_mode",
@@ -114,7 +121,7 @@ def test_poll_dispatch_feedback_and_completion(tmp_path, monkeypatch, kind, cond
                     "Snel opladen", (old.primitive,), "integration_configured_maximum"
                 ),
                 ZendureModeMapping(
-                    "Nul op de meter", (following.primitive,), "integration_configured_maximum"
+                    following_mode, (following.primitive,), "integration_configured_maximum"
                 ),
             ),
         )
@@ -123,7 +130,12 @@ def test_poll_dispatch_feedback_and_completion(tmp_path, monkeypatch, kind, cond
             captured_at=at,
             capability_snapshot_set=replace(source.capability_snapshot_set, captured_at=at),
             current_storage_states=tuple(
-                replace(s, measured_at=measured, current_soc=target if second == 3 else target / 2)
+                # Stay below the unfinished goal but above the safety reserve.
+                # The following local mode is now correctly support, which may
+                # not execute at the old fixture's artificial target/2 < reserve.
+                replace(s, measured_at=measured, current_soc=minimum / 2
+                        if condition == "below_reserve" else target if second == 3
+                        else (minimum + target) / 2)
                 for s in source.current_storage_states
             ),
             storage_mode_capability_evidence=evidence,
@@ -152,6 +164,12 @@ def test_poll_dispatch_feedback_and_completion(tmp_path, monkeypatch, kind, cond
         )
         if a.assignment_id == goal.assignment_id
     )
+    if condition == "below_reserve":
+        assert following.primitive is ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+        assert not dispatched
+        assert outcomes[1] == "blocked"
+        assert done.completed_at is None
+        return
     assert len(dispatched) == 1
     assert outcomes[:2] == ["already_active", "dispatched"]
     if condition == "normal":

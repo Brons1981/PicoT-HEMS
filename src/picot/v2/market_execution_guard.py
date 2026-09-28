@@ -22,6 +22,9 @@ def guarded_market_primitive(
     assignments = {a.assignment_id: a for a in store.load_market_daily_assignments()}
     mode = snapshot.storage_mode_capability_evidence
     result = requested
+    # A selected non-export action also ends export. The old trade's stop and
+    # settlement still need observations, but cannot choose its replacement.
+    export_requested = requested is ExecutionPrimitive.DISCHARGE_AT_POWER
     for binding in store.load_market_plan_bindings():
         if binding.execution_scope_id != scope_id:
             continue
@@ -31,7 +34,7 @@ def guarded_market_primitive(
         start, end = parts[0].starts_at, parts[-1].ends_at
         due = start <= now < end
         if assignment.status != "pending":
-            if due and requested is ExecutionPrimitive.DISCHARGE_AT_POWER:
+            if due and export_requested:
                 result = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
             continue
         progress = store.load_market_progress(binding.assignment_id) or MarketExecutionProgress(
@@ -48,7 +51,7 @@ def guarded_market_primitive(
             (s for s in snapshot.storage_physical_limits if s.execution_scope_id == scope_id), None
         )
         if state is None or limits is None:
-            return ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+            return ExecutionPrimitive.BALANCE_BIDIRECTIONAL if export_requested else requested
         if progress.started_at is None and export_mode_confirmed and due:
             changed = mode.state_changed_at if mode is not None else None
             confirmed_at = changed if changed is not None and start <= changed <= now else now
@@ -61,11 +64,12 @@ def guarded_market_primitive(
                         and mode.current_vendor_mode is not None
                         and mode.current_vendor_mode.lower() not in {"unknown", "unavailable"}):
                     store.save_market_progress(progress)
-                if due:
+                if due and export_requested:
                     result = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
                 continue
             if due and measured_market_export(snapshot.market_power_history, now, now) is None:
-                result = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                if export_requested:
+                    result = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
                 continue
             reason = None
             if now >= end:
@@ -79,7 +83,7 @@ def guarded_market_primitive(
             if reason:
                 progress = replace(progress, stop_requested_at=now, reason=reason)
                 store.save_market_progress(progress)
-                if due:
+                if due and export_requested:
                     result = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
             continue
         measured_until = progress.stopped_at or now
@@ -136,6 +140,6 @@ def guarded_market_primitive(
             if reason:
                 progress = replace(progress, stop_requested_at=now, reason=reason)
         store.save_market_progress(progress)
-        if due and progress.stop_requested_at is not None:
+        if due and export_requested and progress.stop_requested_at is not None:
             result = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
     return result

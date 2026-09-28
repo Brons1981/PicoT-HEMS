@@ -151,6 +151,9 @@ def market_revision_windows(
         if recovery is not None else (),
     )
     seeds = [baseline]
+    baseline_projection = adapter._bridge_projection(snapshot, inputs, baseline, conversion_model)
+    pv_surplus = {n for n, i in enumerate(baseline_projection.intervals)
+                  if i.usable_pv_wh > i.household_demand_wh + 1e-6}
     # A future window can be shortened at either edge; a begun action cannot
     # be paused and restarted as a second action. Every retained slice is
     # contiguous inside the original window, at the original physical power.
@@ -160,13 +163,14 @@ def market_revision_windows(
                      if (start, stop) != (0, len(export_indexes))]
     for keep in slices:
         removed = set(export_indexes) - set(keep)
-        intents = tuple(replace(i, intent=Intent.NOM, storage_export_target_wh=0.0)
+        intents = tuple(replace(i, intent=Intent.NOM if n in pv_surplus
+                                else Intent.HOUSEHOLD_SUPPORT_ONLY, storage_export_target_wh=0.0)
                         if n in removed else i for n, i in enumerate(baseline.intervals))
         digest = sha256(repr((snapshot.snapshot_id, intents)).encode()).hexdigest()[:20]
         seeds.append(replace(baseline, intervals=intents, schedule_id="market-revision:" + digest))
     windows: dict[tuple[DailyReferenceIntentInterval, ...], DailyMainChargeWindow] = {}
     rejected: dict[tuple[DailyReferenceIntentInterval, ...], DailyMainRejectedWindow] = {}
-    simulations = 0
+    simulations = 1
     for seed in seeds:
         if isinstance(trigger, DailyBridgeTrigger):
             discovered = adapter.bridge_windows(snapshot=snapshot, trigger=trigger,

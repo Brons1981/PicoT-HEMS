@@ -680,6 +680,7 @@ class DailyChargePlanningContext:
     duration_ms: float = 0.0
 
     recalculation_request: DailyPlanRecalculationRequest | None = None
+    market_transition_plan_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in {"ready", "blocked"}:
@@ -708,6 +709,7 @@ class DailyChargePlanningContext:
             raise ValueError("active main plan requires its restored plan")
         owners = {a.route_plan_id: a for a in self.assignments if a.route_plan_id is not None}
         market_owners = {b.plan_id for b in self.market_plan_bindings}
+        market_owners.update(self.market_transition_plan_ids)
         market_ids = [b.assignment_id for b in self.market_plan_bindings]
         if len(market_ids) != len(set(market_ids)):
             raise ValueError("market recovery must not duplicate assignments")

@@ -8,6 +8,18 @@ This file is a routing index and guardrail.  The linked Accepted ADR files are
 the architectural authority.  Current code, tests, comments, diagnostics and
 earlier assistant memory are evidence, but they do not redefine ownership.
 
+## Marktroute na de hoofdlaadroute — release dev.281, 29 september 2026
+
+Alex heeft het beperkte avondvenster en de eenmalige overgang voor nog niet
+begonnen ochtendroutes goedgekeurd. Lees `docs/architecture/ADR-019.7-post-main-market-window.md`
+en `docs/development_log/2026-09-29-post-main-market-window.md`. Werkbranch
+`fix/market-after-main-charge` vanaf dev.280. Nieuwe handel hoort na de eigen
+hoofdlaadroute tot middernacht, met bewezen herstel via de volgende dagopdracht.
+Dagbudget, 100%-doelen en historie blijven behouden. Lokale verificatie is
+afgerond; lees het log voor de brede run en 42 geslaagde afsluitende controles.
+Alex heeft op 29 september expliciet release dev.281 aangevraagd via PR en CI.
+Installatie en livecontrole volgen afzonderlijk.
+
 ## Expliciet opnieuw berekenen — release dev.280, 2026-09-29
 
 Alex heeft om 23:48 Europe/Amsterdam reparatie van de bestaande resetknop

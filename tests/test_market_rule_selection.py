@@ -227,7 +227,8 @@ def test_new_trade_waits_then_can_be_admitted_after_recovery_prices_arrive(tmp_p
 
 def test_missing_published_tariff_keeps_charge_plan_without_trade(tmp_path, monkeypatch):
     store, pipeline, recover = setup(tmp_path, monkeypatch)
-    source = trading_source(recover())
+    source = with_next_day_recovery(trading_source(recover()))
+    pipeline.run(planning_input=recover(source))
     pipeline.run(planning_input=recover(source))
     original = store.load_active_daily_main_plan("battery")
     owners = store.load_daily_assignments()
@@ -241,9 +242,11 @@ def test_missing_published_tariff_keeps_charge_plan_without_trade(tmp_path, monk
 
 
 def winter_source(source):
-    source = trading_source(source)
+    source = with_next_day_recovery(trading_source(source))
     return replace(
         source,
+        current_storage_states=tuple(replace(state, current_soc=1.0)
+                                     for state in source.current_storage_states),
         pv_energy_timeline=replace(
             source.pv_energy_timeline,
             intervals=tuple(
@@ -277,11 +280,26 @@ def winter_source(source):
     )
 
 
+def limit_winter_exports(monkeypatch):
+    """Exercise recovery alternatives for one real peak window, without redundant shifts."""
+    from picot.v2 import market_rule_planning
+
+    actual = market_rule_planning.export_windows
+
+    def peak(*args, **kwargs):
+        return tuple(w for w in actual(*args, **kwargs)
+                     if w[0].starts_at.hour == 15 and w[0].starts_at.minute == 0)
+
+    monkeypatch.setattr(market_rule_planning, "export_windows", peak)
+
+
 def test_trade_adds_cheapest_required_charge_before_atomic_publication(tmp_path, monkeypatch):
+    limit_winter_exports(monkeypatch)
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = recover(winter_source(recover()))
     first = pipeline.run(planning_input=source)
     assert first.execution_plan_set.plans, first.evaluation.reason
+    pipeline.run(planning_input=recover(source))
     original = store.load_active_daily_main_plan("battery")
     owner = next(a for a in store.load_daily_assignments() if a.route_plan_id == original.plan_id)
     second = pipeline.run(planning_input=recover(source))
@@ -306,9 +324,11 @@ def test_trade_adds_cheapest_required_charge_before_atomic_publication(tmp_path,
 def test_soc_optimisation_during_trade_keeps_original_window_and_budget(tmp_path, monkeypatch):
     from picot.domain.market_execution import MarketExecutionProgress
 
+    limit_winter_exports(monkeypatch)
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = recover(winter_source(recover()))
     pipeline.run(planning_input=source)
+    pipeline.run(planning_input=recover(source))
     selected = pipeline.run(planning_input=recover(source))
     assert selected.evaluation.reason == "user_market_rule_selected", selected.evaluation.reason
     original_binding = store.load_market_plan_bindings()[0]
@@ -345,9 +365,11 @@ def test_soc_optimisation_during_trade_keeps_original_window_and_budget(tmp_path
 
 
 def test_combined_write_failure_preserves_charge_and_does_not_publish_trade(tmp_path, monkeypatch):
+    limit_winter_exports(monkeypatch)
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = recover(winter_source(recover()))
     pipeline.run(planning_input=source)
+    pipeline.run(planning_input=recover(source))
     original = store.load_active_daily_main_plan("battery")
     owners = store.load_daily_assignments()
     write = store._write
@@ -366,6 +388,7 @@ def test_combined_write_failure_preserves_charge_and_does_not_publish_trade(tmp_
 
 
 def test_recovery_option_evaluates_combined_charge_and_trade(tmp_path, monkeypatch):
+    limit_winter_exports(monkeypatch)
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = winter_source(recover())
     source = recover(
@@ -379,6 +402,7 @@ def test_recovery_option_evaluates_combined_charge_and_trade(tmp_path, monkeypat
         )
     )
     pipeline.run(planning_input=source)
+    pipeline.run(planning_input=recover(source))
     selected = pipeline.run(planning_input=recover(source))
     assert selected.evaluation.reason == "user_market_rule_selected", selected.evaluation.reason
     binding = store.load_market_plan_bindings()[0]

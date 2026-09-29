@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 from test_daily_main_active_pipeline import setup, with_mode
 from test_market_execution_guard import history
-from test_market_rule_selection import winter_source
+from test_market_rule_selection import limit_winter_exports, winter_source
 
 from picot.domain.execution_primitive import ExecutionPrimitive as Primitive
 from picot.v2.canonical_execution_runtime import CanonicalDispatchOutcome, CanonicalExecutionRuntime
@@ -16,9 +16,11 @@ from picot.v2.zendure_mode_capabilities import ZendureModeMapping
 def test_cooperative_check_services_next_segment_and_aborts_changed_ownership(
     tmp_path, monkeypatch, poll_interval
 ):
+    limit_winter_exports(monkeypatch)
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = recover(winter_source(recover()))
     pipeline.run(planning_input=source)
+    pipeline.run(planning_input=recover(source))
     observed = recover(source)
     now = [observed.captured_at]
     calls = []
@@ -57,9 +59,11 @@ def test_cooperative_check_services_next_segment_and_aborts_changed_ownership(
 
 
 def test_market_cannot_publish_after_execution_invalidates_planning_input(tmp_path, monkeypatch):
+    limit_winter_exports(monkeypatch)
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = recover(winter_source(recover()))
     pipeline.run(planning_input=source)
+    pipeline.run(planning_input=recover(source))
     original = store.load_active_daily_main_plan("battery")
     goals = store.load_daily_assignments()
     calls = []
@@ -77,6 +81,7 @@ def test_market_cannot_publish_after_execution_invalidates_planning_input(tmp_pa
 
 
 def test_fresh_execution_uses_low_soc_without_rewriting_planning_snapshot(tmp_path, monkeypatch):
+    limit_winter_exports(monkeypatch)
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = with_mode(
         winter_source(recover()), Primitive.DISCHARGE_AT_POWER, current_mode="Export"
@@ -95,6 +100,7 @@ def test_fresh_execution_uses_low_soc_without_rewriting_planning_snapshot(tmp_pa
             ),
         ),
     )
+    pipeline.run(planning_input=recover(source), control_change_allowed=True)
     pipeline.run(planning_input=recover(source), control_change_allowed=True)
     old_input = recover(source)
     run = pipeline.run(planning_input=old_input, control_change_allowed=True)
@@ -144,9 +150,11 @@ def test_live_composition_retries_cancelled_calculation_without_dispatch(tmp_pat
     from picot.v2.planning_input import PlanningInputBundle
     from picot.v2.web_ui import WebViewStore
 
+    limit_winter_exports(monkeypatch)
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = recover(winter_source(recover()))
     pipeline.run(planning_input=source)
+    pipeline.run(planning_input=recover(source))
     source = recover(source)
     bundle = PlanningInputBundle(
         snapshot=source,

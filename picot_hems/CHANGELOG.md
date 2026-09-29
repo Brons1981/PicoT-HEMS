@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.281
+
+- Nieuwe marktroutes vallen na de hoofdlaadroute van de eigen dag tot lokale middernacht. Toelating wacht op de prijzen en aantoonbaar laadherstel van de volgende dag.
+- De bestaande financiële vergelijking kiest binnen dat venster; herstelkosten, reserve en afzonderlijke 100%-dagdoelen blijven gelden. Er wordt niet vooraf een ochtendroute voor morgen vastgelegd.
+- Een eerder opgeslagen, nog niet begonnen ochtendroute kan eenmalig worden vrijgegeven voor beoordeling binnen het nieuwe venster. Dezelfde dagopdracht en maximaal het resterende exportbudget blijven behouden, ook na herstart.
+- Begonnen of afgesloten handel wordt niet heropend. Een mislukte overgang behoudt het bestaande plan en de historie.
+
 ## 2.0.0-dev.280
 
 - De bestaande knop heet **Planning opnieuw berekenen** en herberekent nu werkelijk de opgeslagen dagplannen. De oude reset bereikte alleen de eerdere commitmentregistratie.

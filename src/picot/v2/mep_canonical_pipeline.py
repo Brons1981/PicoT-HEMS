@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from hashlib import sha256
 from time import perf_counter
+from zoneinfo import ZoneInfo
 
 from picot.architecture_ownership import architecture_ownership
 from picot.domain.charge_source_policy import ChargeSourcePolicy
@@ -1627,9 +1628,41 @@ def _build_daily_main_run(
         except (ValueError, OSError) as exc:
             planning_blocked = not isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
             reason = str(exc) or exc.__class__.__name__
+    transition = None
+    transition_failed = False
+    if not planning_blocked and canonical_set is None and len(retained) == 1 and commitment_store:
+        try:
+            transition = commitment_store.pending_market_window_transition(snapshot.captured_at)
+            if transition is not None:
+                from picot.v2.market_window_transition import transition_portfolio
+
+                comparable = transition_portfolio(
+                    snapshot=snapshot, plan=retained[0], binding=transition,
+                    conversion=conversion, opportunity_ids=opportunities.opportunity_ids,
+                )
+                result = EvaluationEngine().evaluate(
+                    comparable.candidate_set, comparable.strategy, comparable.outcome_set,
+                    created_at=snapshot.captured_at,
+                )
+                if result.winning_energy_path is not None:
+                    proposed = ExecutionPlanBuilder().build(
+                        result, created_at=snapshot.captured_at, fallback_policy_id="guarded-nom")
+                    if planning_checkpoint is not None:
+                        planning_checkpoint()
+                    commitment_store.bind_market_window_transition(
+                        plan=proposed.plans[0], binding=transition, evaluation_record=result.record)
+                    canonical_set = proposed
+                    reason = "market_window_transition_waits_for_evening_admission"
+                else:
+                    reason = "market_window_transition_no_valid_candidate"
+        except (ValueError, OSError) as exc:
+            transition_failed = True
+            reason = "market_window_transition_failed:" + str(exc)
     if (
         not planning_blocked
         and not future_goal_unresolved
+        and transition is None
+        and not transition_failed
         and manual_owner is None
         and canonical_set is None
         and len(retained) == 1
@@ -1642,6 +1675,8 @@ def _build_daily_main_run(
             for day in sorted(context.assignments, key=lambda a: a.delivery_date):
                 if (
                     day.execution_scope_id != incumbent.execution_scope_id
+                    or day.delivery_date != snapshot.captured_at.astimezone(
+                        ZoneInfo(day.timezone)).date()
                     or day.ends_at <= snapshot.captured_at
                 ):
                     continue
@@ -1665,6 +1700,8 @@ def _build_daily_main_run(
                         assignment=market_day,
                         conversion=conversion,
                         opportunity_ids=opportunities.opportunity_ids,
+                        maximum_export_wh=commitment_store.market_transition_export_limit(
+                            market_day.assignment_id),
                         wear_eur_per_export_kwh=market_policy.wear_eur_per_export_kwh,
                         saldering_energy_tax_credit_enabled=market_policy.saldering_energy_tax_credit_enabled,
                     )

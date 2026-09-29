@@ -976,6 +976,7 @@ def _restore_daily_charge_context(
         (s.measured_at for s in snapshot.current_storage_states),
         default=snapshot.captured_at,
     )
+    transition_plan_ids: tuple[str, ...] = ()
     try:
         existing = store.load_daily_assignments()
         latest_completed_ids = {
@@ -998,12 +999,14 @@ def _restore_daily_charge_context(
                     if previous is None:
                         plans.append(plan)
         stored_market_bindings = store.load_market_plan_bindings()
+        transition_plan_ids = store.load_market_transition_plan_ids()
         for scope in sorted(scopes):
             active = store.load_active_daily_main_plan(scope)
             if active is not None and active.valid_until > snapshot.captured_at:
                 bindings = tuple(b for b in stored_market_bindings if b.plan_id == active.plan_id)
                 if active.plan_id not in {p.plan_id for p in plans}:
-                    if not bindings:
+                    if (not bindings
+                            and active.plan_id not in transition_plan_ids):
                         raise ValueError("active_daily_main_plan_owner_not_restored")
                     plans.append(active)
                 market_plan_bindings += bindings
@@ -1052,6 +1055,10 @@ def _restore_daily_charge_context(
         bridge_states=bridge_states,
         supplemental_assignments=supplemental_assignments,
         market_plan_bindings=market_plan_bindings,
+        market_transition_plan_ids=tuple(
+            pid for pid in transition_plan_ids
+            if pid in {p.plan_id for p in plans}
+        ),
         market_execution_progress=market_progress,
         pv_comparison_states=tuple(
             store.load_daily_pv_comparison(a.assignment_id)

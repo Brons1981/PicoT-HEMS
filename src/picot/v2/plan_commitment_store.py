@@ -669,6 +669,9 @@ class ActivePlanCommitmentStore:
             ):
                 raise ValueError("combined market publication requires an unbound daily action")
             self._validate_market_binding(market_binding, market_day, plan)
+            limit = self.market_transition_export_limit(market_binding.assignment_id)
+            if limit is not None and market_binding.expected_export_wh > limit + 1e-6:
+                raise ValueError("transition cannot replenish released export")
             if market_admission.status != "admissible" or (
                 market_admission.assignment_id,
                 market_admission.snapshot_id,
@@ -1011,7 +1014,8 @@ class ActivePlanCommitmentStore:
                 ) or self.load_daily_main_plan(owner.assignment_id) != plan:
                     raise ValueError("active daily main plan scope or binding invalid")
             else:
-                if not any(b.plan_id == plan_id for b in self.load_market_plan_bindings()):
+                if (not any(b.plan_id == plan_id for b in self.load_market_plan_bindings())
+                        and plan_id not in self.load_market_transition_plan_ids()):
                     raise ValueError("active shared execution plan has no market owner")
                 seen = {plan_id}
                 shared = plan
@@ -1023,7 +1027,13 @@ class ActivePlanCommitmentStore:
                     origin = _registered_execution_plan(payload, origin_id)
                     if origin.plan_id != origin_id:
                         raise ValueError("shared plan origin identity mismatch")
-                    self._retains_shared_charge_plan(origin, shared)
+                    transition = next((r for r in payload.get(
+                        "market_window_transitions", {}).values()
+                                       if r["plan_id"] == shared.plan_id), None)
+                    if transition is not None:
+                        self.load_market_transition_plan_ids()
+                    else:
+                        self._retains_shared_charge_plan(origin, shared)
                     shared = origin
                 owner = next((a for a in owners if a.route_plan_id == shared.plan_id), None)
                 if owner is None or self.load_daily_main_plan(owner.assignment_id) != shared:
@@ -1624,6 +1634,14 @@ class ActivePlanCommitmentStore:
                         if known is None or plan.created_at >= known[0]:
                             latest[bound.assignment_id] = (plan.created_at, bound)
             for binding in bindings:
+                transition = payload.get("market_window_transitions", {}).get(binding.assignment_id)
+                if transition is not None:
+                    if binding.expected_export_wh > transition["maximum_export_wh"] + 1e-6:
+                        raise ValueError("transition cannot replenish released export")
+                    boundary = datetime.fromisoformat(transition["created_at"])
+                    prior = latest.get(binding.assignment_id)
+                    if prior is not None and prior[0] <= boundary:
+                        latest.pop(binding.assignment_id)
                 previous = latest.get(binding.assignment_id)
                 if previous is None:
                     if binding.cancelled_export_wh:
@@ -1895,6 +1913,145 @@ class ActivePlanCommitmentStore:
                 _serialize_execution_plan(plan)
             )
 
+    @staticmethod
+    def _retains_transition_charge_plan(
+        previous: ExecutionPlan, plan: ExecutionPlan, segment_ids: tuple[str, ...],
+    ) -> None:
+        if (plan.valid_from, plan.valid_until) != (previous.valid_from, previous.valid_until):
+            raise ValueError("market transition must retain the complete horizon")
+        if len(plan.segments) != len(previous.segments):
+            raise ValueError("market transition must preserve segment boundaries")
+        for old, new in zip(previous.segments, plan.segments, strict=True):
+            if (old.starts_at, old.ends_at) != (new.starts_at, new.ends_at):
+                raise ValueError("market transition cannot move an interval")
+            release = old.segment_id in segment_ids
+            if release:
+                if (new.primitive is not ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
+                        or new.requested_power_w is not None or new.main_assignment_id is not None
+                        or new.purpose != "household-support"):
+                    raise ValueError("market transition must remove the exact export instruction")
+            elif any(getattr(old, f) != getattr(new, f) for f in (
+                "primitive", "requested_power_w", "main_assignment_id", "purpose",
+                "charge_source_policy", "energy_profile_id", "soc_constraint", "capability_id",
+            )):
+                raise ValueError("market transition cannot change charging or other execution")
+            expected_origin = old.retained_execution_origin or (
+                RetainedExecutionOrigin(previous.plan_id, old.segment_id)
+                if old.main_assignment_id else None)
+            if new.retained_execution_origin != expected_origin:
+                raise ValueError("market transition must retain completion lineage")
+
+    def load_market_transition_plan_ids(self) -> tuple[str, ...]:
+        payload = self._load_payload()
+        try:
+            records = payload.get("market_window_transitions", {})
+            result = []
+            for assignment_id, record in records.items():
+                raw = record["previous_binding"]
+                if raw["assignment_id"] != assignment_id:
+                    raise ValueError("market transition ownership mismatch")
+                plan = _registered_execution_plan(payload, record["plan_id"])
+                old = _registered_execution_plan(payload, raw["plan_id"])
+                if (plan.evaluation_id != record["evaluation_id"]
+                        or plan.snapshot_id != record["snapshot_id"]
+                        or plan.created_at.isoformat() != record["created_at"]
+                        or not isfinite(record["maximum_export_wh"])
+                        or record["maximum_export_wh"] <= 0
+                        or abs(record["maximum_export_wh"] - sum(raw["segment_export_wh"])) > 1e-6
+                        or payload.get("shared_plan_origins", {}).get(plan.plan_id) != old.plan_id):
+                    raise ValueError("market transition lineage or budget mismatch")
+                parts = tuple(s for s in old.segments if s.segment_id in raw["segment_ids"])
+                if not parts or plan.created_at >= parts[0].starts_at:
+                    raise ValueError("market transition cannot erase begun export")
+                self._retains_transition_charge_plan(old, plan, tuple(raw["segment_ids"]))
+                result.append(plan.plan_id)
+            return tuple(result)
+        except (KeyError, TypeError, AttributeError) as exc:
+            raise ValueError("invalid stored market window transition") from exc
+
+    def pending_market_window_transition(self, at: datetime) -> MarketPlanBinding | None:
+        """Identify unstarted pre-main bindings; never select their replacement."""
+        payload = self._load_payload()
+        transitioned = payload.get("market_window_transitions", {})
+        assignments = {a.assignment_id: a for a in self.load_market_daily_assignments()}
+        owners = self.load_daily_assignments()
+        for binding in self.load_market_plan_bindings():
+            assignment = assignments[binding.assignment_id]
+            active = self.load_active_daily_main_plan(binding.execution_scope_id)
+            if (assignment.status != "pending" or binding.assignment_id in transitioned
+                    or active is None or active.plan_id != binding.plan_id):
+                continue
+            progress = self.load_market_progress(binding.assignment_id)
+            if progress is not None and (progress.started_at is not None
+                    or progress.stop_requested_at is not None
+                    or progress.measured_export_wh not in (None, 0)):
+                continue
+            parts = tuple(p for p in active.segments if p.segment_id in binding.segment_ids)
+            owner = next((a for a in owners if a.delivery_date == assignment.delivery_date
+                          and a.execution_scope_id == binding.execution_scope_id), None)
+            if (owner is not None and owner.main_segments and at < parts[0].starts_at
+                    and binding.elapsed_planned_export_wh == 0
+                    and parts[-1].ends_at <= min(s.starts_at for s in owner.main_segments)
+                    and owner.completed_at is None):
+                return binding
+        return None
+
+    def market_transition_export_limit(self, assignment_id: str) -> float | None:
+        record = self._load_payload().get("market_window_transitions", {}).get(assignment_id)
+        return float(record["maximum_export_wh"]) if record is not None else None
+
+    def bind_market_window_transition(
+        self, *, plan: ExecutionPlan, binding: MarketPlanBinding,
+        evaluation_record: EvaluationRecord,
+    ) -> None:
+        """Atomically archive an unstarted binding; keep its same pending day budget."""
+        if self.pending_market_window_transition(plan.created_at) != binding:
+            raise ValueError("market window transition requires current unstarted ownership")
+        previous = self.load_active_daily_main_plan(binding.execution_scope_id)
+        assert previous is not None
+        if (evaluation_record.winning_candidate_id != plan.winning_candidate_id
+                or evaluation_record.evaluation_id != plan.evaluation_id
+                or evaluation_record.snapshot_id != plan.snapshot_id
+                or evaluation_record.created_at != plan.created_at
+                or plan.winning_candidate_id not in evaluation_record.evaluated_candidate_ids
+                or any(i.candidate_id == plan.winning_candidate_id
+                       for i in evaluation_record.invalid_candidates)):
+            raise ValueError("market transition requires canonical selected evidence")
+        self._retains_transition_charge_plan(previous, plan, binding.segment_ids)
+        payload = self._load_payload()
+        if plan.plan_id in payload.get("execution_plans", {}):
+            raise ValueError("market transition requires a new immutable plan")
+        self._preserve_market_bindings(payload, plan,
+                                     revised_ids=frozenset((binding.assignment_id,)))
+        payload.setdefault("market_window_transitions", {})[binding.assignment_id] = {
+            "previous_binding": asdict(binding), "plan_id": plan.plan_id,
+            "evaluation_id": plan.evaluation_id, "snapshot_id": plan.snapshot_id,
+            "created_at": plan.created_at.isoformat(),
+            "maximum_export_wh": sum(binding.segment_export_wh),
+        }
+        del payload["market_plan_bindings"][binding.assignment_id]
+        for goal in self.load_supplemental_assignments():
+            if goal.execution_scope_id != plan.execution_scope_id or goal.completed_at is not None:
+                continue
+            parts = tuple(s for s in plan.segments if s.purpose == goal.assignment_id)
+            if not parts or (parts[0].starts_at, parts[-1].ends_at) != (
+                goal.starts_at, goal.ends_at,
+            ):
+                raise ValueError("shared plan cannot discard supplemental charge ownership")
+            updated = replace(goal, plan_id=plan.plan_id,
+                              segment_ids=tuple(s.segment_id for s in parts))
+            history = payload.setdefault("supplemental_history", {}).setdefault(
+                goal.assignment_id, [],
+            )
+            history.append(self._supplemental_record(goal))
+            payload["supplemental_assignments"][goal.assignment_id] = (
+                self._supplemental_record(updated)
+            )
+        payload.setdefault("execution_plans", {})[plan.plan_id] = _serialize_execution_plan(plan)
+        payload.setdefault("shared_plan_origins", {})[plan.plan_id] = previous.plan_id
+        payload.setdefault("active_execution_plan_ids", {})[plan.execution_scope_id] = plan.plan_id
+        self._write(payload)
+
     def bind_market_plan(
         self, *, plan: ExecutionPlan, previous_plan_id: str,
         binding: MarketPlanBinding, admission: MarketAdmission,
@@ -1913,6 +2070,9 @@ class ActivePlanCommitmentStore:
                 != (binding.assignment_id, binding.snapshot_id, binding.expected_export_wh)):
             raise ValueError("market plan requires matching successful admission")
         self._validate_market_binding(binding, assignment, plan)
+        limit = self.market_transition_export_limit(binding.assignment_id)
+        if limit is not None and binding.expected_export_wh > limit + 1e-6:
+            raise ValueError("transition cannot replenish released export")
         if any(s.starts_at < plan.created_at for s in plan.segments
                if s.segment_id in binding.segment_ids):
             raise ValueError("new market execution cannot start in the past")

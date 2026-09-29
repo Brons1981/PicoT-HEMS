@@ -92,6 +92,7 @@ def market_rule_portfolio(
     conversion: StorageConversionModel,
     opportunity_ids: tuple[str, ...],
     planning_checkpoint: Callable[[], None] | None = None,
+    maximum_export_wh: float | None = None,
     wear_eur_per_export_kwh: float = 0.0,
     saldering_energy_tax_credit_enabled: bool = True,
 ) -> MarketRulePortfolio:
@@ -99,6 +100,17 @@ def market_rule_portfolio(
     if context is None or context.status != "ready" or len(snapshot.current_storage_states) != 1:
         raise ValueError("market requires ready single-storage planning input")
     storage = snapshot.current_storage_states[0]
+    own = next((a for a in context.assignments
+                if a.execution_scope_id == assignment.execution_scope_id
+                and a.delivery_date == assignment.delivery_date), None)
+    if own is None or not own.main_segments:
+        raise ValueError("market_waits_for_own_main_route")
+    export_start = own.completed_at or max(s.ends_at for s in own.main_segments)
+    next_date = assignment.delivery_date + timedelta(days=1)
+    if not any(a.execution_scope_id == assignment.execution_scope_id
+               and a.delivery_date == next_date and a.main_segments
+               for a in context.assignments):
+        raise ValueError("future_owned_charge_does_not_prove_full_recovery")
     limits = next(
         i
         for i in snapshot.storage_physical_limits
@@ -125,7 +137,7 @@ def market_rule_portfolio(
         tariffs=prices,
         delivery_start=assignment.starts_at,
         delivery_end=assignment.ends_at,
-        earliest_export=snapshot.captured_at,
+        earliest_export=max(snapshot.captured_at, export_start),
         usable_capacity_wh=assignment.usable_capacity_wh,
         charge_power_w=limits.maximum_charge_input_power_w,
         discharge_power_w=limits.maximum_discharge_output_power_w,
@@ -158,7 +170,7 @@ def market_rule_portfolio(
     capacities = []
     for baseline_interval in base.intervals:
         left, right = (
-            max(baseline_interval.starts_at, assignment.starts_at),
+            max(baseline_interval.starts_at, assignment.starts_at, export_start),
             min(baseline_interval.ends_at, assignment.ends_at),
         )
         if left >= right:
@@ -184,7 +196,8 @@ def market_rule_portfolio(
             )
         )
     windows = export_windows(
-        tuple(capacities), assignment.battery_energy_wh * conversion.discharge_efficiency
+        tuple(capacities), min(assignment.battery_energy_wh * conversion.discharge_efficiency,
+                               maximum_export_wh if maximum_export_wh is not None else float("inf"))
     )
     strategy = replace(
         _strategy(snapshot),
@@ -197,13 +210,9 @@ def market_rule_portfolio(
                               max(s.ends_at for s in a.main_segments), storage.usable_capacity_wh)
         for a in context.assignments
         if a.completed_at is None and a.main_segments
+        and a.delivery_date == next_date
+        and a.execution_scope_id == assignment.execution_scope_id
         and max(s.ends_at for s in a.main_segments) > snapshot.captured_at
-    ) + tuple(
-        MarketRecoverySegment(
-            g.assignment_id, g.starts_at, g.ends_at, g.target_soc * storage.usable_capacity_wh
-        )
-        for g in context.supplemental_assignments
-        if g.completed_at is None
     )
 
     def goals_reached(
@@ -469,6 +478,12 @@ def market_rule_portfolio(
                         (export_candidate_id, outcome.candidate_id, assignment.assignment_id),
                     ))
         for charge_window in charge_windows:
+            if charge_window is not None and (
+                charge_window.assignment_id == own.assignment_id
+                and max(s.ends_at for s in charge_window.main_segments) > first
+            ):
+                reasons.append("market_must_follow_own_main_route")
+                continue
             if planning_checkpoint is not None:
                 planning_checkpoint()
             candidate_id = export_candidate_id
@@ -481,7 +496,9 @@ def market_rule_portfolio(
                 proposed_schedule = charge_window.schedule
             recovery_for_candidate = (
                 recovery
-                if charge_window is None
+                if charge_window is None or charge_window.assignment_id not in {
+                    a.assignment_id for a in context.assignments if a.delivery_date == next_date
+                }
                 else tuple(r for r in recovery if r.assignment_id != charge_window.assignment_id)
                 + (MarketRecoverySegment(
                     charge_window.assignment_id,

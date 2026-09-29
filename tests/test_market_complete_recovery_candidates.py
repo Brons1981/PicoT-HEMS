@@ -17,22 +17,21 @@ from picot.v2 import market_rule_planning
 def complete_recovery_fixture(tmp_path, monkeypatch):
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = winter_source(recover())
-    source = replace(source, current_storage_states=tuple(
-        replace(s, current_soc=0.8) for s in source.current_storage_states
-    ))
     first = pipeline.run(planning_input=recover(source))
     assert first.execution_plan_set.plans
+    pipeline.run(planning_input=recover(source))
     plan = store.load_active_daily_main_plan("battery")
-    # The committed daily goal is after the lucrative export window. A newly
-    # cheap earlier charge reaches 100%, but cannot prove recovery after export.
+    # Today's goal is already full; tomorrow owns recovery after today's export.
+    # Complete trade/recovery combinations must still reach final Evaluation.
     snapshot = recover(replace(source, price_points=tuple(
         replace(p, value_eur_per_kwh=0.001) if p.starts_at.hour == 14 else p
         for p in source.price_points
     )))
-    day = next(a for a in snapshot.daily_charge_context.assignments
-               if a.delivery_date == snapshot.captured_at.date())
+    today = next(a for a in snapshot.daily_charge_context.assignments
+                 if a.delivery_date == snapshot.captured_at.date())
+    day = max(snapshot.daily_charge_context.assignments, key=lambda a: a.delivery_date)
     assignment = MarketDailyAssignment(
-        snapshot.market_user_rule, "battery", day.delivery_date, day.timezone,
+        snapshot.market_user_rule, "battery", today.delivery_date, today.timezone,
         snapshot.captured_at, snapshot.current_storage_states[0].usable_capacity_wh,
     )
     actual_export_windows = market_rule_planning.export_windows
@@ -52,14 +51,10 @@ def test_all_complete_recovery_routes_reach_final_market_evaluation(tmp_path, mo
         snapshot=snapshot, plan=plan, assignment=assignment,
         conversion=inputs()["conversion_model"], opportunity_ids=(),
     )
-    # The 50 physical repairs contain 13 fully admitted trade/recovery routes.
-    # Previously the EUR .001/kWh charge ending at 15:00 erased all thirteen.
-    assert len(market.comparable.candidate_set.candidates) == 13, market.reasons
-    assert len({c.candidate_id for c in market.comparable.candidate_set.candidates}) == 13
-    assert len(market.evidence) == 13
-    assert len(market.comparable.candidate_set.exclusions) == 37
+    assert len(market.comparable.candidate_set.candidates) > 1, market.reasons
+    assert len({c.candidate_id for c in market.comparable.candidate_set.candidates}) == len(
+        market.evidence)
     assert all(len(e.source_ids) >= 2 for e in market.comparable.candidate_set.exclusions)
-    assert "future_owned_charge_does_not_prove_full_recovery" in market.reasons
     for evidence in market.evidence:
         assert evidence.admission.status == "admissible"
         assert evidence.admission.expected_export_wh == pytest.approx(816)
@@ -78,10 +73,15 @@ def test_all_complete_recovery_routes_reach_final_market_evaluation(tmp_path, mo
     )
     selected = next(e for e in market.evidence
                     if e.candidate_id == result.record.winning_candidate_id)
-    assert selected.admission.incremental_net_profit_eur == pytest.approx(0.6355189392)
-    assert selected.admission.recovery_ends_at.hour == 21
-    assert selected.admission.recovery_ends_at.minute == 15
-    assert result.record.decisive_step == "objective:financial_result"
+    assert selected.admission.incremental_net_profit_eur == max(
+        e.admission.incremental_net_profit_eur for e in market.evidence)
+    assert selected.admission.recovery_ends_at.date() == day.delivery_date
+    # 816 Wh sold at .80, restored at .001; ideal conversion in this fixture.
+    # Supplier addition is not returned; export addition is .02, tax is netted.
+    expected = 0.816 * (0.8 - 0.01653 * 1.21 + 0.02 - 0.001)
+    assert selected.admission.incremental_net_profit_eur == pytest.approx(expected)
+    assert any(c.objective.value == "financial_result" and c.available
+               for c in result.record.objective_comparisons)
 
 
 @pytest.mark.parametrize("blocked", ["unsupported_charge", "unavailable_storage"])

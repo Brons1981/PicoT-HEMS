@@ -6729,7 +6729,10 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 else None
             ),
             "pv_forecast_basis": (
-                winning_outcome.pv_forecast_basis
+                winning_candidate.pv_forecast_basis
+                if run.planning_input.daily_charge_context is not None
+                and winning_candidate is not None and not fallback_active
+                else winning_outcome.pv_forecast_basis
                 if winning_outcome is not None and not fallback_active
                 else (
                     winning_candidate.pv_forecast_basis

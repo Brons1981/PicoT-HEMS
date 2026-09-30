@@ -126,3 +126,17 @@ en een exportmanifest. Zet `history_capture_trial_enabled` vóór installatie op
 `false` en download na de update één nieuwe diagnose-ZIP. Een nieuwe opname is
 niet nodig. Export is begrensd op 16 MiB en 64 objecten en verwijdert niets. Het
 manifest meldt ontbrekende of gedeeltelijke export; inhoudsverificatie volgt apart.
+
+## Solcast-basis voor MEP
+
+De add-onoptie `solcast_planning_basis` kiest `lower`, `mean-lower-central`,
+`central` of `upper`. Het gemiddelde van lower en central is de standaard en
+wordt per interval berekend. De originele prognoses blijven beschikbaar.
+Laadplanning, beoordeling van korter netladen en marktherstel gebruiken dezelfde
+keuze. Meer verwachte PV kan minder netladen betekenen, maar geeft geen garantie
+op een later laadmoment.
+
+Sla de optie op en herstart de add-on. Gebruik daarna **Planning opnieuw berekenen**
+om het bestaande dagplan opnieuw te laten beoordelen. De keuze alleen wist of
+vervangt geen opgeslagen plan; lopende laadacties en dagdoelen blijven beschermd.
+De gekozen basis wordt bij nieuwe plannen opgeslagen voor diagnose.

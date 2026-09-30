@@ -1744,6 +1744,7 @@ class IndependentDailyReferenceAdapter:
         )
         pv_scenarios = self._pv_scenarios(
             snapshot.pv_energy_timeline,
+            planning_basis=snapshot.solcast_planning_basis,
             household=household,
             captured_at=snapshot.captured_at,
         )
@@ -1862,10 +1863,12 @@ class IndependentDailyReferenceAdapter:
         *,
         household: DomainHouseholdForecast,
         captured_at: datetime,
+        planning_basis: str = "mean-lower-central",
     ) -> tuple[ScenarioTimeline, ...]:
         return tuple(
             ScenarioTimeline(
                 scenario=scenario,
+                planning_basis=planning_basis,
                 timeline=DomainPVTimeline(
                     timeline_id=f"{timeline.timeline_id}:{scenario.value}",
                     created_at=captured_at,

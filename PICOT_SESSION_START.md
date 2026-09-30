@@ -8,6 +8,13 @@ This file is a routing index and guardrail.  The linked Accepted ADR files are
 the architectural authority.  Current code, tests, comments, diagnostics and
 earlier assistant memory are evidence, but they do not redefine ownership.
 
+## Instelbare Solcast-basis — release dev.283, 30 september 2026
+
+Alex heeft lower, gemiddelde lower–central, central en upper aangevraagd.
+Lees `docs/architecture/ADR-019.9-configurable-solcast-basis.md`. De standaard
+blijft het huidige gemiddelde. Bronprognoses, dagdoelen en commitmentregels
+blijven behouden. Alex heeft release dev.283 aangevraagd via PR en CI; central-failsafe blijft uitgesteld.
+
 ## Betaald marktherstel — release dev.282, 30 september 2026
 
 Alex heeft release van uitsluitend de herstelfix aangevraagd via PR en CI.

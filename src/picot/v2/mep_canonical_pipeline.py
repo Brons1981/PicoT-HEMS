@@ -1595,6 +1595,10 @@ def _build_daily_main_run(
                 created_at=snapshot.captured_at,
                 fallback_policy_id="guarded-nom",
             )
+            proposed = replace(proposed, plans=tuple(
+                replace(p, solcast_planning_basis=snapshot.solcast_planning_basis)
+                for p in proposed.plans
+            ))
             if len(proposed.plans) != 1:
                 raise ValueError("daily_main_requires_single_storage_scope")
             selected_owner = next(a for a in context.assignments
@@ -1727,7 +1731,8 @@ def _build_daily_main_run(
                         for e in market.evidence
                         if e.candidate_id == market_result.record.winning_candidate_id
                     )
-                    market_plan = market_plans.plans[0]
+                    market_plan = replace(market_plans.plans[0],
+                                          solcast_planning_basis=snapshot.solcast_planning_basis)
                     energy = dict(source.segment_energy)
                     bound_parts = tuple(
                         s for s in market_plan.segments if s.source_path_segment_id in energy
@@ -1812,7 +1817,7 @@ def _build_daily_main_run(
             candidate_id=c.candidate_id,
             energy_path_id=c.energy_path_id,
             family=c.family.value,
-            pv_forecast_basis="mean-lower-central",
+            pv_forecast_basis=snapshot.solcast_planning_basis,
         )
         for c in (comparable.candidate_set.candidates if comparable is not None else ())
     )

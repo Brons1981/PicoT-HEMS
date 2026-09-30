@@ -105,6 +105,7 @@ class ExecutionPlan:
     lifecycle: ExecutionPlanLifecycle
     fallback_policy_id: str
     segments: tuple[ExecutionPlanSegment, ...]
+    solcast_planning_basis: str = "mean-lower-central"
 
     def __post_init__(self) -> None:
         for text_value, label in (

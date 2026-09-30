@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.283
+
+- Nieuwe optie `solcast_planning_basis`: lower, mean-lower-central, central of upper. Het gemiddelde blijft de standaard.
+- Laadplanning, beoordeling van korter netladen en marktherstel gebruiken dezelfde ingestelde prognosebasis; originele scenario’s blijven behouden.
+- Nieuwe plannen bewaren de gekozen basis voor diagnose. Na wijzigen en herstarten kan Planning opnieuw berekenen een bestaand dagplan opnieuw beoordelen.
+
 ## 2.0.0-dev.282
 
 - Herstelt de toelating van een marktroute wanneer volledig betaald laadherstel tot 100% eindigt met meer batterijvoorraad dan het ongewijzigde dagplan.

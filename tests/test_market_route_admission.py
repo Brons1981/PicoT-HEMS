@@ -25,12 +25,17 @@ from picot.domain.market_user_rule import (
 )
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.planner.independent_daily_intent_simulator import IndependentDailyIntentSimulator
-from picot.planner.market_route_admission import MarketRecoverySegment, assess_market_route
+from picot.planner.market_route_admission import (
+    MarketRecoverySegment,
+    assess_market_route,
+    common_market_recovery,
+)
 
 AT = datetime(2026, 9, 9, 12, tzinfo=UTC)
 
 
-def inputs(*, recovery=False, pv=False, soc=1.0, export_target=1200.0, load=600.0):
+def inputs(*, recovery=False, pv=False, soc=1.0, export_target=1200.0, load=600.0,
+           charge_power=2400.0, extended_trade_recovery=False):
     h = _household()
     h = replace(
         h,
@@ -86,7 +91,7 @@ def inputs(*, recovery=False, pv=False, soc=1.0, export_target=1200.0, load=600.
                     else DailyStorageIntent.NOM
                     if pv and n == 1
                     else DailyStorageIntent.GRID_REQUIREMENT
-                    if n == 1
+                    if n == 1 or (trade and extended_trade_recovery and n == 2)
                     else DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
                     export_target if trade and n == 0 else 0,
                 )
@@ -103,7 +108,7 @@ def inputs(*, recovery=False, pv=False, soc=1.0, export_target=1200.0, load=600.
             intent_schedule=schedule,
             minimum_storage_energy_wh=816,
             target_storage_energy_wh=8160,
-            maximum_charge_input_power_w=2400,
+            maximum_charge_input_power_w=charge_power,
             maximum_discharge_output_power_w=2400,
         )
 
@@ -251,3 +256,50 @@ def test_exact_execution_duration_accounts_for_household_share():
     assert pieces[1].intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
     assert sum((p.ends_at - p.starts_at).total_seconds() for p in pieces) == 3 * 3600
     assert (2400 - 600) * (export.ends_at - export.starts_at).total_seconds() / 3600 == 1200
+
+
+def test_new_trade_accepts_fully_paid_recovery_surplus_without_valuing_it():
+    args = inputs(charge_power=1200, extended_trade_recovery=True)
+    args["recovery_segments"] = (MarketRecoverySegment(
+        "original-main", AT + timedelta(hours=1), AT + timedelta(hours=3), 8160,
+    ),)
+    assert args["baseline"].intervals[-1].storage_energy_at_end_wh == 7560
+    assert args["proposed"].intervals[-1].storage_energy_at_end_wh == 8160
+    # Strict common-stock comparison remains the default for revisions.
+    assert assess_market_route(**args).status == "insufficient_evidence"
+    result = assess_market_route(**args, allow_recovery_surplus=True)
+    assert result.status == "admissible"
+    assert result.incremental_net_profit_eur == pytest.approx(0.54)
+    assert result.recovery_ends_at == AT + timedelta(hours=3)
+
+
+def test_surplus_option_does_not_admit_missing_full_recovery():
+    args = inputs(charge_power=1200)
+    assert assess_market_route(**args, allow_recovery_surplus=True).reason == (
+        "future_owned_charge_does_not_prove_full_recovery"
+    )
+
+
+def test_paid_surplus_never_allows_a_lower_comparison_stock():
+    args = inputs(charge_power=1200, extended_trade_recovery=True)
+    assert common_market_recovery(
+        projections=(args["proposed"], args["baseline"]),
+        recovery_segments=(MarketRecoverySegment(
+            "original-main", AT + timedelta(hours=1), AT + timedelta(hours=3), 8160,
+        ),),
+        after=AT + timedelta(hours=1), allow_recovery_surplus=True,
+    ) is None
+
+
+def test_expensive_surplus_recovery_is_still_rejected():
+    args = inputs(charge_power=1200, extended_trade_recovery=True)
+    args["recovery_segments"] = (MarketRecoverySegment(
+        "original-main", AT + timedelta(hours=1), AT + timedelta(hours=3), 8160,
+    ),)
+    args["tariffs"] = replace(args["tariffs"], intervals=tuple(
+        replace(t, import_eur_per_kwh=1.0) if t.starts_at == AT + timedelta(hours=2)
+        else t for t in args["tariffs"].intervals
+    ))
+    result = assess_market_route(**args, allow_recovery_surplus=True)
+    assert result.status == "rejected"
+    assert result.incremental_net_profit_eur < 0

@@ -14,9 +14,16 @@ from picot.planner.evaluation_engine import EvaluationEngine
 from picot.v2 import market_rule_planning
 
 
-def complete_recovery_fixture(tmp_path, monkeypatch):
+def complete_recovery_fixture(tmp_path, monkeypatch, *, household_energy_wh=0):
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = winter_source(recover())
+    if household_energy_wh:
+        source = replace(source, household_load_forecast=replace(
+            source.household_load_forecast, intervals=tuple(
+                replace(i, expected_energy_wh=household_energy_wh)
+                for i in source.household_load_forecast.intervals
+            ),
+        ))
     first = pipeline.run(planning_input=recover(source))
     assert first.execution_plan_set.plans
     pipeline.run(planning_input=recover(source))
@@ -115,3 +122,32 @@ def test_complete_recovery_keeps_canonical_capability_validation(tmp_path, monke
     assert expected in market.reasons
     assert market.comparable.candidate_set.exclusions
     assert all(expected in e.reason for e in market.comparable.candidate_set.exclusions)
+
+
+def test_completed_recovery_survives_household_drain_in_unchanged_reference(
+    tmp_path, monkeypatch,
+):
+    snapshot, plan, assignment, _ = complete_recovery_fixture(
+        tmp_path, monkeypatch, household_energy_wh=20,
+    )
+    observed = []
+    original = market_rule_planning.assess_market_route
+
+    def capture(**kwargs):
+        result = original(**kwargs)
+        if result.status == "admissible":
+            finish = result.recovery_ends_at
+            stocks = tuple(next(i.storage_energy_at_end_wh for i in projection.intervals
+                                if i.ends_at == finish)
+                           for projection in (kwargs["baseline"], kwargs["proposed"]))
+            observed.append(stocks)
+        return result
+
+    monkeypatch.setattr(market_rule_planning, "assess_market_route", capture)
+    market = market_rule_planning.market_rule_portfolio(
+        snapshot=snapshot, plan=plan, assignment=assignment,
+        conversion=inputs()["conversion_model"], opportunity_ids=(),
+    )
+    assert market.evidence, market.reasons
+    assert any(proposed > baseline + 1e-6 for baseline, proposed in observed)
+    assert all(e.admission.incremental_net_profit_eur > 0 for e in market.evidence)

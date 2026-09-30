@@ -56,12 +56,15 @@ class MarketAdmission:
 def common_market_recovery(
     *, projections: tuple[DailyPlanningProjection, ...],
     recovery_segments: tuple[MarketRecoverySegment, ...], after: datetime,
+    allow_recovery_surplus: bool = False,
 ) -> MarketRecoverySegment | None:
-    """Find a priced-path boundary where the trade's stock difference is gone.
+    """Find a priced full recovery with equal stock or a paid new-trade surplus.
 
     The caller supplies owned charge cycles, not an invented midnight target.
     Use the whole cycle so differences in its last charging actions are valued.
     Later unrelated actions remain in the physical path but not this comparison.
+    With allow_recovery_surplus, projections[0] is the unchanged reference;
+    every challenger must finish with at least that stock. No surplus valuation.
     """
     if not projections:
         return None
@@ -82,8 +85,16 @@ def common_market_recovery(
             if finish is None or not reached:
                 break
             ends.append(finish.storage_energy_at_end_wh)
-        if len(ends) == len(projections) and max(ends) - min(ends) <= 1e-6:
-            return segment
+        if len(ends) == len(projections):
+            equal_stock = max(ends) - min(ends) <= 1e-6
+            # A new trade may pay for more stock than the unchanged reference.
+            # All paths must still prove the full goal; never allow a deficit.
+            # Settlement below includes every import and gives surplus no value.
+            paid_surplus = allow_recovery_surplus and all(
+                energy + 1e-6 >= ends[0] for energy in ends[1:]
+            )
+            if equal_stock or paid_surplus:
+                return segment
     return None
 
 
@@ -97,6 +108,7 @@ def assess_market_route(
     recovery_segments: tuple[MarketRecoverySegment, ...] = (),
     tariffs: DailyReferenceTariffSchedule | None = None,
     wear_eur_per_export_kwh: float = 0.0,
+    allow_recovery_surplus: bool = False,
 ) -> MarketAdmission:
     """Admit automatic trade only with actual, comparable recovery economics.
 
@@ -197,6 +209,7 @@ def assess_market_route(
         return result("rejected", "minimum_soc_violated")
     recovery = common_market_recovery(
         projections=(baseline, proposed), after=end,
+        allow_recovery_surplus=allow_recovery_surplus,
         recovery_segments=tuple(s for s in recovery_segments
                                 if s.target_storage_energy_wh == assignment.usable_capacity_wh),
     )

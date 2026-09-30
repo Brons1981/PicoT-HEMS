@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.282
+
+- Herstelt de toelating van een marktroute wanneer volledig betaald laadherstel tot 100% eindigt met meer batterijvoorraad dan het ongewijzigde dagplan.
+- Alle herstelkosten tellen mee; extra voorraad krijgt geen financiële waarde. Werkelijk 100%, reserve en winsttoets blijven verplicht.
+- De Solcast-keuze en dagelijkse laadplanning blijven ongewijzigd.
+
 ## 2.0.0-dev.281
 
 - Nieuwe marktroutes vallen na de hoofdlaadroute van de eigen dag tot lokale middernacht. Toelating wacht op de prijzen en aantoonbaar laadherstel van de volgende dag.

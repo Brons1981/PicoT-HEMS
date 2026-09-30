@@ -8,6 +8,16 @@ This file is a routing index and guardrail.  The linked Accepted ADR files are
 the architectural authority.  Current code, tests, comments, diagnostics and
 earlier assistant memory are evidence, but they do not redefine ownership.
 
+## Betaald marktherstel — release dev.282, 30 september 2026
+
+Alex heeft release van uitsluitend de herstelfix aangevraagd via PR en CI.
+Lees `docs/architecture/ADR-019.8-paid-recovery-surplus.md` en
+`docs/development_log/2026-09-30-paid-market-recovery-surplus.md`. Eerste
+markttoelating mag volledig betaald voorraadoverschot behouden nadat beide
+projecties werkelijk 100% bereiken. Alle kosten tellen mee, overschotwaarde is
+nul; bestaande revisievergelijkingen blijven strikt. De central-regel blijft
+uitgesteld. Installatie en livecontrole volgen afzonderlijk.
+
 ## Marktroute na de hoofdlaadroute — release dev.281, 29 september 2026
 
 Alex heeft het beperkte avondvenster en de eenmalige overgang voor nog niet

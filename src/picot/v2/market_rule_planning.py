@@ -516,6 +516,7 @@ def market_rule_portfolio(
                 recovery_segments=recovery_for_candidate,
                 tariffs=actual_tariffs,
                 wear_eur_per_export_kwh=wear_eur_per_export_kwh,
+                allow_recovery_surplus=True,
             )
             if admission.status != "admissible":
                 reasons.append(admission.reason)

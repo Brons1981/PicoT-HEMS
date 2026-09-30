@@ -25,6 +25,7 @@ class ScenarioTimeline:
 
     scenario: PVScenario
     timeline: PVEnergyTimeline
+    planning_basis: str = "mean-lower-central"
 
 
 class IndependentDailySimulator:

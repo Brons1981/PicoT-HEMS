@@ -139,3 +139,22 @@ def test_mode_capability_evidence_is_atomic_planning_input(monkeypatch: object) 
     assert limits.maximum_soc == 1.0
     assert limits.maximum_charge_input_power_w == 2400.0
     assert limits.maximum_discharge_output_power_w == 2400.0
+
+
+def test_solcast_option_is_captured_and_changes_snapshot_identity(tmp_path: Path) -> None:
+    module = import_module("picot.v2.planning_input")
+    path = tmp_path / "options.json"
+    identities = set()
+    for basis in ("lower", "mean-lower-central", "central", "upper"):
+        path.write_text(json.dumps({"solcast_planning_basis": basis}))
+        bundle = module.assemble_planning_input(
+            "unused", bindings=(), captured_at=CAPTURED_AT, options_path=str(path)
+        )
+        assert bundle.snapshot.solcast_planning_basis == basis
+        identities.add(bundle.snapshot.snapshot_id)
+    assert len(identities) == 4
+    path.write_text("{}")
+    bundle = module.assemble_planning_input(
+        "unused", bindings=(), captured_at=CAPTURED_AT, options_path=str(path)
+    )
+    assert bundle.snapshot.solcast_planning_basis == "mean-lower-central"

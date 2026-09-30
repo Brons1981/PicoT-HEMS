@@ -846,6 +846,9 @@ def assemble_planning_input(
             f"{storage_mode_capability_evidence.usable_vendor_modes}:"
             f"{storage_mode_capability_evidence.excluded_dynamic_vendor_modes}"
         )
+    evidence_seed += "|solcast-planning-basis:" + str(
+        options.get("solcast_planning_basis", "mean-lower-central")
+    )
     run_id = _stable_id(
         "run", f"{__version__}|{capture.isoformat()}|{ARCHITECTURE_BASELINE_COMMIT}|{evidence_seed}"
     )
@@ -1062,6 +1065,7 @@ def assemble_planning_input(
         run_id=run_id,
         snapshot_id=snapshot_id,
         captured_at=capture,
+        solcast_planning_basis=str(options.get("solcast_planning_basis", "mean-lower-central")),
         picot_version=__version__,
         architecture_baseline_commit=ARCHITECTURE_BASELINE_COMMIT,
         pipeline_contract_version=PIPELINE_CONTRACT_VERSION,

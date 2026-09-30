@@ -447,3 +447,33 @@ def test_grid_discovery_avoids_repeated_end_searches():
     result = discover(lower=0, central=0)
     assert result.windows
     assert result.simulation_count <= 1 + 2 * len(inputs()["household"].intervals)
+
+
+@pytest.mark.parametrize("basis,expected", [
+    ("lower", 0), ("mean-lower-central", 1000),
+    ("central", 2000), ("upper", 4000),
+])
+def test_selected_solcast_basis_is_applied_before_physical_limits(basis, expected):
+    data = inputs()
+    original = data["pv_scenarios"]
+    data["pv_scenarios"] = tuple(replace(s, planning_basis=basis) for s in original)
+    projection = IndependentDailyIntentSimulator().simulate_planning_basis(
+        **data, intent_schedule=_schedule(Intent.NOM)
+    )
+    assert projection.intervals[0].usable_pv_wh == expected
+    assert projection.intervals[0].storage_energy_at_end_wh == pytest.approx(
+        4080 + min(max(0, expected - 100), 1200) - (100 if expected == 0 else 0)
+    )
+    assert original[0].timeline.intervals[0].energy_wh == 0
+    assert original[1].timeline.intervals[0].energy_wh == 2000
+    assert original[2].timeline.intervals[0].energy_wh == 4000
+
+
+def test_mixed_solcast_basis_is_rejected():
+    data = inputs()
+    data["pv_scenarios"] = (replace(data["pv_scenarios"][0], planning_basis="upper"),
+                            *data["pv_scenarios"][1:])
+    with pytest.raises(ValueError, match="one valid planning basis"):
+        IndependentDailyIntentSimulator().simulate_planning_basis(
+            **data, intent_schedule=_schedule(Intent.NOM)
+        )

@@ -319,3 +319,34 @@ def test_clock_dispatch_keeps_exact_segment_identity_and_power(tmp_path, monkeyp
     assert requests[0].plan_id == plan.plan_id
     assert requests[0].requested_power_w == segment.requested_power_w
     assert all(a.completed_at is None for a in store.load_daily_assignments())
+
+
+def test_solcast_choice_reaches_adapter_and_saved_plan_diagnostics(tmp_path, monkeypatch):
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    snapshot = replace(recover(), solcast_planning_basis="upper")
+    adapter = IndependentDailyReferenceAdapter()
+    scenarios = adapter._inputs(snapshot).pv_scenarios
+    assert {s.planning_basis for s in scenarios} == {"upper"}
+    result = pipeline.run(planning_input=snapshot)
+    assert result.execution_plan_set.plans
+    assert result.candidate_set.candidates[0].pv_forecast_basis == "upper"
+    scope = result.execution_plan_set.plans[0].execution_scope_id
+    saved = ActivePlanCommitmentStore(tmp_path / "plans.json").load_active_daily_main_plan(scope)
+    assert saved is not None
+    assert saved.solcast_planning_basis == "upper"
+
+
+def test_old_saved_plan_without_solcast_choice_loads_as_midpoint(tmp_path, monkeypatch):
+    import json
+
+    store, pipeline, recover = setup(tmp_path, monkeypatch)
+    result = pipeline.run(planning_input=recover())
+    scope = result.execution_plan_set.plans[0].execution_scope_id
+    path = tmp_path / "plans.json"
+    payload = json.loads(path.read_text())
+    for record in payload["execution_plans"].values():
+        record.pop("solcast_planning_basis", None)
+    path.write_text(json.dumps(payload))
+    saved = ActivePlanCommitmentStore(path).load_active_daily_main_plan(scope)
+    assert saved is not None
+    assert saved.solcast_planning_basis == "mean-lower-central"

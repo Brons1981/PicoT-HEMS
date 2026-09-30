@@ -95,10 +95,10 @@ class IndependentDailyIntentSimulator:
         maximum_charge_input_power_w: float,
         maximum_discharge_output_power_w: float,
     ) -> DailyPlanningProjection:
-        """Apply the declared PV midpoint BEFORE the shared physical simulation.
+        """Apply the selected PV basis BEFORE the shared physical simulation.
 
         Source uncertainty scenarios remain immutable and correctly labelled.
-        Confidence is retained as evidence; it never scales the midpoint energy.
+        Confidence is retained as evidence; it never scales the selected energy.
         """
         IndependentDailySimulator._validate_inputs(
             snapshot_id=snapshot_id,
@@ -121,7 +121,16 @@ class IndependentDailyIntentSimulator:
         ):
             raise ValueError("planning LOWER must not exceed CENTRAL")
         method = "pv-lower-central-arithmetic-midpoint:v1"
-        basis = self._planning_basis(lower, central)
+        choices = {s.planning_basis for s in pv_scenarios}
+        if len(choices) != 1 or not choices <= {"lower", "mean-lower-central", "central", "upper"}:
+            raise ValueError("PV scenarios require one valid planning basis")
+        choice = next(iter(choices))
+        if choice == "mean-lower-central":
+            basis = self._planning_basis(lower, central)
+        else:
+            method = f"pv-solcast-{choice}:v1"
+            source = next(s.timeline for s in pv_scenarios if s.scenario.value == choice)
+            basis = replace(source, timeline_id=f"{method}:{source.timeline_id}")
         intervals, _ = self._simulate_timeline(
             household=household,
             pv_timeline=basis,

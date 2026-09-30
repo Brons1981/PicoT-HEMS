@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.282"
+version: "2.0.0-dev.283"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -35,6 +35,7 @@ options:
   storage_maximum_discharge_power_w: 2400.0
   household_load_fallback_power_w: 500.0
   household_load_fallback_confidence: 0.50
+  solcast_planning_basis: "mean-lower-central"
   solcast_forecast_entity: "sensor.solcast_pv_forecast_voorspelling_vandaag"
   solcast_forecast_tomorrow_entity: "sensor.solcast_pv_forecast_voorspelling_morgen"
   solcast_forecast_day_3_entity: "sensor.solcast_pv_forecast_voorspelling_dag_3"
@@ -96,6 +97,7 @@ schema:
   storage_maximum_discharge_power_w: float(0,)
   household_load_fallback_power_w: float(0,)
   household_load_fallback_confidence: float(0,1)
+  solcast_planning_basis: list(lower|mean-lower-central|central|upper)?
   solcast_forecast_entity: str
   solcast_forecast_tomorrow_entity: str
   solcast_forecast_day_3_entity: str

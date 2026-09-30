@@ -760,8 +760,11 @@ class PlanningInputSnapshot:
     household_load_guard: HouseholdLoadGuardAssessment | None = None
     net_balance_surplus: NetBalanceSurplus | None = None
     net_balance_status: str = "not_observed"
+    solcast_planning_basis: str = "mean-lower-central"
 
     def __post_init__(self) -> None:
+        if self.solcast_planning_basis not in {"lower", "mean-lower-central", "central", "upper"}:
+            raise ValueError("invalid Solcast planning basis")
         if self.daily_charge_context is not None and (
             self.daily_charge_context.snapshot_id != self.snapshot_id
             or self.daily_charge_context.restored_at != self.captured_at

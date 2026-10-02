@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-dev.20
+
+- Nieuwe Ecowitt-buitensensoren voor temperatuur, luchtvochtigheid, dauwpunt en VPD.
+- Oude kanaal-1-buitenkoppelingen automatisch vervangen bij opstart; eigen afwijkende koppelingen behouden.
+- Garage toegevoegd met temperatuur, vocht, dauwpunt, batterijmelding en klimaatgrafiek.
+- Garage wordt alleen gemonitord: geen comfortdoel, warmtevraag of apparaatbediening.
+- Cv-activiteit ook vastgelegd als context bij de garagemetingen; bestaande historie en bewaartermijn behouden.
+
 ## 0.1.0-dev.19
 
 - Actuele temperatuur en ontvangsttijd samen ophalen via HA-sjabloon-API;

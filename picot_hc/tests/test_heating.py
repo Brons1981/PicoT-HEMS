@@ -53,7 +53,7 @@ class HeatingTests(ControlFixture):
     def test_four_sources_and_shared_cv_switch_waits_for_off_feedback(self):
         self.enable()
         self.poll(NOW+121); self.poll(); self.poll(); self.poll()
-        self.assertEqual({c[1]['entity_id'] for c in self.calls}, {z['device'] for z in self.config['zones']})
+        self.assertEqual({c[1]['entity_id'] for c in self.calls}, {z['device'] for z in self.config['zones'] if not z.get('monitor_only')})
         self.assertTrue(all(c['status']=='confirmed' for c in self.ctl.records()))
         self.assertEqual(self.runtime.schedule.view(self.at)['overrides'], [])
         self.price(.90)

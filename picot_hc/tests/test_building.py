@@ -17,7 +17,7 @@ class BuildingTests(unittest.TestCase):
     def setUp(self):
         self.config = json.loads((ROOT / 'options.example.json').read_text())
         self.states = {}
-        for zone, temperature in zip(self.config['zones'], (21, 19, 10)):
+        for zone, temperature in zip(self.config['zones'], (21, 19, 10, 15)):
             self.states[zone['temperature']] = self.state(temperature, '°C')
         self.states[self.config['outdoor']] = self.state(10, '°C')
 
@@ -32,7 +32,7 @@ class BuildingTests(unittest.TestCase):
 
     def test_delta_uses_measured_outdoor_and_preserves_source_times(self):
         data = self.collect()
-        self.assertEqual([z['delta_t_k'] for z in data['building']['zones']], [11, 9, 0])
+        self.assertEqual([z['delta_t_k'] for z in data['building']['zones']], [11, 9, 0, 5])
         self.assertEqual(data['zones'][0]['samples']['temperature']['source_reported'], '2026-09-15T19:01:00Z')
         self.assertEqual(data['zones'][0]['samples']['temperature']['source_updated'], '2026-09-15T19:00:00Z')
         self.states[self.config['outdoor']]['state'] = '25'
@@ -48,7 +48,7 @@ class BuildingTests(unittest.TestCase):
         self.states[DOOR] = self.state('on')
         data = self.collect()['building']
         source = next(s for s in data['sources'] if s['entity_id'] == cv)
-        self.assertEqual(source['zones'], ['beneden', 'boven'])
+        self.assertEqual(source['zones'], ['beneden', 'boven', 'garage'])
         self.assertEqual(source['mode']['value'], 'heat')
         self.assertEqual(source['activity']['value'], 'idle')
         self.assertEqual(source['target']['value'], 20)

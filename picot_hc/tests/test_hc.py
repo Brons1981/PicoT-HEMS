@@ -276,7 +276,7 @@ class HC(unittest.TestCase):
         self.assertEqual(data['outdoor']['value'],12.5)
         self.assertEqual(data['outdoor_humidity']['value'],81)
         self.assertEqual(data['outdoor_dewpoint']['value'],9.3)
-        self.assertIsNone(data['outdoor_battery']['battery_status'])
+        self.assertEqual(data['outdoor_battery']['battery_status'], 'normal')
         for zone in data['zones']:
             self.assertEqual(zone['samples']['dewpoint']['value'],11.2)
         self.assertEqual(data['zones'][1]['samples']['battery']['battery_status'],'normal')
@@ -334,7 +334,7 @@ class HC(unittest.TestCase):
         store.save(data, 90)
         again = Runtime(rt.config, store, '', '')
         self.assertEqual(again.current()['outdoor_dewpoint']['value'], -2.5)
-        self.assertIsNone(again.current()['outdoor_battery']['battery_status'])
+        self.assertEqual(again.current()['outdoor_battery']['battery_status'], 'normal')
         self.assertEqual(store.history(0)[-1]['zones'][1]['samples']['battery']['battery_status'], 'low')
         self.assertEqual(data['zones'][0]['samples']['battery']['quality'], 'not_configured')
         self.assertEqual(data['zones'][0]['samples']['dewpoint']['value'], 0)
@@ -423,10 +423,10 @@ class HC(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'alleen gemonitord'):
             rt.update_settings({'zone_id': 'garage', 'values': dict(minimum=10, target=20, maximum=25)})
         states = {garage['temperature']: self.state('16', '°C'),
-                  rt.config['outdoor_vpd']: self.state('0.75', 'kPa')}
+                  rt.config['outdoor_vpd']: self.state('7.5', 'hPa')}
         data = snapshot(rt.config, states, NOW)
         rt.store.save(data, 90)
-        self.assertEqual(rt.store.latest()['outdoor_vpd']['value'], 0.75)
+        self.assertEqual(rt.store.latest()['outdoor_vpd']['value'], 7.5)
         self.assertEqual(next(z for z in rt.store.history(0)[0]['zones'] if z['id'] == 'garage')['samples']['temperature']['value'], 16)
 
 if __name__=='__main__':unittest.main()

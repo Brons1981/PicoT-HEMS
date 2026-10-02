@@ -281,10 +281,12 @@ De bestaande database, bewaartermijn, bronbediening en comfortregeling wijzigen 
 ## Buitenmeting en garage (2 oktober 2026)
 
 Buiten gebruikt nu de vier `sensor.0_energie_gw1200a_*`-entiteiten voor temperatuur,
-luchtvochtigheid, dauwpunt en VPD (kPa). De oude kanaal-1-koppelingen worden bij
+luchtvochtigheid, dauwpunt en VPD (hPa). De oude kanaal-1-koppelingen worden bij
 start vervangen; afwijkende eigen buitenentiteiten blijven behouden.
 Kanaal 1 wordt Garage: temperatuur, vocht en dauwpunt worden opgeslagen en in
 de zonekaart en 24-uursgrafiek getoond. De garage wordt via cv verwarmd, maar
 krijgt geen comfortdoel, warmtevraag of eigen apparaatbediening. Bestaande historie
 blijft ongewijzigd; metingen onder het oude buitenlabel worden niet achteraf
 hernoemd. De bewaartermijn blijft zoals ingesteld.
+
+De buitenbatterijmelding gebruikt `binary_sensor.0_energie_gw1200a_wh26_battery`.

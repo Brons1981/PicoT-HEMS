@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-dev.21
+
+- Ecowitt VPD correct uitlezen en tonen in hPa, overeenkomstig de werkelijke broneenheid.
+- WH26-buitenbatterij gekoppeld aan binary_sensor.0_energie_gw1200a_wh26_battery.
+- Bestaande lege en oude kanaal-1-batterijkoppelingen automatisch bijgewerkt.
+
 ## 0.1.0-dev.20
 
 - Nieuwe Ecowitt-buitensensoren voor temperatuur, luchtvochtigheid, dauwpunt en VPD.

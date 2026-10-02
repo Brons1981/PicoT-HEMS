@@ -2,7 +2,7 @@
   "poll_seconds": 30,
   "stale_seconds": 120,
   "retention_days": 90,
-  "outdoor": "sensor.gw1200a_temperature_1",
+  "outdoor": "sensor.0_energie_gw1200a_outdoor_temperature",
   "presence": "device_tracker.4_iphone_alex",
   "cv": "climate.huiskamer",
   "cv_status": "binary_sensor.huiskamer_status",
@@ -67,12 +67,28 @@
       "humidity_max": 60,
       "dewpoint": "sensor.gw1200a_dewpoint_3",
       "battery": "binary_sensor.gw1200a_battery_3"
+    },
+    {
+      "id": "garage",
+      "name": "Garage",
+      "device": "",
+      "temperature": "sensor.gw1200a_temperature_1",
+      "humidity": "sensor.gw1200a_humidity_1",
+      "dewpoint": "sensor.gw1200a_dewpoint_1",
+      "battery": "binary_sensor.gw1200a_battery_1",
+      "power": "",
+      "energy": "",
+      "monitor_only": true,
+      "humidity_min": 40,
+      "humidity_target": 50,
+      "humidity_max": 60
     }
   ],
   "weather_entity": "weather.buienradar",
   "confirmed_price_entity": "sensor.nordpool_kwh_nl_eur_3_095_0",
   "command_timeout_seconds": 300,
-  "outdoor_humidity": "sensor.gw1200a_humidity_1",
-  "outdoor_dewpoint": "sensor.gw1200a_dewpoint_1",
-  "outdoor_battery": "binary_sensor.gw1200a_battery_1"
+  "outdoor_humidity": "sensor.0_energie_gw1200a_humidity",
+  "outdoor_dewpoint": "sensor.0_energie_gw1200a_dewpoint",
+  "outdoor_battery": "",
+  "outdoor_vpd": "sensor.0_energie_gw1200a_vapour_pressure_deficit"
 }

@@ -20,7 +20,7 @@ const {gunzipSync} = require('node:zlib');
   Object.assign(cv.attributes,{min_temp:5,supported_features:401,hvac_modes:['off','heat','auto']});
   deviceStates.push({entity_id:'sensor.downstairs',state:'19',attributes:{unit_of_measurement:'°C'},last_reported:new Date().toISOString()});
   const doorState={entity_id:'binary_sensor.1_3_woonkamer_deur_raam_sensor_achterdeur_contact',state:'on',attributes:{device_class:'door'},last_updated:new Date().toISOString()};
-  deviceStates.push(doorState,{entity_id:'sensor.gw1200a_temperature_1',state:'10',attributes:{unit_of_measurement:'°C'},last_reported:new Date().toISOString()});
+  deviceStates.push(doorState,{entity_id:'sensor.0_energie_gw1200a_outdoor_temperature',state:'10',attributes:{unit_of_measurement:'°C'},last_reported:new Date().toISOString()});
   const options=JSON.parse(readFileSync(path.join(root,'options.example.json'),'utf8'));
   options.zones[0].temperature='sensor.downstairs';options.poll_seconds=10;options.stale_seconds=30;
   for(const [entity_id,state,attributes] of [
@@ -28,12 +28,18 @@ const {gunzipSync} = require('node:zlib');
     ['sensor.gw1200a_dewpoint_2','12.5',{unit_of_measurement:'°C'}],
     ['sensor.gw1200a_humidity_2','70',{unit_of_measurement:'%'}],
     ['sensor.gw1200a_dewpoint_3','14.5',{unit_of_measurement:'°C'}],
-    ['sensor.gw1200a_dewpoint_1','8.5',{unit_of_measurement:'°C'}],
+    ['sensor.0_energie_gw1200a_dewpoint','8.5',{unit_of_measurement:'°C'}],
     ['binary_sensor.gw1200a_battery_1','off',{device_class:'battery'}],
     ['binary_sensor.gw1200a_battery_2','on',{device_class:'battery'}],
     ['binary_sensor.gw1200a_battery_3','unavailable',{device_class:'battery'}],
   ]) deviceStates.push({entity_id,state,attributes,last_updated:new Date().toISOString()});
   const configPath=path.join(data,'options.json');writeFileSync(configPath,JSON.stringify(options));
+  deviceStates.push(
+    {entity_id:'sensor.0_energie_gw1200a_vapour_pressure_deficit',state:'0.75',attributes:{unit_of_measurement:'kPa'}},
+    {entity_id:'sensor.gw1200a_temperature_1',state:'16',attributes:{unit_of_measurement:'°C'}},
+    {entity_id:'sensor.gw1200a_humidity_1',state:'55',attributes:{unit_of_measurement:'%'}},
+    {entity_id:'sensor.gw1200a_dewpoint_1',state:'7',attributes:{unit_of_measurement:'°C'}}
+  );
   const fakeHA = http.createServer((req,res) => {
     res.setHeader('Content-Type','application/json');
     deviceStates.find(s=>s.entity_id==='sensor.downstairs').last_reported=new Date().toISOString();
@@ -79,14 +85,18 @@ const {gunzipSync} = require('node:zlib');
     assert.equal(await page.locator('form.temperature-settings').count(), 3);
     await page.waitForFunction(()=>document.querySelectorAll('.forecast-day').length===5);
     assert.match(await page.locator('#weather-measured').textContent(), /Dauwpunt: 8,5 °C/);
-    assert.match(await page.locator('#weather-measured').textContent(), /Sensorbatterij: Normaal/);
+    assert.match(await page.locator('#weather-measured').textContent(), /Sensorbatterij: Niet van toepassing/);
+    assert.match(await page.locator('#weather-measured').textContent(), /VPD: 0,75 kPa/);
+    assert.equal(await page.locator('#zones .zone').count(),4);
+    assert.equal(await page.locator('#zones .zone').last().locator('form').count(),0);
+    assert.match(await page.locator('#climate-readout-garage').textContent(),/Temperatuur 16 °C/);
     const zoneText=await page.locator('#zones').textContent();
     assert.match(zoneText,/11,5 °C/);assert.match(zoneText,/12,5 °C/);assert.match(zoneText,/14,5 °C/);
     assert.match(zoneText,/SensorbatterijNiet van toepassing/);
     assert.match(zoneText,/SensorbatterijBatterij bijna leeg/);
     assert.match(zoneText,/SensorbatterijNiet beschikbaar/);
     assert.equal(await page.locator('#zones .battery-low').count(),1);
-    assert.equal(await page.locator('.zone-climate-panel canvas').count(),3);
+    assert.equal(await page.locator('.zone-climate-panel canvas').count(),4);
     assert.match(await page.locator('#climate-readout-beneden').textContent(),/Temperatuur 19 °C/);
     assert.match(await page.locator('#climate-readout-beneden').textContent(),/Dauwpunt 11,5 °C/);
     assert.match(await page.locator('#climate-readout-beneden').textContent(),/Luchtvochtigheid Niet beschikbaar/);

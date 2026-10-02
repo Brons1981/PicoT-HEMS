@@ -39,7 +39,7 @@ def building_observation(config, states, now, data, door_entity):
         if entity:
             bindings.setdefault(entity, []).append(zone['id'])
     if config.get('cv'):
-        bindings[config['cv']] = ['beneden', 'boven']
+        bindings[config['cv']] = ['beneden', 'boven'] + [z['id'] for z in config['zones'] if z['id'] == 'garage']
     sources = []
     for entity, served_zones in bindings.items():
         sources.append(dict(entity_id=entity, zones=served_zones,

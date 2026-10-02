@@ -405,4 +405,28 @@ class HC(unittest.TestCase):
             self.assertEqual(data['outdoor_dewpoint']['quality'], quality)
             self.assertIsNone(data['outdoor_dewpoint']['value'])
 
+
+    def test_outdoor_upgrade_and_garage_never_requests_heat(self):
+        self.config.update(outdoor='sensor.gw1200a_temperature_1',
+                           outdoor_humidity='sensor.gw1200a_humidity_1',
+                           outdoor_dewpoint='sensor.gw1200a_dewpoint_1',
+                           outdoor_battery='binary_sensor.gw1200a_battery_1')
+        self.config['zones'] = [z for z in self.config['zones'] if z['id'] != 'garage']
+        rt = Runtime(self.config, Store(Path(self.tmp.name)/'garage.sqlite3'), '', '')
+        self.assertEqual(rt.config['outdoor'], 'sensor.0_energie_gw1200a_outdoor_temperature')
+        garage = next(z for z in rt.config['zones'] if z['id'] == 'garage')
+        self.assertTrue(garage['monitor_only'])
+        self.assertEqual(garage['device'], '')
+        self.assertNotIn('garage', rt.control.bindings)
+        self.assertNotIn('garage', rt.schedule.view(NOW)['comfort']['zones'])
+        self.assertNotIn('garage', rt.heating.view(rt.config, NOW)['zones'])
+        with self.assertRaisesRegex(ValueError, 'alleen gemonitord'):
+            rt.update_settings({'zone_id': 'garage', 'values': dict(minimum=10, target=20, maximum=25)})
+        states = {garage['temperature']: self.state('16', '°C'),
+                  rt.config['outdoor_vpd']: self.state('0.75', 'kPa')}
+        data = snapshot(rt.config, states, NOW)
+        rt.store.save(data, 90)
+        self.assertEqual(rt.store.latest()['outdoor_vpd']['value'], 0.75)
+        self.assertEqual(next(z for z in rt.store.history(0)[0]['zones'] if z['id'] == 'garage')['samples']['temperature']['value'], 16)
+
 if __name__=='__main__':unittest.main()

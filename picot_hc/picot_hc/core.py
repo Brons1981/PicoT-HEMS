@@ -208,6 +208,7 @@ def snapshot(config, states, now):
                 outdoor=observation(config['outdoor'], states, now, True, '°C'),
                 outdoor_humidity=observation(config.get('outdoor_humidity', ''), states, now, True, '%'),
                 outdoor_dewpoint=observation(config.get('outdoor_dewpoint', ''), states, now, True, '°C'),
+                outdoor_vpd=observation(config.get('outdoor_vpd', ''), states, now, True, 'kPa'),
                 outdoor_battery=battery_observation(config.get('outdoor_battery', ''), states, now),
                 presence=observation(config['presence'], states, now),
                 cv=observation(config['cv'], states, now),
@@ -260,7 +261,7 @@ class Store:
         """Bounded memory, release SQLite read locks between export pages."""
         after = -1e300
         keys = ('collected', 'zones', 'outdoor', 'outdoor_humidity', 'outdoor_dewpoint',
-                'outdoor_battery', 'presence', 'cv', 'cv_status', 'gas', 'weather', 'building')
+                'outdoor_battery', 'outdoor_vpd', 'presence', 'cv', 'cv_status', 'gas', 'weather', 'building')
         while True:
             with self.connect() as db:
                 rows = db.execute('SELECT time, payload FROM samples WHERE time > ? AND time <= ? ORDER BY time LIMIT ?',

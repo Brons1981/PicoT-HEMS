@@ -28,7 +28,7 @@ class HC(unittest.TestCase):
 
     def test_missing_sensors_do_not_become_zero(self):
         d=snapshot(self.config, {}, NOW)
-        self.assertEqual(len(d['zones']),3)
+        self.assertEqual(len(d['zones']),4)
         self.assertIsNone(d['zones'][0]['samples']['temperature']['value'])
         self.assertEqual(d['presence']['quality'],'missing')
         self.assertNotEqual(d['presence']['value'],'not_home')
@@ -131,7 +131,7 @@ class HC(unittest.TestCase):
     def test_supervisor_options_optional_temperatures(self):
         c=json.loads((ROOT/'config.json').read_text())['options']
         validate(c)
-        self.assertEqual(len(snapshot(c,{},NOW)['zones']),3)
+        self.assertEqual(len(snapshot(c,{},NOW)['zones']),4)
 
 
     def settings_runtime(self):
@@ -276,7 +276,7 @@ class HC(unittest.TestCase):
         self.assertEqual(data['outdoor']['value'],12.5)
         self.assertEqual(data['outdoor_humidity']['value'],81)
         self.assertEqual(data['outdoor_dewpoint']['value'],9.3)
-        self.assertEqual(data['outdoor_battery']['battery_status'],'normal')
+        self.assertIsNone(data['outdoor_battery']['battery_status'])
         for zone in data['zones']:
             self.assertEqual(zone['samples']['dewpoint']['value'],11.2)
         self.assertEqual(data['zones'][1]['samples']['battery']['battery_status'],'normal')
@@ -323,7 +323,7 @@ class HC(unittest.TestCase):
         self.assertEqual(rt.config, expected)
         self.assertIsNone(store.history(0)[0]['outdoor_dewpoint'])
         self.assertIsNone(store.history(0)[0]['zones'][0]['samples']['dewpoint'])
-        self.assertEqual(len(rt.current()['zones']), 3)
+        self.assertEqual(len(rt.current()['zones']), 4)
         states = {expected['outdoor_dewpoint']: self.state('-2.5', '°C'),
                   expected['outdoor_battery']: dict(state='off', attributes={'device_class':'battery'})}
         for zone in expected['zones']:
@@ -334,7 +334,7 @@ class HC(unittest.TestCase):
         store.save(data, 90)
         again = Runtime(rt.config, store, '', '')
         self.assertEqual(again.current()['outdoor_dewpoint']['value'], -2.5)
-        self.assertEqual(again.current()['outdoor_battery']['battery_status'], 'normal')
+        self.assertIsNone(again.current()['outdoor_battery']['battery_status'])
         self.assertEqual(store.history(0)[-1]['zones'][1]['samples']['battery']['battery_status'], 'low')
         self.assertEqual(data['zones'][0]['samples']['battery']['quality'], 'not_configured')
         self.assertEqual(data['zones'][0]['samples']['dewpoint']['value'], 0)

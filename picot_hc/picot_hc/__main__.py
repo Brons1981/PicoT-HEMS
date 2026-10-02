@@ -27,14 +27,23 @@ class Runtime:
         self.settings_revision = 0
         self.csrf_token = secrets.token_urlsafe(32)
         self.config = copy.deepcopy(config)
-        # Confirmed entity list from Alex, 2026-09-15. Existing options may still be blank.
-        for key, entity in {'outdoor': 'sensor.gw1200a_temperature_1',
-                            'outdoor_dewpoint': 'sensor.gw1200a_dewpoint_1',
-                            'outdoor_battery': 'binary_sensor.gw1200a_battery_1',
-                            'outdoor_humidity': 'sensor.gw1200a_humidity_1'}.items():
-            if not self.config.get(key):
+        # Move the former outdoor channel to passive garage monitoring.
+        outdoor_defaults = {'outdoor':'sensor.0_energie_gw1200a_outdoor_temperature','outdoor_humidity':'sensor.0_energie_gw1200a_humidity','outdoor_dewpoint':'sensor.0_energie_gw1200a_dewpoint','outdoor_vpd':'sensor.0_energie_gw1200a_vapour_pressure_deficit','outdoor_battery':''}
+        old_outdoor = {'outdoor': 'sensor.gw1200a_temperature_1',
+                       'outdoor_humidity': 'sensor.gw1200a_humidity_1',
+                       'outdoor_dewpoint': 'sensor.gw1200a_dewpoint_1',
+                       'outdoor_battery': 'binary_sensor.gw1200a_battery_1'}
+        for key, entity in outdoor_defaults.items():
+            if not self.config.get(key) or self.config.get(key) == old_outdoor.get(key):
                 self.config[key] = entity
+        if not any(z['id'] == 'garage' for z in self.config['zones']):
+            self.config['zones'].append({'id':'garage','name':'Garage','device':'','temperature':'sensor.gw1200a_temperature_1','humidity':'sensor.gw1200a_humidity_1','dewpoint':'sensor.gw1200a_dewpoint_1','battery':'binary_sensor.gw1200a_battery_1','power':'','energy':'','monitor_only':True,'humidity_min':40,'humidity_target':50,'humidity_max':60})
+        for zone in self.config['zones']:
+            if zone['id'] == 'garage':
+                zone['monitor_only'] = True
+                zone['device'] = ''
         sensor_defaults = {
+            'garage': {'temperature': 'sensor.gw1200a_temperature_1', 'humidity': 'sensor.gw1200a_humidity_1', 'dewpoint': 'sensor.gw1200a_dewpoint_1', 'battery': 'binary_sensor.gw1200a_battery_1'},
             'beneden': {'dewpoint': 'sensor.gw1200a_indoor_dewpoint', 'battery': '', 'temperature': 'sensor.gw1200a_indoor_temperature', 'humidity': 'sensor.gw1200a_indoor_humidity'},
             'boven': {'dewpoint': 'sensor.gw1200a_dewpoint_2', 'battery': 'binary_sensor.gw1200a_battery_2', 'temperature': 'sensor.gw1200a_temperature_2', 'humidity': 'sensor.gw1200a_humidity_2'},
             'badkamer': {'dewpoint': 'sensor.gw1200a_dewpoint_3', 'battery': 'binary_sensor.gw1200a_battery_3', 'temperature': 'sensor.gw1200a_temperature_3', 'humidity': 'sensor.gw1200a_humidity_3'},
@@ -86,6 +95,8 @@ class Runtime:
             zone = next((z for z in config['zones'] if z['id'] == payload['zone_id']), None)
             if zone is None:
                 raise ValueError('Onbekende zone.')
+            if zone.get('monitor_only'):
+                raise ValueError('Deze ruimte wordt alleen gemonitord.')
             zone.update(values)
             try:
                 validate(config)
@@ -156,7 +167,9 @@ class Runtime:
         data['control_mode'] = ('automatic_heating' if data['heating']['enabled']
                                 else 'bathroom_timer' if data['heating']['timer']['active'] else 'comfort_input')
         for zone in data['zones']:
-            zone['reason'] = data['heating']['zones'][zone['id']]['reason']
+            zone['reason'] = ('Monitoring; verwarmd via cv, zonder actieve ruimteregeling.'
+                              if zone['settings'].get('monitor_only') else
+                              data['heating']['zones'][zone['id']]['reason'])
         data['csrf_token'] = self.csrf_token
         data.update(connection=self.connection, error=self.error, age_seconds=age,
                     retention_days=self.config['retention_days'],

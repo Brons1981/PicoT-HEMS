@@ -277,6 +277,8 @@ class Schedule:
                                   active=status not in ('failed','superseded','unrecorded')))
         zones = {}
         for zone in self.config['zones']:
+            if zone.get('monitor_only'):
+                continue
             fixed = dict(zone=zone['id'], kind='fixed' if zone['id'] != 'beneden' else 'fallback',
                          target=zone.get('target'), minimum=zone.get('minimum') if zone.get('minimum') is not None else zone.get('target'),
                          maximum=zone.get('maximum') if zone.get('maximum') is not None else zone.get('target'),

@@ -168,6 +168,8 @@ class Heating:
         fresh = (self.control.connected and self.control.received is not None
                  and 0 <= now-self.control.received <= config['stale_seconds'])
         for zone in config['zones']:
+            if zone.get('monitor_only'):
+                continue
             zid = zone['id']
             req = view['comfort']['zones'][zid]
             goal = req['request']

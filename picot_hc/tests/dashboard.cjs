@@ -34,6 +34,12 @@ const {gunzipSync} = require('node:zlib');
     ['binary_sensor.gw1200a_battery_3','unavailable',{device_class:'battery'}],
   ]) deviceStates.push({entity_id,state,attributes,last_updated:new Date().toISOString()});
   const configPath=path.join(data,'options.json');writeFileSync(configPath,JSON.stringify(options));
+  deviceStates.push(
+    {entity_id:'sensor.0_energie_gw1200a_vapour_pressure_deficit',state:'0.75',attributes:{unit_of_measurement:'kPa'}},
+    {entity_id:'sensor.gw1200a_temperature_1',state:'16',attributes:{unit_of_measurement:'°C'}},
+    {entity_id:'sensor.gw1200a_humidity_1',state:'55',attributes:{unit_of_measurement:'%'}},
+    {entity_id:'sensor.gw1200a_dewpoint_1',state:'7',attributes:{unit_of_measurement:'°C'}}
+  );
   const fakeHA = http.createServer((req,res) => {
     res.setHeader('Content-Type','application/json');
     deviceStates.find(s=>s.entity_id==='sensor.downstairs').last_reported=new Date().toISOString();
@@ -79,7 +85,11 @@ const {gunzipSync} = require('node:zlib');
     assert.equal(await page.locator('form.temperature-settings').count(), 3);
     await page.waitForFunction(()=>document.querySelectorAll('.forecast-day').length===5);
     assert.match(await page.locator('#weather-measured').textContent(), /Dauwpunt: 8,5 °C/);
-    assert.match(await page.locator('#weather-measured').textContent(), /Sensorbatterij: Normaal/);
+    assert.match(await page.locator('#weather-measured').textContent(), /Sensorbatterij: Niet van toepassing/);
+    assert.match(await page.locator('#weather-measured').textContent(), /VPD: 0,75 kPa/);
+    assert.equal(await page.locator('#zones .zone').count(),4);
+    assert.equal(await page.locator('#zones .zone').last().locator('form').count(),0);
+    assert.match(await page.locator('#climate-readout-garage').textContent(),/Temperatuur 16 °C/);
     const zoneText=await page.locator('#zones').textContent();
     assert.match(zoneText,/11,5 °C/);assert.match(zoneText,/12,5 °C/);assert.match(zoneText,/14,5 °C/);
     assert.match(zoneText,/SensorbatterijNiet van toepassing/);

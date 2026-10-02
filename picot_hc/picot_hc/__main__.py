@@ -28,7 +28,7 @@ class Runtime:
         self.csrf_token = secrets.token_urlsafe(32)
         self.config = copy.deepcopy(config)
         # Move the former outdoor channel to passive garage monitoring.
-        outdoor_defaults = {'outdoor':'sensor.0_energie_gw1200a_outdoor_temperature','outdoor_humidity':'sensor.0_energie_gw1200a_humidity','outdoor_dewpoint':'sensor.0_energie_gw1200a_dewpoint','outdoor_vpd':'sensor.0_energie_gw1200a_vapour_pressure_deficit','outdoor_battery':''}
+        outdoor_defaults = {'outdoor':'sensor.0_energie_gw1200a_outdoor_temperature','outdoor_humidity':'sensor.0_energie_gw1200a_humidity','outdoor_dewpoint':'sensor.0_energie_gw1200a_dewpoint','outdoor_vpd':'sensor.0_energie_gw1200a_vapour_pressure_deficit','outdoor_battery':'binary_sensor.0_energie_gw1200a_wh26_battery'}
         old_outdoor = {'outdoor': 'sensor.gw1200a_temperature_1',
                        'outdoor_humidity': 'sensor.gw1200a_humidity_1',
                        'outdoor_dewpoint': 'sensor.gw1200a_dewpoint_1',

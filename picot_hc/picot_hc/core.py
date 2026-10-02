@@ -208,7 +208,7 @@ def snapshot(config, states, now):
                 outdoor=observation(config['outdoor'], states, now, True, '°C'),
                 outdoor_humidity=observation(config.get('outdoor_humidity', ''), states, now, True, '%'),
                 outdoor_dewpoint=observation(config.get('outdoor_dewpoint', ''), states, now, True, '°C'),
-                outdoor_vpd=observation(config.get('outdoor_vpd', ''), states, now, True, 'kPa'),
+                outdoor_vpd=observation(config.get('outdoor_vpd', ''), states, now, True, 'hPa'),
                 outdoor_battery=battery_observation(config.get('outdoor_battery', ''), states, now),
                 presence=observation(config['presence'], states, now),
                 cv=observation(config['cv'], states, now),

@@ -89,6 +89,6 @@
   "command_timeout_seconds": 300,
   "outdoor_humidity": "sensor.0_energie_gw1200a_humidity",
   "outdoor_dewpoint": "sensor.0_energie_gw1200a_dewpoint",
-  "outdoor_battery": "",
+  "outdoor_battery": "binary_sensor.0_energie_gw1200a_wh26_battery",
   "outdoor_vpd": "sensor.0_energie_gw1200a_vapour_pressure_deficit"
 }

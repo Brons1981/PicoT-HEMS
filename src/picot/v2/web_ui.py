@@ -25,6 +25,7 @@ from picot.v2.contracts import (
     PriceForecastPoint,
 )
 from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
+from picot.v2.household_calendar_history import CALENDAR_REPORT_PATH, calendar_dashboard_view
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.price_plan_reference import PricePlanReference
 from picot.v2.projection import Projection, project_market_revision_comparison
@@ -335,6 +336,11 @@ DASHBOARD_HTML = """<!doctype html>
       margin: 0 0 18px;
       overflow-x: auto;
       scrollbar-width: thin;
+    }
+    #household-calendar-history table { width: 100%; border-collapse: collapse; }
+    #household-calendar-history th, #household-calendar-history td {
+      padding: 8px; border-bottom: 1px solid #27313d; text-align: left;
+      white-space: nowrap;
     }
     .tab-button {
       border: 1px solid #386f96;
@@ -1008,6 +1014,15 @@ DASHBOARD_HTML = """<!doctype html>
     <section
       id="tab-history" class="tab-panel" data-tab-panel="history" hidden
     >
+      <h2>Huisverbruik per kalenderdag</h2>
+      <p class="muted">
+        Vergelijk maandag t/m zondag en werkdagen met weekenden. Deze registratie
+        wordt opgebouwd naast de huidige planning. Alleen voldoende gemeten,
+        afgesloten dagen tellen mee in de daggemiddelden.
+      </p>
+      <section id="household-calendar-history" class="timeline-panel" aria-live="polite">
+        Kalenderhistorie wordt opgebouwd…
+      </section>
       <h2>Schakelhistorie batterijmodus</h2>
       <section
         id="storage-mode-transition-history"
@@ -3850,6 +3865,91 @@ DASHBOARD_HTML = """<!doctype html>
         );
       });
       localStorage.setItem(ACTIVE_TAB_KEY, selected);
+      if (selected === "history") loadHouseholdCalendar();
+    }
+
+    let calendarLoading = false;
+    async function loadHouseholdCalendar() {
+      if (calendarLoading || element("tab-history").hidden) return;
+      calendarLoading = true;
+      const target = element("household-calendar-history");
+      try {
+        const response = await fetch("api/household-calendar", { cache: "no-store" });
+        if (!response.ok) throw new Error("Kalenderoverzicht tijdelijk niet beschikbaar.");
+        const report = await response.json();
+        if (report.status !== "ready") {
+          target.textContent = report.status === "collecting"
+            ? "Kalenderhistorie wordt opgebouwd. Na installatie start de aanvulling automatisch."
+            : "Kalenderoverzicht tijdelijk niet beschikbaar; de planning blijft doorlopen.";
+          return;
+        }
+        target.replaceChildren();
+        function paragraph(text) {
+          const p = document.createElement("p");
+          p.textContent = text; target.append(p);
+        }
+        function table(headings, rows) {
+          const wrapper = document.createElement("div");
+          wrapper.style.overflowX = "auto";
+          const grid = document.createElement("table");
+          const head = grid.createTHead().insertRow();
+          for (const text of headings) {
+            const cell = document.createElement("th");
+            cell.textContent = text; head.append(cell);
+          }
+          const body = grid.createTBody();
+          for (const row of rows) {
+            const tr = body.insertRow();
+            for (const value of row) tr.insertCell().textContent = String(value);
+          }
+          wrapper.append(grid); target.append(wrapper);
+        }
+        const energy = (value) => value == null ? "—" : formatEnergyKwh(value);
+        const progress = report.source_progress ?? {};
+        paragraph("Bijgewerkt: " + formatTimestamp(report.generated_at) + ". " +
+          (progress.caught_up ? "Bestaande historie ingelezen. " :
+            "Bestaande historie wordt aangevuld. ") +
+          "Verwerkt: " + (progress.accepted ?? 0) + " metingen.");
+        if (Date.now() - Date.parse(report.generated_at) > 1800000) {
+          paragraph("Dit overzicht is ouder dan 30 minuten; " +
+            "controleer of de kalenderregistratie actief is.");
+        }
+        const summaries = [...Object.entries(report.weekday_summary ?? {}),
+          ...Object.entries(report.day_type_summary ?? {}).map(([key, value]) =>
+            [key === "workday" ? "Werkdagen" : "Weekend", value])];
+        table(["Dag", "Bruikbare dagen", "Gemiddeld gemeten", "Mediaan", "Meetdekking"],
+          summaries.map(([name, s]) => [name, s.eligible_days,
+            energy(s.mean_observed_energy_wh), energy(s.median_observed_energy_wh),
+            s.mean_coverage_fraction == null ? "—" :
+              (s.mean_coverage_fraction * 100).toFixed(1) + "%"]));
+        paragraph("Dagwaarden zijn de gemeten energie; " +
+          "meetgaten worden niet tot een volledige dag aangevuld. " +
+          "EV-laden, wassen en drogen zijn inbegrepen voor zover gemeten in het huisverbruik.");
+        const comparison = report.model_comparison ?? {};
+        paragraph("Modelvergelijking over " + (comparison.common_quarters ?? 0) +
+          " gemeenschappelijk bruikbare kwartieren, uitsluitend met eerdere dagen. " +
+          "Dit is een terugblik op verbruiksmodellen; het toont geen financiële besparing.");
+        const labels = {current_clock_quarter: "Huidige klokkwartiermethode",
+          same_weekday: "Dezelfde weekdag", workday_weekend: "Werkdag / weekend"};
+        table(["Methode", "Gemiddelde absolute fout per kwartier", "Over- / onderschatting"],
+          Object.entries(comparison.models ?? {}).map(([key, s]) => [labels[key] ?? key,
+            formatMeasurement(s.mean_absolute_quarter_error_wh, "Wh"),
+            formatMeasurement(s.mean_signed_quarter_error_wh, "Wh")]));
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "Dagsommen en meetdekking (laatste 28 dagen)";
+        details.append(summary); target.append(details);
+        table(["Datum", "Dag", "Gemeten verbruik", "Dekking", "Status"],
+          (report.days ?? []).slice(-28).reverse().map((d) => [d.local_date, d.weekday_name,
+            energy(d.observed_energy_wh), (d.coverage_fraction * 100).toFixed(1) + "%",
+            !d.closed ? "Dag loopt nog" :
+              d.usable_for_profile ? "Bruikbaar" : "Onvoldoende dekking"]));
+        details.append(target.lastElementChild);
+      } catch (error) {
+        target.textContent = error.message;
+      } finally {
+        calendarLoading = false;
+      }
     }
 
     function initializeTabs() {
@@ -4973,6 +5073,7 @@ DASHBOARD_HTML = """<!doctype html>
     initializeTabs();
     loadView().finally(watchViewUpdates);
     setInterval(loadView, 60000);
+    setInterval(loadHouseholdCalendar, 60000);
   </script>
 </body>
 </html>
@@ -5704,6 +5805,14 @@ def create_web_server(
                     HTTPStatus.OK,
                     json.dumps(overview, separators=(",", ":")),
                 )
+                return
+
+            if path == "/api/household-calendar":
+                report_path = next((p for p in store.diagnostic_paths()
+                                    if p.name == CALENDAR_REPORT_PATH.name), None)
+                self._send_json(HTTPStatus.OK, json.dumps(
+                    calendar_dashboard_view(report_path), separators=(",", ":"),
+                ))
                 return
 
             if path == "/downloads/planning-incidents.jsonl":

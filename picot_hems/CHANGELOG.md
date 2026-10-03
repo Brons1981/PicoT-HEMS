@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.284
+
+- Bouwt automatisch een aparte kalenderhistorie van huisverbruik op, met maandag t/m zondag, werkdagen/weekenden, kwartierprofielen en meetdekking. Bestaande metingen worden hervatbaar meegenomen.
+- Tab Historie toont dagsommen, weekdaggemiddelden en een retrospectieve vergelijking met de huidige verbruiksprognose. De aparte registratie staat ook in de diagnose-ZIP.
+- De planner blijft de huidige 14-dagenmethode gebruiken. De kalenderregistratie werkt in een afzonderlijk begrensd proces; meetgaten worden niet opgevuld.
+
 ## 2.0.0-dev.283
 
 - Nieuwe optie `solcast_planning_basis`: lower, mean-lower-central, central of upper. Het gemiddelde blijft de standaard.

@@ -56,6 +56,11 @@ from picot.v2.financial_measurement_observer import FinancialMeasurementObserver
 from picot.v2.financial_result_ledger import FinancialResultLedger
 from picot.v2.grid_charge_review_runtime import GridChargeReviewObserver
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
+from picot.v2.household_calendar_history import CALENDAR_REPORT_PATH
+from picot.v2.household_calendar_runtime import (
+    maintain_calendar_observer,
+    start_calendar_observer,
+)
 from picot.v2.household_load_history import HouseholdLoadHistoryStore
 from picot.v2.household_load_rejections import HouseholdLoadRejectionStore
 from picot.v2.household_objective_input import attach_household_objectives
@@ -2643,6 +2648,8 @@ def main() -> None:
     household_load_history = HouseholdLoadHistoryStore(
         HOUSEHOLD_LOAD_HISTORY_PATH
     )
+    calendar_observer = start_calendar_observer(options, source=HOUSEHOLD_LOAD_HISTORY_PATH)
+    calendar_observer_restart_after = perf_counter() + 300
     pv_history_reader = HomeAssistantPVHistoryReader(token)
     soc_history_recovery = HistoricalSOCRecovery(token)
     power_history_reader = HomeAssistantPowerHistoryReader(token)
@@ -2743,6 +2750,7 @@ def main() -> None:
             TRIAL_ROOT,
             SOC_PROJECTION_CACHE_PATH,
             HOUSEHOLD_LOAD_HISTORY_PATH,
+            CALENDAR_REPORT_PATH,
             HOUSEHOLD_LOAD_REJECTIONS_PATH,
             PV_ATTENUATION_FORECAST_BASIS_PATH,
             PV_ATTENUATION_EVIDENCE_PATH,
@@ -3429,6 +3437,10 @@ def main() -> None:
             history_capture_trial,
             cycle_ms=(perf_counter() - cycle_started_clock) * 1000,
             cycle_cpu_ms=(time.process_time() - cycle_started_cpu) * 1000,
+        )
+        calendar_observer, calendar_observer_restart_after = maintain_calendar_observer(
+            calendar_observer, options, source=HOUSEHOLD_LOAD_HISTORY_PATH,
+            now=perf_counter(), restart_after=calendar_observer_restart_after,
         )
         execution_scope_id = str(
             options.get("storage_execution_scope_id", "home-battery")

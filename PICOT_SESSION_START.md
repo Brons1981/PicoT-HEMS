@@ -1,5 +1,18 @@
 # PicoT HEMS — mandatory session start
 
+## Doorlopende kalenderhistorie huisverbruik — release dev.284, 3 oktober 2026
+
+Alex heeft automatische registratie naast de huidige methode aangevraagd, met
+bestaande historie en vergelijking van maandag t/m zondag en werkdagen/weekenden.
+Lees `docs/architecture/ADR-037.22-passive-household-calendar-history.md` en
+`docs/development_log/2026-10-03-household-calendar-history.md`. Branch
+`feat/household-calendar-history` vanaf main `3c6aff4` / HEMS dev.283.
+Afzonderlijk begrensd proces, standaard actief na installatie, hervatbare aanvulling,
+meetdekking, diagnose-export en weergave onder Historie. De huidige planner en
+Solcast blijven gelijk. 193 tests, Ruff en mypy (239 bestanden) geslaagd.
+Alex heeft om 08:51 Europe/Amsterdam release dev.284 via PR en CI aangevraagd.
+Installatie en NUC-belastingsbewijs volgen afzonderlijk.
+
 Upload this file at the start of every PicoT development session together with
 the latest development handoff.  Read both completely before diagnosing,
 designing or changing code.

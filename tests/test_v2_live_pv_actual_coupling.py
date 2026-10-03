@@ -506,6 +506,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
             "live_poll_interval_seconds": 60,
             "pv_power_entity": ENTITY_ID,
             "pv_power_telemetry_interval_seconds": 5,
+            "household_calendar_history_enabled": False,
         },
     )
     monkeypatch.setattr(
@@ -1126,6 +1127,7 @@ def test_main_feeds_visible_sunset_evidence_into_attenuation_ranges(
             "pv_power_entity": ENTITY_ID,
             "pv_power_telemetry_interval_seconds": 5,
             "pv_local_timezone": "Europe/Amsterdam",
+            "household_calendar_history_enabled": False,
         },
     )
     monkeypatch.setattr(

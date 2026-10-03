@@ -103,6 +103,7 @@ def test_main_starts_one_web_server_before_pipeline_loop(
 
     events: list[str] = []
     stores: list[WebViewStore] = []
+    calendar_sources: list[Path] = []
 
     def fake_start(store: WebViewStore) -> tuple[object, object]:
         events.append("start")
@@ -125,6 +126,8 @@ def test_main_starts_one_web_server_before_pipeline_loop(
         },
     )
     monkeypatch.setattr(live_runtime, "_start_web_server", fake_start)
+    monkeypatch.setattr(live_runtime, "start_calendar_observer",
+                        lambda options, *, source: calendar_sources.append(source))
     monkeypatch.setattr(
         live_runtime,
         "_start_energy_device_catalog_observer",
@@ -137,11 +140,13 @@ def test_main_starts_one_web_server_before_pipeline_loop(
 
     assert events == ["start", "poll"]
     assert len(stores) == 1
+    assert calendar_sources == [live_runtime.HOUSEHOLD_LOAD_HISTORY_PATH]
     assert [path.name for path in stores[0].diagnostic_paths()] == [
         "picot_v2_planning_incident_history.jsonl",
         "picot_history_capture_trial",
         "picot_v2_soc_projection.json",
         "picot_v2_household_load_history.jsonl",
+        "picot_v2_household_calendar.json",
         "picot_v2_household_load_rejections.jsonl",
         "picot_v2_pv_forecast_basis.jsonl",
         "picot_v2_pv_attenuation_evidence.jsonl",

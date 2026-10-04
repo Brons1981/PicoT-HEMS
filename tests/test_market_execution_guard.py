@@ -14,6 +14,82 @@ from picot.v2.power_history import PowerHistoryPoint, PowerHistorySeries, PowerH
 from picot.v2.zendure_mode_capabilities import ZendureModeMapping
 
 
+def with_battery_gap(snapshot, start, *, duration=0.986637, recovered=True):
+    telemetry = snapshot.market_power_history
+    return replace(snapshot, market_power_history=replace(
+        telemetry,
+        series=tuple(replace(s, points=s.points + (
+            PowerHistoryPoint(start + timedelta(seconds=20), float("nan"), "gap"),
+        ) + ((PowerHistoryPoint(
+            start + timedelta(seconds=20 + duration), 2400, "resumed"
+        ),) if recovered else ())) if s.role == "battery_discharge" else s
+            for s in telemetry.series),
+    ))
+
+
+def test_recovered_one_second_gap_preserves_market_and_persists_uncertainty(tmp_path, monkeypatch):
+    store, binding, start, observed = bound(tmp_path, monkeypatch)
+    guarded_market_primitive(snapshot=observed(start), store=store, scope_id="battery",
+        requested=Primitive.DISCHARGE_AT_POWER, export_mode_confirmed=True)
+    snapshot = with_battery_gap(observed(start + timedelta(seconds=60)), start)
+    assert measured_market_export(
+        snapshot.market_power_history, start, snapshot.captured_at
+    ) is None
+    result = guarded_market_primitive(snapshot=snapshot, store=store, scope_id="battery",
+        requested=Primitive.DISCHARGE_AT_POWER, export_mode_confirmed=True)
+    assert result is Primitive.DISCHARGE_AT_POWER
+    restored = ActivePlanCommitmentStore(tmp_path / "plans.json").load_market_progress(
+        binding.assignment_id
+    )
+    assert restored.stop_requested_at is None
+    assert restored.measured_export_wh == pytest.approx(1200 * (60 - 0.986637) / 3600)
+    assert restored.estimated_export_wh == pytest.approx(1200 * 0.986637 / 3600)
+    assert restored.export_uncertainty_wh == pytest.approx(1200 * 0.986637 / 3600)
+
+    # Closing after an observed mode change retains measured/estimated separation.
+    stopped_at = start + timedelta(seconds=60)
+    final = with_battery_gap(observed(stopped_at, export_mode=False, changed=stopped_at), start)
+    guarded_market_primitive(snapshot=final, store=store, scope_id="battery",
+        requested=Primitive.BALANCE_BIDIRECTIONAL, export_mode_confirmed=False)
+    done = store.load_market_daily_assignments()[0]
+    assert done.status == "stopped"
+    assert done.measured_export_wh == restored.measured_export_wh
+    assert store.load_market_progress(binding.assignment_id).estimated_export_wh > 0
+
+
+@pytest.mark.parametrize("duration,recovered", [(3, True), (1, False)])
+def test_long_or_unrecovered_gap_still_stops_market(tmp_path, monkeypatch, duration, recovered):
+    store, binding, start, observed = bound(tmp_path, monkeypatch)
+    guarded_market_primitive(snapshot=observed(start), store=store, scope_id="battery",
+        requested=Primitive.DISCHARGE_AT_POWER, export_mode_confirmed=True)
+    snapshot = with_battery_gap(observed(start + timedelta(seconds=60)), start,
+        duration=duration, recovered=recovered)
+    result = guarded_market_primitive(snapshot=snapshot, store=store, scope_id="battery",
+        requested=Primitive.DISCHARGE_AT_POWER, export_mode_confirmed=True)
+    assert result is Primitive.BALANCE_BIDIRECTIONAL
+    assert store.load_market_progress(binding.assignment_id).reason == (
+        "market_export_measurement_unavailable"
+    )
+
+
+def test_gap_upper_bound_counts_toward_stop_budget(tmp_path, monkeypatch):
+    store, binding, start, observed = bound(tmp_path, monkeypatch)
+    # At 1,200 W for 60 seconds, total export is 20 Wh; valid-only export is less.
+    binding = replace(binding, expected_export_wh=20, cancelled_export_wh=0,
+        segment_export_wh=tuple(20 / len(binding.segment_ids) for _ in binding.segment_ids))
+    source = observed(start)
+    monkeypatch.setattr(store, "load_market_plan_bindings", lambda: (binding,))
+    guarded_market_primitive(snapshot=source, store=store, scope_id="battery",
+        requested=Primitive.DISCHARGE_AT_POWER, export_mode_confirmed=True)
+    snapshot = with_battery_gap(observed(start + timedelta(seconds=60)), start)
+    result = guarded_market_primitive(snapshot=snapshot, store=store, scope_id="battery",
+        requested=Primitive.DISCHARGE_AT_POWER, export_mode_confirmed=True)
+    assert result is Primitive.BALANCE_BIDIRECTIONAL
+    assert store.load_market_progress(binding.assignment_id).reason == (
+        "market_export_budget_reached"
+    )
+
+
 def history(start, end, battery=2400, export=1200):
     return PowerHistorySnapshot(
         start,

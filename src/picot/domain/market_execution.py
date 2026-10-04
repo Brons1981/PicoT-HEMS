@@ -14,8 +14,18 @@ class MarketExecutionProgress:
     measured_export_wh: float | None = None
     reason: str | None = None
     measurement_unavailable: bool = False
+    estimated_export_wh: float = 0.0
+    export_uncertainty_wh: float = 0.0
 
     def __post_init__(self) -> None:
+        if (not isfinite(self.estimated_export_wh) or self.estimated_export_wh < 0
+                or not isfinite(self.export_uncertainty_wh) or self.export_uncertainty_wh < 0
+                or self.estimated_export_wh > self.export_uncertainty_wh + 1e-9):
+            raise ValueError("market gap estimate requires a finite nonnegative upper bound")
+        if (self.estimated_export_wh or self.export_uncertainty_wh) and (
+            self.started_at is None or self.measured_export_wh is None
+        ):
+            raise ValueError("bounded export requires actual execution and measured valid energy")
         if self.measurement_unavailable and (
             self.stopped_at is None or self.measured_export_wh is not None
         ):

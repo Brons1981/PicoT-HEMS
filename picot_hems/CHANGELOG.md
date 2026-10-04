@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.285
+
+- Voorkomt dat een hersteld meetgat van maximaal 2 seconden in de batterij- of netexportmeting een lopende marktroute afbreekt.
+- Geldig gemeten export blijft behouden; energie tijdens meetgaten krijgt een aparte schatting en bovengrens. Maximaal 5 Wh gezamenlijke onzekerheid; de bovengrens telt mee voor het exportbudget.
+- Grotere, niet herstelde of onbegrensde meetgaten blijven een stop veroorzaken. Laadplanning, marktselectie en EV-aansturing blijven gelijk.
+
 ## 2.0.0-dev.284
 
 - Bouwt automatisch een aparte kalenderhistorie van huisverbruik op, met maandag t/m zondag, werkdagen/weekenden, kwartierprofielen en meetdekking. Bestaande metingen worden hervatbaar meegenomen.

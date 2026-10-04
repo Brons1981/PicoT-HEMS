@@ -3487,3 +3487,16 @@ Alex vraagt de release van de correctie voor vaste SOC-lijngeometrie. Versie,
 manifest, versiecontract en changelog bijgewerkt. Publicatie via PR, samenvoegen
 pas na drie groene CI-workflows. Geen installatie/herstart van Home Assistant.
 Dev.254 blijft pre-stable; MEP en aansturing zijn niet gewijzigd.
+
+
+### 2026-10-04 — dev.285: korte herstelde meetgaten bij marktexport
+
+Status IMPLEMENTED; Alex heeft release via PR/CI gevraagd. Baseline main
+8142d8aec0138dbfa7c232616b117561abdb6e08 / dev.284; branch
+fix/market-export-recovered-gap. Zie ADR-019.10 en
+`docs/development_log/2026-10-04-market-export-measurement.md`.
+Geldig gemeten export, schatting en fysieke onzekerheidsbovengrens blijven apart.
+Herstelde gaten <=2 seconden, maximaal 5 Wh totale onzekerheid; budget gebruikt
+bovengrens. 75 verse tests, Ruff/mypy en echte diagnosemeting slagen.
+CI en livevalidatie nog open. Planner, marktselectie, EV-sturing en financiele
+nacontrole niet gewijzigd. Volgende stap: PR/CI/publicatie, daarna verse live-diagnose.

@@ -1,5 +1,16 @@
 # PicoT HEMS — mandatory session start
 
+## Begrensde marktexportmeting — release dev.285, 4 oktober 2026
+
+Alex heeft de gerichte reparatie en release via PR en CI aangevraagd.
+Lees `docs/architecture/ADR-019.10-bounded-market-export-measurement.md` en
+`docs/development_log/2026-10-04-market-export-measurement.md`.
+Uitvoeringsbewaking verwerkt herstelde meetgaten <=2 seconden met maximaal
+5 Wh gezamenlijke onzekerheid. Gemeten en geschatte export blijven gescheiden;
+de bovengrens telt voor het budget. Planner, marktselectie en EV-aansturing gelijk.
+75 lokale tests, Ruff, mypy en de exacte diagnosemeting slagen.
+CI en livewerking zijn nog niet bevestigd; installatie volgt na publicatie.
+
 ## Doorlopende kalenderhistorie huisverbruik — release dev.284, 3 oktober 2026
 
 Alex heeft automatische registratie naast de huidige methode aangevraagd, met

@@ -5,7 +5,7 @@ from dataclasses import replace
 from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.market_execution import MarketExecutionProgress
 from picot.v2.contracts import PlanningInputSnapshot
-from picot.v2.market_export_measurement import measured_market_export
+from picot.v2.market_export_measurement import bounded_market_export, measured_market_export
 from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
 
 
@@ -105,13 +105,22 @@ def guarded_market_primitive(
             assert progress.stopped_at is not None
             measured_until = progress.stopped_at
         assert progress.started_at is not None
-        measured = measured_market_export(
-            snapshot.market_power_history, progress.started_at, measured_until
+        measurement = bounded_market_export(
+            snapshot.market_power_history, progress.started_at, measured_until,
+            maximum_power_w=limits.maximum_discharge_output_power_w,
         )
+        measured = measurement.measured_export_wh if measurement is not None else None
         if measured is not None:
-            progress = replace(progress, measured_export_wh=measured)
+            assert measurement is not None
+            progress = replace(
+                progress, measured_export_wh=measured,
+                estimated_export_wh=measurement.estimated_export_wh,
+                export_uncertainty_wh=measurement.uncertainty_wh,
+                measurement_unavailable=False,
+            )
         elif progress.stopped_at is not None:
-            progress = replace(progress, measured_export_wh=None)
+            progress = replace(progress, measured_export_wh=None,
+                estimated_export_wh=0.0, export_uncertainty_wh=0.0)
             assert progress.started_at is not None and progress.stopped_at is not None
             history = snapshot.market_power_history
             if (
@@ -132,7 +141,10 @@ def guarded_market_primitive(
                 else "market_minimum_soc_reached"
                 if state.current_soc <= limits.minimum_soc
                 else "market_export_budget_reached"
-                if measured is not None and measured >= binding.approved_export_wh
+                if measurement is not None and (
+                    measurement.measured_export_wh + measurement.uncertainty_wh
+                    >= binding.approved_export_wh
+                )
                 else "market_export_measurement_unavailable"
                 if measured is None
                 else None

@@ -84,3 +84,15 @@ separately. Release version alignment and new regression checks: 22 passed in 1.
 The primary command launcher failed sandbox provisioning; the available Node
 runtime executed the existing Python checks. One non-failing pytest cache
 permission warning occurred.
+
+### First CI and corrected regression expectations
+
+Tests run 37513886069: 1937 passed, 1 skipped, 5 failed. The five failures
+were obsolete expectations in three tests: household-load release, subcent
+replacement, equality decisive-step wording and a reduction fixture below the
+new threshold. Updated the expectations to ADR-037.23. The freed-NOM regression
+uses the material-benefit SOC fixture and retains its full path assertions;
+subcent tests require retention while checking shorter alternatives exist.
+Local rerun: all 13 tests in those three modules passed in 25.86 s.
+Core CI and v2 Rebuild succeeded on the first head; all CI must pass on the
+updated head before merge. No production change was needed for these failures.

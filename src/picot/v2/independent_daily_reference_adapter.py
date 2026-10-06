@@ -647,13 +647,9 @@ class IndependentDailyReferenceAdapter:
     @staticmethod
     def _protected_grid_end(
         snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
-        *, net_balance_review: bool = False,
     ) -> datetime | None:
-        guard = snapshot.household_load_guard
         context = snapshot.daily_charge_context
-        if guard is None or context is None or not (guard.active or guard.quality == "unknown"):
-            return None
-        if net_balance_review and net_balance_for(snapshot, assignment.execution_scope_id):
+        if context is None:
             return None
         if any(s.execution_scope_id == assignment.execution_scope_id and s.current_soc >= 1.0
                for s in snapshot.current_storage_states):
@@ -676,7 +672,7 @@ class IndependentDailyReferenceAdapter:
         ):
             return None
         if self._protected_grid_end(
-            snapshot, assignment, net_balance_review=net_proof is not None,
+            snapshot, assignment,
         ) is not None:
             return None
         if snapshot.household_load_guard is not None and (
@@ -894,12 +890,8 @@ class IndependentDailyReferenceAdapter:
         # Validate prices through their existing owner, including gaps/overlaps;
         # Candidate discovery does not infer or manufacture tariff values.
         tariff_adapter.build(snapshot, horizon_end=published_end)
-        protected_end = self._protected_grid_end(
-            snapshot, assignment, net_balance_review=(
-                isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
-                and optimisation_trigger.net_balance_evidence_id is not None
-            ),
-        )
+        protected_end = (None if isinstance(optimisation_trigger, DailyMainRecalculationTrigger)
+                         else self._protected_grid_end(snapshot, assignment))
         inputs = self._inputs(
             snapshot, horizon_end=published_end,
             maximum_duration=timedelta(hours=49) if optimisation_trigger else timedelta(hours=36),

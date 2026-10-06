@@ -33,6 +33,7 @@ class RelativeResult(StrEnum):
 
 
 class TieBreakKind(StrEnum):
+    MINIMUM_COMMITMENT_IMPROVEMENT = "minimum_commitment_improvement"
     GRID_CHARGE_DURATION = "grid_charge_duration"
     INCUMBENT_COMMITMENT = "incumbent_commitment"
     CONFIDENCE = "confidence"
@@ -80,8 +81,13 @@ class CandidateOutcome:
     invalidity_reasons: tuple[str, ...] = ()
     evidence_ids: tuple[str, ...] = ()
     grid_charge_duration_seconds: float | None = None
+    commitment_improvement_eur: float | None = None
 
     def __post_init__(self) -> None:
+        if self.commitment_improvement_eur is not None and not isfinite(
+            self.commitment_improvement_eur
+        ):
+            raise ValueError("Commitment improvement must be finite EUR.")
         if self.grid_charge_duration_seconds is not None and (
             not isfinite(self.grid_charge_duration_seconds)
             or self.grid_charge_duration_seconds < 0.0
@@ -154,6 +160,7 @@ class TieBreakRecord:
     retained_candidate_ids: tuple[str, ...]
     available: bool
     decisive: bool
+    minimum_improvement_eur: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

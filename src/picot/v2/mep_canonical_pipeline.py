@@ -83,6 +83,7 @@ from picot.v2.plan_commitment_store import (
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("pipeline_composition", __name__)
 PV_CHARGE_PROGRESS_METHOD_VERSION = "pv-charge-progress:v1"
+MINIMUM_OPTIONAL_GRID_REDUCTION_BENEFIT_EUR = 0.01
 
 
 @dataclass(frozen=True, slots=True)
@@ -1531,6 +1532,10 @@ def _build_daily_main_run(
             comparable.outcome_set,
             created_at=snapshot.captured_at,
             incumbent_candidate_id=comparable.incumbent_candidate_id,
+            minimum_commitment_improvement_eur=(
+                MINIMUM_OPTIONAL_GRID_REDUCTION_BENEFIT_EUR
+                if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger) else 0.0
+            ),
         )
         if result.winning_energy_path is not None and (
             result.record.winning_candidate_id == comparable.incumbent_candidate_id

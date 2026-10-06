@@ -1791,6 +1791,30 @@ def produce_main_charge_portfolio(
                 and incumbent is not None and not incumbent_invalidity else None,
                 tuple(dict.fromkeys(invalid + incomplete_comparison)), evidence,
             ))
+    if incumbent is not None:
+        incumbent_id = _id("main-charge-candidate", incumbent.schedule.schedule_id)
+        reference = next(o for o in outcomes if o.candidate_id == incumbent_id)
+        reference_financial = next((o for o in reference.objective_outcomes
+            if o.objective is ObjectiveKind.FINANCIAL_RESULT), None)
+        remaining_goal_kwh = max(
+            0.0, storage.usable_capacity_wh - storage.current_stored_energy_wh,
+        ) / 1000
+        for index, outcome in enumerate(outcomes):
+            financial_objective = next((o for o in outcome.objective_outcomes
+                if o.objective is ObjectiveKind.FINANCIAL_RESULT), None)
+            if (reference.validity is CandidateValidity.VALID
+                    and reference_financial is not None and financial_objective is not None
+                    and reference_financial.unit == financial_objective.unit):
+                # Compare acquisition rates on ONE shared remaining daily goal,
+                # never value differing end inventories with horizon cash.
+                benefit = (financial_objective.value - reference_financial.value
+                    if reference_financial.direction is ComparisonDirection.HIGHER_IS_BETTER
+                    else reference_financial.value - financial_objective.value)
+                if reference_financial.unit == "EUR/kWh-stored":
+                    benefit *= remaining_goal_kwh
+                elif reference_financial.unit != "EUR":
+                    continue
+                outcomes[index] = replace(outcome, commitment_improvement_eur=round(benefit, 12))
     candidate_set = DomainCandidateSet(
         snapshot.snapshot_id, strategy.strategy_version, tuple(candidates), tuple(paths), ()
     )

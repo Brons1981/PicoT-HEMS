@@ -1,5 +1,17 @@
 # PicoT HEMS — mandatory session start
 
+## Stabiel lopend hoofd-netladen - release dev.286, 6 oktober 2026
+
+Alex heeft de eerste reparatie om 18:38 Europe/Amsterdam bevestigd. Lees
+`docs/architecture/ADR-037.23-stable-running-charge-and-minimum-improvement.md`
+en `docs/development_log/2026-10-06-charge-continuity.md`. Basis dev.285 / main
+158c61b; lokale branch fix/charge-continuity. Lopende hoofd-netlaadblokken
+blijven beschermd tot hun einde of werkelijk 100%. Optionele vervanging vraagt
+minstens EUR 0.01 expliciet voordeel. Noodzakelijk herstel blijft mogelijk.
+Exacte invoerreplay voorkomt alle drie reductietriggers van 6 oktober.
+Alex heeft release dev.286 aangevraagd. IMPLEMENTED; PR/CI volgt voor merge.
+Installatie en livecontrole volgen afzonderlijk. BMS-afbouw volgt apart.
+
 ## Begrensde marktexportmeting — release dev.285, 4 oktober 2026
 
 Alex heeft de gerichte reparatie en release via PR en CI aangevraagd.

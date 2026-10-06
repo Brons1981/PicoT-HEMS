@@ -22,6 +22,7 @@ from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
 
 
 def source_with_later_cheap_window():
+    # A shorter feasible window can provide a material acquisition improvement.
     source = snapshot_for_main()
     return replace(
         source,
@@ -30,7 +31,7 @@ def source_with_later_cheap_window():
                 f"price:{n}",
                 source.captured_at + timedelta(minutes=15 * n),
                 source.captured_at + timedelta(minutes=15 * (n + 1)),
-                0.1 if 16 <= n < 32 else 0.5,
+                0.02 if n == 31 else 0.1 if 16 <= n < 32 else 0.5,
                 1.0,
                 f"published:{n}",
             )
@@ -78,6 +79,17 @@ def test_surplus_reduces_grid_once_and_keeps_frozen_reference_after_restart(tmp_
     result = pipeline.run(planning_input=recover(observation))
     assert result.evaluation.daily_pv_surplus_trigger is not None, result.evaluation.reason
     assert result.evaluation.daily_main_shortfall is None
+    canonical = {o.candidate_id: o for o in result.outcomes.canonical_outcomes}
+    winning = canonical[result.evaluation.winning_candidate_id]
+    incumbent = canonical[result.evaluation.incumbent_candidate_id]
+    assert winning.commitment_improvement_eur >= 0.01
+    winning_rate = next(o.value for o in winning.objective_outcomes
+                        if o.objective.value == "financial_result")
+    incumbent_rate = next(o.value for o in incumbent.objective_outcomes
+                          if o.objective.value == "financial_result")
+    # Both rates are valued on the same fresh remaining daily goal, not stock.
+    assert winning.commitment_improvement_eur == pytest.approx(
+        (incumbent_rate - winning_rate) * 8.16 * (1 - 0.76))
     new_plan = result.execution_plan_set.plans[0]
     assert grid_wh(new_plan, observation.captured_at) < grid_wh(old_plan, observation.captured_at)
     revised = store.load_daily_assignments()[0]
@@ -238,7 +250,9 @@ def test_poll_signature_sees_corrected_actual_sources_and_future_range(tmp_path,
 
 
 @pytest.mark.parametrize("measured_pv_wh", [400, 900, 1000])
-def test_actual_soc_can_reduce_grid_below_central(tmp_path, monkeypatch, measured_pv_wh):
+def test_actual_soc_below_central_does_not_replace_for_subcent_benefit(
+    tmp_path, monkeypatch, measured_pv_wh,
+):
     store, pipeline, recover = setup(tmp_path, monkeypatch)
     source = source_with_later_cheap_window()
     first = pipeline.run(planning_input=recover(source))
@@ -252,10 +266,12 @@ def test_actual_soc_can_reduce_grid_below_central(tmp_path, monkeypatch, measure
     assert result.evaluation.daily_pv_comparison.boundary != "above_central"
     assert result.evaluation.daily_pv_surplus_trigger is not None
     assert result.evaluation.daily_pv_surplus_trigger.soc_based
-    assert store.load_daily_assignments()[0].revision_reason is (
-        DailyChargeRevisionReason.GRID_REDUCTION)
-    assert grid_wh(result.execution_plan_set.plans[0], observation.captured_at) < grid_wh(
-        first.execution_plan_set.plans[0], observation.captured_at)
+    assert result.evaluation.canonical_record.decisive_step == (
+        "commitment:minimum_improvement_incumbent_retained")
+    assert max(o.commitment_improvement_eur for o in result.outcomes.canonical_outcomes
+               if o.commitment_improvement_eur is not None) < 0.01
+    assert result.execution_plan_set.plans[0].plan_id == first.execution_plan_set.plans[0].plan_id
+    assert result.execution_plan_set.plans[0].segments == first.execution_plan_set.plans[0].segments
     assert store.load_daily_assignments()[0].completed_at is None
 
 
@@ -270,8 +286,11 @@ def test_changed_soc_reopens_assessment_with_same_pv_and_preserves_goal(tmp_path
     higher = observed(source, soc=0.90, minutes=65)
     reduced = pipeline.run(planning_input=recover(higher))
     assert reduced.evaluation.daily_pv_surplus_trigger is not None
-    assert grid_wh(reduced.execution_plan_set.plans[0], higher.captured_at) < grid_wh(
-        first.execution_plan_set.plans[0], higher.captured_at)
+    assert reduced.evaluation.canonical_record.decisive_step == (
+        "commitment:minimum_improvement_incumbent_retained")
+    assert reduced.execution_plan_set.plans[0].plan_id == first.execution_plan_set.plans[0].plan_id
+    assert (reduced.execution_plan_set.plans[0].segments
+            == first.execution_plan_set.plans[0].segments)
     owner = store.load_daily_assignments()[0]
     assert owner.completed_at is None
     path = next(p for p in reduced.candidate_set.energy_paths

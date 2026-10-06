@@ -46,7 +46,7 @@ def test_reduced_winner_keeps_nom_in_every_freed_grid_slot(tmp_path, monkeypatch
     source = source_with_later_cheap_window()
     first = pipeline.run(planning_input=recover(source))
     old = first.execution_plan_set.plans[0]
-    observation = observed(source, soc=0.90)
+    observation = observed(source, soc=0.76)
     result = pipeline.run(planning_input=recover(observation))
     assert result.evaluation.daily_pv_surplus_trigger is not None
     plan = result.execution_plan_set.plans[0]

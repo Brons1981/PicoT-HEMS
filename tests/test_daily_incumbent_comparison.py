@@ -64,15 +64,16 @@ def test_equal_remaining_route_retains_original_plan_identity(tmp_path, monkeypa
     result = pipeline.run(planning_input=recover(source))
     assert result.evaluation.winning_candidate_id == result.evaluation.incumbent_candidate_id
     assert result.evaluation.commitment_decision == "retained"
-    assert result.evaluation.decisive_step == "commitment:equivalent_incumbent_retained"
-    assert store.load_active_daily_main_plan("battery") == original_plan
+    assert result.evaluation.decisive_step == "commitment:minimum_improvement_incumbent_retained"
+    assert store.load_active_daily_main_plan("battery").plan_id == original_plan.plan_id
+    assert store.load_active_daily_main_plan("battery").segments == original_plan.segments
     assert store.load_daily_assignments()[0].revision == original_revision
     assert result.execution_plan_set.plans[0].plan_id == original_plan.plan_id
     assert result.evaluation.canonical_record.snapshot_id == source.snapshot_id
 
 
 @pytest.mark.parametrize("minutes", [60, 65])
-def test_high_soc_removes_redundant_grid_duration_with_valid_incumbent(
+def test_high_soc_retains_valid_incumbent_for_subcent_reduction(
     tmp_path, monkeypatch, minutes,
 ):
     store, pipeline, recover = setup(tmp_path, monkeypatch)
@@ -83,9 +84,13 @@ def test_high_soc_removes_redundant_grid_duration_with_valid_incumbent(
     incumbent = outcomes[result.evaluation.incumbent_candidate_id]
     winner = outcomes[result.evaluation.winning_candidate_id]
     assert incumbent.validity is CandidateValidity.VALID
-    assert winner.grid_charge_duration_seconds < incumbent.grid_charge_duration_seconds
-    assert result.evaluation.commitment_decision == "triggered_revision"
-    assert any(t.kind.value == "grid_charge_duration"
+    assert winner.candidate_id == incumbent.candidate_id
+    assert result.evaluation.commitment_decision == "retained"
+    assert max(o.commitment_improvement_eur for o in outcomes.values()
+               if o.commitment_improvement_eur is not None) < 0.01
+    assert any(o.grid_charge_duration_seconds < incumbent.grid_charge_duration_seconds
+               for o in outcomes.values())
+    assert any(t.kind.value == "minimum_commitment_improvement"
                for t in result.evaluation.canonical_record.tie_breaks)
     for path in result.candidate_set.energy_paths:
         outcome = outcomes[next(c.candidate_id for c in result.candidate_set.candidates

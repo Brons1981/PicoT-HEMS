@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 from hashlib import sha256
+from math import isfinite
 
 from picot.domain.candidate import CandidateSet
 from picot.domain.evaluation import (
@@ -24,7 +25,7 @@ from picot.domain.evaluation import (
 )
 from picot.domain.objectives import ObjectiveKind, PlannerStrategy
 
-IMPLEMENTATION_VERSION = "evaluation-v3"
+IMPLEMENTATION_VERSION = "evaluation-v4"
 
 
 class EvaluationEngine:
@@ -45,7 +46,12 @@ class EvaluationEngine:
         created_at: datetime,
         incumbent_candidate_id: str | None = None,
         financial_equivalence_margin: float = 0.0,
+        minimum_commitment_improvement_eur: float = 0.0,
     ) -> EvaluationResult:
+        if not isfinite(minimum_commitment_improvement_eur) or (
+            minimum_commitment_improvement_eur < 0.0
+        ):
+            raise ValueError("Minimum commitment improvement must be finite nonnegative EUR.")
         self._validate_atomic_inputs(
             candidate_set,
             strategy,
@@ -77,7 +83,32 @@ class EvaluationEngine:
         remaining = list(valid_ids)
         decisive_step: str | None = None
 
-        if remaining:
+        # ADR-037.23: an optional replacement needs explicit, producer-derived
+        # EUR benefit. Never hide a physically invalid incumbent behind this gate.
+        if minimum_commitment_improvement_eur > 0 and incumbent_candidate_id in remaining:
+            admitted = []
+            for item in remaining:
+                benefit = by_id[item].commitment_improvement_eur
+                if item == incumbent_candidate_id or (
+                    benefit is not None and benefit >= minimum_commitment_improvement_eur
+                ):
+                    admitted.append(item)
+            tie_records.append(TieBreakRecord(
+                kind=TieBreakKind.MINIMUM_COMMITMENT_IMPROVEMENT,
+                values=tuple(CandidateComparisonValue(
+                    item, by_id[item].commitment_improvement_eur,
+                    RelativeResult.UNAVAILABLE if by_id[item].commitment_improvement_eur is None
+                    else RelativeResult.BETTER if item in admitted else RelativeResult.WORSE,
+                ) for item in remaining),
+                retained_candidate_ids=tuple(admitted), available=True,
+                decisive=len(admitted) == 1,
+                minimum_improvement_eur=minimum_commitment_improvement_eur,
+            ))
+            remaining = admitted
+            if len(remaining) == 1:
+                decisive_step = "commitment:minimum_improvement_incumbent_retained"
+
+        if remaining and decisive_step is None:
             for objective in objective_order:
                 weight = strategy.weight_for(objective).value
                 objective_record, retained = self._compare_objective(
@@ -153,6 +184,7 @@ class EvaluationEngine:
             candidate_set,
             outcomes.candidate_set_reference,
             strategy.strategy_version,
+            minimum_commitment_improvement_eur,
         )
         evaluation_record = EvaluationRecord(
             evaluation_id=evaluation_id,
@@ -475,9 +507,10 @@ class EvaluationEngine:
         candidate_set: CandidateSet,
         candidate_set_reference: str,
         strategy_version: int,
+        minimum_commitment_improvement_eur: float = 0.0,
     ) -> str:
         source = (
             f"{candidate_set.snapshot_id}|{candidate_set_reference}|"
-            f"{strategy_version}|{IMPLEMENTATION_VERSION}"
+            f"{strategy_version}|{IMPLEMENTATION_VERSION}|{minimum_commitment_improvement_eur}"
         )
         return f"evaluation-{sha256(source.encode()).hexdigest()[:16]}"

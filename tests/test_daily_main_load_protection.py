@@ -33,7 +33,7 @@ def bound_grid(tmp_path, monkeypatch):
     ), grid
 
 
-def test_active_charge_not_removed_until_release_or_observed_full(tmp_path, monkeypatch):
+def test_active_charge_not_removed_until_block_end_or_observed_full(tmp_path, monkeypatch):
     source, grid = bound_grid(tmp_path, monkeypatch)
     owner = source.daily_charge_context.assignments[0]
     adapter = IndependentDailyReferenceAdapter()
@@ -68,7 +68,7 @@ def test_active_charge_not_removed_until_release_or_observed_full(tmp_path, monk
         source,
         household_load_guard=replace(source.household_load_guard, active=False, extra_power_w=0),
     )
-    assert adapter._protected_grid_end(released, owner) is None
+    assert adapter._protected_grid_end(released, owner) == grid.ends_at
     full = replace(
         source,
         current_storage_states=tuple(

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.286
+
+- Lopend snel laden blijft beschermd tot de bestaande eindtijd of werkelijk 100% SOC, ook bij normale huisbelasting.
+- Optionele vermindering of vervanging vraagt minstens één cent expliciet berekend voordeel; noodzakelijk aanvullend laden blijft mogelijk.
+- Voorkomt de drie onnodige reductietriggers uit de diagnose van 6 oktober. Het laadmodel bij hoge SOC volgt afzonderlijk.
+
 ## 2.0.0-dev.285
 
 - Voorkomt dat een hersteld meetgat van maximaal 2 seconden in de batterij- of netexportmeting een lopende marktroute afbreekt.

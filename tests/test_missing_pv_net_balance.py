@@ -57,7 +57,7 @@ def test_missing_pv_can_reduce_grid_through_canonical_pipeline(
                 if s.primitive is ExecutionPrimitive.CHARGE_AT_POWER)
     minutes = (int((grid.starts_at - source.captured_at).total_seconds() / 60) + 5
                if during_charge else 60)
-    observation = observed(source, soc=0.90, gap=True, minutes=minutes)
+    observation = observed(source, soc=0.90 if during_charge else 0.76, gap=True, minutes=minutes)
     observation = replace(observation, household_load_guard=HouseholdLoadGuardAssessment(
         False, "unknown", 0, observation.captured_at, None,
     ))
@@ -65,6 +65,13 @@ def test_missing_pv_can_reduce_grid_through_canonical_pipeline(
     retained = pipeline.run(planning_input=recover(observation))
     assert retained.execution_plan_set.plans[0].plan_id == first.execution_plan_set.plans[0].plan_id
     result = pipeline.run(planning_input=recover(proof(observation)))
+    if during_charge:
+        # Independent surplus evidence does not reopen a running commitment.
+        assert result.evaluation.daily_pv_surplus_trigger is None
+        assert result.execution_plan_set.plans[0].plan_id == previous_plan.plan_id
+        assert result.execution_plan_set.plans[0].segments == previous_plan.segments
+        assert store.load_daily_assignments()[0].completed_at is None
+        return
     assert result.evaluation.daily_pv_surplus_trigger is not None
     assert result.evaluation.daily_pv_comparison.actual_wh is None
     assert result.evaluation.daily_pv_comparison.status == "partial"

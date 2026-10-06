@@ -3489,6 +3489,27 @@ pas na drie groene CI-workflows. Geen installatie/herstart van Home Assistant.
 Dev.254 blijft pre-stable; MEP en aansturing zijn niet gewijzigd.
 
 
+### 2026-10-06 - Stabiel lopend hoofd-netladen (IMPLEMENTED lokaal)
+
+Alex heeft om 18:38 Europe/Amsterdam de eerste reparatie bevestigd. Basis main
+158c61b051ead19f5ffbfd49754f2b27a2ba5994 / dev.285, lokaal fix/charge-continuity.
+Zie ADR-037.23 en docs/development_log/2026-10-06-charge-continuity.md.
+Candidate beschermt elk lopend hoofd-netlaadblok; werkelijk 100% of de bestaande
+eindtijd geeft vrij. Evaluation verlangt EUR 0.01 expliciet voordeel bij optionele
+vermindering tegen een geldig incumbent. Ongeldige routes en noodzakelijk herstel
+worden niet financieel beschermd. Geen parallelle planner of uitvoeringsvertaling.
+Exacte typed inputreplay reproduceert 23/137/249 Wh oude reductietriggers en toont
+dat alle drie na herstel ontbreken. Dit is adapterbewijs, geen hele-dag/live-replay.
+123 brede tests, 42 aanvullende guardtests, 43 contracttests en 40 afsluitende
+pipelinetests slagen (overlap, geen unieke totaaltelling). Ruff, strict mypy op vijf
+productiemodules, compileall en diff-check slagen. Bronwijzigingen en log worden
+vastgelegd voor release dev.286, expliciet door Alex aangevraagd. 22 aanvullende
+releaseversie/regressiecontroles slagen. PR/CI volgt voor merge; geen installatie.
+Actuele positie: IMPLEMENTED. Vervolgens verse live-diagnose. BMS-laadafbouw blijft apart open.
+DO NOT CHANGE: dagidentiteiten/100%-doel, reserve, Solcast-basis, EV-aansturing,
+marktmeetbewaking, financiële observer en canonieke ownership blijven intact.
+Rollback alleen deze geselecteerde wijziging; dev.268 blijft projectterugvalbasis.
+
 ### 2026-10-04 — dev.285: korte herstelde meetgaten bij marktexport
 
 Status IMPLEMENTED; Alex heeft release via PR/CI gevraagd. Baseline main

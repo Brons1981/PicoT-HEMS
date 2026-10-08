@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.288
+
+- Herstelt updateherkenning: de versie gebruikt weer het bestaande dev.N-formaat dat Home Assistant als nieuwer herkent.
+- De getoetste EV-functies van evtest.2 blijven gelijk. @gielz blijft origineel; functies standaard uit.
+- Regressiecontrole gebruikt dezelfde AwesomeVersion-versievergelijker als Home Assistant.
+
 ## 2.0.0-dev.287-evtest.2
 
 - Correctie van de testrelease: @gielz blijft volledig origineel; de gewijzigde vendor-automatisering en installatieopdracht zijn verwijderd.

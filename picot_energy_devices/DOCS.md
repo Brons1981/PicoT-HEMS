@@ -77,7 +77,7 @@ niet afhankelijk van. Release en live installatie zijn afzonderlijke stappen.
 ## Experimentele gecombineerde EV-test (0.3.0-dev.2)
 
 De shadowproef is uitgebreid met een optionele lees-API en een afzonderlijk
-beleidssnapshot voor HEMS dev.287-evtest.2. De opties `regulation_api_enabled`
+beleidssnapshot voor HEMS dev.288. De opties `regulation_api_enabled`
 en `regulation_control_enabled` staan standaard uit. De API gebruikt de echte
 RAW-P1, actueel getekend Zendurevermogen en de EV-meter; ze regelt geen actuator.
 

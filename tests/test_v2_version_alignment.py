@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_287_evtest_2() -> None:
-    assert __version__ == "2.0.0-dev.287-evtest.2"
+def test_v2_release_version_is_dev_288() -> None:
+    assert __version__ == "2.0.0-dev.288"
 
 
 def test_mep_has_one_fallback_rte_configuration() -> None:
@@ -168,3 +168,16 @@ def test_v2_addon_exposes_explicit_pv_local_timezone() -> None:
 
     assert options.get("pv_local_timezone") == "Europe/Amsterdam"
     assert "  pv_local_timezone: str" in schema_lines
+
+
+def test_release_is_a_supervisor_update_from_existing_dev_versions() -> None:
+    from awesomeversion import AwesomeVersion
+
+    for installed in ("2.0.0-dev.286", "2.0.0-dev.287"):
+        assert AwesomeVersion(__version__) > AwesomeVersion(installed)
+
+
+def test_release_retains_supported_numeric_dev_format() -> None:
+    import re
+
+    assert re.fullmatch(r"2\.0\.0-dev\.\d+", __version__)

@@ -1,7 +1,8 @@
 # Gecombineerde EV-testversie
 
 Experimenteel: Energy Devices bezit de EV-meting en regelcorrectie. @gielz blijft
-één regelaar; HEMS blijft fysieke RAW gebruiken en leest alleen het afzonderlijke
+volledig origineel, inclusief automatiseringen en beveiligingen. De enige
+gewijzigde ingang is de bestaande CT REST-sensor; HEMS blijft fysieke RAW gebruiken en leest alleen het afzonderlijke
 Energy Devices-beleid. Geen vooraf geplande EV-sessie in deze versie.
 
 ## Installatievolgorde
@@ -10,46 +11,45 @@ Energy Devices-beleid. Geen vooraf geplande EV-sessie in deze versie.
 2. Energy Devices: `regulation_api_enabled: true`, `regulation_control_enabled:
    false`; controleer de drie bron-entiteiten. Poort 8101 serveert alleen GET
    `/rpc/EM.GetStatus?id=0`. De fysieke RAW-sensor blijft op Shelly.
-3. Bewaar de bestaande CT REST-definitie en @gielz-automatisering als terugval.
+3. Bewaar de bestaande CT REST-definitie als terugval.
    Vervang uitsluitend de shared CT REST-definitie volgens
    `ct_regulation_rest_fragment.yaml`. Voeg de URL van de HA-host op poort 8101
    toe aan secrets.yaml. Laat RAW ongemoeid. Gebruik geen tweede gelijknamige
    CT-sensor; behoud de bestaande REST unique_id. Verwijder de vaste testoffset.
-4. Vervang de bestaande @gielz-automatisering door
-   `zendure_ev_guarded_test.yaml`; voeg geen tweede actieve automatisering toe.
-   Deze afgeleide versie behoudt alle originele takken en voegt alleen een
-   versheidsblokkade voor NOM/slim laden/slim ontladen toe. Snelle modi blijven
-   hun expliciete aansturing houden. De gebruikte bron is de bevestigde
-   configuratie v20260824, GitHub commit 1c927332849b30a79f8e8e6cfdfb9fcde582210c.
+4. Laat de bestaande @gielz-integratie en automatiseringen ongewijzigd.
+   Neem `zendure_ev_guarded_test.yaml` uit de eerdere release niet over.
 5. Controleer dat `input_text.afwijkende_p1_sensor` ingesteld is op
    `sensor.ct_shelly_pro_3em_api`. Controleer bij uitgeschakelde correctie dat CT gelijk is aan RAW en @gielz
    normaal werkt. Controleer dat policy `disabled` is.
 6. HEMS: fysieke `p1_power_entity` blijft RAW; zet
    `energy_device_policy_entity: sensor.picot_ev_regulation_policy` en
    `energy_device_policy_enabled: true`.
-7. Activeer `regulation_control_enabled: true` in Energy Devices. Controleer
-   eerst zonder EV, daarna met één gecontroleerde EV-sessie.
+7. Controleer met `regulation_control_enabled: false` eerst live de versheid
+   van de drie bronnen en de gelijkheid CT/RAW. Activeer de correctie pas voor
+   één gecontroleerde EV-sessie als de bronnen aan de versheidsgrenzen voldoen.
 
 Door uitschakelen van de correctie retourneert de API weer RAW. Zet tevens de
 HEMS-policyoptie uit om de bestaande prognosewerking te herstellen. Volledige
-terugval: herstel de opgeslagen oorspronkelijke CT REST-definitie en vendor-
-automatisering. Stop bij onverwachte herhaalde moduswisselingen of onbedoeld
+terugval: herstel de opgeslagen oorspronkelijke CT REST-definitie. Stop bij onverwachte herhaalde moduswisselingen of onbedoeld
 batterij-netladen in NOM. Een geplande snelle laadactie is apart te beoordelen.
 
 ## Werking en beperkingen
 
 Bij actieve correctie is de regelwaarde alleen beschikbaar met drie
 achtereenvolgende bruikbare controles, bronnen maximaal 3 sec oud en maximaal 2 sec
-uit elkaar. Meetverlies geeft HTTP 503, niet een verzonnen 0 W. De vendor-guard
-stopt NOM binnen zijn volgende normale 5 sec-tick bij ontbrekende/stale feedback en
-blokkeert de gewone NOM-takken. Op deze guard mag niet worden vertrouwd als een
-andere automatisering of handmatige actie de batterij gelijktijdig aanstuurt.
+uit elkaar. Meetverlies geeft HTTP 503, niet een verzonnen 0 W. Energy Devices
+verstrekt dan geen gecorrigeerde regelwaarde. Dit is geen opdracht om de
+batterij te stoppen: @gielz behoudt zijn oorspronkelijke reactie op een
+ontbrekende P1-meting. Er is geen extra 5-secondenstop of vendor-blokkade.
+De bestaande unavailable-noodstop wacht een minuut; bij meetverlies kan de vorige opdracht daardoor ongeveer een minuut blijven
+werken. Als HomeWizard beschikbaar is, kan het origineel daarnaar terugvallen
+en tijdelijk weer EV-verbruik uit de batterij ondersteunen. Deze reactie is
+ongewijzigd; de correctie claimt tijdens die terugval geen EV-bescherming.
 
-Een ontbrekend policy-entity blokkeert de guarded NOM ook. Bewust uitschakelen
-wordt expliciet gepubliceerd als `disabled`. Bij crash blijft `enabled` staan
-met oude rapporttijd, wat tot blokkering leidt. Herstel wordt pas toegestaan na
-opnieuw drie bruikbare Energy Devices-controles. De bestaande één-minuut-
-noodstop is daarmee niet het enige vangnet voor actieve EV-correctie.
+Bewust uitschakelen wordt expliciet als `disabled` gepubliceerd. De API geeft
+bij uitgeschakelde correctie verse RAW door. Herstel van de gecorrigeerde waarde
+vraagt drie achtereenvolgende bruikbare Energy Devices-controles. De policy-
+entiteit is voor HEMS; de originele @gielz-integratie leest haar niet.
 
 HEMS verwijdert uitsluitend geïdentificeerde EV-metingen uit de baseline/guard-
 prognoseweergave, behoudt fysieke historie en voegt de actuele EV daarna één
@@ -64,22 +64,36 @@ Meetversies en kleine fluctuaties veroorzaken op zichzelf geen herplanning.
 SOC-tekort voor het 100%-dagdoel
 kan nog steeds een terecht herstelplan veroorzaken.
 
-De guard controleert de directe CT-rapporttijd en de ingesloten brontijd. De
-afgeleide `p1_aansturing_vermogen` mag bij constant vermogen een oude tijdstempel
-hebben; dat is geen bewijs van verouderde fysieke meetdata.
+De meetversheid wordt uitsluitend binnen Energy Devices gecontroleerd.
+Firmware, HA-scheduling en het gedrag van de originele @gielz-automatisering
+bij vertraagde metingen zijn nog niet live bewezen. Leg RAW, regelwaarde, EV,
+Zendurevermogen, SOC, policy-status, herplanredenen en moduswisselingen vast.
 
-De guard-template is met Jinja getest; firmware, HA-scheduling en de echte
-installatie zijn nog niet live gevalideerd. Dit is een testversie, geen bewezen
-productieversie. Leg RAW, regelwaarde, EV, Zendurevermogen, SOC, policy-status,
-herplanredenen en moduswisselingen vast gedurende de sessie.
+## Correctie op de eerste testrelease
 
-## Herkomst vendorvoorbeeld
+De eerste release bevatte onterecht een gewijzigde @gielz-automatisering en
+instructies om deze over te nemen. Die toevoeging is verwijderd uit de
+correctiekandidaat. De afspraak blijft: alleen een aangepaste P1-waarde
+leveren; @gielz zelf blijft origineel. Als het eerdere YAML-voorbeeld handmatig
+is geïnstalleerd, herstel dan de eigen opgeslagen originele automatisering.
 
-@Gielz1986 / Michiel Hofker. Het meegeleverde vendorvoorbeeld bevat uitsluitend
-bovenstaande freshness-wrapper als wijziging. De oorspronkelijke licentie
-staat in LICENSE_zenSDK.txt en geldt voor dat voorbeeld. De generator kan ook
-tegen de lokaal bewaarde originele YAML worden uitgevoerd:
+## Offline toets van het origineel
 
-```bash
-python build_guarded_zendure.py originele_automatisering.yaml nieuwe_test.yaml
-```
+Zestien scenario's combineren de werkelijke Energy Devices-observer/cache met
+de oorspronkelijke vier NOM-takken en de oorspronkelijke noodstopvoorwaarden:
+EV-start/stop, drie PV-niveaus, 1–2 s vertraging, 10 W ruis, trage batterijreactie,
+5 s vertraging, stilgevallen RAW/EV/batterij, meetlusuitval en HomeWizard-terugval.
+Met verse 1–2 s-bronnen waren er geen geconstateerde EV-ontlading of netlading in
+de beoordeelde stabiele NOM-vensters. Bij 3000 W PV, 200 W huis en 2000 W EV
+wordt 800 W overschot benut (750 W na de oorspronkelijke 50 W laadmarge).
+
+De originele noodstop volgde in de uitvalproef na circa 62 s P1-onbeschikbaarheid
+(afronding op de normale 5 s-tick), niet na 5 s. Tijdens een PV-daling vlak na
+meetverlies kon de voorgaande laadopdracht tijdelijk uit het net blijven laden.
+Met HomeWizard-terugval ontlaadde de batterij in het 1000 W PV-venster 1205 W
+in plaats van neutraal te blijven. Dat is het oorspronkelijke gedrag.
+
+De proef gebruikt een beperkte bron-template-interpreter en een synthetische
+batterij. Zes aanvullende regressietests voeren de originele commandtemplates
+met Jinja uit en controleren de oorspronkelijke noodstop en CT-beschikbaarheid.
+Dit bewijst geen volledige HA-automatiseringsruntime of firmwarestabiliteit.

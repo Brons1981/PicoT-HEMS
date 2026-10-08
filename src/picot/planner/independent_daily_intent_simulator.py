@@ -273,7 +273,9 @@ class IndependentDailyIntentSimulator:
                     0.0, stored_energy_wh - minimum_storage_energy_wh
                 ) * conversion_model.discharge_efficiency
                 storage_to_household_wh = min(
-                    household_deficit_wh,
+                    (household_deficit_wh if intent.intent is DailyStorageIntent.STORAGE_EXPORT
+                     else max(0.0, load.expected_energy_wh
+                              - load.battery_excluded_energy_wh - pv.energy_wh)),
                     available_output_wh,
                     discharge_power_limit_wh,
                 )
@@ -347,6 +349,7 @@ class IndependentDailyIntentSimulator:
                     starts_at=pv.starts_at,
                     ends_at=pv.ends_at,
                     household_demand_wh=load.expected_energy_wh,
+                    battery_excluded_demand_wh=load.battery_excluded_energy_wh,
                     usable_pv_wh=pv.energy_wh,
                     pv_to_household_wh=pv_to_household_wh,
                     pv_to_storage_input_wh=pv_to_storage_wh,

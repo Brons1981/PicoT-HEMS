@@ -139,8 +139,10 @@ def assess_market_route(
     ):
         raise ValueError("market comparison must use the same physical PV basis")
     if len(baseline.intervals) != len(proposed.intervals) or any(
-        (a.starts_at, a.ends_at, a.household_demand_wh, a.usable_pv_wh)
-        != (b.starts_at, b.ends_at, b.household_demand_wh, b.usable_pv_wh)
+        (a.starts_at, a.ends_at, a.household_demand_wh,
+         a.usable_pv_wh, a.battery_excluded_demand_wh)
+        != (b.starts_at, b.ends_at, b.household_demand_wh,
+            b.usable_pv_wh, b.battery_excluded_demand_wh)
         for a, b in zip(baseline.intervals, proposed.intervals, strict=True)
     ):
         raise ValueError("market comparison requires unchanged household/PV inputs and horizon")

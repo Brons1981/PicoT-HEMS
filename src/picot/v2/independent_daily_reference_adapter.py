@@ -1836,6 +1836,13 @@ class IndependentDailyReferenceAdapter:
                     starts_at=starts_at,
                     ends_at=ends_at,
                     expected_energy_wh=expected_energy_wh,
+                    battery_excluded_energy_wh=sum(
+                        item.battery_excluded_energy_wh
+                        * (min(item.ends_at, ends_at)
+                           - max(item.starts_at, starts_at)).total_seconds()
+                        / (item.ends_at - item.starts_at).total_seconds()
+                        for item in overlapping
+                    ),
                     confidence=min(item.confidence for item in overlapping),
                 )
             )

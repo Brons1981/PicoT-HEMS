@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.287-evtest.1
+
+- Optionele actuele EV-belasting en afzonderlijk batterijondersteuningsbeleid via Energy Devices; fysieke RAW-P1 blijft leidend.
+- MEP, brugtekorten, financiële afrekening en commitments verwerken dezelfde fysieke en uitgesloten energiestromen.
+- Geïdentificeerde EV-metingen worden niet dubbel in de huishoudprognose geteld. Geen sessieplanning; actuele EV wordt maximaal 15 minuten doorgetrokken.
+- Experimentele gezamenlijke testversie: functies standaard uit, offline gecontroleerd; nog geen live stabiliteitsbewijs.
+
 ## 2.0.0-dev.286
 
 - Lopend snel laden blijft beschermd tot de bestaande eindtijd of werkelijk 100% SOC, ook bij normale huisbelasting.

@@ -115,7 +115,8 @@ class IndependentDailySimulator:
                 available_stored_input_wh * conversion_model.discharge_efficiency
             )
             storage_to_household_wh = min(
-                remaining_household_wh,
+                max(0.0, load.expected_energy_wh
+                    - load.battery_excluded_energy_wh - pv.energy_wh),
                 available_storage_output_wh,
                 maximum_discharge_output_power_w * duration_h,
             )
@@ -165,6 +166,7 @@ class IndependentDailySimulator:
                     starts_at=pv.starts_at,
                     ends_at=pv.ends_at,
                     household_demand_wh=load.expected_energy_wh,
+                    battery_excluded_demand_wh=load.battery_excluded_energy_wh,
                     usable_pv_wh=pv.energy_wh,
                     pv_to_household_wh=pv_to_household_wh,
                     pv_to_storage_input_wh=pv_to_storage_input_wh,

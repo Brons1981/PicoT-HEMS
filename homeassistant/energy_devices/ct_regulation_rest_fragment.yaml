@@ -1,0 +1,26 @@
+# Replace ONLY the existing shared CT sensor definition in the existing rest list.
+# Keep the physical RAW sensor on its existing Shelly resource.
+# Add to secrets.yaml:
+# picot_ev_regulation_url: "http://<Home-Assistant-host-IP>:8101/rpc/EM.GetStatus?id=0"
+# Do not retain the old fixed-load offset in this sensor's value_template.
+rest:
+  - resource: !secret picot_ev_regulation_url
+    scan_interval: 1
+    timeout: 2
+    sensor:
+      - name: "CT Shelly Pro 3EM API"
+        unique_id: CT_Shelly_Pro_3EM_API
+        value_template: "{{ value_json.total_act_power }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        json_attributes:
+          - raw_grid_w
+          - battery_w
+          - ev_w
+          - control_enabled
+          - source_id
+          - revision
+          - measured_at
+          - source_ages_seconds
+          - source_skew_seconds

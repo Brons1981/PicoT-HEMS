@@ -685,6 +685,7 @@ def _persist_plan(
             starts_at=interval.starts_at,
             ends_at=interval.ends_at,
             expected_energy_wh=interval.expected_energy_wh,
+            battery_excluded_energy_wh=interval.battery_excluded_energy_wh,
             confidence=interval.confidence,
             source_reference=interval.source_reference,
             method_version=interval.method_version,

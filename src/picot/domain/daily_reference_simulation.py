@@ -46,8 +46,11 @@ class DailyReferenceInterval:
     confidence: float
     evidence_ids: tuple[str, ...]
     storage_to_grid_output_wh: float = 0.0
+    battery_excluded_demand_wh: float = 0.0
 
     def __post_init__(self) -> None:
+        if not 0 <= self.battery_excluded_demand_wh <= self.household_demand_wh:
+            raise ValueError("excluded demand must be a physical-demand subset")
         _aware(self.starts_at, "Daily interval start")
         _aware(self.ends_at, "Daily interval end")
         if self.ends_at <= self.starts_at:

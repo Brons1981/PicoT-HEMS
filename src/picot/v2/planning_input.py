@@ -7,7 +7,7 @@ created once at the ingestion boundary and then carried by one immutable snapsho
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from math import isfinite
@@ -28,6 +28,7 @@ from picot.v2.contracts import (
     StoragePhysicalLimits,
     StorageRoundTripEfficiencyEvidence,
 )
+from picot.v2.external_load_policy import apply_external_load_policy, read_external_load_policy
 from picot.v2.household_load_forecast import (
     build_fallback_household_load_forecast,
     build_historical_household_load_forecast,
@@ -103,6 +104,7 @@ class SourceEvidence:
     price_points: tuple[PriceForecastPoint, ...] = ()
     pv_energy_intervals: tuple[PVEnergyTimelineInterval, ...] = ()
     state_read_at: datetime | None = None
+    external_load_payload: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,8 +130,11 @@ class HouseholdLoadObservation:
     sampled_at: datetime
     evidence_ids: tuple[str, ...]
     method_version: str
+    identified_external_power_w: float = 0.0
 
     def __post_init__(self) -> None:
+        if not 0 <= self.identified_external_power_w <= self.power_w:
+            raise ValueError("identified external power must be a physical subset")
         if not isfinite(self.power_w) or self.power_w < 0.0:
             raise ValueError("power_w must be finite and non-negative")
         if self.sampled_at.tzinfo is None:
@@ -184,6 +189,7 @@ DEFAULT_BINDINGS = (
         "solcast_forecast_day_3_entity",
     ),
     ("nordpool", "energy_price", "nordpool_price_entity"),
+    ("energy_devices", "external_load_policy", "energy_device_policy_entity"),
 )
 
 LEGACY_SOC_ENTITY_MIGRATIONS = {
@@ -775,6 +781,8 @@ class HomeAssistantStateReader:
             ),
             price_points=price_points,
             pv_energy_intervals=pv_energy_intervals,
+            external_load_payload=(typed_attributes if binding.semantic_role ==
+                                   "external_load_policy" and not unavailable else None),
         )
 
 
@@ -834,6 +842,18 @@ def assemble_planning_input(
             sampled_at=capture,
         )
     )
+
+    external_load_policy = None
+    if options.get("energy_device_policy_enabled", False) is True and selected_storage_config:
+        source = next((e for e in evidence if e.semantic_role == "external_load_policy"), None)
+        external_load_policy = read_external_load_policy(
+            source.external_load_payload if source else None,
+            captured_at=capture, execution_scope_id=selected_storage_config.execution_scope_id,
+        )
+        if external_load_policy is not None and household_load_observation is not None:
+            household_load_observation = replace(household_load_observation,
+                identified_external_power_w=min(external_load_policy.power_w,
+                                                household_load_observation.power_w))
 
     evidence_seed = "|".join(
         f"{item.mapping_version}:{item.raw_state}:{item.observed_at}" for item in evidence
@@ -1013,7 +1033,10 @@ def assemble_planning_input(
         else None
     )
     eligible_household_load_observations = tuple(
-        observation
+        (replace(observation,
+                 power_w=observation.power_w-observation.identified_external_power_w,
+                 identified_external_power_w=0.0)
+         if options.get("energy_device_policy_enabled", False) is True else observation)
         for observation in household_load_observations
         if observation.sampled_at <= capture
     )
@@ -1046,7 +1069,11 @@ def assemble_planning_input(
     # A separate recent baseline identifies ongoing demand; historical weights
     # and the future clock-quarter forecast remain unchanged.
     guard_observations = eligible_household_load_observations + (
-        (household_load_observation,) if household_load_observation is not None else ()
+        (replace(household_load_observation,
+                 power_w=household_load_observation.power_w
+                         - household_load_observation.identified_external_power_w,
+                 identified_external_power_w=0.0),)
+        if household_load_observation is not None else ()
     )
     guard_baseline = build_historical_household_load_forecast(
         run_id=run_id, snapshot_id=snapshot_id,
@@ -1059,6 +1086,11 @@ def assemble_planning_input(
     if household_load_forecast is not None:
         household_load_forecast = apply_household_load_guard(
             household_load_forecast, household_load_guard,
+        )
+
+    if external_load_policy is not None and household_load_forecast is not None:
+        household_load_forecast = apply_external_load_policy(
+            household_load_forecast, external_load_policy, captured_at=capture,
         )
 
     snapshot = PlanningInputSnapshot(
@@ -1077,6 +1109,7 @@ def assemble_planning_input(
         pv_energy_timeline=pv_energy_timeline,
         household_load_forecast=household_load_forecast,
         household_load_guard=household_load_guard,
+        external_load_policy=external_load_policy,
         storage_mode_capability_evidence=storage_mode_capability_evidence,
         bms_calibration_evidence=bms_calibration_evidence,
         capability_snapshot_set=(

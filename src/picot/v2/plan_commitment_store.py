@@ -93,7 +93,11 @@ class CommittedHouseholdLoadInterval:
     source_reference: str
     method_version: str
 
+    battery_excluded_energy_wh: float = 0.0
+
     def __post_init__(self) -> None:
+        if not 0 <= self.battery_excluded_energy_wh <= self.expected_energy_wh:
+            raise ValueError("committed excluded demand must be a physical subset")
         if any(
             not value.strip()
             for value in (
@@ -2338,6 +2342,7 @@ def _deserialize(payload: dict[str, Any]) -> ActivePlanCommitment:
                 starts_at=datetime.fromisoformat(item["starts_at"]),
                 ends_at=datetime.fromisoformat(item["ends_at"]),
                 expected_energy_wh=float(item["expected_energy_wh"]),
+                battery_excluded_energy_wh=float(item.get("battery_excluded_energy_wh", 0)),
                 confidence=float(item["confidence"]),
                 source_reference=str(item["source_reference"]),
                 method_version=str(item["method_version"]),

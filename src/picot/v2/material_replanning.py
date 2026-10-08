@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, fields, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 
 from picot.architecture_ownership import architecture_ownership
@@ -51,14 +51,19 @@ class MaterialReplanningObservationProducer:
         self._daily_context_identity: object = None
         self._daily_input_identities: dict[RuntimeObservationKind, object] = {}
         self._highest_emitted_bucket: dict[tuple[str, int, str], int] = {}
+        self._external_policy_value: tuple[str, str, bool, float] | None = None
+        self._external_policy_pending: tuple[
+            tuple[str, str, bool, float] | None, datetime
+        ] | None = None
 
     def observe(
         self,
         bundle: PlanningInputBundle,
     ) -> tuple[RuntimeObservation, ...]:
+        external_observations = self._external_policy_observations(bundle)
         if bundle.snapshot.daily_charge_context is not None:
-            return self._daily_observations(bundle)
-        observations: list[RuntimeObservation] = []
+            return external_observations + self._daily_observations(bundle)
+        observations: list[RuntimeObservation] = list(external_observations)
         active_keys = {
             (item.plan_id, item.plan_revision)
             for item in bundle.snapshot.active_plan_commitments
@@ -98,6 +103,59 @@ class MaterialReplanningObservationProducer:
                 observations.append(household_observation)
 
         return tuple(observations)
+
+    def _external_policy_observations(
+        self,
+        bundle: PlanningInputBundle,
+    ) -> tuple[RuntimeObservation, ...]:
+        """Accept a 100W change after 30s; heartbeat/revision is not material."""
+        snapshot = bundle.snapshot
+        policy = snapshot.external_load_policy
+        value = (
+            (
+                policy.source_id,
+                policy.execution_scope_id,
+                policy.storage_support_allowed,
+                policy.power_w,
+            )
+            if policy is not None and policy.power_w > 0
+            else None
+        )
+
+        def equivalent(
+            left: tuple[str, str, bool, float] | None, right: tuple[str, str, bool, float] | None
+        ) -> bool:
+            if left is None or right is None:
+                return left is right
+            return left[:3] == right[:3] and abs(left[3] - right[3]) < 100.0
+
+        if equivalent(value, self._external_policy_value):
+            self._external_policy_pending = None
+            return ()
+        pending = self._external_policy_pending
+        if pending is None or not equivalent(value, pending[0]):
+            self._external_policy_pending = (value, snapshot.captured_at)
+            return ()
+        if snapshot.captured_at - pending[1] < timedelta(seconds=30):
+            return ()
+        previous = self._external_policy_value
+        self._external_policy_value = value
+        self._external_policy_pending = None
+        scoped_value = value or previous
+        return (
+            RuntimeObservation(
+                observation_id="external-load-policy:"
+                + sha256(repr((snapshot.snapshot_id, previous, value)).encode()).hexdigest(),
+                kind=RuntimeObservationKind.HOUSEHOLD_STATE_CHANGED,
+                observed_at=snapshot.captured_at,
+                source_reference="energy-devices-support-policy",
+                old_value=repr(previous),
+                new_value=repr(value),
+                execution_scope_id=scoped_value[1] if scoped_value else None,
+                evidence_ids=(snapshot.snapshot_id,),
+                material_transition=True,
+            ),
+        )
 
     def _daily_observations(
         self, bundle: PlanningInputBundle,

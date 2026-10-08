@@ -19,6 +19,7 @@ class HouseholdLoadHistoryStore:
         payload = {
             "schema_version": 1,
             "power_w": observation.power_w,
+            "identified_external_power_w": observation.identified_external_power_w,
             "sampled_at": observation.sampled_at.isoformat(),
             "evidence_ids": list(observation.evidence_ids),
             "method_version": observation.method_version,
@@ -64,11 +65,14 @@ def _decode_observation(
         return None
 
     power_w = payload.get("power_w")
+    external = payload.get("identified_external_power_w", 0.0)
     sampled_at = payload.get("sampled_at")
     raw_evidence_ids = payload.get("evidence_ids")
     method_version = payload.get("method_version")
     if (
-        isinstance(power_w, bool)
+        isinstance(external, bool)
+        or not isinstance(external, (int, float))
+        or isinstance(power_w, bool)
         or not isinstance(power_w, (int, float))
         or not isinstance(sampled_at, str)
         or not isinstance(raw_evidence_ids, list)
@@ -88,6 +92,7 @@ def _decode_observation(
         )
         return HouseholdLoadObservation(
             power_w=float(power_w),
+            identified_external_power_w=float(external),
             sampled_at=parsed_at,
             evidence_ids=tuple(evidence_ids),
             method_version=method_version,

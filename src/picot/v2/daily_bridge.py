@@ -114,7 +114,8 @@ def energy_deficits(
         hours = (interval.ends_at - interval.starts_at).total_seconds() / 3600
         deficit = 0.0
         if intent.intent in {DailyStorageIntent.NOM, DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY}:
-            demand = max(0.0, interval.household_demand_wh - interval.pv_to_household_wh)
+            demand = max(0.0, interval.household_demand_wh
+                         - interval.battery_excluded_demand_wh - interval.usable_pv_wh)
             deficit = max(
                 0.0,
                 min(demand, maximum_discharge_output_power_w * hours)

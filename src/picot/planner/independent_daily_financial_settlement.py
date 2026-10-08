@@ -350,6 +350,7 @@ class IndependentDailyFinancialSettlement:
         )
         energy_fields = (
             "household_demand_wh",
+            "battery_excluded_demand_wh",
             "usable_pv_wh",
             "pv_to_household_wh",
             "pv_to_storage_input_wh",

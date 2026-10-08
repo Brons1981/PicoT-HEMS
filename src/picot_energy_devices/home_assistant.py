@@ -75,3 +75,51 @@ class HomeAssistantClient:
                 method="POST",
             )
         )
+
+    def publish_regulation_shadow(self, result: dict[str, object]) -> None:
+        """Publish only the dedicated observer entity, never the shared P1 entity."""
+        value = result.get("candidate_w")
+        body = json.dumps(
+            {
+                "state": str(value) if value is not None else "unavailable",
+                "attributes": {
+                    **result,
+                    "friendly_name": "PicoT EV regelwaarde (schaduw)",
+                    "unit_of_measurement": "W",
+                    "device_class": "power",
+                    "state_class": "measurement",
+                },
+            },
+            allow_nan=False,
+        ).encode("utf-8")
+        self._request(
+            Request(
+                "http://supervisor/core/api/states/sensor.picot_ev_regulation_shadow",
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+        )
+
+    def publish_regulation_policy(self, result: dict[str, object]) -> None:
+        body = json.dumps(
+            {
+                "state": "enabled" if result.get("control_enabled") else "disabled",
+                "attributes": result,
+            },
+            allow_nan=False,
+        ).encode()
+        self._request(
+            Request(
+                "http://supervisor/core/api/states/sensor.picot_ev_regulation_policy",
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+        )

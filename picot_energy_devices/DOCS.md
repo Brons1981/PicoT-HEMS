@@ -44,3 +44,46 @@ apparaat, na bevestiging. Handmatige opnames blijven daarbij bewaard.
 
 Automatisch herkennen van programma's, leren van start-/stopdrempels en het
 gebruiken van profielen in PicoT's planning zijn vervolgstappen.
+
+## EV-regelwaarde observeren (schaduw)
+
+Deze optionele functie schakelt niets en is niet geschikt als actieve netmeter.
+Zet `regulation_shadow_enabled` aan om iedere seconde de ingestelde RAW-netmeter,
+EV-meter en getekende Zendure-terugmelding te lezen. Het gewone leerinterval
+blijft onafhankelijk. De uitvoer is uitsluitend
+`sensor.picot_ev_regulation_shadow`; de bestaande CT-sensor wordt niet geschreven.
+
+`last_reported` moet aanwezig zijn, met tijdzone. Een ontbrekende rapporttijd,
+een bron ouder dan 3 seconden of bronnen meer dan 2 seconden uit elkaar geven
+`unavailable` met een reden. `last_changed` en het moment van ophalen worden
+niet gebruikt als bewijs van verse meting. Controleer live dat elke bron ook
+bij gelijkblijvend vermogen nieuwe rapporttijden krijgt.
+
+Attributen tonen RAW, EV, batterij, bronleeftijden, tijdverschil, uitgesloten EV
+vermogen en de kandidaatregelwaarde. Vermogen is positief voor import/laden.
+De kandidaat sluit EV alleen uit van een tekort; echt PV-overschot blijft
+beschikbaar. Tijdens EV-laden wordt de toegestane netvraag in stappen van 20 W
+richting nul afgerond, met een conservatieve 20 W update-dodeband. Verminderingen,
+nul en richtingswisselingen gaan direct door. Zonder EV is de kandidaat exact RAW.
+
+Dit is een zelfstandige schaduwproef: niet verbinden met @gielz of HEMS. Een
+`unavailable` schaduwsensor stopt de batterij niet. Voor actieve ingebruikname
+moet ook de @gielz-consument verse Zendure-data controleren en de lopende
+opdracht bij verlies daarvan veilig afhandelen; de huidige noodstop wacht een
+minuut. RAW-terugval bij oude Zendure-data is daarvoor onvoldoende.
+
+Terugval van de schaduwproef: optie uitzetten. De actieve integraties zijn er
+niet afhankelijk van. Release en live installatie zijn afzonderlijke stappen.
+
+## Experimentele gecombineerde EV-test (0.3.0-dev.1)
+
+De shadowproef is uitgebreid met een optionele lees-API en een afzonderlijk
+beleidssnapshot voor HEMS dev.287-evtest.1. De opties `regulation_api_enabled`
+en `regulation_control_enabled` staan standaard uit. De API gebruikt de echte
+RAW-P1, actueel getekend Zendurevermogen en de EV-meter; ze regelt geen actuator.
+
+Volg [de gezamenlijke installatie- en terugvalhandleiding](../homeassistant/energy_devices/README.md).
+Activering vraagt vervanging van de bestaande CT REST-definitie en de bestaande
+@gielz-automatisering door het bewaakte voorbeeld. HEMS blijft RAW meten. De
+shadow-entiteit zelf wordt niet als regelsensor gebruikt. Een live sessie is
+nog nodig om firmware, meetvertragingen en HA-scheduling te beoordelen.

@@ -68,22 +68,22 @@ nul en richtingswisselingen gaan direct door. Zonder EV is de kandidaat exact RA
 
 Dit is een zelfstandige schaduwproef: niet verbinden met @gielz of HEMS. Een
 `unavailable` schaduwsensor stopt de batterij niet. Voor actieve ingebruikname
-moet ook de @gielz-consument verse Zendure-data controleren en de lopende
-opdracht bij verlies daarvan veilig afhandelen; de huidige noodstop wacht een
-minuut. RAW-terugval bij oude Zendure-data is daarvoor onvoldoende.
+moet het gedrag van de originele @gielz-consument bij meetverlies offline worden
+getoetst; de bestaande noodstop wacht een minuut. @gielz blijft ongewijzigd.
 
 Terugval van de schaduwproef: optie uitzetten. De actieve integraties zijn er
 niet afhankelijk van. Release en live installatie zijn afzonderlijke stappen.
 
-## Experimentele gecombineerde EV-test (0.3.0-dev.1)
+## Experimentele gecombineerde EV-test (0.3.0-dev.2)
 
 De shadowproef is uitgebreid met een optionele lees-API en een afzonderlijk
-beleidssnapshot voor HEMS dev.287-evtest.1. De opties `regulation_api_enabled`
+beleidssnapshot voor HEMS dev.287-evtest.2. De opties `regulation_api_enabled`
 en `regulation_control_enabled` staan standaard uit. De API gebruikt de echte
 RAW-P1, actueel getekend Zendurevermogen en de EV-meter; ze regelt geen actuator.
 
 Volg [de gezamenlijke installatie- en terugvalhandleiding](../homeassistant/energy_devices/README.md).
-Activering vraagt vervanging van de bestaande CT REST-definitie en de bestaande
-@gielz-automatisering door het bewaakte voorbeeld. HEMS blijft RAW meten. De
+De bestaande CT REST-definitie krijgt de Energy Devices-API als bron. De
+@gielz-integratie en automatiseringen blijven volledig origineel. HEMS blijft
+RAW meten. De
 shadow-entiteit zelf wordt niet als regelsensor gebruikt. Een live sessie is
 nog nodig om firmware, meetvertragingen en HA-scheduling te beoordelen.

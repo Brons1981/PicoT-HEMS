@@ -166,6 +166,16 @@ class RegulationSnapshotStore:
 
     def update(self, result: dict[str, object]) -> dict[str, object]:
         with self._lock:
+            previous = self._snapshot.get("evaluated_at")
+            current = result.get("evaluated_at")
+            if isinstance(previous, str) and isinstance(current, str):
+                try:
+                    gap = (datetime.fromisoformat(current)
+                           - datetime.fromisoformat(previous)).total_seconds()
+                except (ValueError, TypeError):
+                    gap = float("inf")
+                if not 0 <= gap <= 3:
+                    self._consecutive_ready = 0
             self._revision += 1
             self._consecutive_ready = (
                 self._consecutive_ready + 1 if result.get("status") == "ready" else 0

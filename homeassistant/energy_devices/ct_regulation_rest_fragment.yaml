@@ -10,6 +10,7 @@ rest:
     sensor:
       - name: "CT Shelly Pro 3EM API"
         unique_id: CT_Shelly_Pro_3EM_API
+        availability: "{{ value_json is defined and value_json.total_act_power is defined and is_number(value_json.total_act_power) }}"
         value_template: "{{ value_json.total_act_power }}"
         unit_of_measurement: "W"
         device_class: power

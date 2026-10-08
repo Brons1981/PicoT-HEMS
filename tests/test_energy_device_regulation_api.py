@@ -42,6 +42,17 @@ class RegulationAPITests(unittest.TestCase):
         self.assertEqual(store.read(now=now)["total_act_power"], 1200)
         self.assertFalse(store.read(now=now)["control_enabled"])
 
+    def test_producer_gap_requires_three_fresh_checks_after_recovery(self):
+        now = datetime.now(UTC)
+        store = RegulationSnapshotStore(control_enabled=True)
+        for _ in range(3):
+            store.update(self.result(now))
+        resumed = now + timedelta(seconds=10)
+        for index in range(3):
+            when = resumed + timedelta(seconds=index)
+            store.update(self.result(when))
+            self.assertEqual(store.read(now=when) is not None, index == 2)
+
     def test_http_compatible_json_and_503_without_measurements(self):
         store = RegulationSnapshotStore(control_enabled=True)
         server = create_regulation_api(store, host="127.0.0.1", port=0)

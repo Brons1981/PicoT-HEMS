@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.287-evtest.2
+
+- Correctie van de testrelease: @gielz blijft volledig origineel; de gewijzigde vendor-automatisering en installatieopdracht zijn verwijderd.
+- Alleen de bestaande CT REST-ingang krijgt de Energy Devices-regelwaarde. HEMS blijft RAW en het afzonderlijke beleidssnapshot gebruiken.
+- Meetuitval en eventuele HomeWizard-terugval volgen het originele @gielz-gedrag; deze beperkingen staan in de handleiding.
+
 ## 2.0.0-dev.287-evtest.1
 
 - Optionele actuele EV-belasting en afzonderlijk batterijondersteuningsbeleid via Energy Devices; fysieke RAW-P1 blijft leidend.

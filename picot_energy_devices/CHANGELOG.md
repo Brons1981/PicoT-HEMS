@@ -1,11 +1,18 @@
 # Changelog
 
+## 0.3.0-dev.2
+
+- Verwijdert de onterecht meegeleverde @gielz-wrapper. @gielz-automatiseringen, marges, modi en noodstop blijven origineel.
+- De CT REST-definitie markeert ontbrekende/ongeldige JSON-vermogensdata expliciet als niet beschikbaar; geen fictieve 0 W.
+- Na een onderbreking in de meetlus vraagt herstel opnieuw drie bruikbare controles.
+- Offline getoetst met de oorspronkelijke NOM-takken en oorspronkelijke één-minuut-noodstop. Zie de handleiding voor de terugvalbeperkingen.
+
 ## 0.3.0-dev.1
 
 - Optionele EV-correctie op basis van fysieke RAW-P1, getekend actueel Zendurevermogen en EV-meter.
 - Onafhankelijke 1s-meetlus, conservatieve 20W-marge, versheidscontrole en Shelly-compatibele lees-API op poort 8101.
 - Afzonderlijk beleidssnapshot voor HEMS; Energy Devices kiest geen batterijmodus.
-- Correctie standaard uit. Activering vereist de meegeleverde versheidsbewaking in de bestaande @gielz-automatisering; zie de testhandleiding.
+- Correctie standaard uit. @gielz blijft origineel; alleen de bestaande P1-bron wordt aangeboden via de lees-API. Zie de testhandleiding.
 
 ## 0.2.0
 

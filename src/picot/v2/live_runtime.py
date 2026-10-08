@@ -984,6 +984,7 @@ def _restore_daily_charge_context(
     transition_plan_ids: tuple[str, ...] = ()
     try:
         existing = store.load_daily_assignments()
+        deferred_recovery_ids = store.deferred_recovery_assignment_ids()
         latest_completed_ids = {
             max((a for a in existing if a.execution_scope_id == scope
                  and a.completed_at is not None), key=lambda a: a.delivery_date).assignment_id
@@ -992,6 +993,7 @@ def _restore_daily_charge_context(
         }
         assignments = tuple(
             a for a in existing if a.execution_scope_id in scopes
+            and a.assignment_id not in deferred_recovery_ids
             and (a.ends_at >= earliest_observation or a.assignment_id in latest_completed_ids)
         )
         for assignment in assignments:
@@ -1033,6 +1035,7 @@ def _restore_daily_charge_context(
         assignments = tuple(
             a for a in store.load_daily_assignments()
             if a.execution_scope_id in scopes
+            and a.assignment_id not in deferred_recovery_ids
             and (a.ends_at >= earliest_observation or a.assignment_id in latest_completed_ids)
         )
         market_progress = tuple(
@@ -1522,11 +1525,17 @@ def _request_daily_recalculation_and_replan(
     *, store: ActivePlanCommitmentStore, barrier: PlanningResetBarrier,
     replan_requested: Event, web_view_store: WebViewStore,
     request_id: str, requested_at: datetime,
+    recovery_reset: bool = False,
+    reset_execution: Callable[[], None] | None = None,
 ) -> dict[str, object]:
     def persist_request() -> dict[str, object]:
-        result = store.request_daily_recalculation(
+        request = (store.request_planning_recovery if recovery_reset
+                   else store.request_daily_recalculation)
+        result = request(
             request_id=request_id, requested_at=requested_at,
         )
+        if recovery_reset and reset_execution is not None:
+            reset_execution()
         web_view_store.publish_planning_recalculation(result)
         if result["status"] == "pending":
             replan_requested.set()
@@ -2786,6 +2795,8 @@ def main() -> None:
             store=active_plan_commitment_store, barrier=planning_reset_barrier,
             replan_requested=planning_reset_requested, web_view_store=web_view_store,
             request_id=reset_id, requested_at=datetime.now(UTC),
+            recovery_reset=True,
+            reset_execution=canonical_execution_runtime.reset_pending_state,
         )
 
     web_view_store.set_planning_reset(reset_planning)

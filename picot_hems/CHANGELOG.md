@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.289
+
+- Maak een nieuw plan is nu een expliciete herstelreset: bestaande laad- en marktplannen worden gearchiveerd en losgelaten; planning start opnieuw met actuele gegevens.
+- Een aantoonbaar onhaalbaar huidig dagdoel blokkeert na die reset de volgende dag niet. Het blijft geregistreerd als niet behaald, zonder fictieve SOC-completion.
+- Bewezen dagdoelen, meetgeschiedenis, fysieke grenzen en de aparte handmatige modusoverride blijven behouden. @gielz blijft origineel.
+
 ## 2.0.0-dev.288
 
 - Herstelt updateherkenning: de versie gebruikt weer het bestaande dev.N-formaat dat Home Assistant als nieuwer herkent.

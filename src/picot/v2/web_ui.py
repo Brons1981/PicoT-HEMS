@@ -1220,10 +1220,10 @@ DASHBOARD_HTML = """<!doctype html>
 
     <section id="planning-reset" class="status" aria-live="polite">
       <span id="planning-reset-result">
-        Open dagplannen opnieuw berekenen met behoud van dagdoelen en historie.
+        Nieuwe planning maken vanaf actuele gegevens; oude plannen worden gearchiveerd.
       </span>
       <button id="reset-planning" type="button">
-        Planning opnieuw berekenen
+        Maak een nieuw plan
       </button>
     </section>
 
@@ -3439,10 +3439,17 @@ DASHBOARD_HTML = """<!doctype html>
 
     function renderPlanningRecalculation(result) {
       const status = result?.status ?? "idle";
+      if (result?.mode === "recovery_reset") {
+        element("planning-reset-result").textContent = status === "completed"
+          ? "Nieuw plan gemaakt. Oude plannen zijn gearchiveerd; historie blijft behouden."
+          : "Herstelverzoek opgeslagen. PicoT maakt een nieuw plan met actuele gegevens.";
+        element("reset-planning").disabled = false;
+        return;
+      }
       const results = Object.values(result?.results ?? {});
       const rebuilt = results.filter((item) => item.status === "replanned").length;
       const messages = {
-        idle: "Open dagplannen opnieuw berekenen met behoud van dagdoelen en historie.",
+        idle: "Nieuwe planning maken vanaf actuele gegevens; oude plannen worden gearchiveerd.",
         pending: "Verzoek opgeslagen. PicoT berekent de open dagplannen opnieuw.",
         completed: rebuilt > 0
           ? `${rebuilt} dagplan(nen) opnieuw berekend. Dagdoelen en historie zijn behouden.`
@@ -3465,9 +3472,11 @@ DASHBOARD_HTML = """<!doctype html>
     async function resetPlanning() {
       const resetButton = element("reset-planning");
       const confirmed = globalThis.confirm(
-        "PicoT berekent de open dagplannen opnieuw met actuele gegevens. " +
-        "Dagdoelen, behaalde 100%-doelen en historie blijven behouden. " +
-        "Een bestaand plan wordt pas vervangen als een geldig nieuw plan klaar is. Doorgaan?"
+        "PicoT laat bestaande laad- en marktplannen los. " +
+        "Een nieuw plan wordt met actuele gegevens gemaakt. " +
+        "Historie en bewezen 100%-momenten blijven bewaard. " +
+        "Een onhaalbaar dagdoel wordt als gemist geregistreerd. " +
+        "Een handmatige modusoverride blijft apart actief. Doorgaan?"
       );
       if (!confirmed) return;
       resetButton.disabled = true;

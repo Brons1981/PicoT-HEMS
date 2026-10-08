@@ -19,6 +19,7 @@ from picot.domain.evaluation import CandidateOutcome as CanonicalCandidateOutcom
 from picot.domain.evaluation import EvaluationRecord as CanonicalEvaluationRecord
 from picot.domain.execution_plan import ExecutionPlan as CanonicalExecutionPlan
 from picot.domain.execution_primitive import ExecutionPrimitive
+from picot.domain.external_load_policy import ExternalLoadPolicy
 from picot.domain.market_execution import MarketExecutionProgress
 from picot.domain.market_plan_binding import MarketPlanBinding
 from picot.domain.market_revision_comparison import MarketRevisionCandidateEvidence
@@ -537,11 +538,15 @@ class HouseholdLoadForecastInterval:
     source_reference: str
     method_version: str
 
+    battery_excluded_energy_wh: float = 0.0
+
     def __post_init__(self) -> None:
         if self.starts_at >= self.ends_at:
             raise ValueError("starts_at must be before ends_at")
         if self.expected_energy_wh < 0.0:
             raise ValueError("expected_energy_wh must not be negative")
+        if not 0.0 <= self.battery_excluded_energy_wh <= self.expected_energy_wh:
+            raise ValueError("excluded demand must be a subset of physical demand")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
         if not self.source_reference.strip():
@@ -760,6 +765,7 @@ class PlanningInputSnapshot:
     household_load_guard: HouseholdLoadGuardAssessment | None = None
     net_balance_surplus: NetBalanceSurplus | None = None
     net_balance_status: str = "not_observed"
+    external_load_policy: ExternalLoadPolicy | None = None
     solcast_planning_basis: str = "mean-lower-central"
 
     def __post_init__(self) -> None:

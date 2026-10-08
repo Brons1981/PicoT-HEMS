@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.286"
+version: "2.0.0-dev.287-evtest.1"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -72,6 +72,8 @@ options:
   battery_purchase_eur: 2407.40
   financial_pv_maximum_power_w: 4200.0
   energy_device_catalog_entity: "sensor.picot_energy_devices_catalog"
+  energy_device_policy_enabled: false
+  energy_device_policy_entity: "sensor.picot_ev_regulation_policy"
   grid_power_observation_interval_seconds: 1
   live_poll_interval_seconds: 60
   execution_mode: "live"
@@ -135,6 +137,8 @@ schema:
   battery_purchase_eur: float(0,)
   financial_pv_maximum_power_w: float(0,)
   energy_device_catalog_entity: str
+  energy_device_policy_enabled: bool
+  energy_device_policy_entity: str
   grid_power_observation_interval_seconds: int(1,60)
   live_poll_interval_seconds: int(5,3600)
   execution_mode: list(observer|live)

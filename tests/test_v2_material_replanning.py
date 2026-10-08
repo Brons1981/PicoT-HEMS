@@ -268,3 +268,59 @@ def test_material_producer_requests_second_atomic_snapshot_and_run(tmp_path) -> 
     assert loaded == []
     assert executed == [fresh]
     assert result == _planning_input_signature(fresh)
+
+
+def test_external_policy_start_noise_change_and_stop_use_existing_monitor(tmp_path):
+    from picot.domain.external_load_policy import ExternalLoadPolicy
+
+    producer = MaterialReplanningObservationProducer(
+        history=HouseholdLoadHistoryStore(tmp_path / "history.jsonl")
+    )
+    base = _bundle(energy_wh=3900)
+
+    def observe(seconds, power, revision):
+        when = base.snapshot.captured_at + timedelta(seconds=seconds)
+        policy = ExternalLoadPolicy(
+            "energy-devices:ev", str(revision), when, power, False, "home-battery"
+        )
+        snapshot = replace(
+            base.snapshot,
+            captured_at=when,
+            snapshot_id=f"snapshot-{revision}",
+            active_plan_commitments=(),
+            external_load_policy=policy,
+        )
+        return producer.observe(replace(base, snapshot=snapshot))
+
+    assert observe(0, 2000, 1) == ()
+    assert observe(29, 2000, 2) == ()
+    started = observe(30, 2000, 3)
+    assert len(started) == 1
+    assert started[0].source_reference == "energy-devices-support-policy"
+    assert started[0].kind is RuntimeObservationKind.HOUSEHOLD_STATE_CHANGED
+    assert observe(31, 2090, 4) == ()
+    assert observe(60, 2150, 5) == ()
+    assert len(observe(90, 2140, 6)) == 1
+    assert observe(120, 0, 7) == ()
+    assert len(observe(150, 0, 8)) == 1
+    assert observe(180, 0, 9) == ()
+
+
+def test_short_ev_burst_never_becomes_material(tmp_path):
+    from picot.domain.external_load_policy import ExternalLoadPolicy
+
+    producer = MaterialReplanningObservationProducer(
+        history=HouseholdLoadHistoryStore(tmp_path / "history.jsonl")
+    )
+    base = _bundle(energy_wh=3900)
+    for seconds, power in ((0, 2000), (5, 0), (30, 0)):
+        when = base.snapshot.captured_at + timedelta(seconds=seconds)
+        snapshot = replace(
+            base.snapshot,
+            captured_at=when,
+            active_plan_commitments=(),
+            external_load_policy=ExternalLoadPolicy(
+                "energy-devices:ev", str(seconds), when, power, False, "home-battery"
+            ),
+        )
+        assert producer.observe(replace(base, snapshot=snapshot)) == ()

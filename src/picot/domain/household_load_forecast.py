@@ -15,7 +15,11 @@ class HouseholdLoadForecastInterval:
     expected_energy_wh: float
     confidence: float
 
+    battery_excluded_energy_wh: float = 0.0
+
     def __post_init__(self) -> None:
+        if not 0.0 <= self.battery_excluded_energy_wh <= self.expected_energy_wh:
+            raise ValueError("excluded demand must be a subset of physical demand")
         if self.starts_at.tzinfo is None or self.starts_at.utcoffset() is None:
             raise ValueError("Household load interval start must be timezone-aware.")
         if self.ends_at.tzinfo is None or self.ends_at.utcoffset() is None:

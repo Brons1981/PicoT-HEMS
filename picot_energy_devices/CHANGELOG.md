@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0-dev.1
+
+- Optionele EV-correctie op basis van fysieke RAW-P1, getekend actueel Zendurevermogen en EV-meter.
+- Onafhankelijke 1s-meetlus, conservatieve 20W-marge, versheidscontrole en Shelly-compatibele lees-API op poort 8101.
+- Afzonderlijk beleidssnapshot voor HEMS; Energy Devices kiest geen batterijmodus.
+- Correctie standaard uit. Activering vereist de meegeleverde versheidsbewaking in de bestaande @gielz-automatisering; zie de testhandleiding.
+
 ## 0.2.0
 
 - Leer volledige apparaatprogramma’s in met **Start inleren** en **Programma klaar**. Rustige fases splitsen een opname niet meer.

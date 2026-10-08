@@ -1517,7 +1517,8 @@ def produce_main_charge_portfolio(
             recovery_intents = tuple(i for i in incumbent.schedule.intervals
                                      if i.starts_at < recovery.ends_at
                                      and i.ends_at > recovery.starts_at)
-            recovery_input = tuple((i.starts_at, i.ends_at, i.household_demand_wh, i.usable_pv_wh)
+            recovery_input = tuple((i.starts_at, i.ends_at, i.household_demand_wh,
+                                      i.usable_pv_wh, i.battery_excluded_demand_wh)
                                    for i in incumbent.projection.intervals
                                    if i.starts_at < recovery.ends_at
                                    and i.ends_at > recovery.starts_at)
@@ -1525,7 +1526,8 @@ def produce_main_charge_portfolio(
                 if (tuple(i for i in alternative.schedule.intervals
                           if i.starts_at < recovery.ends_at and i.ends_at > recovery.starts_at)
                         != recovery_intents
-                        or tuple((i.starts_at, i.ends_at, i.household_demand_wh, i.usable_pv_wh)
+                        or tuple((i.starts_at, i.ends_at, i.household_demand_wh,
+                                      i.usable_pv_wh, i.battery_excluded_demand_wh)
                                  for i in alternative.projection.intervals
                                  if i.starts_at < recovery.ends_at
                                  and i.ends_at > recovery.starts_at) != recovery_input

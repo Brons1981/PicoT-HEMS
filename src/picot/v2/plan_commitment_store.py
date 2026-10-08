@@ -716,6 +716,13 @@ class ActivePlanCommitmentStore:
                 reason="explicit_user_recalculation", plan_id=plan.plan_id,
                 snapshot_id=plan.snapshot_id,
             )
+        recovery = payload.get("daily_recalculation", {})
+        if recovery.get("mode") == "recovery_reset" and recovery.get("status") == "pending":
+            recovery["status"] = "completed"
+            recovery["results"][bound.assignment_id] = {
+                "status": "replanned", "reason": "explicit_planning_recovery",
+                "plan_id": plan.plan_id, "snapshot_id": plan.snapshot_id,
+            }
         self._write(payload)
         return bound
 
@@ -1339,7 +1346,7 @@ class ActivePlanCommitmentStore:
 
     def load_daily_recalculation_request(self) -> DailyPlanRecalculationRequest | None:
         record = self.daily_recalculation_status()
-        if record["status"] != "pending":
+        if record["status"] != "pending" or record.get("mode") == "recovery_reset":
             return None
         try:
             if not isinstance(record["pending_assignment_ids"], list):
@@ -1385,6 +1392,72 @@ class ActivePlanCommitmentStore:
         payload["daily_recalculation"] = record
         self._write(payload)
         return record
+
+    def request_planning_recovery(
+        self, *, request_id: str, requested_at: datetime,
+    ) -> dict[str, Any]:
+        """Explicitly release planner obligations, preserving their full audit history."""
+        if not request_id.strip() or requested_at.utcoffset() is None:
+            raise ValueError("recovery reset requires identity and aware time")
+        payload = self._load_payload()
+        history = payload.setdefault("planning_recovery_history", {})
+        if request_id in history:
+            return self.daily_recalculation_status()
+        assignments = self.load_daily_assignments()
+        history[request_id] = {
+            "requested_at": requested_at.isoformat(),
+            "previous_state": {k: v for k, v in payload.items()
+                               if k != "planning_recovery_history"},
+        }
+        for key in (
+            "commitments", "active_daily_main_assignments", "active_execution_plan_ids",
+            "daily_execution_plans", "daily_bridge_states", "daily_pv_comparison",
+            "daily_main_revision_triggers", "market_daily_assignments",
+            "market_execution_progress", "market_plan_bindings", "market_plan_revisions",
+            "market_window_transitions", "shared_plan_origins", "supplemental_assignments",
+        ):
+            payload[key] = {}
+        payload["daily_assignments"] = {
+            a.assignment_id: _serialize_daily(a if a.completed_at is not None else replace(
+                a, route_plan_id=None, main_segments=(), revision=0, revised_at=None,
+                revision_reason=None, revision_evidence_id=None,
+            )) for a in assignments
+        }
+        # Completed owners retain their route for truthful historical completion.
+        previous = history[request_id]["previous_state"]
+        payload["daily_execution_plans"] = {
+            a.assignment_id: previous.get("daily_execution_plans", {})[a.assignment_id]
+            for a in assignments if a.completed_at is not None
+            and a.assignment_id in previous.get("daily_execution_plans", {})
+        }
+        payload["daily_recalculation"] = {
+            "request_id": request_id, "requested_at": requested_at.isoformat(),
+            "mode": "recovery_reset", "status": "pending",
+            "pending_assignment_ids": [], "results": {}, "history_preserved": True,
+        }
+        self._write(payload)
+        return self.daily_recalculation_status()
+
+    def deferred_recovery_assignment_ids(self) -> frozenset[str]:
+        return frozenset(self._load_payload().get("recovery_unreachable_assignments", {}))
+
+    def defer_unreachable_recovery_goal(
+        self, *, assignment_id: str, snapshot_id: str, assessed_at: datetime,
+    ) -> None:
+        """Record a proven unreachable current day without fabricating completion."""
+        payload = self._load_payload()
+        record = payload.get("daily_recalculation", {})
+        owner = next(a for a in self.load_daily_assignments() if a.assignment_id == assignment_id)
+        if (record.get("mode") != "recovery_reset" or record.get("status") != "pending"
+                or owner.completed_at is not None
+                or not owner.starts_at <= assessed_at < owner.ends_at):
+            raise ValueError("only an explicit recovery can defer the current unreachable day")
+        payload.setdefault("recovery_unreachable_assignments", {})[assignment_id] = {
+            "request_id": record["request_id"], "snapshot_id": snapshot_id,
+            "assessed_at": assessed_at.isoformat(),
+            "reason": "insufficient_remaining_charge_capacity", "completed": False,
+        }
+        self._write(payload)
 
     @staticmethod
     def _finish_daily_recalculation(

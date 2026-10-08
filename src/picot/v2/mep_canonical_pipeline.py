@@ -1452,6 +1452,26 @@ def _build_daily_main_run(
                         in w.invalidity_reasons for w in windows.rejected_windows)
             )
             if not windows.windows and windows.market_revision is None:
+                recovery = commitment_store.daily_recalculation_status()
+                if (recovery.get("mode") == "recovery_reset"
+                        and recovery.get("status") == "pending"
+                        and windows.reason == "insufficient_remaining_charge_capacity"
+                        and pending[0].starts_at <= snapshot.captured_at < pending[0].ends_at):
+                    commitment_store.defer_unreachable_recovery_goal(
+                        assignment_id=pending[0].assignment_id, snapshot_id=snapshot.snapshot_id,
+                        assessed_at=snapshot.captured_at,
+                    )
+                    recovered_context = replace(context, assignments=tuple(
+                        a for a in context.assignments
+                        if a.assignment_id != pending[0].assignment_id
+                    ))
+                    return _build_daily_main_run(
+                        snapshot=replace(snapshot, daily_charge_context=recovered_context),
+                        opportunities=opportunities, planner_runtime=planner_runtime,
+                        commitment_store=commitment_store,
+                        control_change_allowed=control_change_allowed,
+                        planning_checkpoint=planning_checkpoint,
+                    )
                 if isinstance(optimisation_trigger, DailyMainRecalculationTrigger):
                     reason = windows.reason or "manual_recalculation_no_feasible_route"
                     planning_blocked = True

@@ -20,6 +20,7 @@ class HouseholdLoadHistoryStore:
             "schema_version": 1,
             "power_w": observation.power_w,
             "identified_external_power_w": observation.identified_external_power_w,
+            "external_power_observed": observation.external_power_observed,
             "sampled_at": observation.sampled_at.isoformat(),
             "evidence_ids": list(observation.evidence_ids),
             "method_version": observation.method_version,
@@ -66,11 +67,13 @@ def _decode_observation(
 
     power_w = payload.get("power_w")
     external = payload.get("identified_external_power_w", 0.0)
+    external_observed = payload.get("external_power_observed", False)
     sampled_at = payload.get("sampled_at")
     raw_evidence_ids = payload.get("evidence_ids")
     method_version = payload.get("method_version")
     if (
-        isinstance(external, bool)
+        not isinstance(external_observed, bool)
+        or isinstance(external, bool)
         or not isinstance(external, (int, float))
         or isinstance(power_w, bool)
         or not isinstance(power_w, (int, float))
@@ -87,12 +90,11 @@ def _decode_observation(
         evidence_ids.append(evidence_id)
 
     try:
-        parsed_at = datetime.fromisoformat(
-            sampled_at.replace("Z", "+00:00")
-        )
+        parsed_at = datetime.fromisoformat(sampled_at.replace("Z", "+00:00"))
         return HouseholdLoadObservation(
             power_w=float(power_w),
             identified_external_power_w=float(external),
+            external_power_observed=external_observed,
             sampled_at=parsed_at,
             evidence_ids=tuple(evidence_ids),
             method_version=method_version,

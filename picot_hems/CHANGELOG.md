@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-dev.290
+
+- Optionele sessievoorkennis via Energy Devices-snapshot in bestaande Planning Input.
+- Geplande belasting eenmaal toevoegen, begrensd door resterende energie en bevestigde eindtijd.
+- Sessiewijzigingen via de bestaande 30s-materialiteit en canonieke Runtime Monitor/MEP-keten.
+- Fysieke RAW blijft intact; opslaguitsluiting alleen bij afzonderlijke verse ingeschakelde regelpolicy.
+- Normale energieaftelling en snapshot-heartbeats veroorzaken geen sessieherplanning.
+
+
 ## 2.0.0-dev.289
 
 - Maak een nieuw plan is nu een expliciete herstelreset: bestaande laad- en marktplannen worden gearchiveerd en losgelaten; planning start opnieuw met actuele gegevens.

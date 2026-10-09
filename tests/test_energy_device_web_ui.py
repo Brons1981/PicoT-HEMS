@@ -15,11 +15,7 @@ def _request(url: str, payload: dict[str, object] | None = None) -> dict[str, ob
     request = Request(
         url,
         data=(json.dumps(payload).encode() if payload is not None else None),
-        headers=(
-            {"Content-Type": "application/json"}
-            if payload is not None
-            else {}
-        ),
+        headers=({"Content-Type": "application/json"} if payload is not None else {}),
         method="POST" if payload is not None else "GET",
     )
     with urlopen(request, timeout=5) as response:
@@ -92,6 +88,32 @@ def test_recording_controls_and_detail_api(tmp_path: Path) -> None:
         assert _request(base + f"/api/recording?id={rid}")["name"] == "Eco 50"
         _request(endpoint, {"action": "delete_recording", "recording_id": rid})
         assert _request(base + "/api/view")["recordings"][device.device_id] == []
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_ev_api_exposes_persistent_session_and_accepts_confirmation(tmp_path: Path) -> None:
+    from picot_energy_devices.ev_sessions import EVSessionManager
+
+    now = datetime(2026, 10, 10, 10, tzinfo=UTC)
+    manager = EVSessionManager(
+        tmp_path / "ev.sqlite", power_entity="sensor.ev", switch_entity="switch.ev", now=lambda: now
+    )
+    store = EnergyDeviceStore(tmp_path / "registry.sqlite")
+    for _ in range(31):
+        manager.tick(measured_at=now, power_w=2000, switch_state="on", set_switch=lambda _: None)
+        now += timedelta(seconds=1)
+    server = create_web_server(store, host="127.0.0.1", port=0, ev_sessions=manager)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        view = _request(base + "/api/view")
+        assert view["ev"]["sessions"][0]["session_id"]
+        _request(base + "/api/ev", {"action": "verify_resume", "confirmed": True})
+        assert _request(base + "/api/view")["ev"]["resume_verified"] is True
     finally:
         server.shutdown()
         server.server_close()

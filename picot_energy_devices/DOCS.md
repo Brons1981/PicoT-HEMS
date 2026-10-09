@@ -87,3 +87,32 @@ De bestaande CT REST-definitie krijgt de Energy Devices-API als bron. De
 RAW meten. De
 shadow-entiteit zelf wordt niet als regelsensor gebruikt. Een live sessie is
 nog nodig om firmware, meetvertragingen en HA-scheduling te beoordelen.
+
+## EV-laadsessies (experimenteel)
+
+Schakel `ev_sessions_enabled: true` in. Voor deze installatie:
+
+```yaml
+ev_power_entity: sensor.shellyplugsg3_d885ac1e8c94_vermogen
+ev_switch_entity: switch.shellyplugsg3_d885ac1e8c94
+```
+
+1. Sluit de auto aan met de plug aan en laat minimaal 30 seconden laden.
+2. Controleer de herkende sessie in de EV-laadtijdlijn. De eerste probe schat alleen vermogen; geef de duur zelf op zolang geen bruikbare volledige sessie is geleerd.
+3. Schakel de plug uit en weer in. Controleer werkelijk laadvermogen en bevestig pas daarna **Hervatten getest en geslaagd**.
+4. Zet de plug uit. Kies een toekomstige lokale starttijd, vermogen en duur; bevestig de sessie. De eindtijd is een harde bovengrens, niet bewijs dat de auto vol is.
+5. Energy Devices schakelt bij start in, herkent vijf minuten lage beschikbare belasting als natuurlijk einde en schakelt uiterlijk bij de bevestigde eindtijd uit. Uitval van de meting bewijst geen einde. Geleverde energie is een integratieschatting; meetgaten blijven zichtbaar.
+6. Handmatig uitschakelen tijdens een eigen run onderbreekt de sessie; de app schakelt niet direct tegen je in. Gebruik **Onderbroken sessie hervatten** voor expliciet hervatten binnen het venster.
+7. Expliciet annuleren schakelt de gekozen laadplug uit en wacht op bevestiging via de switchstatus.
+
+De Energy Devices-snapshot staat in `sensor.picot_ev_session_snapshot`. HEMS moet een versie met sessie-ingestie gebruiken en de opties hieronder hebben:
+
+```yaml
+energy_device_sessions_enabled: true
+energy_device_session_entity: sensor.picot_ev_session_snapshot
+p1_power_entity: sensor.ct_shelly_pro_3em_api_raw_2
+```
+
+Laat EV-correctie tijdens de eerste uitvoeringstest uit. Prognose werkt onafhankelijk daarvan; batterijbescherming wordt uitsluitend uit de afzonderlijke verse regelpolicy afgeleid. Bij een bevestigde sessie gebruikt HEMS alleen historische basislast met bewezen EV-meetdekking. Ontbreekt die dekking, dan gebruikt het de bestaande conservatieve terugval en actuele basislastcontrole. Oude EV-belasting wordt niet geraden of dubbel toegevoegd. BMW-informatie wordt in deze eerste versie niet gebruikt omdat geen BMW-bron is geconfigureerd.
+
+Na een add-oncrash kan de plug aan blijven; bij hervatten wordt de bevestigde eindtijd opnieuw toegepast. Annuleer een geplande/actieve sessie en controleer de fysieke plug vóór uitschakelen/verwijderen van de add-on. De onafhankelijke P1 RAW-terugval blijft functioneren zolang HA draait.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0-dev.3
+
+- Optionele lokale Shelly Switch.GetStatus-meetbron via ev_local_rpc_url, eenmaal per seconde gedeeld door EV-sessies en regeling.
+- Geen oude HA-EV-meetwaarde gebruiken bij lokale API-uitval; correctie blokkeren voor de bestaande RAW-terugval.
+- Behoud echte blokkeerreden en vermeld local_rpc als meetbron. Originele @gielz en HEMS blijven ongewijzigd.
+
 ## 0.4.0-dev.2
 
 - Herken een EV-sessie direct bij plug aan en een nieuwe fysieke meting boven 2000 W; geen ingebouwde wachttijd of vermogensschatting.

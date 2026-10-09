@@ -181,7 +181,8 @@ class RegulationSnapshotStore:
                 self._consecutive_ready + 1 if result.get("status") == "ready" else 0
             )
             snapshot = dict(result)
-            if self.control_enabled and self._consecutive_ready < 3:
+            if (self.control_enabled and result.get("status") == "ready"
+                    and self._consecutive_ready < 3):
                 snapshot.update(
                     status="blocked", reason="awaiting_three_fresh_reports", candidate_w=None
                 )

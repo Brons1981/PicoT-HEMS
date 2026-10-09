@@ -1,0 +1,151 @@
+rest:
+  - resource: "http://192.168.6.213/rpc/EM.GetStatus?id=0"
+    scan_interval: 1
+    timeout: 5
+    sensor:
+      - name: "PicoT Shelly fysiek vermogen"
+        unique_id: picot_shelly_fysiek_vermogen
+        availability: >-
+          {{ value_json is defined
+             and value_json.total_act_power is defined
+             and is_number(value_json.total_act_power) }}
+        value_template: "{{ value_json.total_act_power }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+
+  - resource: !secret picot_ev_regulation_url
+    scan_interval: 1
+    timeout: 2
+    sensor:
+      - name: "PicoT Energy Devices regelvermogen"
+        unique_id: picot_energy_devices_regelvermogen
+        availability: >-
+          {{ value_json is defined
+             and value_json.total_act_power is defined
+             and is_number(value_json.total_act_power) }}
+        value_template: "{{ value_json.total_act_power }}"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        json_attributes:
+          - measured_at
+          - status
+          - reason
+          - source_id
+          - control_enabled
+          - raw_grid_w
+          - ev_w
+          - battery_w
+          - correction_guard
+          - correction_source_reason
+          - holding_measurement
+          - offered_p1_w
+          - fallback
+
+template:
+  - triggers:
+      - trigger: time_pattern
+        seconds: "/1"
+      - trigger: homeassistant
+        event: start
+    variables:
+      checked_at: "{{ as_timestamp(now()) }}"
+      raw_age: >-
+        {{ checked_at | float - as_timestamp(
+           state_attr('sensor.ct_shelly_pro_3em_api_raw_2', 'measured_at'), 0) }}
+      api_report_age: >-
+        {% set source = states.sensor.picot_energy_devices_regelvermogen %}
+        {{ checked_at | float - (as_timestamp(source.last_reported, 0)
+           if source is defined and source is not none else 0) }}
+      api_measurement_age: >-
+        {{ checked_at | float - as_timestamp(
+           state_attr('sensor.picot_energy_devices_regelvermogen', 'measured_at'), 0) }}
+      raw_ok: >-
+        {{ is_number(states('sensor.ct_shelly_pro_3em_api_raw_2'))
+           and state_attr('sensor.ct_shelly_pro_3em_api_raw_2', 'unit_of_measurement') == 'W'
+           and 0 <= raw_age | float <= 10 }}
+      api_ok: >-
+        {{ is_number(states('sensor.picot_energy_devices_regelvermogen'))
+           and state_attr('sensor.picot_energy_devices_regelvermogen', 'unit_of_measurement') == 'W'
+           and state_attr('sensor.picot_energy_devices_regelvermogen', 'status') == 'ready'
+           and state_attr('sensor.picot_energy_devices_regelvermogen', 'source_id')
+               == 'energy-devices:ev-regulation'
+           and 0 <= api_report_age | float <= 3
+           and 0 <= api_measurement_age | float <= 10 }}
+      selected_source: >-
+        {{ 'energy_devices' if api_ok else 'shelly_raw' if raw_ok else 'unavailable' }}
+    sensor:
+      - name: "CT Shelly Pro 3EM API"
+        default_entity_id: sensor.ct_shelly_pro_3em_api
+        unique_id: picot_ct_regulation_with_raw_fallback
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        availability: "{{ api_ok or raw_ok }}"
+        state: >-
+          {% if api_ok %}
+            {{ states('sensor.picot_energy_devices_regelvermogen') | float }}
+          {% elif raw_ok %}
+            {{ states('sensor.ct_shelly_pro_3em_api_raw_2') | float }}
+          {% else %}
+            {{ none }}
+          {% endif %}
+        attributes:
+          selected_source: "{{ selected_source }}"
+          fallback_active: "{{ not api_ok and raw_ok }}"
+          fallback_reason: >-
+            {{ 'none' if api_ok else 'energy_devices_unavailable_or_stale'
+               if raw_ok else 'no_fresh_source' }}
+          ev_protection_active: >-
+            {{ api_ok and state_attr(
+               'sensor.picot_energy_devices_regelvermogen', 'control_enabled') == true }}
+          raw_measurement_delayed: "{{ raw_ok and raw_age | float > 3 }}"
+          raw_age_seconds: "{{ raw_age | float | round(3) }}"
+          api_report_age_seconds: "{{ api_report_age | float | round(3) }}"
+          api_measurement_age_seconds: "{{ api_measurement_age | float | round(3) }}"
+          measured_at: >-
+            {% if api_ok %}
+              {{ state_attr('sensor.picot_energy_devices_regelvermogen', 'measured_at') }}
+            {% elif raw_ok %}
+              {{ state_attr('sensor.ct_shelly_pro_3em_api_raw_2', 'measured_at') }}
+            {% else %}
+              {{ none }}
+            {% endif %}
+
+  - triggers:
+      - trigger: time_pattern
+        seconds: "/1"
+      - trigger: homeassistant
+        event: start
+    sensor:
+      - name: CT Shelly Pro 3EM API Raw
+        unique_id: CT_Shelly_Pro_3EM_API_Raw
+        device_class: power
+        state_class: measurement
+        unit_of_measurement: "W"
+        icon: mdi:meter-electric-outline
+        availability: >-
+          {% set source = states.sensor.picot_shelly_fysiek_vermogen %}
+          {% set live = is_number(states('sensor.picot_shelly_fysiek_vermogen')) %}
+          {% set stamp = as_timestamp(source.last_reported, 0)
+             if live and source is defined and source is not none
+             else as_timestamp(this.attributes.get('measured_at'), 0) %}
+          {{ (live or is_number(this.state)) and 0 <= as_timestamp(now()) - stamp <= 10 }}
+        state: >-
+          {{ states('sensor.picot_shelly_fysiek_vermogen')
+             if is_number(states('sensor.picot_shelly_fysiek_vermogen')) else this.state }}
+        attributes:
+          measured_at: >-
+            {% set source = states.sensor.picot_shelly_fysiek_vermogen %}
+            {{ source.last_reported.isoformat()
+               if is_number(states('sensor.picot_shelly_fysiek_vermogen'))
+                  and source is defined and source is not none
+               else this.attributes.get('measured_at') }}
+          measurement_delayed: >-
+            {% set source = states.sensor.picot_shelly_fysiek_vermogen %}
+            {{ not is_number(states('sensor.picot_shelly_fysiek_vermogen'))
+               or (source is defined and source is not none
+                   and as_timestamp(now()) - as_timestamp(source.last_reported, 0) > 3) }}
+          held_value: "{{ not is_number(states('sensor.picot_shelly_fysiek_vermogen')) }}"
+          maximum_hold_seconds: 10

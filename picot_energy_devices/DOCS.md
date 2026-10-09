@@ -54,10 +54,10 @@ blijft onafhankelijk. De uitvoer is uitsluitend
 `sensor.picot_ev_regulation_shadow`; de bestaande CT-sensor wordt niet geschreven.
 
 `last_reported` moet aanwezig zijn, met tijdzone. Een ontbrekende rapporttijd,
-een bron ouder dan 3 seconden of bronnen meer dan 2 seconden uit elkaar geven
+een RAW- of EV-bron ouder dan 3 seconden of die bronnen meer dan 2 seconden uit elkaar geven
 `unavailable` met een reden. `last_changed` en het moment van ophalen worden
-niet gebruikt als bewijs van verse meting. Controleer live dat elke bron ook
-bij gelijkblijvend vermogen nieuwe rapporttijden krijgt.
+niet gebruikt als bewijs van verse meting. Bij RAW en EV zijn nieuwe uitleesrapporten nodig, ook als hun vermogen gelijk blijft.
+De leeftijd van de batterijrapportage is diagnostiek en blokkeert de vrijgave niet.
 
 Attributen tonen RAW, EV, batterij, bronleeftijden, tijdverschil, uitgesloten EV
 vermogen en de kandidaatregelwaarde. Vermogen is positief voor import/laden.
@@ -108,7 +108,9 @@ De request-starttijd dateert de lokale observatie; cachelezen vernieuwt die tijd
 niet. De API levert geen afzonderlijke sampletijd voor `apower`, dus snelle interne
 meetverversing moet live worden getest met opeenvolgende antwoorden en laadstart/stop.
 Een timeout (2 seconden), ongeldige response of observatie ouder dan 3 seconden
-blokkeert de EV-correctie. Er is geen stille overstap naar een oude HA-EV-waarde.
+blokkeert een nieuwe EV-correctieberekening. De hieronder beschreven korte
+overbrugging kan de laatst geldige correctie behouden. Er is geen stille overstap
+naar een oude HA-EV-waarde.
 De bestaande onafhankelijke HA RAW-terugval blijft verantwoordelijk voor P1.
 Het snapshot toont `ev_measurement_source: local_rpc` en behoudt bij blokkade de
 werkelijke reden. Een lege URL behoudt de bestaande HA-meetroute.
@@ -139,3 +141,47 @@ p1_power_entity: sensor.ct_shelly_pro_3em_api_raw_2
 Laat EV-correctie tijdens de eerste uitvoeringstest uit. Prognose werkt onafhankelijk daarvan; batterijbescherming wordt uitsluitend uit de afzonderlijke verse regelpolicy afgeleid. Bij een bevestigde sessie gebruikt HEMS alleen historische basislast met bewezen EV-meetdekking. Ontbreekt die dekking, dan gebruikt het de bestaande conservatieve terugval en actuele basislastcontrole. Oude EV-belasting wordt niet geraden of dubbel toegevoegd. BMW-informatie wordt in deze eerste versie niet gebruikt omdat geen BMW-bron is geconfigureerd.
 
 Na een add-oncrash kan de plug aan blijven; bij hervatten wordt de bevestigde eindtijd opnieuw toegepast. Annuleer een geplande/actieve sessie en controleer de fysieke plug vóór uitschakelen/verwijderen van de add-on. De onafhankelijke P1 RAW-terugval blijft functioneren zolang HA draait.
+
+
+## Bewaking van de aangeboden correctie
+
+De berekening voor avond en PV blijft gelijk. `regulation_offered_entity` wijst
+naar de sensor die @gielz werkelijk ontvangt: standaard
+`sensor.ct_shelly_pro_3em_api`. Energy Devices leest die entiteit uitsluitend;
+@gielz behoudt zijn eigen marges, triggers, modi en acties.
+
+De bewaking vergelijkt deze ontvangen waarde met de berekende P1-kandidaten
+van de laatste vijf seconden, met 50 W tolerantie. Daardoor worden opeenvolgende
+metingen vergeleken met de bijbehorende correcties, ook bij snelle EV-, oven-
+of PV-stappen. Een gelijkblijvende waarde is geen fout. Laden/ontladen wisselen
+of fysieke P1 rond nul zijn geen vrijgave- of blokkeercriteria. Deze bewaking
+bewijst de overdracht van de correctie, niet de fysieke batterijrespons.
+
+Bij 30 seconden aanhoudende afwijking wordt de correctie vergrendeld uitgezet.
+Bij tien seconden aanhoudend ontbrekende/ongeldige metingen gebeurt hetzelfde.
+De API geeft dan HTTP 503; de onafhankelijke HA-selector biedt RAW aan. De
+reden staat op `sensor.picot_ev_regulation_policy` en de schaduwsensor als
+`offered_correction_mismatch` of `persistent_measurement_loss`, met
+`correction_guard: latched` en `fallback: latched_raw_fallback`.
+
+Een korte meetonderbreking mag de laatste geldige correctie behouden, uiterlijk
+tien seconden vanaf de oorspronkelijke bronmeting. `holding_measurement: true`
+en `reason: short_measurement_gap` maken dit zichtbaar. De oorspronkelijke
+`measured_at` blijft staan. Herstel levert direct een nieuwe kandidaat; er is
+geen nieuwe eis van drie opeenvolgende vrijgaven. Bij een vastgelopen of gestopte
+add-on verloopt de API-producerheartbeat na drie seconden en neemt HA RAW over.
+De vergrendeling overleeft een herstart. Reset na onderzoek door
+`regulation_control_enabled: false` op te slaan en de add-on te herstarten,
+daarna expliciet weer inschakelen en herstarten.
+
+Voor een al gemigreerde HA-configuratie: houd correctie uit, wijzig uitsluitend
+in de bestaande CT-selector `api_measurement_age <= 3` naar
+`api_measurement_age <= 10`. Behoud `api_report_age <= 3`, de echte RAW-bron,
+entity-ID's en @gielz. Zie
+[het bijgewerkte fragment](../homeassistant/energy_devices/ct_regulation_fallback_fragment.yaml).
+Controleer de HA-configuratie vóór herladen/herstarten. Zonder deze wijziging
+valt HA tijdens de overbrugging al na drie seconden terug. HEMS behoudt zijn
+bestaande verse-policycontrole; oude metingen worden niet vernieuwd voor planning.
+
+Deze offline getoetste bewaking is nog geen bewijs van live stabiliteit. Controleer
+na installatie de aangeboden correctie, start/stop en PV met de diagnostiek.

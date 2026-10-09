@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0-dev.4
+
+- Bewaakt of de werkelijk aangeboden CT-correctie overeenkomt met de bedoelde correctie, met 50 W tolerantie en maximaal vijf seconden overdrachtsvertraging.
+- Gelijkblijvend batterijvermogen blokkeert de vrijgave niet meer; EV-, oven- en PV-wisselingen gelden niet automatisch als pendelen.
+- Overbrugt korte meetuitval maximaal tien seconden vanaf de oorspronkelijke bronmeting. Herstel geeft direct een nieuwe kandidaat.
+- Vergrendelt RAW-terugval bij aanhoudend verkeerde correctie of langdurige meetuitval. De vergrendeling blijft na herstart actief totdat correctie expliciet wordt uitgezet en herstart.
+- Behoudt originele @gielz-regeling en bestaande PV-berekening. De bestaande HA-selector moet API-meetleeftijd tot tien seconden toestaan; API-rapportleeftijd blijft drie seconden. Zie DOCS.md.
+
 ## 0.4.0-dev.3
 
 - Optionele lokale Shelly Switch.GetStatus-meetbron via ev_local_rpc_url, eenmaal per seconde gedeeld door EV-sessies en regeling.

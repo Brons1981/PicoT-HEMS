@@ -19,6 +19,7 @@ from picot_energy_devices.regulation import (
     RegulationSnapshotStore,
     create_regulation_api,
 )
+from picot_energy_devices.regulation_guard import CorrectionGuard
 from picot_energy_devices.shelly_ev import ShellyEVSource
 from picot_energy_devices.store import EnergyDeviceStore
 from picot_energy_devices.web_ui import create_web_server
@@ -74,6 +75,8 @@ def regulation_poll_once(
     observer: RegulationObserver | None = None,
     snapshots: RegulationSnapshotStore | None = None,
     ev_source: ShellyEVSource | None = None,
+    guard: CorrectionGuard | None = None,
+    offered_entity: str = "sensor.ct_shelly_pro_3em_api",
 ) -> None:
     raw = None
     try:
@@ -100,7 +103,19 @@ def regulation_poll_once(
             "evaluated_at": datetime.now(UTC).isoformat(),
         }
     result["ev_measurement_source"] = "local_rpc" if ev_source is not None else "home_assistant"
-    client.publish_regulation_shadow(result)
+    if guard is not None:
+        offered = None
+        if guard.enabled:
+            try:
+                offered_state = client.state(offered_entity)
+                attributes = offered_state.get("attributes")
+                if (not isinstance(attributes, dict)
+                        or attributes.get("unit_of_measurement") not in {"W", "kW"}):
+                    raise ValueError("offered correction requires an explicit power unit")
+                offered = client.measurement(offered_state, quantity="power")
+            except (OSError, ValueError):
+                pass
+        result = guard.check(result=result, offered_w=offered, now=datetime.now(UTC))
     if snapshots is not None:
         api_result = result
         if not snapshots.control_enabled and raw is not None:
@@ -117,6 +132,7 @@ def regulation_poll_once(
                     source_ages_seconds=[age],
                 )
         client.publish_regulation_policy(snapshots.update(api_result))
+    client.publish_regulation_shadow(result)
 
 
 def _regulation_loop(
@@ -147,12 +163,18 @@ def _regulation_loop(
     }
     if any(not value.startswith("sensor.") for value in entities.values()):
         raise ValueError("regulation source entities must be sensors")
+    offered_entity = str(options.get("regulation_offered_entity", "sensor.ct_shelly_pro_3em_api"))
+    if not offered_entity.startswith("sensor.") or offered_entity == entities["raw_entity"]:
+        raise ValueError("offered correction must be a separate sensor")
     observer = RegulationObserver()
+    guard = CorrectionGuard(enabled=snapshots is not None and snapshots.control_enabled,
+                            path=DATA_PATH.parent / "picot_ev_regulation_guard.json")
     while True:
         started = time.perf_counter()
         try:
             regulation_poll_once(client=client, observer=observer, snapshots=snapshots,
-                                 ev_source=ev_source, **entities)
+                                 ev_source=ev_source, guard=guard,
+                                 offered_entity=offered_entity, **entities)
         except (OSError, ValueError) as error:
             print(
                 json.dumps({"event": "regulation_shadow_failed", "error": str(error)}),
@@ -242,6 +264,8 @@ def main() -> None:
         RegulationSnapshotStore(
             control_enabled=api_enabled
             and options.get("regulation_control_enabled", False) is True,
+            measurement_grace_seconds=10,
+            minimum_ready_reports=1,
         )
         if api_enabled
         else None

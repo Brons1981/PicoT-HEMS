@@ -36,8 +36,8 @@ class RegulationTests(unittest.TestCase):
                 watts,
             )
 
-    def test_old_each_source_and_future_and_skew_block(self) -> None:
-        for index in range(3):
+    def test_old_raw_or_ev_and_future_and_skew_block(self) -> None:
+        for index in (0, 2):
             values = [report(0), report(0), report(2000)]
             values[index] = report(values[index].watts, 4)
             result = regulation_candidate(*values, now=NOW)
@@ -51,6 +51,22 @@ class RegulationTests(unittest.TestCase):
             regulation_candidate(report(0, 3), report(0), report(2000), now=NOW)["reason"],
             "source_time_skew",
         )
+
+    def test_unchanged_battery_is_diagnostic_not_a_freshness_gate(self) -> None:
+        result = regulation_candidate(report(2500), report(0, 3600), report(2300), now=NOW)
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["candidate_w"], 200)
+        self.assertEqual(result["battery_report_age_seconds"], 3600)
+        self.assertEqual(result["source_ages_seconds"], [0, 0])
+
+    def test_buffered_raw_keeps_original_measurement_time(self) -> None:
+        power = PowerReport.from_state({
+            "state": "2500", "last_reported": NOW.isoformat(),
+            "attributes": {"unit_of_measurement": "W",
+                           "measured_at": (NOW - timedelta(seconds=8)).isoformat()},
+        })
+        result = regulation_candidate(power, report(0), report(2300), now=NOW)
+        self.assertEqual(result["reason"], "stale_source")
 
     def test_quantization_reduces_noise_without_adding_support(self) -> None:
         values = []

@@ -18,13 +18,14 @@ class PowerReport:
     @classmethod
     def from_state(cls, payload: dict[str, object]) -> PowerReport:
         # A fetch time and last_changed do not establish source freshness.
-        raw = payload.get("last_reported")
+        attributes = payload.get("attributes")
+        raw = (attributes.get("measured_at", payload.get("last_reported"))
+               if isinstance(attributes, dict) else payload.get("last_reported"))
         if not isinstance(raw, str):
             raise ValueError("source report time missing")
         stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if stamp.tzinfo is None:
             raise ValueError("source report time must include timezone")
-        attributes = payload.get("attributes")
         if not isinstance(attributes, dict) or attributes.get("unit_of_measurement") not in {
             "W",
             "kW",
@@ -58,8 +59,9 @@ def regulation_candidate(
         or quantization_w < 0
     ):
         raise ValueError("invalid regulation bounds")
-    reports = (raw, battery, ev)
-    if any(not isfinite(r.watts) or r.reported_at.tzinfo is None for r in reports):
+    reports = (raw, ev)
+    if any(not isfinite(r.watts) or r.reported_at.tzinfo is None
+           for r in (raw, battery, ev)):
         raise ValueError("invalid source report")
     ages = [(now - source.reported_at).total_seconds() for source in reports]
     skew = max(r.reported_at for r in reports) - min(r.reported_at for r in reports)
@@ -79,6 +81,7 @@ def regulation_candidate(
         "actuation_authority": False,
         "raw_grid_w": raw.watts,
         "battery_w": battery.watts,
+        "battery_report_age_seconds": (now - battery.reported_at).total_seconds(),
         "ev_w": ev.watts,
         "source_ages_seconds": ages,
         "source_skew_seconds": skew.total_seconds(),
@@ -155,11 +158,17 @@ class RegulationObserver:
 class RegulationSnapshotStore:
     """Short-lived, fail-closed HTTP snapshot; no actuator dispatch."""
 
-    def __init__(self, *, control_enabled: bool) -> None:
+    def __init__(self, *, control_enabled: bool, measurement_grace_seconds: float = 0,
+                 minimum_ready_reports: int = 3) -> None:
         from threading import Lock
 
         self._lock = Lock()
+        if not 0 <= measurement_grace_seconds <= 10 or minimum_ready_reports < 1:
+            raise ValueError("invalid snapshot recovery bounds")
         self._snapshot: dict[str, object] = {}
+        self._last_good: dict[str, object] = {}
+        self._measurement_grace_seconds = measurement_grace_seconds
+        self._minimum_ready_reports = minimum_ready_reports
         self._consecutive_ready = 0
         self._revision = 0
         self.control_enabled = control_enabled
@@ -181,8 +190,27 @@ class RegulationSnapshotStore:
                 self._consecutive_ready + 1 if result.get("status") == "ready" else 0
             )
             snapshot = dict(result)
+            if result.get("status") == "ready":
+                self._last_good = dict(result)
+            elif (self.control_enabled and self._measurement_grace_seconds
+                  and result.get("fallback") != "latched_raw_fallback"):
+                last = self._last_good.get("evaluated_at")
+                ages = self._last_good.get("source_ages_seconds")
+                if isinstance(last, str) and isinstance(current, str) and isinstance(ages, list):
+                    elapsed = (datetime.fromisoformat(current) - datetime.fromisoformat(last)
+                               ).total_seconds()
+                    held_ages = [a + elapsed for a in ages if isinstance(a, (int, float))]
+                    if (0 <= elapsed and len(held_ages) == len(ages) and held_ages
+                            and max(held_ages) <= self._measurement_grace_seconds):
+                        snapshot = dict(self._last_good, evaluated_at=current,
+                                        source_ages_seconds=held_ages,
+                                        reason="short_measurement_gap", holding_measurement=True,
+                                        correction_guard=result.get("correction_guard"),
+                                        offered_p1_w=result.get("offered_p1_w"),
+                                        correction_source_reason=result.get(
+                                            "correction_source_reason"))
             if (self.control_enabled and result.get("status") == "ready"
-                    and self._consecutive_ready < 3):
+                    and self._consecutive_ready < self._minimum_ready_reports):
                 snapshot.update(
                     status="blocked", reason="awaiting_three_fresh_reports", candidate_w=None
                 )
@@ -193,7 +221,7 @@ class RegulationSnapshotStore:
                 regulation_authority=self.control_enabled,
                 source_id="energy-devices:ev-regulation",
                 revision=str(self._revision),
-                measured_at=result.get("source_measured_at", result.get("evaluated_at")),
+                measured_at=snapshot.get("source_measured_at", snapshot.get("evaluated_at")),
             )
             self._snapshot = snapshot
             return dict(snapshot)
@@ -206,10 +234,13 @@ class RegulationSnapshotStore:
             return None
         age = (now - datetime.fromisoformat(stamp)).total_seconds()
         ages = result.get("source_ages_seconds")
+        maximum_age = (self._measurement_grace_seconds
+                       if result.get("holding_measurement") else 3)
         if (
             not isinstance(ages, list)
             or not 0 <= age <= 3
-            or any(not isinstance(a, (int, float)) or a + age > 3 for a in ages)
+            or any(not isinstance(a, (int, float)) or not isfinite(a)
+                   or not 0 <= a + age <= maximum_age for a in ages)
         ):
             return None
         value = result.get("candidate_w") if self.control_enabled else result.get("raw_grid_w")

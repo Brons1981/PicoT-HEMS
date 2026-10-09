@@ -185,66 +185,63 @@ def test_failed_command_retries_without_losing_plan(tmp_path):
     assert rig.commands == [True]
 
 
-def test_recognition_inclu…14050 tokens truncated…            return ()
-
-        observations: list[HouseholdLoadObservation] = []
-        try:
-            lines = self.path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            return ()
-
-        for line in lines:
-            observation = _decode_observation(line)
-            if observation is not None:
-                observations.append(observation)
-        return tuple(observations)
+def test_recognition_includes_first_thirty_seconds_of_energy(tmp_path):
+    rig = Rig(tmp_path / "db")
+    session = rig.recognize()
+    assert session["delivered_energy_wh"] == pytest.approx(2000 * 30 / 3600)
+    assert session["expected_duration_seconds"] is None
+    assert session["uncertainty"] == "duration_unknown"
 
 
-def _decode_observation(
-    line: str,
-) -> HouseholdLoadObservation | None:
-    try:
-        payload: object = json.loads(line)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    if payload.get("schema_version") != 1:
-        return None
+def test_planned_start_allows_unchanged_zero_meter_but_not_unknown_switch(tmp_path):
+    rig = Rig(tmp_path / "db")
+    start = rig.plan()
+    rig.now = start
+    rig.tick(None, "unavailable")
+    assert rig.commands == []
+    rig.tick(None, "off")
+    assert rig.commands == [True]
 
-    power_w = payload.get("power_w")
-    external = payload.get("identified_external_power_w", 0.0)
-    external_observed = payload.get("external_power_observed", False)
-    sampled_at = payload.get("sampled_at")
-    raw_evidence_ids = payload.get("evidence_ids")
-    method_version = payload.get("method_version")
-    if (
-        not isinstance(external_observed, bool)
-        or isinstance(external, bool)
-        or not isinstance(external, (int, float))
-        or isinstance(power_w, bool)
-        or not isinstance(power_w, (int, float))
-        or not isinstance(sampled_at, str)
-        or not isinstance(raw_evidence_ids, list)
-        or not isinstance(method_version, str)
-    ):
-        return None
 
-    evidence_ids: list[str] = []
-    for evidence_id in raw_evidence_ids:
-        if not isinstance(evidence_id, str):
-            return None
-        evidence_ids.append(evidence_id)
+def test_restart_after_deadline_never_starts_expired_plan(tmp_path):
+    rig = Rig(tmp_path / "db")
+    start = rig.plan(duration=60)
+    rig.now = start + timedelta(seconds=61)
+    rig.tick(0, "off")
+    assert rig.commands == []
+    session = rig.manager.view()["sessions"][-1]
+    assert session["state"] == "completed"
+    assert session["completion_reason"] == "scheduled_deadline"
+    assert session["delivered_energy_wh"] < 100
 
-    try:
-        parsed_at = datetime.fromisoformat(sampled_at.replace("Z", "+00:00"))
-        return HouseholdLoadObservation(
-            power_w=float(power_w),
-            identified_external_power_w=float(external),
-            external_power_observed=external_observed,
-            sampled_at=parsed_at,
-            evidence_ids=tuple(evidence_ids),
-            method_version=method_version,
-        )
-    except ValueError:
-        return None
+
+def test_switch_change_cannot_reuse_live_session_or_resume_verification(tmp_path):
+    rig = Rig(tmp_path / "db")
+    rig.plan()
+    with pytest.raises(ValueError, match="Annuleer"):
+        EVSessionManager(tmp_path / "db", power_entity=POWER, switch_entity="switch.other")
+
+
+def test_cancel_owned_run_turns_off_and_waits_for_switch_ack(tmp_path):
+    rig = Rig(tmp_path / "db")
+    start = rig.plan()
+    rig.now = start
+    rig.tick(0, "off")
+    rig.tick(2000, "on")
+    session = rig.manager.view()["sessions"][-1]
+    rig.manager.action({"action": "cancel", "session_id": session["session_id"]})
+    rig.tick(2000, "on", seconds=10)
+    assert rig.commands == [True, False]
+    assert rig.manager.view()["sessions"][-1]["state"] != "cancelled"
+    rig.tick(0, "off")
+    assert rig.manager.view()["sessions"][-1]["state"] == "cancelled"
+
+
+def test_explicit_cancel_also_stops_a_manually_started_recognized_session(tmp_path):
+    rig = Rig(tmp_path / "db")
+    session = rig.recognize()
+    rig.manager.action({"action": "cancel", "session_id": session["session_id"]})
+    rig.tick(2000, "on")
+    assert rig.commands == [False]
+    rig.tick(0, "off")
+    assert rig.manager.view()["sessions"][-1]["state"] == "cancelled"

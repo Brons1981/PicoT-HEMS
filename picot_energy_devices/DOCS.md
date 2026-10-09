@@ -97,8 +97,8 @@ ev_power_entity: sensor.shellyplugsg3_d885ac1e8c94_vermogen
 ev_switch_entity: switch.shellyplugsg3_d885ac1e8c94
 ```
 
-1. Sluit de auto aan met de plug aan en laat minimaal 30 seconden laden.
-2. Controleer de herkende sessie in de EV-laadtijdlijn. De eerste probe schat alleen vermogen; geef de duur zelf op zolang geen bruikbare volledige sessie is geleerd.
+1. Sluit de auto aan en zet de plug aan. De eerste nieuwe geldige meting boven 2000 W herkent direct een sessie; er is geen ingebouwde wachttijd.
+2. Controleer de sessie in de EV-laadtijdlijn. Het gemeten vermogen wordt direct overgenomen; vul de duur zelf in. De herkenningsmeting mag maximaal 75 seconden oud zijn en mag niet van vóór het inschakelen van de plug dateren. Meetleeftijd en blokkeerreden zijn zichtbaar. Actieve meetbeschikbaarheid en HEMS behouden hun afzonderlijke versheidscontrole. Meetgaten boven 15 seconden worden niet als geleverde energie ingevuld.
 3. Schakel de plug uit en weer in. Controleer werkelijk laadvermogen en bevestig pas daarna **Hervatten getest en geslaagd**.
 4. Zet de plug uit. Kies een toekomstige lokale starttijd, vermogen en duur; bevestig de sessie. De eindtijd is een harde bovengrens, niet bewijs dat de auto vol is.
 5. Energy Devices schakelt bij start in, herkent vijf minuten lage beschikbare belasting als natuurlijk einde en schakelt uiterlijk bij de bevestigde eindtijd uit. Uitval van de meting bewijst geen einde. Geleverde energie is een integratieschatting; meetgaten blijven zichtbaar.

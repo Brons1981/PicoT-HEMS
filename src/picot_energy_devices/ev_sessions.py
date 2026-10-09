@@ -17,6 +17,7 @@ Payload = dict[str, Any]
 
 CONTRACT = "energy-device-session-demand:v1"
 OPEN = {"recognized", "planned", "active", "interrupted"}
+RECOGNITION_MAX_AGE_SECONDS = 75
 
 
 def instant(value: object) -> datetime:
@@ -111,7 +112,7 @@ class EVSessionManager:
                 state["resume_verified"] = True
             elif action == "plan":
                 if session is None or session["session_id"] != payload.get("session_id"):
-                    raise ValueError("Herken eerst de aangesloten auto gedurende 30 seconden")
+                    raise ValueError("Herken eerst de aangesloten auto met een meting boven 2000 W")
                 if session["state"] == "active":
                     raise ValueError("Onderbreek het laden eerst met de smartplug")
                 start = instant(payload.get("planned_start"))
@@ -166,6 +167,7 @@ class EVSessionManager:
         power_w: float | None,
         switch_state: str,
         set_switch: Callable[[bool], None],
+        switch_changed_at: datetime | None = None,
     ) -> Payload:
         """Called every second; missing data never proves charge completion."""
         with self.lock:
@@ -180,62 +182,47 @@ class EVSessionManager:
             )
             session = self.current(state)
             if session is None:
-                high = fresh and power_w is not None and power_w >= 100 and switch_state == "on"
-                if not high:
-                    state.pop("recognition_start", None)
-                    state.pop("recognition_samples", None)
-                    state.pop("recognition_energy_wh", None)
-                    state.pop("recognition_previous", None)
-                else:
+                age = (now - measured_at).total_seconds() if measured_at is not None else None
+                usable = (age is not None and 0 <= age <= RECOGNITION_MAX_AGE_SECONDS
+                          and power_w is not None and isfinite(power_w) and power_w >= 0)
+                after_switch_on = (switch_changed_at is None or (
+                    measured_at is not None and measured_at >= switch_changed_at
+                ))
+                previous_report = state.get("last_recognition_report")
+                new_report = (measured_at is not None and (
+                    previous_report is None or measured_at > instant(previous_report)
+                ))
+                high = (usable and after_switch_on and new_report
+                        and power_w is not None and power_w > 2000 and switch_state == "on")
+                state["recognition"] = {
+                    "power_w": power_w if power_w is not None and isfinite(power_w) else None,
+                    "measured_at": measured_at.isoformat() if measured_at else None,
+                    "measurement_age_seconds": age,
+                    "max_age_seconds": RECOGNITION_MAX_AGE_SECONDS,
+                    "switch_state": switch_state,
+                    "reason": ("switch_not_on" if switch_state != "on" else
+                               "measurement_missing_or_stale" if not usable else
+                               "measurement_before_switch_on" if not after_switch_on else
+                               "power_not_above_2000w" if power_w is None or power_w <= 2000 else
+                               "waiting_for_new_measurement" if not new_report else "recognized"),
+                }
+                if usable and new_report and measured_at is not None:
+                    state["last_recognition_report"] = measured_at.isoformat()
+                if high:
                     assert measured_at is not None and power_w is not None
-                    state.setdefault("recognition_start", measured_at.isoformat())
-                    samples = state.setdefault("recognition_samples", [])
-                    previous = state.get("recognition_previous")
-                    if previous and measured_at > instant(previous[0]):
-                        elapsed = (measured_at - instant(previous[0])).total_seconds()
-                        if elapsed <= 15:
-                            state["recognition_energy_wh"] = (
-                                state.get("recognition_energy_wh", 0)
-                                + (previous[1] + power_w) / 2 * elapsed / 3600
-                            )
-                    state["recognition_previous"] = [measured_at.isoformat(), power_w]
-                    samples.append(power_w)
-                    del samples[:-60]
-                    if (measured_at - instant(state["recognition_start"])).total_seconds() >= 30:
-                        learned = [
-                            s["delivered_energy_wh"]
-                            for s in state["sessions"]
-                            if s["state"] == "completed" and s.get("measurement_complete")
-                        ]
-                        session = {
-                            "session_id": str(uuid4()),
-                            "version": 1,
-                            "state": "recognized",
-                            "recognized_at": now.isoformat(),
-                            "expected_power_w": median(samples),
-                            "expected_duration_seconds": (
-                                median(learned) * 3600 / median(samples) if learned else None
-                            ),
-                            "remaining_energy_wh": median(learned) if learned else None,
-                            "delivered_energy_wh": state.get("recognition_energy_wh", 0.0),
-                            "current_power_w": power_w,
-                            "last_measured_at": measured_at.isoformat(),
-                            "last_power_w": power_w,
-                            "measurement_complete": True,
-                            "confirmed": False,
-                            "owns_switch": False,
-                            "error": None,
-                            "duration_source": "learned" if learned else "unknown",
-                            "energy_source": "integrated_power",
-                            "uncertainty": "duration_unknown"
-                            if not learned
-                            else "learned_estimate",
-                            "recognition_samples": samples[-30:],
-                        }
-                        state["sessions"].append(session)
-                        state["sessions"] = state["sessions"][-30:]
-                        state.pop("recognition_start", None)
-                        state.pop("recognition_samples", None)
+                    session = {
+                        "session_id": str(uuid4()), "version": 1, "state": "recognized",
+                        "recognized_at": now.isoformat(), "expected_power_w": power_w,
+                        "expected_duration_seconds": None, "remaining_energy_wh": None,
+                        "delivered_energy_wh": 0.0, "current_power_w": power_w,
+                        "last_measured_at": measured_at.isoformat(), "last_power_w": power_w,
+                        "measurement_complete": True, "confirmed": False, "owns_switch": False,
+                        "error": None, "duration_source": "unknown",
+                        "energy_source": "integrated_power", "uncertainty": "duration_unknown",
+                        "recognition_samples": [power_w],
+                    }
+                    state["sessions"].append(session)
+                    state["sessions"] = state["sessions"][-30:]
             if (
                 session is not None
                 and measured_at is not None
@@ -264,8 +251,9 @@ class EVSessionManager:
                         session["remaining_energy_wh"] = max(0.0, estimate - used)
                     if power_w >= 100:
                         session.pop("low_since", None)
-                        session["recognition_samples"].append(power_w)
-                        del session["recognition_samples"][:-30]
+                        if elapsed > 0:
+                            session["recognition_samples"].append(power_w)
+                            del session["recognition_samples"][:-30]
                         if session.get("confirmed") and len(session["recognition_samples"]) == 30:
                             stable_power = median(session["recognition_samples"])
                             if abs(stable_power - session["expected_power_w"]) >= 100:
@@ -375,6 +363,7 @@ class EVSessionManager:
                     "revision": str(recent["version"]) if recent else "0",
                     "generated_at": now.isoformat(),
                     "session": recent,
+                    "recognition": state.get("recognition"),
                     "storage_support_allowed": storage_support_allowed,
                 }
             return {
@@ -385,5 +374,6 @@ class EVSessionManager:
                 "revision": str(session["version"]),
                 "generated_at": now.isoformat(),
                 "session": session,
+                "recognition": state.get("recognition"),
                 "storage_support_allowed": storage_support_allowed,
             }

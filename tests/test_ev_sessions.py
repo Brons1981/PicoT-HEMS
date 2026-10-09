@@ -17,7 +17,7 @@ class Rig:
         )
         self.commands = []
 
-    def tick(self, power=2000, switch="on", seconds=1):
+    def tick(self, power=2300, switch="on", seconds=1):
         self.now += timedelta(seconds=seconds)
         return self.manager.tick(
             measured_at=self.now if power is not None else None,
@@ -48,12 +48,34 @@ class Rig:
         return start
 
 
-def test_short_spike_does_not_create_session(tmp_path):
+def test_plug_on_and_above_2000w_recognizes_immediately(tmp_path):
     rig = Rig(tmp_path / "db")
-    for _ in range(20):
-        rig.tick()
-    rig.tick(0)
+    rig.tick(2000)
     assert not rig.manager.view()["sessions"]
+    rig.tick(2300, "off")
+    assert not rig.manager.view()["sessions"]
+    view = rig.tick(2294)
+    session = view["sessions"][-1]
+    assert session["expected_power_w"] == 2294
+    assert session["delivered_energy_wh"] == 0
+    assert session["expected_duration_seconds"] is None
+    rig.tick(0, "off")
+    assert rig.manager.view()["sessions"][-1]["session_id"] == session["session_id"]
+
+
+def test_stale_or_before_switch_on_measurement_does_not_recognize(tmp_path):
+    rig = Rig(tmp_path / "db")
+    old = rig.now - timedelta(seconds=76)
+    rig.manager.tick(measured_at=old, power_w=2300, switch_state="on",
+                     set_switch=rig.commands.append)
+    assert not rig.manager.view()["sessions"]
+    old = rig.now - timedelta(seconds=5)
+    rig.manager.tick(measured_at=old, power_w=2300, switch_state="on",
+                     switch_changed_at=rig.now, set_switch=rig.commands.append)
+    assert not rig.manager.view()["sessions"]
+    assert rig.manager.snapshot()["recognition"]["reason"] == "measurement_before_switch_on"
+    rig.tick(2300)
+    assert len(rig.manager.view()["sessions"]) == 1
 
 
 def test_pauses_and_tail_remain_one_session(tmp_path):
@@ -185,10 +207,10 @@ def test_failed_command_retries_without_losing_plan(tmp_path):
     assert rig.commands == [True]
 
 
-def test_recognition_includes_first_thirty_seconds_of_energy(tmp_path):
+def test_energy_is_integrated_from_immediate_recognition(tmp_path):
     rig = Rig(tmp_path / "db")
     session = rig.recognize()
-    assert session["delivered_energy_wh"] == pytest.approx(2000 * 30 / 3600)
+    assert session["delivered_energy_wh"] == pytest.approx(2300 * 30 / 3600)
     assert session["expected_duration_seconds"] is None
     assert session["uncertainty"] == "duration_unknown"
 

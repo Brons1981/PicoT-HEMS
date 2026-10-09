@@ -11,7 +11,7 @@ from pathlib import Path
 from threading import Thread
 
 from picot_energy_devices.contracts import DeviceObservation
-from picot_energy_devices.ev_sessions import EVSessionManager
+from picot_energy_devices.ev_sessions import EVSessionManager, instant
 from picot_energy_devices.home_assistant import HomeAssistantClient
 from picot_energy_devices.regulation import (
     PowerReport,
@@ -159,19 +159,24 @@ def ev_poll_once(manager: EVSessionManager, client: HomeAssistantClient) -> None
     power = None
     measured = None
     switch_state = "unavailable"
+    switch_changed_at = None
     try:
         report = PowerReport.from_state(client.state(manager.power_entity))
         power, measured = report.watts, report.reported_at
     except (OSError, ValueError):
         pass
     try:
-        switch_state = str(client.state(manager.switch_entity).get("state", "unavailable"))
+        switch_payload = client.state(manager.switch_entity)
+        switch_state = str(switch_payload.get("state", "unavailable"))
+        if switch_payload.get("last_changed") is not None:
+            switch_changed_at = instant(switch_payload["last_changed"])
     except (OSError, ValueError):
         pass
     manager.tick(
         measured_at=measured,
         power_w=power,
         switch_state=switch_state,
+        switch_changed_at=switch_changed_at,
         set_switch=lambda enabled: client.set_ev_switch(manager.switch_entity, enabled),
     )
     client.publish_ev_session(manager.snapshot())

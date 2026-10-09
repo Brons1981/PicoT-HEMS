@@ -103,7 +103,7 @@ def test_ev_api_exposes_persistent_session_and_accepts_confirmation(tmp_path: Pa
     )
     store = EnergyDeviceStore(tmp_path / "registry.sqlite")
     for _ in range(31):
-        manager.tick(measured_at=now, power_w=2000, switch_state="on", set_switch=lambda _: None)
+        manager.tick(measured_at=now, power_w=2300, switch_state="on", set_switch=lambda _: None)
         now += timedelta(seconds=1)
     server = create_web_server(store, host="127.0.0.1", port=0, ev_sessions=manager)
     thread = Thread(target=server.serve_forever, daemon=True)

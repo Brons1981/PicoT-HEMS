@@ -121,7 +121,7 @@ DASHBOARD_HTML = """<!doctype html>
       if(!ev)return;
       evSession=[...ev.sessions].reverse().find(s=>["recognized","planned","active","interrupted"].includes(s.state));
       const labels={recognized:"Herkend",planned:"Gepland",active:"Actief",interrupted:"Onderbroken",completed:"Voltooid",cancelled:"Geannuleerd"};
-      el("ev-status").textContent=evSession ? `${labels[evSession.state]} · ${number(evSession.current_power_w,"W")} · ${number(evSession.delivered_energy_wh,"Wh geleverd")} · ${number(evSession.remaining_energy_wh,"Wh resterend")} · ${number((evSession.remaining_duration_seconds??0)/60,"min resterend (schatting)")}${evSession.error ? " · "+evSession.error : ""}` : "Nog geen herkende sessie";
+      el("ev-status").textContent=evSession ? `${labels[evSession.state]} · ${number(evSession.current_power_w,"W")} · ${number(evSession.delivered_energy_wh,"Wh geleverd")} · ${number(evSession.remaining_energy_wh,"Wh resterend")} · ${number((evSession.remaining_duration_seconds??0)/60,"min resterend (schatting)")}${evSession.error ? " · "+evSession.error : ""}` : `Nog geen herkende sessie · ${ev.recognition?.reason??"wachten op meting"} · ${number(ev.recognition?.power_w,"W")} · meetleeftijd ${number(ev.recognition?.measurement_age_seconds,"s")}`;
       el("ev-verify").disabled=ev.resume_verified;
       if(evSession && document.activeElement!==el("ev-power") && !el("ev-power").value)el("ev-power").value=Math.round(evSession.expected_power_w);
       if(evSession?.expected_duration_seconds && !el("ev-duration").value)el("ev-duration").value=Math.round(evSession.expected_duration_seconds/60);

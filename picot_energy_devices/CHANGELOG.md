@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0-dev.2
+
+- Herken een EV-sessie direct bij plug aan en een nieuwe fysieke meting boven 2000 W; geen ingebouwde wachttijd of vermogensschatting.
+- Neem gemeten vermogen over en laat de gebruiker de duur invullen. De sessie blijft beschikbaar na plug-uit.
+- Herkenning accepteert minuutrapportage tot 75 seconden oud, maar geen meetwaarde van vóór plug-aan.
+- Toon meetleeftijd en blokkeerreden in de tijdlijn en het snapshot. P1-regelcorrectie en HEMS blijven ongewijzigd.
+
 ## 0.4.0-dev.1
 
 - Optionele duurzame EV-sessies, herkenning na 30 seconden en een bevestigde laadtijdlijn.

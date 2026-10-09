@@ -90,6 +90,29 @@ nog nodig om firmware, meetvertragingen en HA-scheduling te beoordelen.
 
 ## EV-laadsessies (experimenteel)
 
+### Optionele lokale Shelly-meetbron
+
+Voor een Shelly Plug S Gen3 die via HA ongeveer iedere minuut rapporteert:
+
+```yaml
+ev_local_rpc_url: "http://192.168.6.113/rpc/Switch.GetStatus?id=0"
+```
+
+Na opslaan en herstart haalt Energy Devices eenmaal per seconde de lokale status
+op. Sessies en EV-regeling delen dezelfde uitlezing: `apower` in W en `output`
+als fysieke switchstatus. Schakelen blijft via de expliciet gekozen HA-switch.
+Controleer dat het URL-adres en de gekozen switch dezelfde fysieke plug zijn.
+De bestaande HA-vermogenentiteit hoeft niet sneller te rapporteren.
+
+De request-starttijd dateert de lokale observatie; cachelezen vernieuwt die tijd
+niet. De API levert geen afzonderlijke sampletijd voor `apower`, dus snelle interne
+meetverversing moet live worden getest met opeenvolgende antwoorden en laadstart/stop.
+Een timeout (2 seconden), ongeldige response of observatie ouder dan 3 seconden
+blokkeert de EV-correctie. Er is geen stille overstap naar een oude HA-EV-waarde.
+De bestaande onafhankelijke HA RAW-terugval blijft verantwoordelijk voor P1.
+Het snapshot toont `ev_measurement_source: local_rpc` en behoudt bij blokkade de
+werkelijke reden. Een lege URL behoudt de bestaande HA-meetroute.
+
 Schakel `ev_sessions_enabled: true` in. Voor deze installatie:
 
 ```yaml

@@ -43,10 +43,14 @@ def test_poll_reads_measurements_and_publishes_neutral_catalog(tmp_path: Path) -
     assert client.published["cards"][0]["active"] is True  # type: ignore[index]
 
 
-def test_energy_devices_runtime_has_no_service_call_path() -> None:
+def test_energy_devices_only_has_explicit_ev_switch_service_path() -> None:
     files = (Path(__file__).parents[1] / "src" / "picot_energy_devices").glob("*.py")
     combined = "\n".join(path.read_text(encoding="utf-8") for path in files)
-    assert "/api/services/" not in combined
+    assert combined.count("/api/services/") == 1
+    assert "/api/services/switch/" in combined
+    assert "set_ev_switch(manager.switch_entity, enabled)" in combined
+    assert "/api/services/number/" not in combined
+    assert "/api/services/select/" not in combined
 
 
 @pytest.mark.parametrize("state", ["nan", "inf", "-inf"])

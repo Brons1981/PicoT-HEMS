@@ -23,6 +23,8 @@ from picot.v2.planning_input import HouseholdLoadObservation, PlanningInputBundl
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("materiality_producer", __name__)
 
+PolicyValue = tuple[str, str, bool, float, str | None, str | None, datetime | None, float | None]
+
 METHOD_VERSION = "committed-trajectory-materiality:v1"
 MINIMUM_ABSOLUTE_DEVIATION_WH = 250.0
 STORAGE_CAPACITY_DEVIATION_FRACTION = 0.05
@@ -51,9 +53,9 @@ class MaterialReplanningObservationProducer:
         self._daily_context_identity: object = None
         self._daily_input_identities: dict[RuntimeObservationKind, object] = {}
         self._highest_emitted_bucket: dict[tuple[str, int, str], int] = {}
-        self._external_policy_value: tuple[str, str, bool, float] | None = None
+        self._external_policy_value: PolicyValue | None = None
         self._external_policy_pending: tuple[
-            tuple[str, str, bool, float] | None, datetime
+            PolicyValue | None, datetime
         ] | None = None
 
     def observe(
@@ -116,18 +118,21 @@ class MaterialReplanningObservationProducer:
                 policy.source_id,
                 policy.execution_scope_id,
                 policy.storage_support_allowed,
-                policy.power_w,
+                (policy.expected_power_w or 0.0) if policy.session_id else policy.power_w,
+                policy.session_id, policy.session_state, policy.planned_start,
+                policy.expected_duration_seconds,
             )
-            if policy is not None and policy.power_w > 0
+            if policy is not None and (policy.power_w > 0 or policy.session_id is not None)
             else None
         )
 
         def equivalent(
-            left: tuple[str, str, bool, float] | None, right: tuple[str, str, bool, float] | None
+            left: PolicyValue | None, right: PolicyValue | None
         ) -> bool:
             if left is None or right is None:
                 return left is right
-            return left[:3] == right[:3] and abs(left[3] - right[3]) < 100.0
+            return (left[:3] == right[:3] and left[4:] == right[4:]
+                    and abs(left[3] - right[3]) < 100.0)
 
         if equivalent(value, self._external_policy_value):
             self._external_policy_pending = None

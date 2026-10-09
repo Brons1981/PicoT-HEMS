@@ -1,7 +1,8 @@
 # PicoT Energy Devices
 
-Zelfstandige, read-only Home Assistant add-on die energieprofielen leert van
-door de gebruiker gekozen vermogenssensoren en optionele energiemeters.
+Zelfstandige Home Assistant add-on die energieprofielen leert en optioneel
+bevestigde EV-laadsessies uitvoert via één expliciet gekozen smartplug.
 
-De add-on bestuurt geen apparaten en kent PicoT's planner niet. Hij publiceert
-uitsluitend de neutrale catalogus `sensor.picot_energy_devices_catalog`.
+Gewone apparaatopnames blijven metingen. De EV-laadtijdlijn wordt apart
+ingeschakeld, vereist een praktische hervattest en kiest geen batterijmodus.
+Zie DOCS.md voor bediening, snapshotopties en praktische acceptatie.

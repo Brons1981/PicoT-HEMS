@@ -123,3 +123,31 @@ class HomeAssistantClient:
                 method="POST",
             )
         )
+
+    def set_ev_switch(self, entity_id: str, enabled: bool) -> None:
+        """Only the explicitly configured EV switch; never a storage service."""
+        if not entity_id.startswith("switch."):
+            raise ValueError("EV target must be a switch")
+        request = Request(
+            "http://supervisor/core/api/services/switch/" + ("turn_on" if enabled else "turn_off"),
+            data=json.dumps({"entity_id": entity_id}).encode(),
+            headers={"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=10) as response:
+            response.read()
+
+    def publish_ev_session(self, payload: dict[str, object]) -> None:
+        self._request(
+            Request(
+                "http://supervisor/core/api/states/sensor.picot_ev_session_snapshot",
+                data=json.dumps(
+                    {"state": "ready", "attributes": payload}, allow_nan=False
+                ).encode(),
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+        )

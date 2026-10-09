@@ -9,6 +9,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from picot_energy_devices.ev_sessions import EVSessionManager
 from picot_energy_devices.store import EnergyDeviceStore
 
 DASHBOARD_HTML = """<!doctype html>
@@ -40,7 +41,23 @@ DASHBOARD_HTML = """<!doctype html>
 </head>
 <body><main>
   <h1>PicoT Energy Devices</h1>
-  <p class="muted">Leert alleen het energieprofiel van jouw meetstekkers. Deze app bedient niets.</p>
+  <p class="muted">Leert energieprofielen en voert door jou bevestigde EV-laadsessies uit.</p>
+  <section class="panel" id="ev-panel" hidden>
+    <h2>EV-laadtijdlijn</h2>
+    <p id="ev-status"></p>
+    <p>Laat de aangesloten auto eerst 30 seconden laden. Zet daarna de plug uit om de sessie te plannen. Test eerst handmatig of de auto na uit/aan hervat.</p>
+    <button id="ev-verify">Hervatten getest en geslaagd</button>
+    <form id="ev-plan">
+      <label>Starttijd<input type="datetime-local" id="ev-start" required></label>
+      <label>Vermogen (W)<input type="number" id="ev-power" min="100" max="3680" required></label>
+      <label>Duur (minuten)<input type="number" id="ev-duration" min="1" max="1440" required></label>
+      <button type="submit">Laadsessie bevestigen</button>
+    </form>
+    <button id="ev-resume">Onderbroken sessie hervatten</button>
+    <button id="ev-cancel">Sessie annuleren</button>
+    <div id="ev-timeline"></div>
+    <p id="ev-message" aria-live="polite"></p>
+  </section>
   <section class="panel">
     <h2>Apparaat toevoegen</h2>
     <form id="device-form">
@@ -64,6 +81,7 @@ DASHBOARD_HTML = """<!doctype html>
     async function load() {
       const response = await fetch("api/view", {cache:"no-store"});
       const view = await response.json();
+      renderEV(view.ev);
       const cards = el("cards"); cards.replaceChildren();
       for (const card of view.catalog.cards ?? []) {
         const article = document.createElement("article"); article.className = "card";
@@ -97,6 +115,27 @@ DASHBOARD_HTML = """<!doctype html>
       if (!(view.catalog.cards ?? []).length) cards.textContent = "Nog geen apparaten toegevoegd.";
       el("metrics").textContent = `${view.catalog.cards?.length ?? 0} kaarten · ${(view.database_size_bytes/1024).toLocaleString("nl-NL",{maximumFractionDigits:0})} kB`;
     }
+    let evSession=null;
+    function renderEV(ev) {
+      el("ev-panel").hidden=!ev;
+      if(!ev)return;
+      evSession=[...ev.sessions].reverse().find(s=>["recognized","planned","active","interrupted"].includes(s.state));
+      const labels={recognized:"Herkend",planned:"Gepland",active:"Actief",interrupted:"Onderbroken",completed:"Voltooid",cancelled:"Geannuleerd"};
+      el("ev-status").textContent=evSession ? `${labels[evSession.state]} · ${number(evSession.current_power_w,"W")} · ${number(evSession.delivered_energy_wh,"Wh geleverd")} · ${number(evSession.remaining_energy_wh,"Wh resterend")} · ${number((evSession.remaining_duration_seconds??0)/60,"min resterend (schatting)")}${evSession.error ? " · "+evSession.error : ""}` : "Nog geen herkende sessie";
+      el("ev-verify").disabled=ev.resume_verified;
+      if(evSession && document.activeElement!==el("ev-power") && !el("ev-power").value)el("ev-power").value=Math.round(evSession.expected_power_w);
+      if(evSession?.expected_duration_seconds && !el("ev-duration").value)el("ev-duration").value=Math.round(evSession.expected_duration_seconds/60);
+      if(evSession?.planned_start && !el("ev-start").value){const d=new Date(evSession.planned_start);el("ev-start").value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
+      const timeline=el("ev-timeline");timeline.replaceChildren();
+      for(const s of [...ev.sessions].reverse()) {const p=document.createElement("p");p.textContent=`${s.planned_start ? new Date(s.planned_start).toLocaleString("nl-NL") : new Date(s.recognized_at).toLocaleString("nl-NL")} — ${labels[s.state]} · ${number(s.expected_power_w,"W")} · ${number((s.expected_duration_seconds??0)/60,"min")}`;timeline.append(p);}
+    }
+    async function evChange(payload) {
+      try {const response=await fetch("api/ev",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const result=await response.json();if(!response.ok)throw new Error(result.error);el("ev-message").textContent="Opgeslagen";await load();} catch(error){el("ev-message").textContent=error.message;}
+    }
+    el("ev-verify").onclick=()=>{if(confirm("Heb je met deze auto en plug getest dat laden na uit- en inschakelen werkelijk hervat?"))evChange({action:"verify_resume",confirmed:true});};
+    el("ev-plan").onsubmit=(event)=>{event.preventDefault();if(!evSession){el("ev-message").textContent="Herken eerst een sessie";return;}evChange({action:"plan",session_id:evSession.session_id,planned_start:new Date(el("ev-start").value).toISOString(),expected_power_w:Number(el("ev-power").value),expected_duration_seconds:Number(el("ev-duration").value)*60});};
+    el("ev-resume").onclick=()=>evChange({action:"resume"});
+    el("ev-cancel").onclick=()=>{if(evSession && confirm("Deze sessie annuleren? De laadplug wordt uitgeschakeld."))evChange({action:"cancel",session_id:evSession.session_id});};
     async function showRecording(id) {
       const response=await fetch(`api/recording?id=${id}`,{cache:"no-store"});
       const rec=await response.json(); if(!response.ok)throw new Error(rec.error);
@@ -129,7 +168,8 @@ DASHBOARD_HTML = """<!doctype html>
 </main></body></html>"""
 
 
-def create_web_server(store: EnergyDeviceStore, *, host: str, port: int) -> ThreadingHTTPServer:
+def create_web_server(store: EnergyDeviceStore, *, host: str, port: int,
+                      ev_sessions: EVSessionManager | None = None) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
             self.send_response(int(status))
@@ -157,6 +197,7 @@ def create_web_server(store: EnergyDeviceStore, *, host: str, port: int) -> Thre
                     HTTPStatus.OK,
                     {
                         "catalog": store.catalog(),
+                        "ev": ev_sessions.view() if ev_sessions is not None else None,
                         "database_size_bytes": store.database_size_bytes(),
                         "recordings": {d.device_id: store.recording_list(d.device_id)
                                        for d in store.devices()},
@@ -173,6 +214,20 @@ def create_web_server(store: EnergyDeviceStore, *, host: str, port: int) -> Thre
             self._json(HTTPStatus.NOT_FOUND, {"status": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802
+            if urlsplit(self.path).path == "/api/ev":
+                try:
+                    if ev_sessions is None:
+                        raise ValueError("EV-sessies zijn niet ingeschakeld")
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= 8192:
+                        raise ValueError("Ongeldige invoer")
+                    payload = json.loads(self.rfile.read(length))
+                    if not isinstance(payload, dict):
+                        raise ValueError("Invoer moet een object zijn")
+                    self._json(HTTPStatus.OK, ev_sessions.action(payload))
+                except (ValueError, TypeError) as error:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                return
             if urlsplit(self.path).path != "/api/devices":
                 self._json(HTTPStatus.METHOD_NOT_ALLOWED, {"status": "method_not_allowed"})
                 return

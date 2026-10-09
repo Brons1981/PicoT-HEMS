@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0-dev.1
+
+- Optionele duurzame EV-sessies, herkenning na 30 seconden en een bevestigde laadtijdlijn.
+- Alleen de expliciet gekozen EV-switch bedienen na bevestigde hervattest; geen opslagaansturing.
+- Onderbreken, hervatten, annuleren, schakelbevestiging en harde eindtijd na herstart.
+- Afzonderlijk gedateerd sessiesnapshot voor HEMS; meetenergie blijft een integratieschatting.
+- Live BMW-hervatten en EV-uitvoering blijven praktische acceptatiepunten.
+
+
 ## 0.3.0-dev.2
 
 - Verwijdert de onterecht meegeleverde @gielz-wrapper. @gielz-automatiseringen, marges, modi en noodstop blijven origineel.

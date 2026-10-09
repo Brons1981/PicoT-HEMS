@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Thread
 
 from picot_energy_devices.contracts import DeviceObservation
+from picot_energy_devices.ev_sessions import EVSessionManager
 from picot_energy_devices.home_assistant import HomeAssistantClient
 from picot_energy_devices.regulation import (
     PowerReport,
@@ -153,6 +155,38 @@ def _regulation_loop(
         time.sleep(max(0.0, 1.0 - (time.perf_counter() - started)))
 
 
+def ev_poll_once(manager: EVSessionManager, client: HomeAssistantClient) -> None:
+    power = None
+    measured = None
+    switch_state = "unavailable"
+    try:
+        report = PowerReport.from_state(client.state(manager.power_entity))
+        power, measured = report.watts, report.reported_at
+    except (OSError, ValueError):
+        pass
+    try:
+        switch_state = str(client.state(manager.switch_entity).get("state", "unavailable"))
+    except (OSError, ValueError):
+        pass
+    manager.tick(
+        measured_at=measured,
+        power_w=power,
+        switch_state=switch_state,
+        set_switch=lambda enabled: client.set_ev_switch(manager.switch_entity, enabled),
+    )
+    client.publish_ev_session(manager.snapshot())
+
+
+def _ev_loop(manager: EVSessionManager, client: HomeAssistantClient) -> None:
+    while True:
+        started = time.perf_counter()
+        try:
+            ev_poll_once(manager, client)
+        except (OSError, ValueError, sqlite3.Error) as error:
+            print(json.dumps({"event": "ev_session_poll_failed", "error": str(error)}), flush=True)
+        time.sleep(max(0.0, 1.0 - (time.perf_counter() - started)))
+
+
 def main() -> None:
     token = os.environ.get("SUPERVISOR_TOKEN", "")
     if not token:
@@ -196,7 +230,22 @@ def main() -> None:
             name="ev-regulation-shadow",
             daemon=True,
         ).start()
-    server = create_web_server(store, host="0.0.0.0", port=8100)
+    ev_sessions = None
+    if options.get("ev_sessions_enabled", False) is True:
+        ev_sessions = EVSessionManager(
+            DATA_PATH,
+            power_entity=str(
+                options.get("ev_power_entity", "sensor.shellyplugsg3_d885ac1e8c94_vermogen")
+            ),
+            switch_entity=str(options.get("ev_switch_entity", "switch.shellyplugsg3_d885ac1e8c94")),
+        )
+        Thread(
+            target=_ev_loop,
+            args=(ev_sessions, HomeAssistantClient(token)),
+            name="ev-sessions",
+            daemon=True,
+        ).start()
+    server = create_web_server(store, host="0.0.0.0", port=8100, ev_sessions=ev_sessions)
     Thread(target=server.serve_forever, name="energy-devices-web", daemon=True).start()
     while True:
         started = time.perf_counter()

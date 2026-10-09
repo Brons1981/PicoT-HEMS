@@ -28,7 +28,11 @@ from picot.v2.contracts import (
     StoragePhysicalLimits,
     StorageRoundTripEfficiencyEvidence,
 )
-from picot.v2.external_load_policy import apply_external_load_policy, read_external_load_policy
+from picot.v2.external_load_policy import (
+    apply_external_load_policy,
+    read_external_load_policy,
+    read_session_demand,
+)
 from picot.v2.household_load_forecast import (
     build_fallback_household_load_forecast,
     build_historical_household_load_forecast,
@@ -131,6 +135,7 @@ class HouseholdLoadObservation:
     evidence_ids: tuple[str, ...]
     method_version: str
     identified_external_power_w: float = 0.0
+    external_power_observed: bool = False
 
     def __post_init__(self) -> None:
         if not 0 <= self.identified_external_power_w <= self.power_w:
@@ -190,6 +195,7 @@ DEFAULT_BINDINGS = (
     ),
     ("nordpool", "energy_price", "nordpool_price_entity"),
     ("energy_devices", "external_load_policy", "energy_device_policy_entity"),
+    ("energy_devices", "ev_session_demand", "energy_device_session_entity"),
 )
 
 LEGACY_SOC_ENTITY_MIGRATIONS = {
@@ -781,8 +787,11 @@ class HomeAssistantStateReader:
             ),
             price_points=price_points,
             pv_energy_intervals=pv_energy_intervals,
-            external_load_payload=(typed_attributes if binding.semantic_role ==
-                                   "external_load_policy" and not unavailable else None),
+            external_load_payload=(
+                typed_attributes
+                if binding.semantic_role in {"external_load_policy", "ev_session_demand"}
+                and not unavailable else None
+            ),
         )
 
 
@@ -844,16 +853,33 @@ def assemble_planning_input(
     )
 
     external_load_policy = None
-    if options.get("energy_device_policy_enabled", False) is True and selected_storage_config:
+    if (
+        options.get("energy_device_policy_enabled", False) is True
+        or options.get("energy_device_sessions_enabled", False) is True
+    ) and selected_storage_config:
         source = next((e for e in evidence if e.semantic_role == "external_load_policy"), None)
         external_load_policy = read_external_load_policy(
             source.external_load_payload if source else None,
             captured_at=capture, execution_scope_id=selected_storage_config.execution_scope_id,
         )
+        if options.get("energy_device_policy_enabled", False) is not True:
+            external_load_policy = None
+        if options.get("energy_device_sessions_enabled", False) is True:
+            session_source = next(
+                (e for e in evidence if e.semantic_role == "ev_session_demand"), None
+            )
+            demand = read_session_demand(
+                session_source.external_load_payload if session_source else None,
+                captured_at=capture, execution_scope_id=selected_storage_config.execution_scope_id,
+                live_policy=external_load_policy,
+            )
+            if demand is not None:
+                external_load_policy = demand
         if external_load_policy is not None and household_load_observation is not None:
             household_load_observation = replace(household_load_observation,
                 identified_external_power_w=min(external_load_policy.power_w,
-                                                household_load_observation.power_w))
+                                                household_load_observation.power_w),
+                external_power_observed=external_load_policy.physical_evidence_available)
 
     evidence_seed = "|".join(
         f"{item.mapping_version}:{item.raw_state}:{item.observed_at}" for item in evidence
@@ -1036,9 +1062,12 @@ def assemble_planning_input(
         (replace(observation,
                  power_w=observation.power_w-observation.identified_external_power_w,
                  identified_external_power_w=0.0)
-         if options.get("energy_device_policy_enabled", False) is True else observation)
+         if (options.get("energy_device_policy_enabled", False) is True
+             or options.get("energy_device_sessions_enabled", False) is True) else observation)
         for observation in household_load_observations
         if observation.sampled_at <= capture
+        and (external_load_policy is None or external_load_policy.session_id is None
+             or observation.external_power_observed or observation.identified_external_power_w > 0)
     )
     household_load_forecast = (
         build_historical_household_load_forecast(

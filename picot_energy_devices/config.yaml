@@ -1,5 +1,5 @@
 name: PicoT Energy Devices
-version: "0.3.0-dev.2"
+version: "0.4.0-dev.1"
 slug: picot_energy_devices
 description: Leert energieprofielen van door de gebruiker gekozen Home Assistant-meetpunten
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -16,6 +16,9 @@ panel_title: Energy Devices
 options:
   poll_interval_seconds: 10
   catalog_entity_id: "sensor.picot_energy_devices_catalog"
+  ev_sessions_enabled: false
+  ev_power_entity: "sensor.shellyplugsg3_d885ac1e8c94_vermogen"
+  ev_switch_entity: "switch.shellyplugsg3_d885ac1e8c94"
   regulation_api_enabled: false
   regulation_control_enabled: false
   regulation_shadow_enabled: false
@@ -25,6 +28,9 @@ options:
 schema:
   poll_interval_seconds: int(5,300)
   catalog_entity_id: str
+  ev_sessions_enabled: bool
+  ev_power_entity: str
+  ev_switch_entity: str
   regulation_api_enabled: bool
   regulation_control_enabled: bool
   regulation_shadow_enabled: bool

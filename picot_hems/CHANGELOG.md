@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0-dev.291
+
+- Kleine voorspelde tekorten alleen uitstellen met bewezen herstelruimte; fysieke SOC-reserve en 100%-dagdoel blijven behouden.
+- Overbodige netlaadblokken zonder batterijopslag vervangen door passende huishoudondersteuning.
+- Oude bridge-bijdragen bij planherziening opnieuw beoordelen en herkenbaar houden.
+- Eerder geïdentificeerde EV-belasting buiten de huishoudbasis houden, ook na uitschakelen van de policy.
+- Na installatie eenmaal **Maak een nieuw plan** gebruiken voor bestaande plannen uit eerdere versies.
+
 ## 2.0.0-dev.290
 
 - Optionele sessievoorkennis via Energy Devices-snapshot in bestaande Planning Input.

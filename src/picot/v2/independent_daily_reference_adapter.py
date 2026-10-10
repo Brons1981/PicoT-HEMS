@@ -78,6 +78,7 @@ from picot.v2.contracts import (
     PVEnergyTimelineInterval,
 )
 from picot.v2.daily_bridge import (
+    BridgeEnergyInterval,
     DailyBridgeAssessment,
     DailyBridgeTrigger,
     energy_deficits,
@@ -95,6 +96,10 @@ from picot.v2.supplemental_charge_planning import attach_supplemental_goals
 
 METHOD_VERSION = "v2-independent-daily-reference-adapter:v7"
 DAILY_REFERENCE_DURATION = timedelta(hours=24)
+# Prediction tolerance only: neither the physical reserve nor the measured
+# daily 100% goal is relaxed. Every deferral needs a fresh recovery witness.
+SMALL_PREDICTED_SHORTFALL_FRACTION = 0.03
+RECOVERY_RECHECK_DELAY = timedelta(minutes=15)
 
 
 class DailyReferenceInputError(ValueError):
@@ -243,6 +248,11 @@ class IndependentDailyReferenceAdapter:
         obsolete_retry = any(s.main_assignment_id in recovered_ids
                              and s.ends_at > snapshot.captured_at for s in plan.segments)
         needed = needed or missed_goal is not None or obsolete_retry
+        if (needed and missed_goal is None and not obsolete_retry
+                and self._bridge_can_wait(snapshot, inputs, schedule,
+                                          conversion_model, until, deficits)):
+            return DailyBridgeAssessment("deferred_with_recovery", owner.assignment_id,
+                                         until, deficits)
         trigger = None
         if needed:
             assert owner.route_plan_id is not None
@@ -259,6 +269,54 @@ class IndependentDailyReferenceAdapter:
             "energy_shortfall" if needed else "accepted_grid_support" if state else "sufficient",
             owner.assignment_id, until, deficits, trigger,
         )
+
+    def _bridge_can_wait(
+        self, snapshot: PlanningInputSnapshot, inputs: _DailyReferenceInputs,
+        schedule: DailyReferenceIntentSchedule,
+        conversion: StorageConversionModel, until: datetime,
+        deficits: tuple[BridgeEnergyInterval, ...],
+    ) -> bool:
+        """Prove delayed direct household support, without selecting a plan."""
+        total = sum(i.deficit_wh for i in deficits)
+        if not 0 < total <= inputs.storage.usable_capacity_wh * SMALL_PREDICTED_SHORTFALL_FRACTION:
+            return False
+        if (snapshot.household_load_guard is not None
+                and snapshot.household_load_guard.quality == "unknown"):
+            return False
+        resume = snapshot.captured_at + RECOVERY_RECHECK_DELAY
+        first = next(i.starts_at for i in deficits if i.deficit_wh > 1e-6)
+        if resume >= first:
+            return False
+        context = snapshot.daily_charge_context
+        assert context is not None
+        # Published intervals and the existing endpoint only; do not stop an
+        # admitted export or overwrite another day's owned charge to prove this.
+        protected = tuple(s for p in context.main_plans
+                          if p.plan_id in context.active_main_plan_ids for s in p.segments
+                          if s.main_assignment_id is not None
+                          or s.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER)
+        trial = replace(schedule, schedule_id=f"bridge-recovery:{snapshot.snapshot_id}",
+                        intervals=tuple(
+            replace(i, intent=DailyStorageIntent.STANDBY)
+            if resume <= i.starts_at and i.ends_at <= until
+            and i.intent is not DailyStorageIntent.STORAGE_EXPORT
+            and not any(s.starts_at < i.ends_at and i.starts_at < s.ends_at for s in protected)
+            else i for i in schedule.intervals
+        ))
+        witness = self._bridge_projection(snapshot, inputs, trial, conversion)
+        if any(i.deficit_wh > 1e-6 for i in energy_deficits(
+            witness, trial, until=until,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+        )):
+            return False
+        return all(any(
+            main.starts_at <= at <= main.ends_at
+            and energy + 1e-6 >= inputs.target_storage_energy_wh
+            for main in a.main_segments for i in witness.intervals
+            for at, energy in ((i.starts_at, i.storage_energy_at_start_wh),
+                               (i.ends_at, i.storage_energy_at_end_wh))
+        ) for a in context.assignments if a.completed_at is None and a.main_segments
+                   and a.ends_at > snapshot.captured_at)
 
     def committed_execution_invalidity_reasons(
         self, *, snapshot: PlanningInputSnapshot, plan: ExecutionPlan,
@@ -491,6 +549,21 @@ class IndependentDailyReferenceAdapter:
         ) for r in owned)
         for schedule in schedules.values():
             projection = project(schedule)
+            # Explicit charging with no acquired storage energy is direct grid
+            # support, not a latent refill order. Materialise that exact physics
+            # as standby, preserving owned main charging and admitted export.
+            normalized = tuple(
+                replace(i, intent=DailyStorageIntent.STANDBY if household_need
+                        else baseline.intervals[n].intent)
+                if n in free and i.intent is DailyStorageIntent.GRID_REQUIREMENT
+                and projection.intervals[n].grid_to_storage_input_wh <= 1e-6
+                and projection.intervals[n].pv_to_storage_input_wh <= 1e-6
+                else i for n, i in enumerate(schedule.intervals)
+            )
+            if normalized != schedule.intervals:
+                schedule = replace(schedule, intervals=normalized,
+                                   schedule_id=f"{schedule.schedule_id}:direct-support")
+                projection = project(schedule)
             reaches = {}
             invalid = []
             for a in context.assignments:
@@ -595,7 +668,9 @@ class IndependentDailyReferenceAdapter:
         This does not complete a goal or select a recovery plan. The next poll
         assesses again; candidate discovery retains its exact target and reserve.
         """
-        if trigger.target_wh - trigger.projected_main_peak_wh > trigger.target_wh * 0.005:
+        if trigger.target_wh - trigger.projected_main_peak_wh > (
+            trigger.target_wh * SMALL_PREDICTED_SHORTFALL_FRACTION
+        ):
             return True
         guard = snapshot.household_load_guard
         if guard is not None and guard.quality == "unknown":
@@ -604,7 +679,7 @@ class IndependentDailyReferenceAdapter:
         assert context is not None
         owner = next(a for a in context.assignments if a.assignment_id == trigger.assignment_id)
         deadline = max(s.ends_at for s in owner.main_segments)
-        recovery_start = snapshot.captured_at + timedelta(minutes=15)
+        recovery_start = snapshot.captured_at + RECOVERY_RECHECK_DELAY
         if recovery_start >= deadline:
             return True
         plan = next(p for p in context.main_plans if p.plan_id == trigger.active_plan_id)
@@ -1142,6 +1217,19 @@ class IndependentDailyReferenceAdapter:
                     # like the feasibility trial that admitted this revision.
                     # Only challengers use this baseline; the incumbent stays exact.
                     intent = DailyStorageIntent.NOM
+                if (revising_assignment_id is not None
+                        and source.purpose == f"bridge:{revising_assignment_id}"
+                        and source.main_assignment_id is None
+                        and source.primitive in {ExecutionPrimitive.CHARGE_AT_POWER,
+                                                 ExecutionPrimitive.STANDBY}):
+                    # Reassess an old free bridge alongside a main revision;
+                    # it must not silently become an anonymous retained refill.
+                    # A real running charge below target keeps its continuity.
+                    mode = snapshot.storage_mode_capability_evidence
+                    running = (mode is not None and mode.current_vendor_mode == "Snel opladen"
+                               and snapshot.current_storage_states[0].current_soc < 1.0)
+                    if not running:
+                        intent = DailyStorageIntent.NOM
             if (recalculate_free_intervals and retained_main is None
                     and intent is not DailyStorageIntent.STORAGE_EXPORT):
                 # An explicit rebuild releases the old free-interval layout.

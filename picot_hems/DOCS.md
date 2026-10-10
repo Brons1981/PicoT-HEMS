@@ -140,3 +140,45 @@ Sla de optie op en herstart de add-on. Gebruik daarna **Planning opnieuw bereken
 om het bestaande dagplan opnieuw te laten beoordelen. De keuze alleen wist of
 vervangt geen opgeslagen plan; lopende laadacties en dagdoelen blijven beschermd.
 De gekozen basis wordt bij nieuwe plannen opgeslagen voor diagnose.
+
+## Begrensd uitstel van voorspelde tekorten
+
+Een voorspeld hoofd- of overbruggingstekort tot 3% van de bruikbare capaciteit
+kan worden uitgesteld als dezelfde fysieke simulator bewijst dat ingrijpen na
+vijftien minuten nog uitvoerbaar is. Bij 8,16 kWh is de grens 244,8 Wh. De volgende
+poll beoordeelt opnieuw; onbekende meetkwaliteit, een reeds actueel tekort of
+ontbrekende herstelruimte geeft geen vrijstelling. Een herstelbewijs voor de
+hoofdroute bewaart het exacte 100%-doel. Het overbruggingsbewijs bewaart de
+hoofdopdrachten en houdt rekening met vastgelegde export. Dit wijzigt geen
+minimum-SOC en voltooit geen opdracht op basis van een prognose.
+
+Een overbruggingsvariant die zonder batterijopname alleen huisvraag uit het net
+laat komen, gebruikt expliciet stand-by. Zij krijgt geen wachtend maximaal
+laadcommando dat na een kleine SOC-daling alsnog bijlaadt. Bij een materiële
+herziening wordt een eerdere niet-lopende overbrugging opnieuw beoordeeld;
+werkelijk lopend snel laden beneden 100% behoudt zijn continuïteit.
+
+## EV-snapshot en huishoudhistorie
+
+Voor de bestaande snapshotkoppeling aan de actieve Energy Devices-correctie:
+
+```yaml
+energy_device_policy_enabled: true
+energy_device_policy_entity: sensor.picot_ev_regulation_policy
+```
+
+Dit zijn **PicoT HEMS-add-onopties**, geen instellingen van `configuration.yaml`.
+Start HEMS na wijziging opnieuw. HEMS leest uitsluitend het Energy Devices-contract;
+de EV-meter en smartplug blijven bij Energy Devices. Onbruikbare of verouderde
+snapshots geven geen toestemming om EV-vraag uit de batterijvraag te verwijderen.
+De fysieke RAW-netmeting blijft onveranderd.
+
+Fysiek gemeten, afzonderlijk geïdentificeerd EV-vermogen blijft bewaard naast
+het totale verbruik en wordt niet opnieuw als normale huishoudhistorie gebruikt,
+ook wanneer de actuele EV-koppeling later wordt uitgeschakeld. Oven en andere
+huishoudvraag blijven meetellen. Oude metingen zonder EV-identificatie worden
+niet achteraf geschat of gewist.
+
+Een al opgeslagen oud plan kan nog een anoniem overbruggingslaadblok bevatten.
+Gebruik na installatie van deze fix eenmaal **Maak een nieuw plan** om die oude
+vrije intervallen door de canonieke herberekening te vervangen.

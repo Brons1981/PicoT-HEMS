@@ -1061,9 +1061,7 @@ def assemble_planning_input(
     eligible_household_load_observations = tuple(
         (replace(observation,
                  power_w=observation.power_w-observation.identified_external_power_w,
-                 identified_external_power_w=0.0)
-         if (options.get("energy_device_policy_enabled", False) is True
-             or options.get("energy_device_sessions_enabled", False) is True) else observation)
+                 identified_external_power_w=0.0))
         for observation in household_load_observations
         if observation.sampled_at <= capture
         and (external_load_policy is None or external_load_policy.session_id is None

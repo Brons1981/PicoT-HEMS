@@ -202,7 +202,11 @@ def test_small_margin_requires_recoverability_and_expires_before_deadline(tmp_pa
     assert adapter.main_repair_required(
         snapshot=unknown, trigger=trigger, conversion_model=conversion
     )
-    large = replace(trigger, projected_main_peak_wh=8000)
+    moderate = replace(trigger, projected_main_peak_wh=8067)
+    assert not adapter.main_repair_required(
+        snapshot=healthy, trigger=moderate, conversion_model=conversion
+    )
+    large = replace(trigger, projected_main_peak_wh=7860)
     assert adapter.main_repair_required(
         snapshot=healthy, trigger=large, conversion_model=conversion
     )

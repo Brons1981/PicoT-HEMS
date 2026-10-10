@@ -284,3 +284,71 @@ def test_real_ingestion_preserves_raw_and_adds_ev_once(tmp_path, monkeypatch):
         i.battery_excluded_energy_wh == 0
         for i in disabled.snapshot.household_load_forecast.intervals
     )
+
+
+def test_known_ev_history_stays_separate_after_policy_is_disabled(tmp_path, monkeypatch):
+    import json
+
+    from picot.v2 import planning_input as module
+
+    options = tmp_path / "options.json"
+    options.write_text(json.dumps({"energy_device_policy_enabled": False}))
+    values = {"grid_power": 200, "pv_power": 0, "storage_power_signed": 0,
+              "storage_power_to_house": 0, "storage_power_from_house": 0}
+
+    def read(_self, binding):
+        return module.SourceEvidence(
+            evidence_id=binding.semantic_role, category=binding.category,
+            semantic_role=binding.semantic_role, entity_id=binding.entity_id,
+            raw_state=str(values.get(binding.semantic_role, "enabled")),
+            raw_unit="W", observed_at=AT,
+            availability="available", mapping_version="test",
+            external_load_payload={
+                "contract": "measured-external-load-support-policy:v1",
+                "control_enabled": True, "status": "ready", "measured_at": AT.isoformat(),
+                "ev_w": 2000, "source_id": "energy-devices:ev", "revision": "1",
+            } if binding.semantic_role == "external_load_policy" else None,
+        )
+
+    monkeypatch.setattr(module.HomeAssistantStateReader, "read", read)
+    # Physically measured 2200 W: 2000 W identified EV + 200 W house. No
+    # retrospective guess for old unlabelled samples, no direct EV sensor read.
+    history = tuple(HouseholdLoadObservation(
+        2200, AT - timedelta(days=day) + timedelta(minutes=minute),
+        ("raw", "energy-device-snapshot"), "test", 2000, True,
+    ) for day in range(1, 8) for minute in range(0, 1440, 5))
+    result = module.assemble_planning_input(
+        "test-token", bindings=tuple(module.SourceBinding("test", role, "sensor." + role)
+                                    for role in values),
+        options_path=str(options), captured_at=AT,
+        storage_state_config=module.StorageStateConfig("home", "battery", 8160),
+        household_load_observations=history,
+    )
+    forecast = result.snapshot.household_load_forecast
+    assert forecast is not None
+    assert forecast.intervals[0].expected_energy_wh == 50  # 200 W for fifteen minutes.
+    assert result.household_load_observation.power_w == 200
+    assert result.snapshot.external_load_policy is None
+    assert all(i.battery_excluded_energy_wh == 0 for i in forecast.intervals)
+    assert all(i.power_w == 2200 for i in history)  # physical source remains unchanged.
+
+    # The same snapshot path removes the measured EV but keeps an oven's
+    # 1000 W excess in the measured household guard and the physical forecast.
+    options.write_text(json.dumps({"energy_device_policy_enabled": True}))
+    values["grid_power"] = 3200
+    oven_history = history + tuple(HouseholdLoadObservation(
+        3200, AT - timedelta(minutes=minute), ("raw", "ev"), "test", 2000, True,
+    ) for minute in range(1, 8))
+    result = module.assemble_planning_input(
+        "test-token", bindings=tuple(module.SourceBinding("test", role, "sensor." + role)
+                                    for role in (*values, "external_load_policy")),
+        options_path=str(options), captured_at=AT,
+        storage_state_config=module.StorageStateConfig("home", "battery", 8160),
+        household_load_observations=oven_history,
+    )
+    assert result.household_load_observation.power_w == 3200
+    assert result.household_load_observation.identified_external_power_w == 2000
+    assert result.snapshot.household_load_guard.extra_power_w == 1000
+    first = result.snapshot.household_load_forecast.intervals[0]
+    assert first.expected_energy_wh == 800  # house 200 + oven 1000 + EV 2000.
+    assert first.battery_excluded_energy_wh == 500  # only the EV.

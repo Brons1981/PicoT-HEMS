@@ -1865,6 +1865,11 @@ def _main_charge_energy_path(
         for segment in plan.segments
         if segment.segment_id in binding.segment_ids
     )
+    retained_bridges = tuple(s
+        for p in (context.main_plans if context else ())
+        if p.plan_id in (context.active_main_plan_ids if context else ())
+        for s in p.segments
+        if s.purpose.startswith("bridge:") and s.main_assignment_id is None)
     for interval in (() if isinstance(window, DailyMainIncumbentAssessment)
                      else _execution_path_intervals(
         window.schedule,
@@ -1884,6 +1889,8 @@ def _main_charge_energy_path(
                     for t in (s.starts_at, s.ends_at)
                     if interval.starts_at < t < interval.ends_at
                 ),
+                *(t for s in retained_bridges for t in (s.starts_at, s.ends_at)
+                  if interval.starts_at < t < interval.ends_at),
                 *(
                     t
                     for goal in window.supplemental_assignments
@@ -1924,6 +1931,8 @@ def _main_charge_energy_path(
             market_owner = next(
                 (key for key, s in retained_market if s.starts_at <= start < end <= s.ends_at), None
             )
+            previous_bridge = next((s.purpose for s in retained_bridges
+                                    if s.starts_at <= start and end <= s.ends_at), None)
             segments.append(
                 PathSegment(
                     segment_id=segment_id,
@@ -1944,6 +1953,8 @@ def _main_charge_energy_path(
                     if supplemental
                     and retained_main is None
                     and end <= window.main_segments[0].starts_at
+                    else previous_bridge
+                    if previous_bridge is not None and owner is None and retained_main is None
                     else "retained-route",
                     evidence_ids=(
                         window.schedule.schedule_id,

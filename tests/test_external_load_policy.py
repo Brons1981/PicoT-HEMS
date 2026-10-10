@@ -352,3 +352,58 @@ def test_known_ev_history_stays_separate_after_policy_is_disabled(tmp_path, monk
     first = result.snapshot.household_load_forecast.intervals[0]
     assert first.expected_energy_wh == 800  # house 200 + oven 1000 + EV 2000.
     assert first.battery_excluded_energy_wh == 500  # only the EV.
+
+
+def test_ev_coverage_selection_survives_idle_and_missing_snapshot(tmp_path, monkeypatch):
+    import json
+
+    from picot.v2 import planning_input as module
+
+    options = tmp_path / "options.json"
+    options.write_text(json.dumps({"energy_device_policy_enabled": True}))
+    payload = {"contract": "measured-external-load-support-policy:v1",
+               "control_enabled": True, "status": "ready", "measured_at": AT.isoformat(),
+               "ev_w": 0, "source_id": "energy-devices:ev", "revision": "1"}
+    values = {"grid_power": 200, "pv_power": 0, "storage_power_signed": 0,
+              "storage_power_to_house": 0, "storage_power_from_house": 0}
+
+    def read(_self, binding):
+        return module.SourceEvidence(
+            evidence_id=binding.semantic_role, category=binding.category,
+            semantic_role=binding.semantic_role, entity_id=binding.entity_id,
+            raw_state=str(values.get(binding.semantic_role, "enabled")), raw_unit="W",
+            observed_at=AT, availability="available", mapping_version="test",
+            external_load_payload=payload if binding.semantic_role == "external_load_policy"
+            else None)
+
+    monkeypatch.setattr(module.HomeAssistantStateReader, "read", read)
+    clean = tuple(HouseholdLoadObservation(
+        200, AT - timedelta(days=day) + timedelta(minutes=minute),
+        ("raw", "ev-zero"), "test", 0, True,
+    ) for day in range(2, 8) for minute in range(0, 1440, 5))
+    unclassified = tuple(HouseholdLoadObservation(
+        2600, AT - timedelta(days=1) + timedelta(minutes=minute), ("raw",), "test",
+    ) for minute in range(0, 1440, 5))
+    for available in (True, False):
+        if not available:
+            payload.clear()
+        result = module.assemble_planning_input(
+            "test-token", bindings=tuple(module.SourceBinding("test", role, "sensor." + role)
+                                        for role in (*values, "external_load_policy")),
+            options_path=str(options), captured_at=AT,
+            storage_state_config=module.StorageStateConfig("home", "battery", 8160),
+            household_load_observations=clean + unclassified,
+            household_load_fallback_power_w=250,
+        )
+        assert result.snapshot.household_load_forecast.intervals[0].expected_energy_wh == 50
+    fallback = module.assemble_planning_input(
+        "test-token", bindings=tuple(module.SourceBinding("test", role, "sensor." + role)
+                                    for role in (*values, "external_load_policy")),
+        options_path=str(options), captured_at=AT,
+        storage_state_config=module.StorageStateConfig("home", "battery", 8160),
+        household_load_observations=unclassified,
+        household_load_fallback_power_w=250,
+    ).snapshot.household_load_forecast
+    assert fallback.fallback_active
+    assert fallback.intervals[0].expected_energy_wh == 62.5
+    assert all(x.power_w == 2600 for x in unclassified)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.293
+
+- Bij ingeschakelde EV-koppeling dezelfde historische EV-dekking eisen tijdens en na een sessie, ook bij een ontbrekend snapshot.
+- Oude ongeclassificeerde belasting niet opnieuw als huisverbruik toelaten; bij onvoldoende gedekte historie de ingestelde basislast gebruiken.
+- Actuele huisvraag en afzonderlijk geïdentificeerde EV-metingen behouden.
+
 ## 2.0.0-dev.292
 
 - Na een planreset geen toekomstige opdrachten overnemen uit uitsluitend historische, afgeronde dagplannen.

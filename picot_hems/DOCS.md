@@ -182,3 +182,15 @@ niet achteraf geschat of gewist.
 Een al opgeslagen oud plan kan nog een anoniem overbruggingslaadblok bevatten.
 Gebruik na installatie van deze fix eenmaal **Maak een nieuw plan** om die oude
 vrije intervallen door de canonieke herberekening te vervangen.
+
+### Gelijke EV-dekking tijdens en na een sessie
+
+Bij ingeschakelde `energy_device_policy_enabled` of `energy_device_sessions_enabled`
+gebruikt de huishoudbasis alleen historische metingen met vastgelegde externe
+vermogensdekking. Ook een gemeten EV-vermogen van nul telt als dekking. Het einde
+van een sessie of een ontbrekend actueel snapshot heropent geen ongeclassificeerde
+historie. Bekend EV-vermogen wordt afgetrokken; fysieke bronmetingen worden niet
+gewijzigd. Zonder voldoende gedekte historie gebruikt de bestaande expliciete
+huishoudbasislast-terugval de ingestelde waarde. Dit is een tijdelijke basis met
+beperkte voorspelbaarheid van toekomstig huishoudverbruik, geen kalenderprofiel.
+Actuele huishoudmetingen en bewaking van extra huisvraag blijven beschikbaar.

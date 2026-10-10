@@ -1058,14 +1058,22 @@ def assemble_planning_input(
         if pv_energy_intervals
         else None
     )
+    # EV coverage is a configured ingestion boundary, not an activity flag.
+    # Ending a session (or losing its snapshot) must not re-admit unclassified
+    # historic EV demand into the household base. Missing covered history uses
+    # the existing explicit configured fallback, without rewriting raw samples.
+    require_external_coverage = (
+        options.get("energy_device_policy_enabled", False) is True
+        or options.get("energy_device_sessions_enabled", False) is True
+    )
     eligible_household_load_observations = tuple(
         (replace(observation,
                  power_w=observation.power_w-observation.identified_external_power_w,
                  identified_external_power_w=0.0))
         for observation in household_load_observations
         if observation.sampled_at <= capture
-        and (external_load_policy is None or external_load_policy.session_id is None
-             or observation.external_power_observed or observation.identified_external_power_w > 0)
+        and (not require_external_coverage or observation.external_power_observed
+             or observation.identified_external_power_w > 0)
     )
     household_load_forecast = (
         build_historical_household_load_forecast(

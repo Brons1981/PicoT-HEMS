@@ -1142,7 +1142,15 @@ class IndependentDailyReferenceAdapter:
             sources = []
             source_plans = tuple(
                 p for p in plans.values() if p.plan_id in context.active_main_plan_ids
-            ) or tuple(plans.values())
+            ) or tuple(
+                # Completed-day plans are evidence, not a fallback command
+                # schedule after a reset. Pending owners and admitted market
+                # bindings still retain their independently owned constraints.
+                p for p in plans.values()
+                if any(a.route_plan_id == p.plan_id and a.completed_at is None
+                       for a in context.assignments)
+                or any(b.plan_id == p.plan_id for b in context.market_plan_bindings)
+            )
             for plan in source_plans:
                 if plan.valid_from >= grid.ends_at or plan.valid_until <= grid.starts_at:
                     continue

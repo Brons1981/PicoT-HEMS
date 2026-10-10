@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.0-dev.292
+
+- Na een planreset geen toekomstige opdrachten overnemen uit uitsluitend historische, afgeronde dagplannen.
+- Bewijs van behaalde dagdoelen behouden; openstaande dagopdrachten en bestaande marktroutebindingen blijven beschermd.
+
 ## 2.0.0-dev.291
 
 - Kleine voorspelde tekorten alleen uitstellen met bewezen herstelruimte; fysieke SOC-reserve en 100%-dagdoel blijven behouden.

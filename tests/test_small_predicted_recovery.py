@@ -191,3 +191,32 @@ def test_main_revision_reassesses_old_bridge_without_unowned_refill(tmp_path):
     assert first.purpose == f"bridge:{owner.assignment_id}"
     assert first.ends_at == old_bridge.ends_at
     assert first.primitive is Primitive.BALANCE_BIDIRECTIONAL
+
+
+def test_reset_does_not_reuse_future_commands_from_completed_day(tmp_path):
+    snapshot = household_bridge(tmp_path)
+    context = snapshot.daily_charge_context
+    owner = next(a for a in context.assignments if a.completed_at is None)
+    completed = next(a for a in context.assignments if a.completed_at is not None)
+    # Reset tomorrow's binding, retaining today's immutable completion proof.
+    owner = replace(owner, route_plan_id=None, main_segments=(), revision=0,
+                    revised_at=None, revision_reason=None, revision_evidence_id=None)
+    context = replace(context, active_main_plan_ids=(), assignments=tuple(
+        owner if a.completed_at is None else a for a in context.assignments))
+    snapshot = replace(snapshot, daily_charge_context=context)
+    adapter = IndependentDailyReferenceAdapter()
+    conversion = inputs()["conversion_model"]
+    with_history = adapter.main_charge_windows(
+        snapshot=snapshot, assignment=owner, conversion_model=conversion)
+    without_history = adapter.main_charge_windows(
+        snapshot=replace(snapshot, daily_charge_context=replace(context, main_plans=tuple(
+            replace(p, segments=tuple(replace(s, primitive=Primitive.BALANCE_DISCHARGE_ONLY,
+                requested_power_w=None, charge_source_policy=None)
+                if s.starts_at >= snapshot.captured_at else s for s in p.segments))
+            for p in context.main_plans))),
+        assignment=owner, conversion_model=conversion)
+    assert with_history.windows and without_history.windows
+    assert {w.schedule.intervals for w in with_history.windows} == {
+        w.schedule.intervals for w in without_history.windows}
+    assert next(a for a in snapshot.daily_charge_context.assignments
+                if a.completed_at is not None) == completed

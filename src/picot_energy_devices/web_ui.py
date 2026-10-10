@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from picot_energy_devices.diagnostics import DiagnosticsRecorder
 from picot_energy_devices.ev_sessions import EVSessionManager
 from picot_energy_devices.store import EnergyDeviceStore
 
@@ -29,9 +32,10 @@ DASHBOARD_HTML = """<!doctype html>
     form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
     label { display: grid; gap: 5px; }
     label.wide { grid-column: 1/-1; }
-    input, button { font: inherit; padding: 10px; border-radius: 8px; }
+    input, button, .download-button { font: inherit; padding: 10px; border-radius: 8px; }
     input { color: inherit; background: #0e151d; border: 1px solid #40546a; }
-    button { color: #e7eef6; background: #123b55; border: 1px solid #2c7fb0; cursor: pointer; }
+    button, .download-button { color: #e7eef6; background: #123b55; border: 1px solid #2c7fb0; cursor: pointer; }
+    .download-button { display: inline-block; text-decoration: none; }
     .cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap: 12px; }
     .card { padding: 14px; }
     .row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
@@ -42,6 +46,11 @@ DASHBOARD_HTML = """<!doctype html>
 <body><main>
   <h1>PicoT Energy Devices</h1>
   <p class="muted">Leert energieprofielen en voert door jou bevestigde EV-laadsessies uit.</p>
+  <section class="panel">
+    <h2>Diagnose</h2>
+    <p>Download de laatste 48 uur meetgegevens en de bewaarde gebeurtenissen om EV-correctie en terugvallen te beoordelen.</p>
+    <a class="download-button" href="api/diagnostics.zip" download>Diagnose downloaden</a>
+  </section>
   <section class="panel" id="ev-panel" hidden>
     <h2>EV-laadtijdlijn</h2>
     <p id="ev-status"></p>
@@ -169,7 +178,8 @@ DASHBOARD_HTML = """<!doctype html>
 
 
 def create_web_server(store: EnergyDeviceStore, *, host: str, port: int,
-                      ev_sessions: EVSessionManager | None = None) -> ThreadingHTTPServer:
+                      ev_sessions: EVSessionManager | None = None,
+                      diagnostics: DiagnosticsRecorder | None = None) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
             self.send_response(int(status))
@@ -191,6 +201,25 @@ def create_web_server(store: EnergyDeviceStore, *, host: str, port: int,
             path = urlsplit(self.path).path
             if path == "/":
                 self._send(HTTPStatus.OK, DASHBOARD_HTML.encode(), "text/html; charset=utf-8")
+                return
+            if path == "/api/diagnostics.zip":
+                if diagnostics is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Diagnose niet beschikbaar"})
+                    return
+                try:
+                    body = diagnostics.export_zip()
+                except (OSError, ValueError, sqlite3.Error):
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Diagnose kon niet worden gelezen"})
+                    return
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/zip")
+                name = datetime.now(UTC).strftime("energy-devices-diagnostics-%Y%m%dT%H%M%SZ.zip")
+                self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
                 return
             if path == "/api/view":
                 self._json(

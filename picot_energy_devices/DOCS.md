@@ -185,3 +185,44 @@ bestaande verse-policycontrole; oude metingen worden niet vernieuwd voor plannin
 
 Deze offline getoetste bewaking is nog geen bewijs van live stabiliteit. Controleer
 na installatie de aangeboden correctie, start/stop en PV met de diagnostiek.
+
+
+## Diagnose downloaden
+
+Het dashboard van Energy Devices bevat **Diagnose downloaden**. De ZIP bevat:
+
+- `manifest.json`: softwareversie, gebruikte opties/bronentiteiten, meetdekking,
+  aantal nog wachtende of gemiste registraties en eventuele schrijffout.
+- `measurements.jsonl`: maximaal één registratie per seconde per functie over
+  de laatste 48 uur. RAW, bedoeld regelvermogen, vrijgegeven kandidaat,
+  daadwerkelijk gelezen CT-vermogen, batterij en EV hebben aparte velden.
+  Fysieke meettijden blijven onderscheiden van het registratietijdstip.
+- `events.jsonl`: blijvende historie van statuswijzigingen, overbruggingen,
+  waargenomen selector-terugvallen, EV-/plugtransities en herstarts.
+- `README.txt`: betekenis en beperkingen van de registratie.
+
+Een vergrendeling bewaart nu `latched_at` en `latched_origin`, inclusief de eerste
+foutreden, betrokken bron en beschikbare meetcontext. Die gegevens blijven na
+herstart staan, ook wanneer de bronnen inmiddels weer geldig zijn. Voor oude
+vergrendelingen zonder deze context worden tijdstip en aanleiding niet geraden.
+
+De registratie begint na installatie van deze uitbreiding en volgt de
+ingeschakelde EV-sessie-/regelfuncties. Zonder die functies is er geen volledige
+meetgeschiedenis. De werkelijk aangeboden CT wordt uit de bestaande actieve
+bewakingsuitlezing overgenomen; bij uitgeschakelde correctie kan die ontbreken.
+Een ontbrekende meting wordt als ontbrekend bewaard, niet als nul.
+
+Registratie gebruikt een eigen wachtrij, achtergrondschrijver en database in
+`/data/picot_energy_diagnostics.sqlite3`. Volle wachtrij of schrijfproblemen
+werpen geen uitzondering naar de regeling; gemiste registraties worden zichtbaar
+in de diagnose. Herstelde logging bewaart ook een gebeurtenis met die fouttelling.
+De meetdatabase ruimt oude samples periodiek op en hergebruikt vrijgekomen
+ruimte. Het gebeurtenissenlog blijft behouden. De ZIP bevat alleen toegestane
+instellingen en diagnosevelden, geen Supervisor-token, volledige options.json,
+laad-API-URL of volledige apparaatdatabase. Behandel bronentiteiten en gebruiks-
+tijden in het bestand als gegevens over je eigen installatie.
+
+De diagnoseknop leest uitsluitend gegevens en wijzigt geen sessie, correctie,
+vergrendeling, HEMS-plan of @gielz-instelling. Live vergelijking blijft nodig;
+batterijvermogen is de ingestelde bron en niet een onafhankelijk gevalideerde
+AC-meting. Deze uitbreiding verandert de correctieberekening en drempels niet.

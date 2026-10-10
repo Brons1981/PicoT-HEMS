@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0-dev.5
+
+- Diagnose downloaden vanuit Energy Devices: meetgegevens van de laatste 48 uur en blijvend bewaarde status- en terugvalgebeurtenissen.
+- Legt de oorspronkelijke oorzaak en tijd van een RAW-vergrendeling vast, ook na herstel en herstart.
+- Registreert asynchroon; uitval van diagnoseopslag onderbreekt de regeling niet. De bestaande regeling en originele @gielz blijven ongewijzigd.
+
 ## 0.4.0-dev.4
 
 - Bewaakt of de werkelijk aangeboden CT-correctie overeenkomt met de bedoelde correctie, met 50 W tolerantie en maximaal vijf seconden overdrachtsvertraging.

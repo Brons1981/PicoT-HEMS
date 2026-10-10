@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Thread
 
 from picot_energy_devices.contracts import DeviceObservation
+from picot_energy_devices.diagnostics import DiagnosticsRecorder
 from picot_energy_devices.ev_sessions import EVSessionManager, instant
 from picot_energy_devices.home_assistant import HomeAssistantClient
 from picot_energy_devices.regulation import (
@@ -77,13 +78,21 @@ def regulation_poll_once(
     ev_source: ShellyEVSource | None = None,
     guard: CorrectionGuard | None = None,
     offered_entity: str = "sensor.ct_shelly_pro_3em_api",
+    diagnostics: DiagnosticsRecorder | None = None,
 ) -> None:
-    raw = None
+    raw = battery = ev = None
+    local = None
+    failed_entity = raw_entity
     try:
         raw = PowerReport.from_state(client.state(raw_entity))
+        failed_entity = battery_entity
         battery = PowerReport.from_state(client.state(battery_entity))
-        ev = (ev_source.read().power if ev_source is not None
-              else PowerReport.from_state(client.state(ev_entity)))
+        failed_entity = "local_rpc" if ev_source is not None else ev_entity
+        if ev_source is not None:
+            local = ev_source.read()
+            ev = local.power
+        else:
+            ev = PowerReport.from_state(client.state(ev_entity))
         result = (observer or RegulationObserver()).evaluate(
             raw,
             battery,
@@ -101,7 +110,14 @@ def regulation_poll_once(
             "reason": str(error),
             "fallback": "no_control_value",
             "evaluated_at": datetime.now(UTC).isoformat(),
+            "source_failure_entity": failed_entity,
         }
+    for name, source in (("raw", raw), ("battery", battery), ("ev", ev)):
+        result[name + "_measured_at"] = source.reported_at.isoformat() if source else None
+        if source is not None:
+            result[{"raw": "raw_grid_w", "battery": "battery_w", "ev": "ev_w"}[name]] = source.watts
+    result["ev_switch_state"] = ("on" if local.output else "off") if local else None
+    result["intended_candidate_w"] = result.get("candidate_w")
     result["ev_measurement_source"] = "local_rpc" if ev_source is not None else "home_assistant"
     if guard is not None:
         offered = None
@@ -113,6 +129,10 @@ def regulation_poll_once(
                         or attributes.get("unit_of_measurement") not in {"W", "kW"}):
                     raise ValueError("offered correction requires an explicit power unit")
                 offered = client.measurement(offered_state, quantity="power")
+                result["consumer_source"] = attributes.get("selected_source")
+                result["consumer_measured_at"] = attributes.get("measured_at")
+                result["consumer_reported_at"] = offered_state.get("last_reported")
+                result["consumer_fallback_active"] = attributes.get("fallback_active")
             except (OSError, ValueError):
                 pass
         result = guard.check(result=result, offered_w=offered, now=datetime.now(UTC))
@@ -131,7 +151,17 @@ def regulation_poll_once(
                     source_measured_at=raw.reported_at.isoformat(),
                     source_ages_seconds=[age],
                 )
-        client.publish_regulation_policy(snapshots.update(api_result))
+        api_result = snapshots.update(api_result)
+        if diagnostics is not None:
+            diagnostics.record("regulation", dict(result, **{
+                k: api_result.get(k) for k in (
+                    "status", "reason", "fallback", "holding_measurement", "candidate_w",
+                    "control_enabled", "measured_at", "revision",
+                )
+            }))
+        client.publish_regulation_policy(api_result)
+    if diagnostics is not None and snapshots is None:
+        diagnostics.record("regulation", result)
     client.publish_regulation_shadow(result)
 
 
@@ -140,6 +170,7 @@ def _regulation_loop(
     options: dict[str, object],
     snapshots: RegulationSnapshotStore | None = None,
     ev_source: ShellyEVSource | None = None,
+    diagnostics: DiagnosticsRecorder | None = None,
 ) -> None:
     entities = {
         "raw_entity": str(
@@ -174,7 +205,7 @@ def _regulation_loop(
         try:
             regulation_poll_once(client=client, observer=observer, snapshots=snapshots,
                                  ev_source=ev_source, guard=guard,
-                                 offered_entity=offered_entity, **entities)
+                                 offered_entity=offered_entity, diagnostics=diagnostics, **entities)
         except (OSError, ValueError) as error:
             print(
                 json.dumps({"event": "regulation_shadow_failed", "error": str(error)}),
@@ -186,6 +217,7 @@ def _regulation_loop(
 def ev_poll_once(
     manager: EVSessionManager, client: HomeAssistantClient,
     ev_source: ShellyEVSource | None = None,
+    diagnostics: DiagnosticsRecorder | None = None,
 ) -> None:
     power = None
     measured = None
@@ -223,17 +255,21 @@ def ev_poll_once(
     snapshot["ev_measurement_source"] = (
         "local_rpc" if ev_source is not None else "home_assistant"
     )
+    if diagnostics is not None:
+        diagnostics.record("ev", dict(snapshot, ev_w=power, ev_switch_state=switch_state,
+                                      ev_measured_at=measured.isoformat() if measured else None))
     client.publish_ev_session(snapshot)
 
 
 def _ev_loop(
     manager: EVSessionManager, client: HomeAssistantClient,
     ev_source: ShellyEVSource | None = None,
+    diagnostics: DiagnosticsRecorder | None = None,
 ) -> None:
     while True:
         started = time.perf_counter()
         try:
-            ev_poll_once(manager, client, ev_source)
+            ev_poll_once(manager, client, ev_source, diagnostics)
         except (OSError, ValueError, sqlite3.Error) as error:
             print(json.dumps({"event": "ev_session_poll_failed", "error": str(error)}), flush=True)
         time.sleep(max(0.0, 1.0 - (time.perf_counter() - started)))
@@ -255,6 +291,12 @@ def main() -> None:
         raise ValueError("catalog entity ID must be a sensor")
     store = EnergyDeviceStore(DATA_PATH, maximum_sample_gap_seconds=max(60.0, interval * 5))
     client = HomeAssistantClient(token)
+    diagnostics = None
+    try:
+        diagnostics = DiagnosticsRecorder(DATA_PATH.parent / "picot_energy_diagnostics.sqlite3",
+                                          options=options)
+    except (OSError, sqlite3.Error) as error:
+        print(json.dumps({"event": "diagnostics_unavailable", "error": str(error)}), flush=True)
     local_url = str(options.get("ev_local_rpc_url", "")).strip()
     ev_source = ShellyEVSource(local_url) if local_url else None
     if ev_source is not None:
@@ -284,7 +326,7 @@ def main() -> None:
     if api_enabled or options.get("regulation_shadow_enabled", False) is True:
         Thread(
             target=_regulation_loop,
-            args=(HomeAssistantClient(token), options, snapshots, ev_source),
+            args=(HomeAssistantClient(token), options, snapshots, ev_source, diagnostics),
             name="ev-regulation-shadow",
             daemon=True,
         ).start()
@@ -299,11 +341,12 @@ def main() -> None:
         )
         Thread(
             target=_ev_loop,
-            args=(ev_sessions, HomeAssistantClient(token), ev_source),
+            args=(ev_sessions, HomeAssistantClient(token), ev_source, diagnostics),
             name="ev-sessions",
             daemon=True,
         ).start()
-    server = create_web_server(store, host="0.0.0.0", port=8100, ev_sessions=ev_sessions)
+    server = create_web_server(store, host="0.0.0.0", port=8100, ev_sessions=ev_sessions,
+                               diagnostics=diagnostics)
     Thread(target=server.serve_forever, name="energy-devices-web", daemon=True).start()
     while True:
         started = time.perf_counter()

@@ -1115,6 +1115,16 @@ def assemble_planning_input(
         starts_at=capture - timedelta(hours=1), horizon_end=capture,
         observations=eligible_household_load_observations,
     ) if eligible_household_load_observations else None
+    if guard_baseline is None and household_load_fallback_power_w is not None:
+        # Limited daily history need not invalidate fresh recent load evidence.
+        # Use the same explicit configured base; five-minute physical coverage
+        # is still required and unknown samples never prove a quiet household.
+        guard_baseline = build_fallback_household_load_forecast(
+            run_id=run_id, snapshot_id=snapshot_id,
+            starts_at=capture - timedelta(hours=1), horizon_end=capture,
+            fallback_power_w=household_load_fallback_power_w,
+            fallback_confidence=household_load_fallback_confidence,
+        )
     household_load_guard = assess_household_load_guard(
         observations=guard_observations, baseline=guard_baseline, assessed_at=capture,
     )

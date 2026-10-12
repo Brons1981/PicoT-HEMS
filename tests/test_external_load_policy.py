@@ -407,3 +407,91 @@ def test_ev_coverage_selection_survives_idle_and_missing_snapshot(tmp_path, monk
     assert fallback.fallback_active
     assert fallback.intervals[0].expected_energy_wh == 62.5
     assert all(x.power_w == 2600 for x in unclassified)
+
+
+def test_fresh_ev_measurement_survives_regulation_fallback():
+    payload = {
+        "contract": "measured-external-load-support-policy:v1",
+        "source_id": "energy-devices:ev-regulation", "revision": "1",
+        "control_enabled": True, "status": "blocked",
+        "fallback": "latched_raw_fallback", "ev_w": 0,
+        "ev_measured_at": AT.isoformat(),
+        "measured_at": (AT - timedelta(hours=1)).isoformat(),
+    }
+    measured = read_external_load_policy(payload, captured_at=AT, execution_scope_id="home")
+    assert measured is not None
+    assert measured.physical_evidence_available
+    assert measured.power_w == 0
+    assert measured.storage_support_allowed  # RAW fallback permits ordinary NOM support.
+    for change in ({"ev_w": 2350}, {"control_enabled": False}):
+        measured = read_external_load_policy(
+            dict(payload, **change), captured_at=AT, execution_scope_id="home",
+        )
+        assert measured is not None and measured.storage_support_allowed
+        assert measured.power_w == change.get("ev_w", 0)
+    for change in ({"ev_measured_at": (AT - timedelta(seconds=4)).isoformat()},
+                   {"ev_measured_at": None}, {"ev_w": -1}, {"ev_w": True}):
+        assert read_external_load_policy(
+            dict(payload, **change), captured_at=AT, execution_scope_id="home",
+        ) is None
+
+
+def test_recent_covered_measurements_guard_configured_fallback(tmp_path, monkeypatch):
+    import json
+
+    from picot.v2 import planning_input as module
+
+    options = tmp_path / "options.json"
+    options.write_text(json.dumps({"energy_device_policy_enabled": True}))
+    values = {"grid_power": 200, "pv_power": 0, "storage_power_signed": 0,
+              "storage_power_to_house": 0, "storage_power_from_house": 0}
+
+    ev_power = [0]
+
+    def read(_self, binding):
+        return module.SourceEvidence(
+            evidence_id=binding.semantic_role, category=binding.category,
+            semantic_role=binding.semantic_role, entity_id=binding.entity_id,
+            raw_state=str(values.get(binding.semantic_role, "enabled")), raw_unit="W",
+            observed_at=AT, availability="available", mapping_version="test",
+            external_load_payload={
+                "contract": "measured-external-load-support-policy:v1",
+                "source_id": "energy-devices:ev-regulation", "revision": "1",
+                "control_enabled": True, "status": "blocked", "ev_w": ev_power[0],
+                "ev_measured_at": AT.isoformat(), "fallback": "latched_raw_fallback",
+            } if binding.semantic_role == "external_load_policy" else None,
+        )
+
+    monkeypatch.setattr(module.HomeAssistantStateReader, "read", read)
+
+    def assemble(power, covered=True):
+        values["grid_power"] = power + ev_power[0]
+        return module.assemble_planning_input(
+            "test-token", bindings=tuple(module.SourceBinding("test", role, "sensor." + role)
+                                        for role in (*values, "external_load_policy")),
+            options_path=str(options), captured_at=AT,
+            storage_state_config=module.StorageStateConfig("home", "battery", 8160),
+            household_load_observations=tuple(HouseholdLoadObservation(
+                power + ev_power[0], AT - timedelta(minutes=i), ("raw", "ev"), "test",
+                ev_power[0], covered,
+            ) for i in range(1, 7)), household_load_fallback_power_w=250,
+        ).snapshot
+
+    quiet = assemble(200)
+    assert quiet.household_load_forecast.fallback_active
+    assert quiet.household_load_guard.quality == "reliable"
+    assert not quiet.household_load_guard.active
+    oven = assemble(2200)
+    assert oven.household_load_guard.quality == "reliable"
+    assert oven.household_load_guard.active
+    assert oven.household_load_guard.extra_power_w == 1950
+    missing = assemble(200, covered=False)
+    assert missing.household_load_guard.quality == "unknown"
+    ev_power[0] = 2000
+    charging = assemble(200)
+    assert not charging.household_load_guard.active
+    # RAW fallback permits battery support: keep EV demand in physics, without
+    # contaminating historical household load or claiming battery exclusion.
+    first = charging.household_load_forecast.intervals[0]
+    assert first.expected_energy_wh == 562.5  # (250 W house + 2000 W EV) * 0.25 h.
+    assert first.battery_excluded_energy_wh == 0

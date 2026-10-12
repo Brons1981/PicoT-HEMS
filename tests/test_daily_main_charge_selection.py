@@ -364,3 +364,44 @@ def test_already_full_has_no_invented_zero_unit_price():
         o.objective is ObjectiveKind.FINANCIAL_RESULT and o.available
         for o in result.record.objective_comparisons
     )
+
+
+def test_old_bridge_boundary_does_not_split_new_main_source(tmp_path):
+    from picot.v2.contracts import DailyChargePlanningContext
+
+    snapshot, assignment, windows, tariffs, original = portfolio_fixture()
+    result = evaluate(snapshot, original)
+    plan = ExecutionPlanBuilder().build(
+        result, created_at=snapshot.captured_at, fallback_policy_id="nom",
+    ).plans[0]
+    store = ActivePlanCommitmentStore(tmp_path / "plans.json")
+    store.save_daily_assignment(assignment)
+    source = next(s for s in original.sources
+                  if s.candidate_id == result.winning_candidate.candidate_id)
+    owner = store.bind_daily_main_plan(plan=plan, window=source.window)
+    # The old route's bridge ends inside a newly considered main window.
+    main = windows.windows[0].main_segments[0]
+    cut = main.starts_at + (main.ends_at - main.starts_at) / 2
+    bridge = replace(
+        plan.segments[0], starts_at=plan.valid_from, ends_at=cut,
+        purpose=f"bridge:{assignment.assignment_id}", main_assignment_id=None,
+    )
+    old = replace(plan, segments=(bridge,))
+    context = DailyChargePlanningContext(
+        snapshot.snapshot_id, snapshot.captured_at, "UTC", "ready", None,
+        assignments=(owner,), main_plans=(old,), active_main_plan_ids=(old.plan_id,),
+    )
+    reconsidered = produce_main_charge_portfolio(
+        snapshot=replace(snapshot, daily_charge_context=context), windows=windows,
+        tariffs=tariffs, opportunity_ids=("published-prices",),
+    )
+    for source in reconsidered.sources:
+        candidate = next(c for c in reconsidered.candidate_set.candidates
+                         if c.candidate_id == source.candidate_id)
+        path = next(p for p in reconsidered.candidate_set.energy_paths
+                    if p.path_id == candidate.energy_path_id)
+        assert len({s.segment_id for s in path.segments}) == len(path.segments)
+        for main in source.window.main_segments:
+            parts = [s for s in path.segments if s.segment_id == main.segment_id]
+            assert len(parts) == 1
+            assert (parts[0].starts_at, parts[0].ends_at) == (main.starts_at, main.ends_at)

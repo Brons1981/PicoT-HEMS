@@ -21,11 +21,15 @@ def read_external_load_policy(
 ) -> ExternalLoadPolicy | None:
     if not payload or payload.get("contract") != METHOD:
         return None
-    # A shadow estimate never proves that storage exclusion is actually enabled.
-    if payload.get("control_enabled") is not True or payload.get("status") != "ready":
+    # Measurement freshness and regulation authority are separate evidence.
+    # A RAW fallback still carries a usable EV measurement, but proves no exclusion.
+    exclusion_ready = (payload.get("control_enabled") is True
+                       and payload.get("status") == "ready")
+    independent_measurement = "ev_measured_at" in payload
+    if not independent_measurement and not exclusion_ready:
         return None
     try:
-        raw = payload["measured_at"]
+        raw = payload.get("ev_measured_at") if independent_measurement else payload["measured_at"]
         if not isinstance(raw, str):
             return None
         when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
@@ -40,12 +44,18 @@ def read_external_load_policy(
         revision = payload.get("revision")
         if not isinstance(source, str) or not isinstance(revision, str):
             return None
+        control_stamp = payload.get("measured_at")
+        control_fresh = False
+        if exclusion_ready and isinstance(control_stamp, str):
+            control_at = datetime.fromisoformat(control_stamp.replace("Z", "+00:00"))
+            control_fresh = (control_at.tzinfo is not None
+                             and 0 <= (captured_at - control_at).total_seconds() <= 3)
         return ExternalLoadPolicy(
             source,
             revision,
             when,
             float(power),
-            False,
+            not (exclusion_ready and control_fresh),
             execution_scope_id,
             physical_evidence_available=True,
         )
@@ -176,7 +186,7 @@ def apply_external_load_policy(
         if end <= start:
             return forecast
     else:
-        if policy.storage_support_allowed or policy.power_w <= 0:
+        if policy.power_w <= 0:
             return forecast
         start, power = captured_at, policy.power_w
         end = captured_at + timedelta(minutes=15)

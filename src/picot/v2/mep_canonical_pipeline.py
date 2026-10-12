@@ -1360,9 +1360,9 @@ def _build_daily_main_run(
             snapshot=snapshot, conversion_model=conversion,
         ) if context.active_main_plan_ids else ()
         input_shortfalls = triggers
-        triggers = tuple(t for t in triggers if adapter.main_repair_required(
-            snapshot=snapshot, trigger=t, conversion_model=conversion,
-        ))
+        triggers = adapter.main_repair_sequence(
+            snapshot=snapshot, triggers=triggers, conversion_model=conversion,
+        )
         if manual_owner is not None:
             assert manual_request is not None and manual_owner.route_plan_id is not None
             active = next((p for p in retained

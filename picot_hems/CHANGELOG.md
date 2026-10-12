@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.295
+
+- Runtime Monitor en planner dezelfde chronologische reparatievolgorde laten gebruiken wanneer meerdere dagdoelen tekortschieten.
+- Een eerdere uitgestelde laadopdracht niet overslaan en daarna reparatie van morgen laten blokkeren.
+- Alleen uitstelbare tekorten laten het bestaande plan staan; 3%-grens, herstelbewijs, dagdoel en minimumreserve behouden.
+
 ## 2.0.0-dev.294
 
 - Oude bridge-overgangen niet binnen nieuwe hoofdlaadsegmenten kopiëren; dubbele segment-ID’s en ongeldige planbinding voorkomen.

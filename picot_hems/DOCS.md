@@ -211,3 +211,14 @@ meting nodig. Een langdurige ovenbelasting blijft extra vraag; ontbrekende EV-de
 wordt niet stilzwijgend als nul behandeld. De bestaande 3%-grens voor kleine
 prognosetekorten blijft afhankelijk van een gesimuleerde herstelmogelijkheid,
 zonder versoepeling van het 100%-dagdoel of de minimumreserve.
+
+### Samenhang tussen kleine tekorten en meerdere dagdoelen
+
+Runtime Monitor en de canonieke planner gebruiken dezelfde reparatievolgorde.
+Wanneer alle voorspelde tekorten verantwoord uitstelbaar zijn, blijft het bestaande
+plan staan. Zodra één dag in dezelfde batterijscope wel reparatie nodig heeft,
+worden de nog tekortschietende dagdoelen chronologisch behandeld: een eerdere dag
+mag niet eerst worden overgeslagen en daarna alle kandidaten voor morgen blokkeren.
+Per run wordt één dagopdracht herzien; volgende dagopdrachten behouden hun identiteit.
+Dit verhoogt geen tolerantie en accepteert geen kandidaat die het 100%-dagdoel of
+de fysieke SOC-reserve mist. Het haalt ook geen dagdoel af zonder gemeten voltooiing.

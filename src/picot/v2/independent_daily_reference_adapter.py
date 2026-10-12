@@ -659,6 +659,35 @@ class IndependentDailyReferenceAdapter:
             t.assignment_id,
         )))
 
+    def main_repair_sequence(
+        self, *, snapshot: PlanningInputSnapshot,
+        triggers: tuple[DailyMainShortfallTrigger, ...],
+        conversion_model: StorageConversionModel,
+    ) -> tuple[DailyMainShortfallTrigger, ...]:
+        """Admit repair once, then preserve chronological daily ownership.
+
+        Recoverable small discrepancies alone remain deferred. If a later day
+        needs repair, an earlier unresolved goal in that storage scope is a
+        dependency: repairing the later day first cannot prove the earlier goal.
+        Candidates retain exact targets and only one owner changes per run.
+        """
+        context = snapshot.daily_charge_context
+        assert context is not None
+        owners = {a.assignment_id: a for a in context.assignments}
+        required_scopes = {
+            owners[t.assignment_id].execution_scope_id
+            for t in triggers
+            if self.main_repair_required(
+                snapshot=snapshot, trigger=t, conversion_model=conversion_model,
+            )
+        }
+        return tuple(sorted(
+            (t for t in triggers
+             if owners[t.assignment_id].execution_scope_id in required_scopes),
+            key=lambda t: (owners[t.assignment_id].delivery_date,
+                           owners[t.assignment_id].execution_scope_id, t.assignment_id),
+        ))
+
     def main_repair_required(
         self, *, snapshot: PlanningInputSnapshot, trigger: DailyMainShortfallTrigger,
         conversion_model: StorageConversionModel,

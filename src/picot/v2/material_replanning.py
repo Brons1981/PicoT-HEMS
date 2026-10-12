@@ -260,16 +260,16 @@ class MaterialReplanningObservationProducer:
         try:
             conversion = self._conversion_model(snapshot)
             adapter = IndependentDailyReferenceAdapter()
-            for trigger in adapter.main_route_shortfalls(
+            shortfalls = adapter.main_route_shortfalls(
                 snapshot=snapshot, conversion_model=conversion,
+            )
+            for trigger in adapter.main_repair_sequence(
+                snapshot=snapshot, triggers=shortfalls, conversion_model=conversion,
             ):
-                if adapter.main_repair_required(
-                    snapshot=snapshot, trigger=trigger, conversion_model=conversion,
-                ):
-                    return observation(
-                        trigger.revision_reason.value, RuntimeObservationKind.STORAGE_STATE_CHANGED,
-                        (trigger.assignment_id, trigger.route_plan_id),
-                    )
+                return observation(
+                    trigger.revision_reason.value, RuntimeObservationKind.STORAGE_STATE_CHANGED,
+                    (trigger.assignment_id, trigger.route_plan_id),
+                )
             for state in context.pv_comparison_states:
                 owner = next(a for a in context.assignments
                              if a.assignment_id == state.assignment_id)

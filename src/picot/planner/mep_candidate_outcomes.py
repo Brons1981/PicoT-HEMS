@@ -1889,8 +1889,13 @@ def _main_charge_energy_path(
                     for t in (s.starts_at, s.ends_at)
                     if interval.starts_at < t < interval.ends_at
                 ),
+                # Old bridge boundaries have no ownership inside the new main.
+                # Splitting there repeats the main source ID and also violates
+                # the exact main boundaries required by durable plan binding.
                 *(t for s in retained_bridges for t in (s.starts_at, s.ends_at)
-                  if interval.starts_at < t < interval.ends_at),
+                  if interval.starts_at < t < interval.ends_at
+                  and not any(main.starts_at < t < main.ends_at
+                              for main in window.main_segments)),
                 *(
                     t
                     for goal in window.supplemental_assignments

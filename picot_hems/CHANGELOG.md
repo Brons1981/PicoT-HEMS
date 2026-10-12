@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.294
+
+- Oude bridge-overgangen niet binnen nieuwe hoofdlaadsegmenten kopiëren; dubbele segment-ID’s en ongeldige planbinding voorkomen.
+- Verse EV-metingen onafhankelijk van regelterugval verwerken; bij RAW-terugval batterijondersteuning correct blijven simuleren.
+- Recente huisbelasting bij beperkte historie bewaken met de ingestelde basislast en voldoende meetdekking; herstelbewijs en SOC-grenzen behouden.
+
 ## 2.0.0-dev.293
 
 - Bij ingeschakelde EV-koppeling dezelfde historische EV-dekking eisen tijdens en na een sessie, ook bij een ontbrekend snapshot.

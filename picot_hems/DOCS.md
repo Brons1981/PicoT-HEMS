@@ -194,3 +194,20 @@ gewijzigd. Zonder voldoende gedekte historie gebruikt de bestaande expliciete
 huishoudbasislast-terugval de ingestelde waarde. Dit is een tijdelijke basis met
 beperkte voorspelbaarheid van toekomstig huishoudverbruik, geen kalenderprofiel.
 Actuele huishoudmetingen en bewaking van extra huisvraag blijven beschikbaar.
+
+### EV-meting bij regelterugval
+
+Een verse `ev_w` met een eigen `ev_measured_at` blijft bruikbaar wanneer de
+Energy Devices-regeling op RAW is teruggevallen. HEMS houdt fysieke EV-dekking
+apart van toestemming voor batterijuitsluiting. Bij regelterugval blijft de
+EV-vraag in de fysieke prognose en mag NOM deze ondersteunen; HEMS claimt dan
+geen werkende EV-batterijbescherming. Voor uitsluiting blijft een ingeschakelde,
+`ready` en verse regelwaarde vereist. Oude snapshots zonder afzonderlijke
+EV-meettijd behouden de bestaande toelatingsvoorwaarden.
+
+Bij beperkte daghistorie kan de recente huisbelastingbewaking dezelfde expliciet
+ingestelde basislast gebruiken. Ook dan is vijf minuten voldoende gedekte recente
+meting nodig. Een langdurige ovenbelasting blijft extra vraag; ontbrekende EV-dekking
+wordt niet stilzwijgend als nul behandeld. De bestaande 3%-grens voor kleine
+prognosetekorten blijft afhankelijk van een gesimuleerde herstelmogelijkheid,
+zonder versoepeling van het 100%-dagdoel of de minimumreserve.

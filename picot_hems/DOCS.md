@@ -222,3 +222,28 @@ mag niet eerst worden overgeslagen en daarna alle kandidaten voor morgen blokker
 Per run wordt één dagopdracht herzien; volgende dagopdrachten behouden hun identiteit.
 Dit verhoogt geen tolerantie en accepteert geen kandidaat die het 100%-dagdoel of
 de fysieke SOC-reserve mist. Het haalt ook geen dagdoel af zonder gemeten voltooiing.
+
+
+## Financieel weekoverzicht — dev.296
+
+Het financiële tabblad toont de huidige week met afzonderlijke bedragen voor
+netresultaat, netto batterijvoordeel en netto extra PicoT-resultaat. Eerdere
+weken zijn op te roepen. De drie kolommen mogen niet bij elkaar worden opgeteld.
+Een uitroepteken opent de onderbouwing van een afgeleid of ontbrekend bedrag;
+een klokicoon duidt op historische bedragen zonder nieuwe kwaliteitsbeoordeling.
+Ontbrekende bedragen worden geen nul; weekdeeltotalen benoemen hun dekking.
+
+De huisverbruikgrafiek gebruikt de bestaande bronverdeling: geel voor PV,
+rood voor net en groen voor batterij. Batterij is hier de directe leveringsbron,
+niet de eerdere laadbron. Een ontbrekende volledige verdeling blijft leeg.
+
+De Zendure-kaart toont de bestaande terugverdienvoortgang. De afzonderlijke
+schatting van de resterende tijd deelt het resterende aankoopbedrag door het
+netto batterijvoordeel per dag over de laatste 28 afgesloten meetdagen.
+Alle 28 perioden moeten lopen van lokale middernacht tot de volgende lokale
+middernacht in Europe/Amsterdam. Korte of onbekende perioden, ontbrekende
+bedragen en een niet-positief gemiddelde leveren geen tijdschatting op.
+Seizoenen, toekomstige prijzen en de Zonneplan-zonnebonus zijn niet inbegrepen.
+
+Deze update herberekent geen historische bedragen en wijzigt geen planner,
+voorraad of apparaatregeling. De add-onversie wordt 2.0.0-dev.296.

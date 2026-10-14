@@ -468,6 +468,7 @@ DASHBOARD_HTML = """<!doctype html>
     #financial-results .financial-week-nav button,
     #financial-results .financial-week-nav select { background: #ffffff; border-color: #c5ced9; }
     #financial-results .financial-quality-marker { color: #8a5700; border: 1px solid #a56c12; }
+    #financial-results .value { color: #243245; }
     #financial-results .financial-positive { color: #19723b; }
     #financial-results .financial-negative { color: #b32d40; }
     #financial-results .financial-donut::after { background: #ffffff; }

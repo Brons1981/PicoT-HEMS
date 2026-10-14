@@ -439,6 +439,42 @@ DASHBOARD_HTML = """<!doctype html>
       grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
       gap: 12px;
     }
+    .financial-week-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    .financial-week-nav h3 { margin-right: auto; }
+    .financial-quality-marker { padding: 0 6px; margin-left: 6px; border-radius: 50%;
+      color: #f5c542; background: transparent; min-width: 24px; min-height: 24px; }
+    .financial-week-sources { padding: 16px; margin: 18px 0; }
+    .financial-source-day { display: grid; align-items: center; gap: 10px; margin: 12px 0;
+      grid-template-columns: 30px minmax(30px, 1fr) 165px 24px; }
+    .financial-week-nav button, .financial-week-nav select { padding: 7px; background: #151b23;
+      color: inherit; border: 1px solid #334155; border-radius: 6px; }
+    .financial-week-nav button:disabled { opacity: .45; }
+    #financial-results > .financial-grid .value { font-size: 24px; font-weight: 600; }
+    @media (max-width: 600px) {
+      .financial-source-day { grid-template-columns: 24px minmax(30px, 1fr) 85px 24px; gap: 6px; }
+    }
+    .financial-source-day > span:first-child { width: 30px; }
+    .financial-source-bar { display: flex; flex: 1; height: 20px; min-width: 60px; }
+    #financial-results > details { margin-top: 18px; }
+    #financial-results summary { cursor: pointer; padding: 10px 0; }
+    /* Keep the financial overview light without changing other dashboard tabs. */
+    #financial-results { color-scheme: light; background: #f6f7f9; color: #243245;
+      padding: 20px; border: 1px solid #dde3ea; border-radius: 14px; }
+    #financial-results .metric, #financial-results .timeline-panel,
+    #financial-results .empty-panel { background: #ffffff; border-color: #dde3ea; }
+    #financial-results .muted, #financial-results th,
+    #financial-results .financial-equation-symbol { color: #586678; }
+    #financial-results th, #financial-results td { border-color: #dde3ea; }
+    #financial-results .financial-week-nav button,
+    #financial-results .financial-week-nav select { background: #ffffff; border-color: #c5ced9; }
+    #financial-results .financial-quality-marker { color: #8a5700; border: 1px solid #a56c12; }
+    #financial-results .value { color: #243245; }
+    #financial-results .financial-positive { color: #19723b; }
+    #financial-results .financial-negative { color: #b32d40; }
+    #financial-results .financial-donut::after { background: #ffffff; }
+    #financial-results .payback-track { background: #e1e7ee; }
+    #financial-results :focus-visible { outline: 2px solid #245d9b; outline-offset: 3px; }
+    @media (max-width: 600px) { #financial-results { padding: 12px; } }
     .financial-positive { color: #8de5ae; }
     .financial-negative { color: #ffadb8; }
     .financial-source-panel {
@@ -4137,7 +4173,7 @@ DASHBOARD_HTML = """<!doctype html>
       const sourceMeta = {
         pv_direct: {label: "PV rechtstreeks", color: "#f5c542", value: "vermeden inkoop"},
         battery: {label: "Batterij", color: "#35a862", value: "bruto vermeden inkoop"},
-        grid: {label: "Net", color: "#5db9f3", value: "kosten"},
+        grid: {label: "Net", color: "#ef6464", value: "kosten"},
       };
       let cursor = 0;
       const stops = [];
@@ -4149,7 +4185,7 @@ DASHBOARD_HTML = """<!doctype html>
       }
       const chartWrap = document.createElement("div");
       const heading = document.createElement("h3");
-      heading.textContent = "Herkomst huishoudelijke energie vandaag";
+      heading.textContent = "Herkomst huishoudelijke energie in deze meetperiode";
       const donut = document.createElement("div");
       donut.className = "financial-donut";
       donut.setAttribute("role", "img");
@@ -4345,8 +4381,336 @@ DASHBOARD_HTML = """<!doctype html>
       container.appendChild(note);
     }
 
+    // Financial presentation only: consume existing per-metric results, never repair records.
+    const financialColumns = [
+      ["Netresultaat", "actual_energy_cost_eur", -1],
+      ["Batterijvoordeel netto", "net_battery_value_eur", 1],
+      ["Extra PicoT-resultaat netto", "net_picot_value_eur", 1],
+    ];
+    const financialQuality = {
+      available: "Beschikbaar volgens de opgeslagen meetcontrole",
+      estimated: "Afgeleid: dit bedrag is niet volledig bewezen met metingen",
+      historical: "Historisch: niet opnieuw beoordeeld met de huidige kwaliteitscriteria",
+      incomplete: "Onvolledig: onvoldoende gegevens voor dit bedrag",
+    };
+    function financialMetric(day, name, sign = 1) {
+      const item = day?.financial_metrics
+        ? day.financial_metrics.values?.[name]
+        : {status: day?.status, value_eur: day?.[name]};
+      const valid = ["available", "estimated"].includes(item?.status) &&
+        typeof item.value_eur === "number" && Number.isFinite(item.value_eur);
+      return {value: valid ? sign * item.value_eur : null,
+        quality: !valid ? "incomplete" : !day.financial_metrics ? "historical" : item.status};
+    }
+    function financialDate(now = new Date()) {
+      return new Intl.DateTimeFormat("sv-SE", {timeZone: "Europe/Amsterdam",
+        year: "numeric", month: "2-digit", day: "2-digit"}).format(now);
+    }
+    function financialDateShift(day, offset) {
+      const date = new Date(day + "T12:00:00Z");
+      date.setUTCDate(date.getUTCDate() + offset);
+      return date.toISOString().slice(0, 10);
+    }
+    function financialMonday(day) {
+      return financialDateShift(day, -((new Date(day + "T12:00:00Z").getUTCDay() + 6) % 7));
+    }
+    function financialWeek(days, monday, today) {
+      const byDay = new Map(days.map(day => [day.day, day]));
+      return Array.from({length: 7}, (_, index) => {
+        const date = financialDateShift(monday, index);
+        return {date, future: date > today, record: byDay.get(date)};
+      });
+    }
+    function financialWeekTotal(rows, name, sign) {
+      const elapsed = rows.filter(row => !row.future);
+      const values = elapsed.map(row => financialMetric(row.record, name, sign));
+      const known = values.filter(item => item.value !== null);
+      return {value: known.length ? known.reduce((sum, item) => sum + item.value, 0) : null,
+        count: known.length, expected: elapsed.length,
+        qualities: [...new Set(values.map(item => item.quality))]};
+    }
+    function financialHouseSources(day) {
+      // A partial financial result may retain an older source allocation. Do not plot it.
+      if (financialMetric(day, "net_total_energy_value_eur").value === null) return null;
+      const breakdown = day?.household_energy_sources;
+      const sources = breakdown?.sources;
+      if (!Array.isArray(sources) || sources.length !== 3) return null;
+      const values = ["pv_direct", "grid", "battery"].map(key => {
+        const matches = sources.filter(source => source.source === key);
+        return matches.length === 1 ? matches[0].energy_kwh : null;
+      });
+      if (values.some(value => typeof value !== "number" || !Number.isFinite(value) || value < 0))
+        return null;
+      const total = values.reduce((sum, value) => sum + value, 0);
+      if (typeof breakdown.household_load_kwh !== "number" ||
+          !Number.isFinite(breakdown.household_load_kwh) ||
+          Math.abs(total - breakdown.household_load_kwh) > 0.001) return null;
+      return {values, total, quality: financialMetric(day, "net_total_energy_value_eur").quality};
+    }
+    function financialFullDay(day) {
+      // Validate the period of the selected amount, not a newer raw record's period.
+      const period = day?.financial_metrics ?? day;
+      const midnight = (value, date) => {
+        if (typeof value !== "string" || !/(Z|[+-][0-9]{2}:[0-9]{2})$/.test(value))
+          return false;
+        const instant = new Date(value);
+        if (!Number.isFinite(instant.getTime()) || instant.getUTCMilliseconds() !== 0)
+          return false;
+        const time = new Intl.DateTimeFormat("en-GB", {timeZone: "Europe/Amsterdam",
+          hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"});
+        return financialDate(instant) === date && time.format(instant) === "00:00:00";
+      };
+      if (!day?.day || !midnight(period?.starts_at, day.day)) return false;
+      return midnight(period?.ends_at, financialDateShift(day.day, 1));
+    }
+    function financialPaybackEstimate(days, cumulative, today) {
+      const remaining = cumulative?.remaining_eur;
+      if (typeof remaining !== "number" || !Number.isFinite(remaining) || remaining < 0)
+        return {reason: "Het resterende aankoopbedrag is niet beschikbaar."};
+      if (remaining === 0 && cumulative.battery_purchase_eur > 0)
+        return {completed: true};
+      const byDay = new Map(days.map(day => [day.day, day]));
+      const records = Array.from({length: 28}, (_, index) =>
+        byDay.get(financialDateShift(today, -index - 1)));
+      const period = records.map(day => financialMetric(day, "net_battery_value_eur"));
+      const missing = period.filter(item => item.value === null).length;
+      if (missing) return {
+        reason: `${missing} van de laatste 28 afgesloten dagen missen een batterijbedrag.`};
+      const partial = records.filter(day => !financialFullDay(day)).length;
+      if (partial) return {
+        reason: `${partial} van de laatste 28 dagen hebben geen bewezen volledige meetperiode.`};
+      const daily = period.reduce((sum, item) => sum + item.value, 0) / 28;
+      if (daily <= 0) return {
+        reason: "Het netto batterijvoordeel over de laatste 28 dagen is niet positief."};
+      return {days: Math.ceil(remaining / daily), daily,
+        estimated: period.some(item => item.quality === "estimated"),
+        historical: period.some(item => item.quality === "historical")};
+    }
+    let financialSelectedWeek = null;
+    const financialOpenEvidence = new Set();
+    function financialDisclosure(detail, key) {
+      detail.financialDisclosureKey = key;
+      detail.open = financialOpenEvidence.has(key);
+    }
     function renderFinancialResults(financial) {
       const container = element("financial-results");
+      // Capture synchronously: a refresh can arrive before the browser's toggle event.
+      for (const detail of container.querySelectorAll("details")) {
+        const key = detail.financialDisclosureKey;
+        if (!key) continue;
+        if (detail.open) financialOpenEvidence.add(key); else financialOpenEvidence.delete(key);
+      }
+      container.replaceChildren();
+      const today = financialDate();
+      const currentWeek = financialMonday(today);
+      const days = financial?.days ?? [];
+      const weeks = [...new Set([currentWeek, ...days.filter(day => day.day <= today)
+        .map(day => financialMonday(day.day))])].sort().reverse();
+      if (!weeks.includes(financialSelectedWeek)) financialSelectedWeek = currentWeek;
+      const rows = financialWeek(days, financialSelectedWeek, today);
+      const node = (tag, text, className) => {
+        const result = document.createElement(tag);
+        if (text !== undefined) result.textContent = text;
+        if (className) result.className = className;
+        return result;
+      };
+      const dateLabel = date => new Intl.DateTimeFormat("nl-NL", {
+        day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+      }).format(new Date(date + "T12:00:00Z"));
+      const navigation = node("div", undefined, "financial-week-nav");
+      navigation.append(node("h3", "Je energieresultaat"));
+      const select = node("select");
+      select.setAttribute("aria-label", "Kies een week");
+      for (const week of weeks) {
+        const option = node("option", `${week === currentWeek ? "Deze week · " : ""}` +
+          `${dateLabel(week)} – ${dateLabel(financialDateShift(week, 6))}`);
+        option.value = week;
+        select.append(option);
+      }
+      select.value = financialSelectedWeek;
+      select.onchange = () => {
+        financialSelectedWeek = select.value; renderFinancialResults(financial);
+      };
+      const navigate = (caption, offset) => {
+        const button = node("button", caption);
+        const index = weeks.indexOf(financialSelectedWeek) + offset;
+        button.disabled = index < 0 || index >= weeks.length;
+        button.onclick = () => {
+          financialSelectedWeek = weeks[index]; renderFinancialResults(financial);
+        };
+        return button;
+      };
+      navigation.append(navigate("‹ Vorige", 1), select, navigate("Volgende ›", -1));
+      container.append(navigation);
+      const current = rows.find(row => row.date === today)?.record;
+      const until = current?.financial_metrics?.ends_at ?? current?.ends_at;
+      container.append(node("p", "Positief = opbrengst of voordeel · negatief = kosten. " +
+        "De drie resultaten zijn niet bij elkaar op te tellen." +
+        (rows.some(row => row.date === today) ? (until ? ` Vandaag tot ${formatTimestamp(until)}.` :
+          " Vandaag is nog niet afgerond.") : ""), "muted"));
+      const evidence = node("details");
+      financialDisclosure(evidence, `week:${financialSelectedWeek}`);
+      const special = rows.filter(row => !row.future && financialColumns.some(([, name, sign]) =>
+        financialMetric(row.record, name, sign).quality !== "available")).length;
+      evidence.append(node("summary",
+        `Onderbouwing en meetkwaliteit · ${special} dagen met bijzonderheden`));
+      evidence.append(node("p",
+        "Elk bedrag heeft een eigen meetcontrole. Netresultaat is gebaseerd op " +
+        "netinkoop en teruglevering; batterij- en PicoT-voordeel vragen " +
+        "aanvullende bronmetingen. " +
+        "Historische bedragen zijn niet opnieuw beoordeeld. Exclusief Zonneplan-zonnebonus.",
+        "muted"));
+      const evidenceByDay = new Map();
+      for (const row of rows.filter(row => !row.future)) {
+        const detail = node("details");
+        financialDisclosure(detail, `day:${row.date}`);
+        detail.append(node("summary", dateLabel(row.date)));
+        for (const [label, name, sign] of financialColumns) {
+          const value = financialMetric(row.record, name, sign);
+          detail.append(node("p",
+            `${label}: ${value.value === null ? "—" : formatCurrency(value.value)} · ` +
+            financialQuality[value.quality]));
+        }
+        if (row.record) {
+          const extra = node("div");
+          renderFinancialDayEvidence({today: row.record, days: []}, extra);
+          detail.append(extra);
+        } else detail.append(node("p", "Voor deze dag is geen dagrecord beschikbaar."));
+        evidence.append(detail);
+        evidenceByDay.set(row.date, detail);
+      }
+      const marker = (quality, day, label = "Bronverdeling") => {
+        const button = node("button", quality === "historical" ? "◷" : "!",
+          "financial-quality-marker");
+        button.title = financialQuality[quality];
+        button.setAttribute("aria-label", `${label}: ${day ? dateLabel(day) + ": " : ""}` +
+          `${financialQuality[quality]}. Open onderbouwing`);
+        button.onclick = () => {
+          evidence.open = true;
+          const target = evidenceByDay.get(day) ?? evidence;
+          if (target !== evidence) target.open = true;
+          target.querySelector("summary").focus();
+          target.scrollIntoView({block: "nearest"});
+        };
+        return button;
+      };
+      const cards = node("section", undefined, "financial-grid");
+      for (const [label, name, sign] of financialColumns) {
+        const total = financialWeekTotal(rows, name, sign);
+        const card = node("div", undefined, "metric");
+        card.append(node("span", label, "muted"));
+        const value = node("div", total.value === null ? "—" : formatCurrency(total.value),
+          "value");
+        for (const quality of total.qualities.filter(item => item !== "available")) {
+          value.append(marker(quality, undefined, label));
+        }
+        card.append(value, node("small",
+          `${total.count < total.expected ? "Deeltotaal" : "Weektotaal"} · ` +
+          `${total.count} van ${total.expected} dagen` + (current ?
+            " · vandaag loopt nog" : ""), "muted"));
+        cards.append(card);
+      }
+      container.append(cards);
+      const table = node("table");
+      const head = node("thead");
+      const headers = node("tr");
+      for (const label of ["Dag", ...financialColumns.map(item => item[0])]) {
+        headers.append(node("th", label));
+      }
+      head.append(headers); table.append(head);
+      const body = node("tbody");
+      for (const row of rows) {
+        const tr = node("tr");
+        tr.append(node("td", dateLabel(row.date) + (row.date === today ? " · vandaag" : "")));
+        for (const [label, name, sign] of financialColumns) {
+          const item = financialMetric(row.record, name, sign);
+          const cell = node("td", row.future ? "·" : item.value === null ?
+            "—" : formatCurrency(item.value));
+          if (!row.future && item.quality !== "available") {
+            cell.append(marker(item.quality, row.date, label));
+          }
+          tr.append(cell);
+        }
+        body.append(tr);
+      }
+      table.append(body);
+      const scroll = node("div"); scroll.style.overflowX = "auto"; scroll.append(table);
+      container.append(scroll);
+      const chart = node("section", undefined, "timeline-panel financial-week-sources");
+      chart.append(node("h3", "Waar komt je huisverbruik vandaan?"));
+      const sourceMeta = [["PV", "#f5c542"], ["Net", "#ef6464"], ["Batterij", "#35a862"]];
+      const legend = node("p");
+      for (const [label, color] of sourceMeta) {
+        const dot = node("span", "● "); dot.style.color = color;
+        dot.setAttribute("aria-hidden", "true");
+        legend.append(dot, node("span", `${label}   `));
+      }
+      chart.append(legend);
+      const allocations = rows.map(row => row.future ? null : financialHouseSources(row.record));
+      const maximum = Math.max(1, ...allocations.filter(Boolean).map(item => item.total));
+      rows.forEach((row, index) => {
+        const line = node("div", undefined, "financial-source-day");
+        line.append(node("span", new Intl.DateTimeFormat("nl-NL", {weekday: "short",
+          timeZone: "UTC"})
+          .format(new Date(row.date + "T12:00:00Z"))));
+        const allocation = allocations[index];
+        const bar = node("div", undefined, "financial-source-bar");
+        if (allocation) {
+          const description = sourceMeta.map(([label], i) =>
+            `${label}: ${formatDutchNumber(allocation.values[i])} kWh`).join(" · ");
+          bar.setAttribute("role", "img"); bar.setAttribute("aria-label",
+            `${dateLabel(row.date)}: ${description}`);
+          bar.title = description;
+          allocation.values.forEach((value, i) => {
+            const segment = node("span"); segment.style.width = `${value / maximum * 100}%`;
+            segment.style.background = sourceMeta[i][1]; bar.append(segment);
+          });
+          line.append(bar, node("span", `${formatDutchNumber(allocation.total)} kWh`));
+          if (allocation.quality !== "available") line.append(marker(allocation.quality, row.date));
+        } else line.append(bar, node("span", row.future ? "·" : "Geen volledige verdeling",
+          "muted"));
+        chart.append(line);
+      });
+      chart.append(node("p", "Dagverbruik in kWh · gelijke schaal voor alle dagen. " +
+        "Batterij is de directe bron; de eerdere laadbron wordt hier niet uitgesplitst. " +
+        "Bronhoeveelheden staan ook in de onderbouwing.", "muted"));
+      container.append(chart, evidence);
+      const payback = node("section", undefined, "timeline-panel financial-week-sources");
+      payback.append(node("h3", "Terugverdienen Zendure-batterij"));
+      const estimate = financialPaybackEstimate(days, financial.cumulative, today);
+      const duration = estimate.days === undefined ? null : estimate.days < 31 ?
+        "minder dan een maand" :
+        estimate.days < 365 ? `${Math.ceil(estimate.days / 30.4375)} maanden` :
+          `${formatDutchNumber(estimate.days / 365.25)} jaar`;
+      payback.append(node("p", estimate.completed ?
+        "Aankoopbedrag terugverdiend volgens de geregistreerde resultaten." :
+        duration ? `Geschatte resterende terugverdientijd: circa ${duration}` :
+          "Geschatte resterende terugverdientijd: nog niet te bepalen.", "value"));
+      const estimateEvidence = node("details");
+      financialDisclosure(estimateEvidence, "payback-estimate");
+      estimateEvidence.append(node("summary", "Onderbouwing van de tijdschatting"));
+      estimateEvidence.append(node("p", (estimate.reason ? estimate.reason + " " : "") +
+        "Resterend aankoopbedrag gedeeld door het gemiddelde netto batterijvoordeel " +
+        "van de laatste 28 afgesloten dagen. " +
+        "Alleen meetperioden van middernacht tot de volgende middernacht " +
+        "in Amsterdam tellen mee. " +
+        "Een kortere of onbekende meetperiode blokkeert de schatting. " +
+        "Vandaag telt niet mee; ontbrekende dagen worden niet als nul of als " +
+        "gemiddelde ingevuld. " +
+        "De prognose houdt geen rekening met seizoenen, toekomstige tarieven of de zonnebonus. " +
+        "Dit is een schatting, geen garantie." +
+        (estimate.daily !== undefined ?
+          ` Gebruikt daggemiddelde: ${formatCurrency(estimate.daily)}.` : "") +
+        (estimate.estimated ? " Bevat afgeleide dagbedragen." : "") +
+        (estimate.historical ? " Bevat historische, niet opnieuw beoordeelde dagbedragen." : "")));
+      payback.append(estimateEvidence);
+      const paybackBody = node("div");
+      renderFinancialDayEvidence({days, cumulative: financial.cumulative ?? {},
+        paybackOnly: true}, paybackBody);
+      payback.append(paybackBody); container.append(payback);
+    }
+
+    function renderFinancialDayEvidence(financial, container) {
       container.replaceChildren();
       const today = financial?.today;
       const days = financial.days ?? [];
@@ -4387,7 +4751,8 @@ DASHBOARD_HTML = """<!doctype html>
           (metric(day, name).status === "estimated" ? "≈ " : "") + formatCurrency(sign * value);
       };
       const todayStatus = today?.financial_metrics?.status ?? today?.status;
-      if (!today || !["available", "estimated"].includes(todayStatus)) {
+      if (Object.hasOwn(financial, "today") &&
+          (!today || !["available", "estimated"].includes(todayStatus))) {
         const empty = document.createElement("p");
         empty.className = "empty-panel";
         empty.textContent = today
@@ -4405,7 +4770,7 @@ DASHBOARD_HTML = """<!doctype html>
         const cards = document.createElement("section");
         cards.className = "financial-grid";
         const values = [
-          ["Netto energieresultaat vandaag", "actual_energy_cost_eur", -1],
+          ["Netto energieresultaat in deze periode", "actual_energy_cost_eur", -1],
           ["Kosten netinkoop", "grid_import_cost_eur", -1],
           ["Opbrengst teruglevering", "grid_export_revenue_eur", 1],
           ["Totale energiebesparing netto", "net_total_energy_value_eur", 1],
@@ -4447,6 +4812,7 @@ DASHBOARD_HTML = """<!doctype html>
         const coverage = today.financial_metrics?.measurement_coverage ??
           today.coverage_by_role ?? {};
         const details = document.createElement("details");
+        financialDisclosure(details, `day:${today.day}:gaps`);
         const detailsTitle = document.createElement("summary");
         detailsTitle.textContent = "Ontbrekende meetgegevens";
         details.style.overflowWrap = "anywhere";
@@ -4485,6 +4851,7 @@ DASHBOARD_HTML = """<!doctype html>
         const inferences = today.financial_metrics?.inferences ?? [];
         if (inferences.length) {
           const inferred = document.createElement("details");
+          financialDisclosure(inferred, `day:${today.day}:inferences`);
           const title = document.createElement("summary");
           title.textContent = "Afgeleide meetgegevens";
           inferred.append(title);
@@ -4516,7 +4883,6 @@ DASHBOARD_HTML = """<!doctype html>
         if (["available", "estimated"].includes(todayStatus)) {
           container.append(renderHouseholdEnergySources(today.household_energy_sources ?? {}));
         }
-
         if (["gross_battery_value_eur", "battery_wear_eur", "net_battery_value_eur"]
             .every(name => amount(metric(today, name)) !== null)) {
           const equation = document.createElement("section");
@@ -4551,10 +4917,10 @@ DASHBOARD_HTML = """<!doctype html>
           container.append(equation);
         }
       }
-
-      const cumulative = financial.cumulative ?? {};
+      if (!financial.cumulative) return;
+      const cumulative = financial.cumulative;
       const payback = document.createElement("section");
-      payback.className = "timeline-panel";
+      payback.className = financial.paybackOnly ? "" : "timeline-panel";
       const heading = document.createElement("h3");
       heading.textContent = "Terugverdienen batterij";
       const summary = document.createElement("p");
@@ -4581,48 +4947,11 @@ DASHBOARD_HTML = """<!doctype html>
       fill.className = "payback-fill";
       fill.style.width = `${percentage}%`;
       track.append(fill);
-      payback.append(heading, summary, coverageNote);
+      if (!financial.paybackOnly) payback.append(heading);
+      payback.append(summary, coverageNote);
       if (included) payback.append(track);
       container.append(payback);
-
-      const historyHeading = document.createElement("h3");
-      historyHeading.textContent = "Resultaat per dag";
-      container.append(historyHeading);
-      const table = document.createElement("table");
-      const head = document.createElement("thead");
-      const header = document.createElement("tr");
-      for (const label of ["Dag", "Energieresultaat", "Batterij netto", "PicoT netto", "Status"]) {
-        const cell = document.createElement("th");
-        cell.textContent = label;
-        header.append(cell);
-      }
-      head.append(header);
-      const body = document.createElement("tbody");
-      for (const day of [...days].reverse()) {
-        const row = document.createElement("tr");
-        const status = day.financial_metrics?.status ?? day.status;
-        for (const value of [
-          day.day,
-          money(day, "actual_energy_cost_eur", -1),
-          money(day, "net_battery_value_eur"),
-          money(day, "net_picot_value_eur"),
-          status === "available" ? "Beschikbaar" :
-            status === "estimated" ? "Afgeleid" :
-              status === "partial" ? "Gedeeltelijk" : "Onvolledig",
-        ]) {
-          const cell = document.createElement("td");
-          cell.textContent = value;
-          row.append(cell);
-        }
-        body.append(row);
-      }
-      table.append(head, body);
-      const historyScroll = document.createElement("div");
-      historyScroll.style.overflowX = "auto";
-      historyScroll.append(table);
-      container.append(historyScroll);
     }
-
     async function markPlannerStress() {
       const note = window.prompt(
         "Korte toelichting (optioneel)",

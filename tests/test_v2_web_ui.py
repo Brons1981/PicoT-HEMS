@@ -307,7 +307,7 @@ def test_dashboard_contains_passive_financial_result_tab() -> None:
     assert "renderFinancialResults(view.financial_results ?? {})" in DASHBOARD_HTML
     assert "Netto extra PicoT-resultaat" in DASHBOARD_HTML
     assert "Terugverdienen batterij" in DASHBOARD_HTML
-    assert "Herkomst huishoudelijke energie vandaag" in DASHBOARD_HTML
+    assert "Herkomst huishoudelijke energie in deze meetperiode" in DASHBOARD_HTML
     assert "renderHouseholdEnergySources" in DASHBOARD_HTML
     assert "formatCurrency" in DASHBOARD_HTML
     assert "Bruto batterijvoordeel − slijtage = netto batterijvoordeel" in DASHBOARD_HTML

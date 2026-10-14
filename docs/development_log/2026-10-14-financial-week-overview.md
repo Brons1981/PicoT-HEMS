@@ -93,3 +93,19 @@ Verse lokale verificatie: 133 tests, Ruff, Mypy (Linux-doel), Edge op desktop
 plus mobiel, bronkleuren en uitklapbediening geslaagd. De PR bevat ook de twee
 gecontroleerde reparaties en hun regressietests. Automatische GitHub-controles
 volgen op de PR; geen merge, installatie of release is aangevraagd.
+
+
+## Release dev.296 na expliciet akkoord
+
+Alex heeft op 14 oktober opdracht gegeven om na groene controles PR #701 samen
+te voegen en een release te maken. Dit vervangt de eerdere beperking tot een PR.
+Alle drie PR-workflows en de twee aanvullende push-workflows zijn geslaagd op
+13168f0fd5eeadd5d9805fa3a23175964792f86d. PR #701 is samengevoegd als
+8615573b76653a3c7014e7b2390e216d7b815908.
+
+De afzonderlijke releasewijziging verhoogt uitsluitend de HEMS-/runtimeversie
+naar 2.0.0-dev.296 en werkt changelog, gebruikersuitleg en versietests bij.
+Publicatie volgt via een eigen PR met groene controles. De release voegt geen
+financiële formulewijziging of historische migratie toe. De Supervisor-test
+controleert ook dat dev.296 nieuwer is dan dev.295. Installatie en livecontrole
+in Home Assistant volgen afzonderlijk; er wordt geen apparaat aangestuurd.

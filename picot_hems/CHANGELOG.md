@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0-dev.296
+
+- Rustig, licht financieel weekoverzicht met afzonderlijke kwaliteitsicoontjes per bedrag en oproepbare eerdere weken.
+- Uitklapbare meetonderbouwing behouden bij automatisch verversen; historische bedragen herkenbaar houden zonder herberekening.
+- Herkomst van huisverbruik per dag tonen: PV geel, net rood, batterij groen.
+- Zendure-terugverdienvoortgang met afzonderlijke tijdschatting op basis van 28 volledige meetdagen; geen schatting bij ontbrekende of kortere perioden.
+- Bestaande financiële berekeningen, opgeslagen dagbedragen, planning en voorraad ongewijzigd; zonnebonus niet meegerekend.
+
 ## 2.0.0-dev.295
 
 - Runtime Monitor en planner dezelfde chronologische reparatievolgorde laten gebruiken wanneer meerdere dagdoelen tekortschieten.

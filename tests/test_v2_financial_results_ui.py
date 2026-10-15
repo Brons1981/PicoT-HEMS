@@ -316,3 +316,33 @@ def test_deep_disclosures_keep_open_and_closed_states_across_refresh():
       if(titles.some(title=>find(title).open)) throw Error('Closed disclosure reopened');
     """.replace("DATA", json.dumps(financial))
     _render(financial, interaction)
+
+
+
+def test_stored_value_column_has_one_header_explanation_and_no_disclosure():
+    base = {"day": "2026-09-26", "status": "available", "net_battery_value_eur": .2}
+    without = _render({"days": [base]})
+    for value in [0, -0.3, 2.104]:
+        record = {**base, "estimated_battery_value": {
+            "status": "estimated", "value_eur": value}}
+        nodes = _render({"days": [record]})
+        assert any(n["tag"] == "td" and n["text"] == f"≈ €{value}" for n in nodes)
+        header = next(n for n in nodes if n["text"] == "Geschatte batterijwaarde ")
+        assert "24 uur" in header["title"]
+        assert sum(n["tag"] == "details" for n in nodes) == sum(
+            n["tag"] == "details" for n in without)
+    assert any(n["tag"] == "td" and n["text"] == "—" for n in without)
+
+
+
+def test_stored_value_help_can_be_opened_and_closed_without_row_disclosures():
+    _render({"days": []}, """
+      const button=flatten(root).find(e=>e.tag==='button' &&
+        e.attributes['aria-controls']==='financial-stored-value-help');
+      const help=flatten(root).find(e=>e.id==='financial-stored-value-help');
+      if(!button || !help || !help.hidden) throw Error('Missing collapsed help');
+      button.onclick();
+      if(help.hidden || button.attributes['aria-expanded']!=='true') throw Error('Cannot open');
+      button.onclick();
+      if(!help.hidden || button.attributes['aria-expanded']!=='false') throw Error('Cannot close');
+    """)

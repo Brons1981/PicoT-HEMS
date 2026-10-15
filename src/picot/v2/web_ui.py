@@ -4617,6 +4617,23 @@ DASHBOARD_HTML = """<!doctype html>
       for (const label of ["Dag", ...financialColumns.map(item => item[0])]) {
         headers.append(node("th", label));
       }
+      const storedHeader = node("th", "Geschatte batterijwaarde ⓘ");
+      storedHeader.title = "Geschatte besparing bij eigen gebruik, na reserve en ontlaadverlies, tegen de gemiddelde inkoopprijs komende 24 uur. Geen winst; niet optellen. Per dag de laatst vastgelegde schatting; — = onbekend.";
+      const storedHelp = node("button", "ⓘ", "financial-quality");
+      storedHelp.type = "button";
+      storedHelp.setAttribute("aria-label", "Toelichting geschatte batterijwaarde");
+      storedHelp.setAttribute("aria-controls", "financial-stored-value-help");
+      storedHelp.setAttribute("aria-expanded", "false");
+      const storedExplanation = node("p", storedHeader.title, "muted");
+      storedExplanation.id = "financial-stored-value-help";
+      storedExplanation.hidden = true;
+      storedHelp.onclick = () => {
+        storedExplanation.hidden = !storedExplanation.hidden;
+        storedHelp.setAttribute("aria-expanded", String(!storedExplanation.hidden));
+      };
+      storedHeader.textContent = "Geschatte batterijwaarde ";
+      storedHeader.append(storedHelp);
+      headers.append(storedHeader);
       head.append(headers); table.append(head);
       const body = node("tbody");
       for (const row of rows) {
@@ -4631,11 +4648,17 @@ DASHBOARD_HTML = """<!doctype html>
           }
           tr.append(cell);
         }
+        const stored = row.record?.estimated_battery_value;
+        const storedValue = stored?.status === "estimated" &&
+          typeof stored.value_eur === "number" && Number.isFinite(stored.value_eur)
+          ? stored.value_eur : null;
+        tr.append(node("td", row.future ? "·" : storedValue === null ? "—" :
+          `≈ ${formatCurrency(storedValue)}`));
         body.append(tr);
       }
       table.append(body);
       const scroll = node("div"); scroll.style.overflowX = "auto"; scroll.append(table);
-      container.append(scroll);
+      container.append(scroll, storedExplanation);
       const chart = node("section", undefined, "timeline-panel financial-week-sources");
       chart.append(node("h3", "Waar komt je huisverbruik vandaan?"));
       const sourceMeta = [["PV", "#f5c542"], ["Net", "#ef6464"], ["Batterij", "#35a862"]];

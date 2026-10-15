@@ -29,6 +29,7 @@ from picot.v2.independent_daily_tariff_adapter import (
     VAT_FACTOR,
 )
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
+from picot.v2.stored_energy_value import estimated_stored_energy_value
 
 SCHEMA_VERSION = 1
 METHOD_VERSION = "financial-result-ledger:v1"
@@ -137,6 +138,13 @@ class FinancialResultLedger:
                 "error_type": type(exc).__name__, "values": {},
                 "observer_only": True, "selection_permitted": False,
             }
+        # Optional display evidence must never interrupt existing settlement or inventory.
+        try:
+            result["estimated_battery_value"] = estimated_stored_energy_value(
+                snapshot, self.discharge_efficiency,
+            )
+        except Exception:
+            result["estimated_battery_value"] = {"status": "unavailable", "value_eur": None}
         local_day = snapshot.captured_at.astimezone(self.local_timezone).date().isoformat()
         with self._lock:
             days = self._state.setdefault("days", {})

@@ -562,3 +562,100 @@ def test_storage_inventory_cost_basis_survives_the_day_boundary(tmp_path) -> Non
     pv_lot = next(item for item in inventory.lots if item.source == "pv")
     assert pv_lot.stored_energy_wh == pytest.approx(1000.0)
     assert pv_lot.acquisition_cost_eur == pytest.approx(0.10)
+
+
+@pytest.mark.parametrize("rate", [0.25, 0.0, -0.1])
+def test_stored_value_reserve_losses_and_prices_are_separate(tmp_path, rate):
+    from picot.v2.stored_energy_value import estimated_stored_energy_value
+    snapshot = _snapshot()
+    now = snapshot.captured_at
+    snapshot = replace(snapshot, price_points=(
+        PriceForecastPoint("future", now, now + timedelta(hours=24), rate, 1, "tariff"),
+    ))
+    value = estimated_stored_energy_value(snapshot, 0.9)
+    # 50% of 8.16 kWh minus 10% reserve, then 10% discharge loss.
+    assert value["value_eur"] == pytest.approx(round(2.9376 * rate, 4))
+    assert value["status"] == "estimated"
+
+
+@pytest.mark.parametrize("case", ["gap", "overlap", "stale", "missing", "nan"])
+def test_stored_value_does_not_invent_missing_evidence(case):
+    from picot.v2.stored_energy_value import estimated_stored_energy_value
+    snapshot = _snapshot()
+    now = snapshot.captured_at
+    point = PriceForecastPoint("future", now, now + timedelta(hours=24), .25, 1, "tariff")
+    points = (point,)
+    if case == "gap":
+        points = (replace(point, starts_at=now + timedelta(minutes=1)),)
+    elif case == "overlap":
+        points = (point, point)
+    elif case == "missing":
+        points = ()
+    elif case == "nan":
+        points = (replace(point, value_eur_per_kwh=float("nan")),)
+    elif case == "stale":
+        snapshot = replace(snapshot, current_storage_states=(replace(
+            snapshot.current_storage_states[0], measured_at=now - timedelta(minutes=16),
+        ),))
+    assert estimated_stored_energy_value(replace(snapshot, price_points=points), .9)[
+        "value_eur"] is None
+
+
+def test_stored_value_preserves_settlement_inventory_totals_and_history(tmp_path, monkeypatch):
+    import copy
+
+    import picot.v2.financial_result_ledger as module
+    ledger = _ledger(tmp_path)
+    old = {"day": "2026-08-26", "status": "available", "net_battery_value_eur": 1.23}
+    ledger._state["days"]["2026-08-26"] = copy.deepcopy(old)
+    history = _history(pv_generation=0, household_load=1000, grid_import=0,
+                       grid_export=0, battery_charge=0, battery_discharge=1000)
+    original = ledger.update(_snapshot(), history)
+    monkeypatch.setattr(module, "estimated_stored_energy_value", lambda *args: {
+        "status": "estimated", "value_eur": 999,
+    })
+    updated = ledger.update(_snapshot(), history)
+    assert updated["cumulative"] == original["cumulative"]
+    before, after = dict(original["today"]), dict(updated["today"])
+    before.pop("estimated_battery_value")
+    after.pop("estimated_battery_value")
+    assert before == after
+    assert ledger._state["days"]["2026-08-26"] == old
+    reloaded = _ledger(tmp_path).dashboard_view()
+    assert reloaded == updated
+
+
+
+def test_stored_value_time_weighting_and_empty_usable_reserve():
+    from picot.v2.stored_energy_value import estimated_stored_energy_value
+    snapshot = _snapshot()
+    now = snapshot.captured_at
+    snapshot = replace(snapshot, price_points=(
+        PriceForecastPoint("a", now, now + timedelta(hours=6), .1, 1, "a"),
+        PriceForecastPoint("b", now + timedelta(hours=6), now + timedelta(hours=24), .3, 1, "b"),
+    ))
+    assert estimated_stored_energy_value(snapshot, 1)["value_eur"] == .816
+    snapshot = replace(snapshot, current_storage_states=(replace(
+        snapshot.current_storage_states[0], current_soc=.05,
+    ),))
+    assert estimated_stored_energy_value(snapshot, 1)["value_eur"] == 0
+
+
+
+@pytest.mark.parametrize("read_age, expected", [(0, "estimated"), (900, "estimated"),
+                                                 (901, "unavailable"), (-1, "unavailable")])
+def test_stored_value_uses_current_ha_read_for_unchanged_soc(read_age, expected):
+    from picot.v2.stored_energy_value import estimated_stored_energy_value
+    snapshot = _snapshot()
+    now = snapshot.captured_at
+    state = replace(snapshot.current_storage_states[0],
+                    measured_at=now - timedelta(hours=2),
+                    state_valid_since=now - timedelta(hours=2),
+                    state_read_at=now - timedelta(seconds=read_age))
+    snapshot = replace(snapshot, current_storage_states=(state,), price_points=(
+        PriceForecastPoint("future", now, now + timedelta(hours=24), .25, 1, "tariff"),
+    ))
+    value = estimated_stored_energy_value(snapshot, .9)
+    assert value["status"] == expected
+    if expected == "estimated":
+        assert value["value_eur"] == .7344

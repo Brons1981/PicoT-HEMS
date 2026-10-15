@@ -46,17 +46,24 @@ def test_transition_render_distinguishes_unknown_from_zero_confidence() -> None:
     start = DASHBOARD_HTML.index("    function renderStorageModeTransitionHistory(")
     end = DASHBOARD_HTML.index("\n    function ", start + 10)
     function = DASHBOARD_HTML[start:end]
+    filter_start = DASHBOARD_HTML.index("    function switchHistoryEvents(")
+    filter_end = DASHBOARD_HTML.index("\n    function ", filter_start + 10)
+    date_start = DASHBOARD_HTML.index("    function financialDate(")
+    date_end = DASHBOARD_HTML.index("\n    function ", date_start + 10)
     formatter_start = DASHBOARD_HTML.index("    function formatConfidence(")
     formatter_end = DASHBOARD_HTML.index("\n    function ", formatter_start + 10)
     script = (
         """
 const container = {children: [], replaceChildren(){this.children=[];},
  append(...x){this.children.push(...x);}};
-const element = () => container;
+let lastSwitchEvents = [];
+const element = id => id === 'switch-history-period' ? {value: 'all'} : container;
 const document = {createElement: () => ({children: [], append(...x){this.children.push(...x);}})};
 const displayValue = x => x ?? "—";
 """
         + DASHBOARD_HTML[formatter_start:formatter_end]
+        + DASHBOARD_HTML[filter_start:filter_end]
+        + DASHBOARD_HTML[date_start:date_end]
         + function
         + """
 renderStorageModeTransitionHistory([{occurred_at:"2026-09-15T17:15:00Z",confidence:null},

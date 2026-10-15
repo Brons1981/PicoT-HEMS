@@ -98,3 +98,5 @@ dezelfde PR als de UI. Samenvoegen pas nadat de controles op deze PR groen zijn.
 Installatie in Home Assistant en livecontrole volgen afzonderlijk.
 
 CI-correctie PR #705: de bestaande SVG-renderertest laadde alleen renderPriceTimeline en verwachtte nog de vervangen werkelijke SOC-lijn. De test laadt nu ook socQuarterSlots en controleert vier lege omtrekken, uitsluitend twee gemeten vullingen op de juiste kwartieren, 30% hoogte, prognoseonderbrekingen, arcering en onveranderde invoergegevens. Geen productiecode gewijzigd. Gerichte grafiek- en dashboardtests: 26 geslaagd; Ruff geslaagd.
+
+Tweede CI-correctie: algemene suite vond nog een bestaande rendererharnas-test zonder periodekeuze en bijbehorende helpers. Die test laadt nu de echte filter- en datumfuncties en kiest alle dagen, zodat het oorspronkelijke onderscheid tussen onbekende confidence en 0% behouden wordt gecontroleerd. 32 gerichte tests geslaagd. Productiecode en bedragen niet gewijzigd.

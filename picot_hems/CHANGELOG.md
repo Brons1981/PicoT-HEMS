@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.297
+
+- Kolom geschatte batterijwaarde met één aanklikbare toelichting bij de titel.
+- Afzonderlijke bruto eigenverbruiksschatting na minimumreserve en ontlaadverlies, tegen de gemiddelde inkoopprijs van de komende 24 uur.
+- Onvoldoende prijs- of SOC-bewijs toont een streepje; verse uitlezing van een gelijkblijvende SOC blijft geldig.
+- Bestaande financiële bedragen, voorraadkosten, weektotalen en terugverdientijd ongewijzigd; geen historische aanvulling of zonnebonus.
+
 ## 2.0.0-dev.296
 
 - Rustig, licht financieel weekoverzicht met afzonderlijke kwaliteitsicoontjes per bedrag en oproepbare eerdere weken.

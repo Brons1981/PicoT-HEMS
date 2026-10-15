@@ -247,3 +247,18 @@ Seizoenen, toekomstige prijzen en de Zonneplan-zonnebonus zijn niet inbegrepen.
 
 Deze update herberekent geen historische bedragen en wijzigt geen planner,
 voorraad of apparaatregeling. De add-onversie wordt 2.0.0-dev.296.
+
+
+## Geschatte batterijwaarde — dev.297
+
+Het financiële weekoverzicht toont een aparte schatting van de nog bruikbare
+energie boven de minimumreserve, na ontlaadverlies. De waardering gebruikt de
+tijdgewogen gemiddelde inkoopprijs van de komende 24 uur: mogelijke bruto
+besparing bij eigen gebruik, geen gerealiseerde winst of gegarandeerde opbrengst.
+Niet optellen bij batterijvoordeel; geen bijdrage aan weektotalen of terugverdientijd.
+
+Tik of klik op het informatieknopje bij de kolomtitel voor de korte toelichting.
+De knop werkt ook met Enter en Spatie. Ontbrekende prijzen of verouderde SOC
+geven een streepje. Een recent uitgelezen, gelijkblijvend percentage blijft geldig.
+Oude dagen zonder vastgelegde schatting blijven leeg; bestaande bedragen en
+voorraadkosten worden niet herberekend. De zonnebonus blijft buiten beschouwing.

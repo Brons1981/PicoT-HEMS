@@ -96,3 +96,5 @@ beschrijven de voorafgaande fase. Releasevoorbereiding: dev.298 vanaf
 `c621518118cec6d71006df17a918d8f7e8afda08`, met versie-afstemming en changelog in
 dezelfde PR als de UI. Samenvoegen pas nadat de controles op deze PR groen zijn.
 Installatie in Home Assistant en livecontrole volgen afzonderlijk.
+
+CI-correctie PR #705: de bestaande SVG-renderertest laadde alleen renderPriceTimeline en verwachtte nog de vervangen werkelijke SOC-lijn. De test laadt nu ook socQuarterSlots en controleert vier lege omtrekken, uitsluitend twee gemeten vullingen op de juiste kwartieren, 30% hoogte, prognoseonderbrekingen, arcering en onveranderde invoergegevens. Geen productiecode gewijzigd. Gerichte grafiek- en dashboardtests: 26 geslaagd; Ruff geslaagd.

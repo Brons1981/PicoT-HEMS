@@ -10,7 +10,7 @@ from picot.v2.web_ui import DASHBOARD_HTML
 
 @pytest.mark.parametrize("optimized", [True, False])
 def test_price_renderer_clips_hatching_and_draws_actual_soc_with_gaps(optimized):
-    start = DASHBOARD_HTML.index("    function renderPriceTimeline(")
+    start = DASHBOARD_HTML.index("    function socQuarterSlots(")
     end = DASHBOARD_HTML.index("    function displayValue(", start)
     renderer = DASHBOARD_HTML[start:end]
     harness = r"""
@@ -64,10 +64,13 @@ console.log(JSON.stringify({nodes:flatten(root).map(e=>({tag:e.tag,...e.attrs}))
     assert [n["width"] for n in hatches] == ([141.75, 141.75] if optimized else [])
     assert all(n["fill"] == "url(#price-hatch-canonical-charge)" for n in hatches)
     assert all(n["height"] > 0 for n in hatches)  # Negative and zero prices still hatch.
-    actual = [n for n in nodes if n.get("class") == "soc-line soc-actual"]
-    assert len(actual) == 2  # No line across the 15-minute unavailable interval.
-    assert actual[0]["d"].endswith("H 365.5")
-    assert "H 932.5" in actual[1]["d"]  # Stops at observed 00:45, not forecast end 01:00.
+    outlines = [n for n in nodes if n.get("class") == "soc-quarter-outline"]
+    actual = [n for n in nodes if n.get("class") == "soc-quarter-fill"]
+    assert len(outlines) == 4  # All quarters remain visible, including future quarters.
+    assert len(actual) == 2
+    # Quarter-end samples: missing at 00:15, 30% at 00:30 and 00:45, future empty.
+    assert [n["x"] for n in actual] == [outlines[1]["x"], outlines[2]["x"]]
+    assert all(n["height"] == pytest.approx(outlines[0]["height"] * .3) for n in actual)
     assert len([n for n in nodes if n.get("class") == "soc-line soc-projected"]) == 2
     assert len([n for n in nodes if n.get("class") == "soc-replan-marker"]) == 1
     assert result["unchanged"] is True

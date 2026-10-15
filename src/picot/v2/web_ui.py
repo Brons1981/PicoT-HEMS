@@ -4618,7 +4618,9 @@ DASHBOARD_HTML = """<!doctype html>
         headers.append(node("th", label));
       }
       const storedHeader = node("th", "Geschatte batterijwaarde ⓘ");
-      storedHeader.title = "Geschatte besparing bij eigen gebruik, na reserve en ontlaadverlies, tegen de gemiddelde inkoopprijs komende 24 uur. Geen winst; niet optellen. Per dag de laatst vastgelegde schatting; — = onbekend.";
+      storedHeader.title = "Geschatte besparing bij eigen gebruik, na reserve en ontlaadverlies, " +
+        "tegen de gemiddelde inkoopprijs komende 24 uur. Geen winst; niet optellen. " +
+        "Per dag de laatst vastgelegde schatting; — = onbekend.";
       const storedHelp = node("button", "ⓘ", "financial-quality");
       storedHelp.type = "button";
       storedHelp.setAttribute("aria-label", "Toelichting geschatte batterijwaarde");

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0-dev.298
+
+- Licht dashboard met Vandaag, Historie en Financieel; overige schermen via Instellingen & diagnose.
+- Solcast op Vandaag en een centrale statusmelding; schakelhistorie standaard vandaag, meer dagen oproepbaar.
+- SOC onder de 48-uursprijsgrafiek: lege kwartierstaven, groene werkelijke vulling en gele verwachting met behouden prognosehistorie.
+- Verversen behoudt invoer, tabkeuze, open toelichtingen en toetsenbordfocus. Nieuwe invoer tijdens opslaan blijft onopgeslagen behouden.
+- Bestaande berekeningen, financiële dagbedragen, voorraad, planning en uitvoering blijven ongewijzigd.
+
 ## 2.0.0-dev.297
 
 - Kolom geschatte batterijwaarde met één aanklikbare toelichting bij de titel.

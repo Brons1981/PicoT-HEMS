@@ -310,13 +310,13 @@ DASHBOARD_HTML = """<!doctype html>
   <title>PicoT v2 — Canonical Pipeline</title>
   <style>
     :root {
-      color-scheme: dark;
+      color-scheme: light;
       font-family: Inter, system-ui, sans-serif;
-      background: #0b0f14;
-      color: #eef4fb;
+      background: #f4f6f8;
+      color: #253749;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; background: #0b0f14; }
+    body { margin: 0; background: #f4f6f8; }
     main { width: min(1500px, 100%); margin: auto; padding: 24px; }
     header {
       display: flex;
@@ -329,7 +329,7 @@ DASHBOARD_HTML = """<!doctype html>
     h1 { margin-bottom: 6px; font-size: 1.55rem; }
     h2 { margin: 28px 0 12px; font-size: 1.15rem; }
     h3 { margin-bottom: 10px; font-size: 1rem; }
-    .muted { color: #96a6b8; }
+    .muted { color: #647588; }
     .dashboard-tabs {
       display: flex;
       gap: 8px;
@@ -339,39 +339,39 @@ DASHBOARD_HTML = """<!doctype html>
     }
     #household-calendar-history table { width: 100%; border-collapse: collapse; }
     #household-calendar-history th, #household-calendar-history td {
-      padding: 8px; border-bottom: 1px solid #27313d; text-align: left;
+      padding: 8px; border-bottom: 1px solid #e0e6ec; text-align: left;
       white-space: nowrap;
     }
     .tab-button {
       border: 1px solid #386f96;
       border-radius: 8px;
       padding: 9px 13px;
-      background: #10283a;
-      color: #b9dcf5;
+      background: #ffffff;
+      color: #315f83;
       cursor: pointer;
       white-space: nowrap;
     }
     .tab-button[aria-selected="true"] {
       border-color: #5db9f3;
-      background: #17466a;
+      background: #e6eff6;
       color: #ffffff;
     }
     .tab-panel[hidden] { display: none; }
     .empty-panel {
       padding: 14px;
-      border: 1px solid #27313d;
+      border: 1px solid #e0e6ec;
       border-radius: 12px;
-      background: #151b23;
-      color: #96a6b8;
+      background: #ffffff;
+      color: #647588;
     }
     .strategy-rules {
       display: grid;
       gap: 14px;
       max-width: 760px;
       padding: 18px;
-      border: 1px solid #27313d;
+      border: 1px solid #e0e6ec;
       border-radius: 12px;
-      background: #151b23;
+      background: #ffffff;
     }
     .strategy-rule {
       display: grid;
@@ -388,15 +388,15 @@ DASHBOARD_HTML = """<!doctype html>
       padding: 7px;
       border: 1px solid #386f96;
       border-radius: 7px;
-      background: #0f1c27;
-      color: #eef4fb;
+      background: #f4f7f9;
+      color: #253749;
     }
     .strategy-rules button {
       justify-self: start;
       padding: 9px 14px;
       border: 1px solid #5db9f3;
       border-radius: 8px;
-      background: #17466a;
+      background: #e6eff6;
       color: #fff;
       cursor: pointer;
     }
@@ -410,7 +410,7 @@ DASHBOARD_HTML = """<!doctype html>
       padding: 14px;
       border: 1px solid #334155;
       border-radius: 10px;
-      background: #111923;
+      background: #ffffff;
     }
     .energy-device-card[data-selected="true"] { border-color: #b96cff; }
     .energy-device-placement-list { display: grid; gap: 8px; margin-top: 14px; }
@@ -418,8 +418,8 @@ DASHBOARD_HTML = """<!doctype html>
       padding: 8px 12px;
       border: 1px solid #386f96;
       border-radius: 999px;
-      background: #10283a;
-      color: #8ed1ff;
+      background: #ffffff;
+      color: #315f83;
       white-space: nowrap;
     }
     .metadata {
@@ -429,9 +429,9 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .metric, .source-card, .stage-card, .timeline-panel, .price-panel,
     .zendure-now {
-      border: 1px solid #27313d;
+      border: 1px solid #e0e6ec;
       border-radius: 12px;
-      background: #151b23;
+      background: #ffffff;
     }
     .metric { padding: 12px; }
     .financial-grid {
@@ -446,7 +446,7 @@ DASHBOARD_HTML = """<!doctype html>
     .financial-week-sources { padding: 16px; margin: 18px 0; }
     .financial-source-day { display: grid; align-items: center; gap: 10px; margin: 12px 0;
       grid-template-columns: 30px minmax(30px, 1fr) 165px 24px; }
-    .financial-week-nav button, .financial-week-nav select { padding: 7px; background: #151b23;
+    .financial-week-nav button, .financial-week-nav select { padding: 7px; background: #ffffff;
       color: inherit; border: 1px solid #334155; border-radius: 6px; }
     .financial-week-nav button:disabled { opacity: .45; }
     #financial-results > .financial-grid .value { font-size: 24px; font-weight: 600; }
@@ -475,8 +475,8 @@ DASHBOARD_HTML = """<!doctype html>
     #financial-results .payback-track { background: #e1e7ee; }
     #financial-results :focus-visible { outline: 2px solid #245d9b; outline-offset: 3px; }
     @media (max-width: 600px) { #financial-results { padding: 12px; } }
-    .financial-positive { color: #8de5ae; }
-    .financial-negative { color: #ffadb8; }
+    .financial-positive { color: #28633d; }
+    .financial-negative { color: #a72d43; }
     .financial-source-panel {
       display: grid;
       grid-template-columns: minmax(190px, 260px) minmax(260px, 1fr);
@@ -497,7 +497,7 @@ DASHBOARD_HTML = """<!doctype html>
       position: absolute;
       inset: 24%;
       border-radius: 50%;
-      background: #151b23;
+      background: #ffffff;
     }
     .financial-donut-center {
       position: absolute;
@@ -526,10 +526,10 @@ DASHBOARD_HTML = """<!doctype html>
       padding: 14px;
     }
     .financial-equation-part { text-align: center; }
-    .financial-equation-symbol { color: #96a6b8; font-size: 1.4rem; }
+    .financial-equation-symbol { color: #647588; font-size: 1.4rem; }
     .payback-track {
       height: 14px; overflow: hidden; border-radius: 999px;
-      background: #27313d;
+      background: #e0e6ec;
     }
     .payback-fill { height: 100%; background: #35a862; }
     .daily-comparison-grid {
@@ -542,20 +542,20 @@ DASHBOARD_HTML = """<!doctype html>
       padding: 14px;
       border: 1px solid #386f96;
       border-radius: 12px;
-      background: #10283a;
+      background: #ffffff;
     }
     .daily-comparison-card.daily-reference {
       border-color: #a855f7;
-      background: #251337;
+      background: #f5effb;
       box-shadow: inset 4px 0 0 #c084fc;
     }
-    .daily-reference-label { color: #d8b4fe; }
+    .daily-reference-label { color: #744398; }
     .daily-comparison-card.market-daily {
       border-color: #2dd4bf;
-      background: #0d2c2d;
+      background: #edf7f6;
       box-shadow: inset 4px 0 0 #5eead4;
     }
-    .daily-lineage-warning { color: #ffd77a; }
+    .daily-lineage-warning { color: #805516; }
     @media (max-width: 800px) {
       .financial-source-panel { grid-template-columns: 1fr; }
       .financial-equation { grid-template-columns: 1fr; }
@@ -572,12 +572,12 @@ DASHBOARD_HTML = """<!doctype html>
       margin: 16px 0;
       padding: 10px 12px;
       border-radius: 8px;
-      background: #152231;
-      color: #9fcdf0;
+      background: #edf3f7;
+      color: #315f83;
     }
     .status[data-state="error"] {
-      background: #351b20;
-      color: #ffadb8;
+      background: #fdeef0;
+      color: #a72d43;
     }
     .source-grid {
       display: grid;
@@ -590,16 +590,16 @@ DASHBOARD_HTML = """<!doctype html>
       margin-bottom: 10px;
       padding: 4px 8px;
       border-radius: 6px;
-      background: #193226;
-      color: #8de5ae;
+      background: #eaf6ee;
+      color: #28633d;
     }
     .source-status[data-state="unavailable"] {
-      background: #351b20;
-      color: #ffadb8;
+      background: #fdeef0;
+      color: #a72d43;
     }
     .source-status[data-state="unconfigured"] {
-      background: #3a3018;
-      color: #ffd77a;
+      background: #fff3de;
+      color: #805516;
     }
     .pipeline {
       display: grid;
@@ -619,7 +619,7 @@ DASHBOARD_HTML = """<!doctype html>
     .stage-result {
       margin: 0;
       margin-left: 8px;
-      color: #b7c6d6;
+      color: #536779;
       font-size: 0.88rem;
     }
     .stage-health {
@@ -636,12 +636,12 @@ DASHBOARD_HTML = """<!doctype html>
       box-shadow: 0 0 0 3px rgba(223, 79, 95, 0.18);
     }
     .pipeline-health[data-health="healthy"] {
-      background: #193226;
-      color: #8de5ae;
+      background: #eaf6ee;
+      color: #28633d;
     }
     .pipeline-health[data-health="fault"] {
-      background: #351b20;
-      color: #ffadb8;
+      background: #fdeef0;
+      color: #a72d43;
     }
     .zendure-now { padding: 14px; }
     .zendure-now-grid {
@@ -657,8 +657,8 @@ DASHBOARD_HTML = """<!doctype html>
       margin-bottom: 12px;
       padding: 4px 8px;
       border-radius: 6px;
-      background: #193226;
-      color: #8de5ae;
+      background: #eaf6ee;
+      color: #28633d;
     }
     dl { margin: 0; }
     .attribute {
@@ -666,15 +666,15 @@ DASHBOARD_HTML = """<!doctype html>
       grid-template-columns: minmax(110px, 0.8fr) minmax(0, 1.2fr);
       gap: 8px;
       padding: 6px 0;
-      border-top: 1px solid #27313d;
+      border-top: 1px solid #e0e6ec;
     }
-    dt { color: #96a6b8; overflow-wrap: anywhere; }
+    dt { color: #647588; overflow-wrap: anywhere; }
     dd { margin: 0; overflow-wrap: anywhere; }
     .technical-details {
       margin-top: 12px;
-      border-top: 1px solid #27313d;
+      border-top: 1px solid #e0e6ec;
       padding-top: 10px;
-      color: #96a6b8;
+      color: #647588;
     }
     .technical-details summary { cursor: pointer; }
     .technical-details pre {
@@ -682,7 +682,7 @@ DASHBOARD_HTML = """<!doctype html>
       overflow: auto;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      color: #d9e4ef;
+      color: #536779;
       font-size: 0.78rem;
     }
     .timeline-panel { padding: 14px; overflow-x: auto; }
@@ -694,8 +694,8 @@ DASHBOARD_HTML = """<!doctype html>
       min-width: 760px;
       height: auto;
     }
-    .energy-chart .grid-line { stroke: #27313d; stroke-width: 1; }
-    .energy-chart .axis-label { fill: #96a6b8; font-size: 12px; }
+    .energy-chart .grid-line { stroke: #e0e6ec; stroke-width: 1; }
+    .energy-chart .axis-label { fill: #647588; font-size: 12px; }
     .energy-chart .forecast-range {
       fill: #ff9800;
       opacity: 0.24;
@@ -746,13 +746,13 @@ DASHBOARD_HTML = """<!doctype html>
     .self-consumption-line.pv_generation { stroke: #ffd600; stroke-width: 2; }
     .self-consumption-line.local_pv_use { stroke: #2196f3; stroke-width: 2; }
     .self-consumption-line.grid_import { stroke: #d32f2f; stroke-width: 1.5; }
-    .power-zero-line { stroke: #96a6b8; stroke-width: 1.5; }
+    .power-zero-line { stroke: #647588; stroke-width: 1.5; }
     .energy-chart-legend {
       display: flex;
       flex-wrap: wrap;
       gap: 14px;
       margin-bottom: 10px;
-      color: #96a6b8;
+      color: #647588;
     }
     .energy-chart-key {
       display: inline-flex;
@@ -762,8 +762,8 @@ DASHBOARD_HTML = """<!doctype html>
     button.energy-chart-key {
       border: 1px solid #334155;
       border-radius: 999px;
-      background: #111923;
-      color: #96a6b8;
+      background: #ffffff;
+      color: #647588;
       padding: 5px 9px;
       cursor: pointer;
     }
@@ -781,7 +781,7 @@ DASHBOARD_HTML = """<!doctype html>
       gap: 8px;
       margin: 2px 0 10px;
     }
-    .power-current-value { color: #96a6b8; font-size: 0.76rem; }
+    .power-current-value { color: #647588; font-size: 0.76rem; }
     .power-current-value strong {
       display: block;
       margin-top: 2px;
@@ -797,8 +797,8 @@ DASHBOARD_HTML = """<!doctype html>
       min-width: 30px;
       border: 1px solid #334155;
       border-radius: 6px;
-      background: #111923;
-      color: #b9c8d8;
+      background: #ffffff;
+      color: #536779;
       padding: 4px 8px;
       cursor: pointer;
     }
@@ -836,7 +836,7 @@ DASHBOARD_HTML = """<!doctype html>
       flex-wrap: wrap;
       gap: 14px;
       margin-bottom: 10px;
-      color: #96a6b8;
+      color: #647588;
     }
     .price-legend-item {
       display: inline-flex;
@@ -851,14 +851,14 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .price-swatch.low { background: #35a862; }
     .price-swatch.high { background: #df6b57; }
-    .price-swatch.missing { background: #2b3541; }
+    .price-swatch.missing { background: #edf1f5; }
     .price-swatch.canonical-nom { background: #35a862; }
     .price-swatch.energy-device-placement { background: #b96cff; }
     .price-swatch.canonical-charge { background: #df5c57; }
     .price-swatch.canonical-trade { background: #aab2bd; }
     .price-swatch.canonical-support { background: #3994e6; }
     .price-swatch.optimized {
-      background: repeating-linear-gradient(135deg, #b9c3cf 0 2px, #253341 2px 6px);
+      background: repeating-linear-gradient(135deg, #b9c3cf 0 2px, #edf1f5 2px 6px);
     }
     .price-swatch.soc-actual { background: #c084fc; height: 3px; }
     .price-swatch.soc-projected { background: #ffd600; height: 3px; }
@@ -903,18 +903,18 @@ DASHBOARD_HTML = """<!doctype html>
       height: auto;
     }
     .price-chart .grid-line {
-      stroke: #27313d;
+      stroke: #e0e6ec;
       stroke-width: 1;
     }
     .price-chart .zero-line {
-      stroke: #96a6b8;
+      stroke: #647588;
       stroke-width: 1.5;
     }
     .price-chart .axis-label {
-      fill: #96a6b8;
+      fill: #647588;
       font-size: 12px;
     }
-    .price-chart .missing-area { fill: #232c36; }
+    .price-chart .missing-area { fill: #edf1f5; }
     .price-chart .price-bar {
       fill: #477fa8;
       opacity: 0.85;
@@ -935,38 +935,38 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .soc-line { fill: none; stroke-width: 3; }
     .price-chart .soc-line.soc-actual { stroke: #c084fc; stroke-width: 3; }
     .price-chart .soc-line.soc-projected { stroke: #ffd600; }
-    .price-chart .soc-point { fill: #eef4fb; stroke: #17202a; stroke-width: 2; }
+    .price-chart .soc-point { fill: #253749; stroke: #ffffff; stroke-width: 2; }
     .price-chart .now-line {
-      stroke: #eef4fb;
+      stroke: #253749;
       stroke-width: 1.5;
       stroke-dasharray: 3 4;
     }
     .price-chart .now-label {
-      fill: #eef4fb;
+      fill: #253749;
       font-size: 12px;
     }
     .price-chart .horizon-line {
-      stroke: #ffd77a;
+      stroke: #805516;
       stroke-width: 2;
       stroke-dasharray: 6 5;
     }
     .price-chart .horizon-label {
-      fill: #ffd77a;
+      fill: #805516;
       font-size: 12px;
     }
     .price-detail {
       min-height: 22px;
       margin: 8px 0 0;
-      color: #96a6b8;
+      color: #647588;
     }
     table { width: 100%; border-collapse: collapse; }
     th, td {
       padding: 9px 10px;
-      border-bottom: 1px solid #27313d;
+      border-bottom: 1px solid #e0e6ec;
       text-align: left;
       white-space: nowrap;
     }
-    th { color: #96a6b8; font-weight: 600; }
+    th { color: #647588; font-weight: 600; }
     .planning-facts {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -997,14 +997,33 @@ DASHBOARD_HTML = """<!doctype html>
       .observer { display: inline-block; margin-bottom: 14px; }
       .metadata, .pipeline { grid-template-columns: 1fr; }
     }
+
+    .tab-button[aria-selected="true"] { color: #253749; border-color: #abc3d5; }
+    .dashboard-tools { margin-bottom: 16px; color: #647588; }
+    .dashboard-tools nav { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    #central-health[data-health="healthy"] { background: #eaf6ee; color: #28633d; }
+    #central-health[data-health="fault"] { background: #fff3de; color: #805516; }
+    .price-chart .soc-quarter-outline { fill: none; stroke: #becfc5; stroke-width: .7; }
+    .price-chart .soc-quarter-fill { fill: #35a364; }
+    .price-swatch.soc-actual { background: #35a364; height: 10px; }
+    .price-chart.soc-chart { margin-top: 4px; }
+    .price-chart text { fill: #536779; }
+    .planner-details { margin: 10px 0; color: #647588; }
+
+    .strategy-rules button { color: #253749; }
+    .today-summary { display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    .today-summary strong { display: block; font-size: 1.5rem; margin: 6px 0; }
+    .today-summary small { display: block; color: #647588; }
+    #central-health { padding: 10px 14px; border-radius: 10px; }
   </style>
 </head>
 <body data-observer-only="true">
   <main>
     <header>
       <div>
-        <h1>PicoT v2 — Canonical Pipeline</h1>
-        <p class="muted">Live status van de volledige PicoT-pipeline.</p>
+        <h1>PicoT</h1>
+        <p class="muted">Energie in overzicht · vandaag en morgen</p>
       </div>
       <div id="execution-mode" class="observer">Status wordt geladen</div>
     </header>
@@ -1012,14 +1031,8 @@ DASHBOARD_HTML = """<!doctype html>
     <p id="dashboard-status" class="planning-attention" role="status" hidden></p>
 
     <nav class="dashboard-tabs" aria-label="Dashboardweergave">
-      <button
-        class="tab-button" type="button" data-tab="overview"
-        aria-selected="true"
-      >Overzicht</button>
-      <button
-        class="tab-button" type="button" data-tab="planning"
-        aria-selected="false"
-      >Dagplanning</button>
+      <button class="tab-button" type="button" data-tab="planning"
+        aria-selected="true">Vandaag</button>
       <button
         class="tab-button" type="button" data-tab="history"
         aria-selected="false"
@@ -1028,6 +1041,10 @@ DASHBOARD_HTML = """<!doctype html>
         class="tab-button" type="button" data-tab="financial"
         aria-selected="false"
       >Financieel</button>
+    </nav>
+    <details id="dashboard-tools" class="dashboard-tools">
+      <summary>Instellingen & diagnose</summary>
+      <nav aria-label="Aanvullende weergaven">
       <button
         class="tab-button" type="button" data-tab="strategy"
         aria-selected="false"
@@ -1040,7 +1057,10 @@ DASHBOARD_HTML = """<!doctype html>
         class="tab-button" type="button" data-tab="technical"
         aria-selected="false"
       >Techniek</button>
-    </nav>
+      </nav>
+    </details>
+    <p id="central-health" class="status" role="status">Status nog onbekend</p>
+    <div id="today-summary" class="today-summary" aria-live="polite"></div>
     <section
       id="tab-overview" class="tab-panel" data-tab-panel="overview"
     ></section>
@@ -1060,6 +1080,10 @@ DASHBOARD_HTML = """<!doctype html>
         Kalenderhistorie wordt opgebouwd…
       </section>
       <h2>Schakelhistorie batterijmodus</h2>
+      <label>Periode <select id="switch-history-period">
+        <option value="today">Vandaag</option>
+        <option value="all">Meer dagen · beschikbare historie</option>
+      </select></label>
       <section
         id="storage-mode-transition-history"
         class="timeline-panel"
@@ -1410,6 +1434,29 @@ DASHBOARD_HTML = """<!doctype html>
       });
     }
 
+    function socQuarterSlots(startsAt, endsAt, history, now) {
+      const points = (Array.isArray(history.points) ? history.points : [])
+        .filter(point => Number.isFinite(Date.parse(point.at)))
+        .slice().sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+      const observedEnd = history.status === "unavailable"
+        ? NaN : Math.min(now, Date.parse(history.ends_at));
+      const slots = [];
+      let index = -1;
+      for (let start = startsAt; start < endsAt; start += 900000) {
+        const end = Math.min(start + 900000, endsAt);
+        const sampleAt = Math.min(end, now);
+        while (index + 1 < points.length && Date.parse(points[index + 1].at) <= sampleAt) {
+          index += 1;
+        }
+        const raw = points[index]?.soc_percent;
+        const value = typeof raw === "number" ? raw : NaN;
+        slots.push({start, end, sampleAt, value:
+          start < now && sampleAt <= observedEnd && Number.isFinite(value) &&
+          value >= 0 && value <= 100 ? value : null});
+      }
+      return slots;
+    }
+
     function renderPriceTimeline(
       timeline,
       capturedAt,
@@ -1478,7 +1525,13 @@ DASHBOARD_HTML = """<!doctype html>
         ? "Arcering: latere aanpassingen ten opzichte van het oorspronkelijke plan, " +
           "inclusief handel."
         : "Oorspronkelijk plan niet beschikbaar; verschillen worden niet gearceerd.";
-      container.appendChild(referenceNote);
+      const plannerDetails = document.createElement("details");
+      plannerDetails.id = "price-planner-details";
+      plannerDetails.className = "planner-details";
+      const plannerSummary = document.createElement("summary");
+      plannerSummary.textContent = "Planning en wijzigingen toelichten";
+      plannerDetails.append(plannerSummary, referenceNote);
+      container.appendChild(plannerDetails);
 
       if (plannerWindows.length) {
         const summary = document.createElement("div");
@@ -1493,7 +1546,7 @@ DASHBOARD_HTML = """<!doctype html>
           ].join(": ");
           summary.appendChild(chip);
         }
-        container.appendChild(summary);
+        plannerDetails.appendChild(summary);
       }
 
       const width = 1280;
@@ -1523,8 +1576,51 @@ DASHBOARD_HTML = """<!doctype html>
         margin.top +
         ((maximum - value) / (maximum - minimum)) *
           plotHeight;
-      const socYPosition = (value) =>
-        margin.top + 10 + ((100 - value) / 100) * (plotHeight - 20);
+      const socHeight = 170;
+      const socTop = 24;
+      const socPlotHeight = plotHeight / 3;
+      const socYPosition = value => socTop + (1 - value / 100) * socPlotHeight;
+      const socSvg = createSvgElement("svg", {
+        class: "price-chart soc-chart", viewBox: `0 0 ${width} ${socHeight}`,
+        role: "img", "aria-label": "Batterijvulling: groene metingen en gele verwachting"
+      });
+      for (const value of [0, 50, 100]) {
+        appendSvgText(socSvg, `${value}%`, {
+          x: margin.left - 8, y: socYPosition(value) + 4, "text-anchor": "end"
+        }, "axis-label");
+      }
+      const slots = socQuarterSlots(startsAtMs, endsAtMs, actualSoc, nowMs);
+      for (const slot of slots) {
+        const x = xPosition(slot.start) + .6;
+        const barWidth = Math.max(.2, xPosition(slot.end) - xPosition(slot.start) - 1.2);
+        if (slot.value !== null) {
+          socSvg.appendChild(createSvgElement("rect", {
+            class: "soc-quarter-fill", x, width: barWidth,
+            y: socYPosition(slot.value), height: socYPosition(0) - socYPosition(slot.value)
+          }));
+        }
+        const outline = createSvgElement("rect", {
+          class: "soc-quarter-outline", x, y: socYPosition(100),
+          width: barWidth, height: socPlotHeight
+        });
+        const title = createSvgElement("title", {});
+        title.textContent = `${formatChartTime(slot.start, timezone)} · ` +
+          (slot.value === null ? "Geen meting" : `Gemeten SOC ${slot.value}%`);
+        outline.appendChild(title);
+        socSvg.appendChild(outline);
+      }
+      for (let hour = 0; hour <= displayHours; hour += 6) {
+        const timestamp = startsAtMs + hour * 3600000;
+        appendSvgText(socSvg, formatChartTime(timestamp, timezone), {
+          x: xPosition(timestamp), y: socHeight - 12, "text-anchor": "middle"
+        }, "axis-label");
+      }
+      if (nowMs >= startsAtMs && nowMs <= endsAtMs) {
+        socSvg.appendChild(createSvgElement("line", {
+          class: "now-line", x1: xPosition(nowMs), x2: xPosition(nowMs),
+          y1: socTop, y2: socYPosition(0)
+        }));
+      }
 
       const scroll = document.createElement("div");
       scroll.className = "price-chart-scroll";
@@ -1590,16 +1686,6 @@ DASHBOARD_HTML = """<!doctype html>
             x: margin.left - 8,
             y: y + 4,
             "text-anchor": "end"
-          },
-          "axis-label"
-        );
-        appendSvgText(
-          svg,
-          `${100 - index * 25}%`,
-          {
-            x: width - margin.right + 8,
-            y: socYPosition(100 - index * 25) + 4,
-            "text-anchor": "start"
           },
           "axis-label"
         );
@@ -1737,7 +1823,8 @@ DASHBOARD_HTML = """<!doctype html>
       const visibleSoc = socTimeline.filter((point) => {
         const timestamp = new Date(point.at).getTime();
         const soc = Number(point.soc_percent);
-        return Number.isFinite(timestamp) && Number.isFinite(soc) &&
+        return Number.isFinite(timestamp) && point.soc_percent !== null &&
+          point.soc_percent !== undefined && Number.isFinite(soc) && soc >= 0 && soc <= 100 &&
           timestamp >= startsAtMs && timestamp <= endsAtMs;
       });
       for (let index = 1; index < visibleSoc.length; index += 1) {
@@ -1753,51 +1840,16 @@ DASHBOARD_HTML = """<!doctype html>
             const title = createSvgElement("title", {});
             title.textContent = `Nieuw plan · ${formatTimestamp(current.at)}`;
             marker.appendChild(title);
-            svg.appendChild(marker);
+            socSvg.appendChild(marker);
           }
           continue;
         }
-        svg.appendChild(createSvgElement("line", {
+        socSvg.appendChild(createSvgElement("line", {
           class: "soc-line soc-projected",
           x1: xPosition(new Date(previous.at).getTime()),
           y1: socYPosition(Number(previous.soc_percent)),
           x2: xPosition(new Date(current.at).getTime()),
           y2: socYPosition(Number(current.soc_percent))
-        }));
-      }
-      if (visibleSoc.length) {
-        const actual = visibleSoc[0];
-        svg.appendChild(createSvgElement("circle", {
-          class: "soc-point",
-          cx: xPosition(new Date(actual.at).getTime()),
-          cy: socYPosition(Number(actual.soc_percent)),
-          r: 5
-        }));
-      }
-
-      const measured = Array.isArray(actualSoc.points) ? [...actualSoc.points] : [];
-      const observedEnd = Math.min(nowMs, new Date(actualSoc.ends_at).getTime(), endsAtMs);
-      if (measured.length && Number.isFinite(observedEnd) &&
-          observedEnd > new Date(measured[measured.length - 1].at).getTime()) {
-        measured.push({...measured[measured.length - 1], at: new Date(observedEnd).toISOString()});
-      }
-      for (let index = 1; index < measured.length; index += 1) {
-        const a = measured[index - 1], b = measured[index];
-        const startAt = new Date(a.at).getTime(), endAt = new Date(b.at).getTime();
-        if (a.soc_percent === null || a.soc_percent === undefined ||
-            !Number.isFinite(Number(a.soc_percent)) || a.soc_percent < 0 || a.soc_percent > 100 ||
-            !Number.isFinite(startAt) || !Number.isFinite(endAt) || endAt <= startAt ||
-            endAt < startsAtMs || startAt > observedEnd) continue;
-        const x1 = xPosition(Math.max(startsAtMs, startAt));
-        const x2 = xPosition(Math.min(observedEnd, endAt));
-        if (x2 < x1) continue;
-        const y1 = socYPosition(Number(a.soc_percent));
-        const validNext = b.soc_percent !== null && b.soc_percent !== undefined &&
-          Number.isFinite(Number(b.soc_percent)) && b.soc_percent >= 0 && b.soc_percent <= 100;
-        const y2 = validNext ? socYPosition(Number(b.soc_percent)) : y1;
-        svg.appendChild(createSvgElement("path", {
-          class: "soc-line soc-actual", d: `M ${x1} ${y1} H ${x2}` +
-            (endAt <= observedEnd && validNext ? ` V ${y2}` : "")
         }));
       }
       if (actualSoc.ends_at || actualSoc.status === "unavailable") {
@@ -1870,7 +1922,14 @@ DASHBOARD_HTML = """<!doctype html>
       }
 
       scroll.appendChild(svg);
-      container.append(scroll, detail);
+      const socHeading = document.createElement("h3");
+      socHeading.textContent = "Batterijvulling · kwartierstaven · 0–100%";
+      scroll.append(socHeading, socSvg);
+      const socNote = document.createElement("p");
+      socNote.className = "muted";
+      socNote.textContent = "Groen: gemeten SOC aan het kwartiereinde (lopend kwartier: nu). " +
+        "Geel: verwachting. Leeg: nog geen meting; meetgaten worden niet aangevuld.";
+      container.append(scroll, socNote, detail);
     }
 
     function displayValue(value) {
@@ -2999,6 +3058,10 @@ DASHBOARD_HTML = """<!doctype html>
     function renderPipelineHealth(health) {
       const container = element("pipeline-health");
       const healthy = health?.healthy === true;
+      const central = element("central-health");
+      central.dataset.health = healthy ? "healthy" : "fault";
+      central.textContent = healthy ? "PicoT · pipeline in orde" :
+        health?.summary_nl ?? "PicoT · status nog onbekend";
       container.dataset.health = healthy ? "healthy" : "fault";
       container.textContent = health?.summary_nl ??
         "De gezondheid van de pipeline is nog niet bekend.";
@@ -3419,6 +3482,11 @@ DASHBOARD_HTML = """<!doctype html>
       const manualOverrideActive =
         item?.attributes?.manual_override_active === true;
       resetButton.hidden = !manualOverrideActive;
+      if (manualOverrideActive) {
+        element("central-health").dataset.health = "fault";
+        element("central-health").textContent =
+          "PicoT · handmatige batterij-instelling actief; zie Instellingen & diagnose";
+      }
       result.textContent = manualOverrideActive
         ? "Een handmatige batterij-instelling blokkeert PicoT."
         : "Geen actieve handmatige blokkade.";
@@ -3895,11 +3963,12 @@ DASHBOARD_HTML = """<!doctype html>
       panel.appendChild(node);
     }
 
-    function activateTab(tabName) {
+    function activateTab(tabName, revealTools = true) {
       const available = Array.from(
         document.querySelectorAll("[data-tab-panel]")
       ).map((panel) => panel.dataset.tabPanel);
-      const selected = available.includes(tabName) ? tabName : "overview";
+      const requested = tabName === "overview" ? "planning" : tabName;
+      const selected = available.includes(requested) ? requested : "planning";
       document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
         panel.hidden = panel.dataset.tabPanel !== selected;
       });
@@ -3910,10 +3979,14 @@ DASHBOARD_HTML = """<!doctype html>
         );
       });
       localStorage.setItem(ACTIVE_TAB_KEY, selected);
-      if (selected === "history") loadHouseholdCalendar();
+      if (revealTools && ["strategy", "devices", "technical"].includes(selected)) {
+        element("dashboard-tools").open = true;
+      }
+      if (selected === "history" && !calendarLoaded) loadHouseholdCalendar();
     }
 
     let calendarLoading = false;
+    let calendarLoaded = false;
     async function loadHouseholdCalendar() {
       if (calendarLoading || element("tab-history").hidden) return;
       calendarLoading = true;
@@ -3922,6 +3995,8 @@ DASHBOARD_HTML = """<!doctype html>
         const response = await fetch("api/household-calendar", { cache: "no-store" });
         if (!response.ok) throw new Error("Kalenderoverzicht tijdelijk niet beschikbaar.");
         const report = await response.json();
+        calendarLoaded = true;
+        const previousDetailsOpen = target.querySelector("details")?.open ?? false;
         if (report.status !== "ready") {
           target.textContent = report.status === "collecting"
             ? "Kalenderhistorie wordt opgebouwd. Na installatie start de aanvulling automatisch."
@@ -3990,6 +4065,7 @@ DASHBOARD_HTML = """<!doctype html>
             !d.closed ? "Dag loopt nog" :
               d.usable_for_profile ? "Bruikbaar" : "Onvoldoende dekking"]));
         details.append(target.lastElementChild);
+        details.open = previousDetailsOpen;
       } catch (error) {
         target.textContent = error.message;
       } finally {
@@ -3998,26 +4074,74 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function initializeTabs() {
-      const overview = element("tab-overview");
-      overview.append(
-        document.querySelector(".metadata"),
-        element("status"),
-        element("storage-mode-override")
-      );
-      movePanelContent("zendure-now", "overview");
+      const technical = element("tab-technical");
+      technical.append(document.querySelector(".metadata"), element("status"));
+      movePanelContent("zendure-now", "technical");
+      element("tab-planning").prepend(element("today-summary"));
       movePanelContent("price-timeline", "planning");
-      movePanelContent("planning-status", "planning");
-      movePanelContent("plan-explanation", "planning");
+      movePanelContent("pv-forecast-actual-chart", "planning");
       movePanelContent("storage-energy-source-needs", "planning");
-      movePanelContent("pv-energy-timeline", "planning");
-      movePanelContent("household-load-forecast", "planning");
+      movePanelContent("plan-explanation", "planning");
+      movePanelContent("planning-status", "technical");
+      movePanelContent("pv-energy-timeline", "technical");
+      movePanelContent("household-load-forecast", "technical");
       movePanelContent("sources", "technical");
       movePanelContent("pipeline-health", "technical");
       movePanelContent("pipeline", "technical", false);
+      movePanelContent("planning-reset", "technical", false);
+      movePanelContent("storage-mode-override", "technical", false);
+      const history = element("tab-history");
+      const power = element("power-history-chart");
+      const selfUse = element("self-consumption-history-chart");
+      history.prepend(power.previousElementSibling, power,
+        selfUse.previousElementSibling, selfUse);
+      for (const [id, label] of [["household-calendar-history", "Verbruik vergelijken"],
+        ["planning-incident-history", "Incidenten en diagnose"]]) {
+        const node = element(id);
+        const section = id === "planning-incident-history" ? node.parentElement : node;
+        const introduction = section.previousElementSibling?.tagName === "P"
+          ? section.previousElementSibling : null;
+        const heading = (introduction ?? section).previousElementSibling;
+        const disclosure = document.createElement("details");
+        disclosure.id = id + "-disclosure";
+        const summary = document.createElement("summary");
+        summary.textContent = label;
+        disclosure.append(summary);
+        if (heading?.tagName === "H2") disclosure.append(heading);
+        if (introduction) disclosure.append(introduction);
+        disclosure.append(section);
+        history.append(disclosure);
+      }
+      element("switch-history-period").addEventListener("change", () =>
+        renderStorageModeTransitionHistory(lastSwitchEvents));
       document.querySelectorAll(".tab-button").forEach((button) => {
         button.addEventListener("click", () => activateTab(button.dataset.tab));
       });
-      activateTab(localStorage.getItem(ACTIVE_TAB_KEY) ?? "overview");
+      activateTab(localStorage.getItem(ACTIVE_TAB_KEY) ?? "planning");
+    }
+
+    function captureDashboardFocus() {
+      const node = document.activeElement;
+      if (!node || !["SUMMARY", "BUTTON", "A", "INPUT", "SELECT", "TEXTAREA"]
+        .includes(node.tagName)) return null;
+      return {
+        node, id: node.id, tag: node.tagName,
+        containerId: node.parentElement?.closest("[id]")?.id,
+        label: node.getAttribute("aria-label") ?? node.textContent
+      };
+    }
+
+    function restoreDashboardFocus(saved) {
+      if (!saved || saved.node.isConnected) return;
+      const active = document.activeElement;
+      if (active && active.tagName !== "BODY" && active !== saved.node) return;
+      const matches = Array.from(document.querySelectorAll(
+        "summary, button, a[href], input, select, textarea"
+      )).filter(node => node.tagName === saved.tag && !node.disabled &&
+        !node.closest?.("[hidden]") && (saved.id ? node.id === saved.id :
+          saved.containerId && node.parentElement?.closest("[id]")?.id === saved.containerId &&
+          (node.getAttribute("aria-label") ?? node.textContent) === saved.label));
+      if (matches.length === 1) matches[0].focus({preventScroll: true});
     }
 
     function captureDashboardState() {
@@ -4051,7 +4175,12 @@ DASHBOARD_HTML = """<!doctype html>
         left: node.scrollLeft,
         top: node.scrollTop
       }));
+      const openDisclosures = Object.fromEntries(Array.from(
+        document.querySelectorAll("details[id]")
+      ).map(node => [node.id, node.open]));
       return {
+        focus: captureDashboardFocus(),
+        openDisclosures,
         openStageCards,
         openTechnicalDetails,
         openTechnicalDetailsByKey,
@@ -4068,6 +4197,11 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function restoreDashboardState(state) {
+      document.querySelectorAll("details[id]").forEach(node => {
+        if (Object.hasOwn(state.openDisclosures ?? {}, node.id)) {
+          node.open = state.openDisclosures[node.id];
+        }
+      });
       Array.from(
         document.querySelectorAll("details.stage-card")
       ).forEach((details, index) => {
@@ -4106,23 +4240,34 @@ DASHBOARD_HTML = """<!doctype html>
       if (priceDetail && state.selectedPriceDetail) {
         priceDetail.textContent = state.selectedPriceDetail;
       }
-      activateTab(state.activeTab ?? "overview");
+      activateTab(state.activeTab ?? "planning", false);
+      restoreDashboardFocus(state.focus);
       window.scrollTo(state.windowScrollX, state.windowScrollY);
     }
 
     function shouldDeferRenderForSelection() {
+      if (document.activeElement?.matches("input, select, textarea")) return true;
       const selection = window.getSelection();
       return Boolean(
         selection && !selection.isCollapsed && selection.toString()
       );
     }
 
+    let lastSwitchEvents = [];
+    function switchHistoryEvents(events, period, today = financialDate()) {
+      return [...events].filter(event => period === "all" ||
+        (Number.isFinite(Date.parse(event.occurred_at)) &&
+          financialDate(new Date(event.occurred_at)) === today));
+    }
+
     function renderStorageModeTransitionHistory(events) {
+      lastSwitchEvents = Array.isArray(events) ? events : [];
+      events = switchHistoryEvents(lastSwitchEvents, element("switch-history-period").value);
       const container = element("storage-mode-transition-history");
       container.replaceChildren();
       if (!Array.isArray(events) || events.length === 0) {
         container.textContent =
-          "Nog geen door PicoT uitgevoerde moduswissels vastgelegd.";
+          "Geen door PicoT uitgevoerde moduswissels in deze periode.";
         return;
       }
       const table = document.createElement("table");
@@ -5075,7 +5220,7 @@ DASHBOARD_HTML = """<!doctype html>
 
     function renderUserRules(rules) {
       const form = element("user-rules-form");
-      if (form.contains(document.activeElement)) return;
+      if (form.dataset.dirty === "true" || form.contains(document.activeElement)) return;
       element("rule-preserve-pv").checked =
         rules.preserve_pv_during_grid_charge !== false;
       element("rule-trading-soc").value = Number.isFinite(
@@ -5095,6 +5240,9 @@ DASHBOARD_HTML = """<!doctype html>
       event.preventDefault();
       const status = element("user-rules-status");
       const button = element("save-user-rules");
+      if (button.disabled) return;
+      const form = element("user-rules-form");
+      const submittedRevision = form.dataset.editRevision ?? "0";
       const maximumTradingSoc = Number(element("rule-trading-soc").value);
       if (!Number.isFinite(maximumTradingSoc) || maximumTradingSoc < 0 || maximumTradingSoc > 100) {
         status.textContent = "Kies een waarde tussen 0 en 100%.";
@@ -5119,8 +5267,14 @@ DASHBOARD_HTML = """<!doctype html>
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const result = await response.json();
-        renderUserRules(result.user_rules ?? {});
-        status.textContent = "Regels opgeslagen; lopende opdrachten blijven behouden.";
+        if ((form.dataset.editRevision ?? "0") === submittedRevision) {
+          form.dataset.dirty = "false";
+          renderUserRules(result.user_rules ?? {});
+          status.textContent = "Regels opgeslagen; lopende opdrachten blijven behouden.";
+        } else {
+          status.textContent = "Verstuurde regels opgeslagen. Je nieuwe wijzigingen zijn " +
+            "nog niet opgeslagen.";
+        }
       } catch (error) {
         status.textContent = `Opslaan mislukt: ${error.message}`;
       } finally {
@@ -5255,8 +5409,36 @@ DASHBOARD_HTML = """<!doctype html>
       notice.textContent = status?.message_nl ?? "";
     }
 
+    function renderTodaySummary(view) {
+      const target = element("today-summary");
+      target.replaceChildren();
+      const actual = view.grid_charge_review?.actual_soc ?? {};
+      const last = (actual.points ?? []).filter(p => Date.parse(p.at) <= Date.now()).at(-1);
+      const fresh = actual.ends_at && Date.now() - Date.parse(actual.ends_at) <= 900000 &&
+        Date.parse(actual.ends_at) <= Date.now() && actual.status !== "unavailable";
+      const rawSoc = last?.soc_percent;
+      const soc = fresh && typeof rawSoc === "number" && Number.isFinite(rawSoc) &&
+        rawSoc >= 0 && rawSoc <= 100 ? rawSoc : null;
+      const price = (view.price_timeline?.points ?? []).find(p =>
+        Date.parse(p.starts_at) <= Date.now() && Date.parse(p.ends_at) > Date.now());
+      for (const [label, value, note] of [
+        ["Zendure", soc == null ? "—" : `${formatDutchNumber(soc)}%`,
+          soc == null ? "Geen actuele SOC-meting" : "Gemeten batterijvulling"],
+        ["Actieve modus", view.zendure_now?.active_mode ?? "—", "Laatst waargenomen modus"],
+        ["Stroomprijs nu", price?.value_eur_per_kwh == null ? "—" :
+          formatPrice(price.value_eur_per_kwh), "Actuele inkoopprijs"]
+      ]) {
+        const card = document.createElement("div"); card.className = "metric";
+        const title = document.createElement("span"); title.textContent = label;
+        const amount = document.createElement("strong"); amount.textContent = value;
+        const caption = document.createElement("small"); caption.textContent = note;
+        card.append(title, amount, caption); target.append(card);
+      }
+    }
+
     function renderView(view) {
       const dashboardState = captureDashboardState();
+      renderTodaySummary(view);
       renderDashboardStatus(view.dashboard_status);
       renderPlanningRecalculation(view.planning_recalculation);
       element("version").textContent = displayValue(view.picot_version);
@@ -5359,7 +5541,7 @@ DASHBOARD_HTML = """<!doctype html>
         pendingView = view;
         status.dataset.state = "ready";
         status.textContent =
-          "Realtime · nieuwe data wacht tot de selectie is afgerond";
+          "Realtime · nieuwe data wacht tot invoer of selectie is afgerond";
         return;
       }
       pendingView = null;
@@ -5373,6 +5555,8 @@ DASHBOARD_HTML = """<!doctype html>
       try {
         const response = await fetch("api/view", { cache: "no-store" });
         if (response.status === 503) {
+          element("central-health").dataset.health = "fault";
+          element("central-health").textContent = "PicoT · wachten op actuele gegevens";
           status.dataset.state = "waiting";
           status.textContent = "Wachten op de eerste pipeline-run…";
           return false;
@@ -5383,6 +5567,8 @@ DASHBOARD_HTML = """<!doctype html>
       } catch (error) {
         status.dataset.state = "error";
         status.textContent = `Dashboarddata niet beschikbaar: ${error.message}`;
+        element("central-health").dataset.health = "fault";
+        element("central-health").textContent = "PicoT · dashboardverbinding niet beschikbaar";
         return false;
       }
     }
@@ -5405,18 +5591,29 @@ DASHBOARD_HTML = """<!doctype html>
           status.dataset.state = "error";
           status.textContent =
             `Realtime verbinding verbroken: ${error.message}; opnieuw verbinden…`;
+          element("central-health").dataset.health = "fault";
+          element("central-health").textContent = "PicoT · realtime verbinding onderbroken";
           await new Promise((resolve) => setTimeout(resolve, 5000));
         }
       }
     }
 
-    document.addEventListener("selectionchange", () => {
+    function flushPendingView() {
       if (!shouldDeferRenderForSelection() && pendingView !== null) {
         const newestView = pendingView;
         pendingView = null;
-        renderView(newestView);
+        applyView(newestView);
       }
-    });
+    }
+    document.addEventListener("selectionchange", flushPendingView);
+    document.addEventListener("focusout", () => setTimeout(flushPendingView, 0));
+    function markUserRulesEdited() {
+      const form = element("user-rules-form");
+      form.dataset.dirty = "true";
+      form.dataset.editRevision = String(Number(form.dataset.editRevision ?? 0) + 1);
+    }
+    element("user-rules-form").addEventListener("input", markUserRulesEdited);
+    element("user-rules-form").addEventListener("change", markUserRulesEdited);
 
     element("reset-storage-mode-override").addEventListener(
       "click",

@@ -114,7 +114,8 @@ def test_web_server_exposes_auto_refreshing_read_only_dashboard() -> None:
     assert "api/view/updates?revision=" in html
     assert "setInterval(loadView, 5000)" not in html
     assert "setInterval(loadView, 60000)" in html
-    assert 'data-tab="overview"' in html
+    assert '>Vandaag</button>' in html
+    assert 'id="dashboard-tools"' in html
     assert 'data-tab="planning"' in html
     assert 'data-tab="history"' in html
     assert 'data-tab="strategy"' in html

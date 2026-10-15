@@ -881,7 +881,8 @@ def test_price_chart_has_room_for_soc_and_one_plan_lane() -> None:
     assert "const height = 430;" in DASHBOARD_HTML
     assert "bottom: 76" in DASHBOARD_HTML
     assert "y: height - margin.bottom + 14" in DASHBOARD_HTML
-    assert "(plotHeight - 20)" in DASHBOARD_HTML
+    assert "const socPlotHeight = plotHeight / 3;" in DASHBOARD_HTML
+    assert 'class: "price-chart soc-chart"' in DASHBOARD_HTML
 
 
 def test_dashboard_preserves_interaction_state_during_refresh() -> None:
@@ -917,7 +918,7 @@ def test_dashboard_preserves_active_tab_during_realtime_updates() -> None:
     assert "activateTab" in DASHBOARD_HTML
     assert "ACTIVE_TAB_KEY" in DASHBOARD_HTML
     assert "activeTab:" in DASHBOARD_HTML
-    assert 'activateTab(state.activeTab ?? "overview")' in DASHBOARD_HTML
+    assert 'activateTab(state.activeTab ?? "planning", false)' in DASHBOARD_HTML
 
 def test_web_view_store_overlays_fast_grid_power_without_planner_run() -> None:
     store = WebViewStore()

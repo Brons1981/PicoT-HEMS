@@ -2,6 +2,21 @@
 
 Deze add-on draait de eerste begrensde PicoT-validatie binnen Home Assistant OS.
 
+## Dashboard vanaf dev.298
+
+Vandaag bevat de prijsplanning voor vandaag en morgen, met daaronder de
+batterijvulling per kwartier. Groen toont gemeten SOC aan het kwartiereinde
+(bij het lopende kwartier: nu); geel toont de bestaande verwachting. Toekomstige
+kwartieren en ontbrekende metingen houden een lege omlijning. Solcast staat ook
+op Vandaag. Historie toont energiestromen, zelfverbruik en standaard de
+schakelingen van vandaag; meer beschikbare dagen zijn apart te kiezen.
+
+Financieel behoudt dezelfde berekeningen en historische bedragen. Techniek,
+Strategie en Apparaten blijven bereikbaar via Instellingen & diagnose.
+Bij invoer of tekstselectie wacht de weergave met verversen tot je klaar bent.
+Nieuwere invoer tijdens opslaan blijft staan als nog niet opgeslagen.
+Open toelichtingen, tabkeuze en toetsenbordfocus blijven behouden bij verversen.
+
 ## Eerste test
 
 Laat `mode` op `dry_run` staan. Controleer daarna in de add-onlogs of:

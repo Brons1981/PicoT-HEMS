@@ -2308,14 +2308,10 @@ def _execute_planning_bundle(
             run = canonical_execution_runtime.apply_committed(run, observed)
         else:
             run = canonical_execution_runtime.apply(run)
-        if runtime_monitor is not None:
-            _observe_execution_status(
-                runtime_monitor, status=run.vendor_result.status,
-                source_reference=(run.execution_plan_set.plans[0].plan_id
-                                  if run.execution_plan_set.plans else "committed-boundary"),
-                observed_at=execution_observed_at,
-                observation_id=f"execution-result:{run.planning_input.run_id}",
-            )
+        # The result exists only after apply returns. Cooperative checkpoints
+        # may already have observed later snapshots while this run was planning.
+        # Keep input/evidence timestamps intact, but do not backdate the result.
+        execution_result_at = datetime.now(UTC)
         if (
             run.vendor_result.status in {"dispatched", "already_active"}
             and run.vendor_result.planned_vendor_mode is not None
@@ -2326,6 +2322,8 @@ def _execute_planning_bundle(
                 f"{run.planning_input.run_id}:"
                 f"{run.vendor_result.command_id or 'already-active'}"
             )
+            # Persist our successful command before notifying the monitor. A
+            # subsequent failure must not turn it into a manual override on restart.
             provenance = storage_mode_provenance_runtime.record_planner_application(
                 run.vendor_result.planned_vendor_mode,
                 applied_at=execution_observed_at,
@@ -2350,6 +2348,14 @@ def _execute_planning_bundle(
                     application_id=application_id,
                     occurred_at=execution_observed_at,
                 )
+        if runtime_monitor is not None:
+            _observe_execution_status(
+                runtime_monitor, status=run.vendor_result.status,
+                source_reference=(run.execution_plan_set.plans[0].plan_id
+                                  if run.execution_plan_set.plans else "committed-boundary"),
+                observed_at=execution_result_at,
+                observation_id=f"execution-result:{run.planning_input.run_id}",
+            )
     if planning_incident_history is not None:
         try:
             planning_incident_history.record(

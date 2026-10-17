@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.299
+
+- Verhelpt een crash wanneer uitvoeringsresultaten na tussentijdse runtime-observaties worden verwerkt.
+- Slaat succesvolle eigen opdrachten op vóór monitorverwerking, zodat een daaropvolgende fout ze na herstart niet als handmatige wijziging aanmerkt.
+- Behoudt bestaande EV-, planning- en fallbackregels. Een reeds actieve handmatige blokkering wordt niet automatisch vrijgegeven.
+
 ## 2.0.0-dev.298
 
 - Licht dashboard met Vandaag, Historie en Financieel; overige schermen via Instellingen & diagnose.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0-dev.6
+
+- Start een EV-sessie met Nu laden, zonder voorafgaande laadproef of BMW-aansluitdetectie.
+- Bewaar een vast laadvermogen en maximale laadduur voor volgende sessies. De startknop bevestigt dat de auto aangesloten is.
+- Controleer werkelijk laden na inschakelen; toon ontbrekende metingen of niet gestart laden. Behoud herstart, annuleren en handmatig onderbreken/hervatten.
+- HEMS ontvangt de bestaande sessieprognose. Prijsplanning met eindtijd is nog niet toegevoegd.
+
 ## 0.4.0-dev.5
 
 - Diagnose downloaden vanuit Energy Devices: meetgegevens van de laatste 48 uur en blijvend bewaarde status- en terugvalgebeurtenissen.

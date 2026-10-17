@@ -67,6 +67,7 @@ class EVSessionManager:
                     "Annuleer de bestaande EV-sessie vóór het wijzigen van de meetplug"
                 )
             state["resume_verified"] = False
+            state.pop("profile", None)
         state.update(switch_entity=switch_entity, power_entity=power_entity)
         self.save(state)
 
@@ -106,7 +107,51 @@ class EVSessionManager:
             state = self.load()
             session = self.current(state)
             action = payload.get("action")
-            if action == "verify_resume":
+            if action == "save_profile":
+                power = payload.get("expected_power_w")
+                duration = payload.get("expected_duration_seconds")
+                for value in (power, duration):
+                    if (isinstance(value, bool) or not isinstance(value, (int, float))
+                            or not isfinite(value)):
+                        raise ValueError("Vermogen en laadduur moeten geldige getallen zijn")
+                power = float(cast(float, power))
+                duration = float(cast(float, duration))
+                if not 100 <= power <= 3680:
+                    raise ValueError("Laadvermogen moet tussen 100 en 3680 W liggen")
+                if not 60 <= duration <= 24 * 3600:
+                    raise ValueError("Laadduur moet tussen 1 minuut en 24 uur liggen")
+                state["profile"] = {
+                    "expected_power_w": power, "expected_duration_seconds": duration,
+                }
+            elif action == "start_now":
+                if session is not None:
+                    raise ValueError("Er is al een open EV-sessie; hervat of annuleer die eerst")
+                profile = state.get("profile")
+                if not profile:
+                    raise ValueError("Sla eerst het laadprofiel op")
+                now = self.now()
+                power = profile["expected_power_w"]
+                duration = profile["expected_duration_seconds"]
+                energy = power * duration / 3600
+                session = {
+                    "session_id": str(uuid4()), "version": 1, "state": "planned",
+                    "recognized_at": now.isoformat(), "recognition_source": "user_start",
+                    "planned_start": now.isoformat(),
+                    "planned_end": (now + timedelta(seconds=duration)).isoformat(),
+                    "expected_power_w": power, "expected_duration_seconds": duration,
+                    "remaining_energy_wh": energy, "target_energy_wh": energy,
+                    "delivered_energy_wh": 0.0, "planned_delivered_base_wh": 0.0,
+                    "current_power_w": None, "last_measured_at": None, "last_power_w": None,
+                    "measurement_complete": True, "measurement_available": False,
+                    "confirmed": True, "owns_switch": False, "manual_pause": False,
+                    "direct_start_authorized": True, "start_status": "waiting_for_switch",
+                    "error": None, "duration_source": "saved_user_profile",
+                    "energy_source": "integrated_power", "uncertainty": "user_estimate",
+                    "recognition_samples": [],
+                }
+                state["sessions"].append(session)
+                state["sessions"] = state["sessions"][-30:]
+            elif action == "verify_resume":
                 if payload.get("confirmed") is not True:
                     raise ValueError("Bevestig eerst dat de auto na uit/aan werkelijk hervat")
                 state["resume_verified"] = True
@@ -226,23 +271,33 @@ class EVSessionManager:
             if (
                 session is not None
                 and measured_at is not None
+                and session.get("last_measured_at") is not None
                 and measured_at < instant(session["last_measured_at"])
             ):
                 fresh = False
             if session is not None:
+                if session.get("direct_start_authorized") and measured_at is not None:
+                    if (measured_at < instant(session["recognized_at"])
+                            or (switch_changed_at is not None
+                                and measured_at < switch_changed_at)):
+                        fresh = False
+                previous_switch_state = session.get("switch_state")
                 session["switch_state"] = switch_state
                 session["current_power_w"] = power_w if fresh else None
                 session["measurement_available"] = fresh
                 if fresh:
                     assert measured_at is not None and power_w is not None
-                    previous = instant(session["last_measured_at"])
+                    previous = (
+                        instant(session["last_measured_at"])
+                        if session.get("last_measured_at") else measured_at
+                    )
                     elapsed = (measured_at - previous).total_seconds()
                     if 0 < elapsed <= 15:
                         energy = (session["last_power_w"] + power_w) / 2 * elapsed / 3600
                         session["delivered_energy_wh"] += energy
                     elif elapsed > 15:
                         session["measurement_complete"] = False
-                    if elapsed > 0:
+                    if elapsed > 0 or session.get("last_measured_at") is None:
                         session["last_measured_at"] = measured_at.isoformat()
                         session["last_power_w"] = power_w
                     if session.get("confirmed"):
@@ -250,6 +305,9 @@ class EVSessionManager:
                         estimate = session["target_energy_wh"]
                         session["remaining_energy_wh"] = max(0.0, estimate - used)
                     if power_w >= 100:
+                        if session.get("direct_start_authorized"):
+                            session["start_status"] = "charging"
+                            session["charging_observed"] = True
                         session.pop("low_since", None)
                         if elapsed > 0:
                             session["recognition_samples"].append(power_w)
@@ -278,6 +336,24 @@ class EVSessionManager:
                 else:
                     # Never count a missing interval as a continuous low-power end.
                     session.pop("low_since", None)
+                    if session.get("direct_start_authorized") and switch_state == "on":
+                        session["measurement_complete"] = False
+                if session.get("direct_start_authorized"):
+                    if switch_state == "on":
+                        session.setdefault("switch_on_observed_at", now.isoformat())
+                        if not session.get("charging_observed"):
+                            elapsed_on = (
+                                now - instant(session["switch_on_observed_at"])
+                            ).total_seconds()
+                            session["start_status"] = (
+                                "measurement_unavailable" if not fresh else
+                                "charging_not_started" if elapsed_on >= 120 else
+                                "waiting_for_charging"
+                            )
+                    elif (switch_state == "off" and previous_switch_state != "off"
+                          and session.get("switch_on_observed_at")
+                          and session.get("owns_switch") and session.get("command") != "turn_off"):
+                        self.change(session, state="interrupted", manual_pause=True)
                 if switch_state == "off" and session["state"] == "active":
                     self.change(session, state="interrupted")
                     if session.get("owns_switch") and session.get("command") != "turn_off":
@@ -321,7 +397,8 @@ class EVSessionManager:
                                 if session["state"] == "planned":
                                     self.change(session, state="interrupted")
                         elif desired is False or (
-                            state["resume_verified"] and switch_state in {"on", "off"}
+                            (state["resume_verified"] or session.get("direct_start_authorized"))
+                            and switch_state in {"on", "off"}
                         ):
                             last = session.get("last_command_at")
                             if last is None or (now - instant(last)).total_seconds() >= 10:

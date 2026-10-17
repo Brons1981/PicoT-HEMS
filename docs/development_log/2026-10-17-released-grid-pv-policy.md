@@ -36,3 +36,9 @@ Final market-regression suite: 9 passed in 410.64 seconds, including keep/shorte
 Release authorization: Alex requested publication at 19:29 Europe/Amsterdam.
 HEMS 2.0.0-dev.302 will be published via PR and green CI from unchanged main.
 Energy Devices remains 0.4.0-dev.9. Installation and live verification are separate.
+
+Initial release CI: 2213 passed, 1 skipped, one obsolete unconditional-NOM
+expectation in the missing-PV/net-balance pipeline regression. The fixture
+predicts zero PV in the released intervals. Its expected primitive now follows
+V2ADR-064.8, with an added zero-PV assertion; all goal, provenance, running-owner
+and repeat-evidence assertions remain. No production change was needed.

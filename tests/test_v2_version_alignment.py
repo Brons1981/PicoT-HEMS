@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_298() -> None:
-    assert __version__ == "2.0.0-dev.298"
+def test_v2_release_version_is_dev_299() -> None:
+    assert __version__ == "2.0.0-dev.299"
 
 
 def test_mep_has_one_fallback_rte_configuration() -> None:
@@ -173,7 +173,7 @@ def test_v2_addon_exposes_explicit_pv_local_timezone() -> None:
 def test_release_is_a_supervisor_update_from_existing_dev_versions() -> None:
     from awesomeversion import AwesomeVersion
 
-    for installed in ("2.0.0-dev.286", "2.0.0-dev.287", "2.0.0-dev.295", "2.0.0-dev.296"):
+    for installed in ("2.0.0-dev.286", "2.0.0-dev.287", "2.0.0-dev.295", "2.0.0-dev.296", "2.0.0-dev.298"):
         assert AwesomeVersion(__version__) > AwesomeVersion(installed)
 
 

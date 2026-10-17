@@ -219,7 +219,35 @@ class EVSessionManager:
                 state["profile"] = {
                     "expected_power_w": power, "expected_duration_seconds": duration,
                 }
-            elif action == "start_now":
+            elif action in {"start_now", "execute_advice"}:
+                accepted = None
+                request = state.get("charging_request") or {}
+                if action == "execute_advice":
+                    accepted = state.get("charging_advice")
+                    if (session is not None and session.get("accepted_advice")
+                            and session["session_id"] == payload.get("session_id")
+                            and session["accepted_advice"]["generated_at"]
+                            == payload.get("generated_at")):
+                        return self.view()
+                    if (not accepted or request.get("state") != "requested"
+                            or accepted.get("status") not in {"ready", "provisional"}
+                            or any(payload.get(k) != accepted.get(k)
+                                   for k in ("session_id", "request_revision", "generated_at"))
+                            or not 0 <= (self.now() - instant(
+                                accepted["generated_at"])).total_seconds() <= 300
+                            or len(accepted.get("slots", [])) != 1):
+                        raise ValueError("Advies gewijzigd of verlopen; bekijk het actuele advies")
+                    slot = accepted["slots"][0]
+                    start, end = instant(slot["starts_at"]), instant(slot["ends_at"])
+                    duration = (end - start).total_seconds()
+                    energy = request["remaining_energy_wh"]
+                    power = request["fixed_power_w"]
+                    if (end <= self.now() or start < self.now() - timedelta(seconds=60)
+                            or end > instant(request["ready_by"])
+                            or not 60 <= duration <= 86400
+                            or abs(slot["energy_wh"] - energy) > 0.01
+                            or abs(power * duration / 3600 - energy) > 0.01):
+                        raise ValueError("Laadblok niet uitvoerbaar; vraag een actueel advies aan")
                 if session is not None:
                     raise ValueError("Er is al een open EV-sessie; hervat of annuleer die eerst")
                 profile = state.get("profile")
@@ -246,6 +274,21 @@ class EVSessionManager:
                     "energy_source": "integrated_power", "uncertainty": "user_estimate",
                     "recognition_samples": [],
                 }
+                if accepted is not None:
+                    slot = accepted["slots"][0]
+                    start, end = instant(slot["starts_at"]), instant(slot["ends_at"])
+                    session.update(
+                        session_id=request["session_id"],
+                        recognition_source="accepted_hems_advice",
+                        planned_start=start.isoformat(), planned_end=end.isoformat(),
+                        expected_power_w=request["fixed_power_w"],
+                        expected_duration_seconds=(end - start).total_seconds(),
+                        remaining_energy_wh=request["remaining_energy_wh"],
+                        target_energy_wh=request["remaining_energy_wh"],
+                        accepted_advice=accepted, duration_source="hems_advice",
+                        start_status="waiting_for_schedule", ready_by=request["ready_by"],
+                    )
+                    request.update(state="accepted", request_revision=accepted["request_revision"])
                 state["sessions"].append(session)
                 state["sessions"] = state["sessions"][-30:]
             elif action == "verify_resume":
@@ -253,6 +296,8 @@ class EVSessionManager:
                     raise ValueError("Bevestig eerst dat de auto na uit/aan werkelijk hervat")
                 state["resume_verified"] = True
             elif action == "plan":
+                if session is not None and session.get("accepted_advice"):
+                    raise ValueError("Annuleer het vastgezette laadblok voor een nieuwe planning")
                 if session is None or session["session_id"] != payload.get("session_id"):
                     raise ValueError("Herken eerst de aangesloten auto met een meting boven 2000 W")
                 if session["state"] == "active":
@@ -468,13 +513,17 @@ class EVSessionManager:
                     desired = (
                         False
                         if stop
+                        else False
+                        if session.get("accepted_advice") and now < start
                         else True
                         if start <= now < end and not session.get("manual_pause")
                         else None
                     )
                     if desired is not None:
                         if switch_state == ("on" if desired else "off"):
-                            if not desired:
+                            if not desired and not stop:
+                                session["command"] = None
+                            elif not desired:
                                 self.change(
                                     session,
                                     state="cancelled"
@@ -549,5 +598,6 @@ class EVSessionManager:
                 "generated_at": now.isoformat(),
                 "session": session,
                 "recognition": state.get("recognition"),
-                "storage_support_allowed": storage_support_allowed,
+                "storage_support_allowed": storage_support_allowed
+                and not bool(session.get("accepted_advice")),
             }

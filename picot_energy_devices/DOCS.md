@@ -246,7 +246,7 @@ AC-meting. Deze uitbreiding verandert de correctieberekening en drempels niet.
 
 ## EV-laadadvies met eindtijd
 
-Werk HEMS bij naar **2.0.0-dev.300** en Energy Devices naar **0.4.0-dev.7**.
+Werk HEMS bij naar **2.0.0-dev.300** en Energy Devices naar **0.4.0-dev.8**.
 HEMS gebruikt de bestaande optie `energy_device_sessions_enabled`; Energy Devices
 gebruikt `ev_sessions_enabled`. Bestaande configuratie blijft behouden.
 
@@ -263,7 +263,14 @@ Onbekende toekomstige prijzen blijven onbekend: de uitkomst kan voorlopig zijn.
 Dit is geen garantie op een volledig geladen auto of de goedkoopste van alle
 mogelijke starttijden. Bij wijzigen of annuleren vervalt eerder advies.
 
-**Dit is advies: de plug schakelt nog niet automatisch volgens dit tijdvak.**
+Kies **Automatisch uitvoeren** om het getoonde laadblok vast te zetten. Daarmee
+bevestig je dat de auto aangesloten is. De plug blijft uit tot de starttijd en
+stopt op de eindtijd. De planning blijft bewaard na herstart. Annuleer via de
+laadsessie; handmatig uitschakelen tijdens laden pauzeert de uitvoering.
+Een voorlopig advies kan worden vastgezet, maar latere prijzen wijzigen dat
+laadblok niet. Na uitval of pauze kan energie ontbreken; de eindtijd wordt niet
+automatisch verlengd. De resterende kWh zijn een schatting, geen BMW-SOC.
 Gebruik voor direct laden de bestaande knop **Nu laden**.
 De uitwisseling gebruikt `sensor.picot_ev_charging_request` en
 `sensor.picot_ev_charging_advice`; een oud advies wordt als verlopen getoond.
+

@@ -57,7 +57,7 @@ DASHBOARD_HTML = """<!doctype html>
     <p>Sluit de auto aan en druk op Nu laden. Daarmee bevestig je dat de stekker in de auto zit. Energy Devices schakelt de laadplug in en controleert het laadvermogen.</p>
     <button id="ev-now" disabled>Nu laden</button>
     <details><summary>Goedkoop laden voor een eindtijd — laadadvies</summary>
-      <p>HEMS vergelijkt aaneengesloten laadblokken met de bekende prijzen, zonverwachting en het batterijplan. Dit advies schakelt de laadplug nog niet in en reserveert de thuisbatterij voor haar bestaande plan. De laadbehoefte is energie aan de stekker, inclusief laadverlies.</p>
+      <p>HEMS vergelijkt laadblokken met bekende prijzen, zonverwachting en het batterijplan. Kies Automatisch uitvoeren om het getoonde laadblok vast te zetten. Daarmee bevestig je dat de auto aangesloten is. De plug blijft uit tot de starttijd en stopt op de eindtijd. De laadbehoefte is energie aan de stekker, inclusief laadverlies.</p>
       <form id="ev-advice-form">
         <label>Gereed voor (lokale tijd)<input type="datetime-local" id="ev-ready-by" required></label>
         <label>Nog te laden (kWh)<input type="number" id="ev-required-kwh" min="0.01" max="88.32" step="0.01" required></label>
@@ -67,6 +67,7 @@ DASHBOARD_HTML = """<!doctype html>
       <p id="ev-advice-status" aria-live="polite"></p>
       <p id="ev-advice-cost"></p>
       <ul id="ev-advice-slots"></ul>
+      <button id="ev-advice-execute" type="button" disabled>Automatisch uitvoeren</button>
     </details>
     <p id="ev-start-status" aria-live="polite"></p>
     <details><summary>Vast laadprofiel</summary>
@@ -184,7 +185,11 @@ DASHBOARD_HTML = """<!doctype html>
       const labels={ready:"Laadadvies beschikbaar",provisional:"Voorlopig advies: nog niet alle prijzen of plangegevens zijn bekend",blocked:"Nog geen bruikbaar laadadvies",infeasible:"Laadbehoefte niet haalbaar voor deze eindtijd"};
       const reasons={deadline_capacity_insufficient:"Er is te weinig tijd voor de gevraagde energie",known_horizon_has_insufficient_capacity:"Er zijn nog onvoldoende uren met bekende prijzen en plangegevens",retained_battery_plan_unavailable:"Wachten op een actueel batterijplan",retained_battery_plan_requires_repair:"HEMS moet eerst het batterijplan bijwerken",no_placement_preserves_battery_commitments:"Geen passend laadblok gevonden dat het batterijplan behoudt",existing_ev_demand_requires_reconciliation:"Er is al een laadsessie actief"};
       const fresh=advice && Date.now()-new Date(advice.generated_at).getTime()<=300000;
-      el("ev-advice-status").textContent=!pending ? "Geen open adviesaanvraag" : !advice ? "Wachten op HEMS" : !fresh ? "Advies verlopen; wachten op actuele beoordeling door HEMS" : (labels[advice.status]??"Wachten op HEMS")+(reasons[advice.reason] ? `. ${reasons[advice.reason]}` : "")+". Advies; automatisch laden is nog niet actief.";
+      const execute=el("ev-advice-execute");
+      execute.disabled=evBusy || !pending || !fresh || !["ready","provisional"].includes(advice?.status) || advice?.slots?.length!==1;
+      execute.onclick=()=>evChange({action:"execute_advice",session_id:advice.session_id,request_revision:advice.request_revision,generated_at:advice.generated_at});
+      const scheduled=ev.sessions.find(s=>s.session_id===request?.session_id && s.accepted_advice);
+      el("ev-advice-status").textContent=scheduled ? `Vastgezet laadblok: ${new Date(scheduled.planned_start).toLocaleString("nl-NL")} tot ${new Date(scheduled.planned_end).toLocaleString("nl-NL")}. ${scheduled.confirmed ? "Automatische aansturing actief; annuleren kan bij de laadsessie." : "Aansturing beëindigd. Resterend: "+number(scheduled.remaining_energy_wh/1000,"kWh (schatting)")}` : !ev.profile ? "Sla eerst het vaste laadprofiel op." : !pending ? "Geen open adviesaanvraag" : !advice ? "Wachten op HEMS" : !fresh ? "Advies verlopen; wachten op actuele beoordeling door HEMS" : (labels[advice.status]??"Wachten op HEMS")+(reasons[advice.reason] ? `. ${reasons[advice.reason]}` : "")+". Kies Automatisch uitvoeren om dit laadblok vast te zetten; latere prijzen wijzigen dit blok niet.";
       el("ev-advice-cost").textContent=pending && fresh && advice.estimated_incremental_cost_eur!==undefined ? `Geschatte extra kosten: ${number(advice.estimated_incremental_cost_eur,"EUR")}. Beste van de beoordeelde laadblokken; geen garantie dat alle mogelijke starttijden zijn vergeleken.` : "";
       const list=el("ev-advice-slots");list.replaceChildren();
       if(pending && fresh)for(const slot of advice.slots??[]){const li=document.createElement("li");li.textContent=`${new Date(slot.starts_at).toLocaleString("nl-NL")} – ${new Date(slot.ends_at).toLocaleString("nl-NL")}: ${number(slot.energy_wh/1000,"kWh")}`;list.append(li);}

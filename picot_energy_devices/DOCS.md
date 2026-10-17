@@ -90,6 +90,23 @@ nog nodig om firmware, meetvertragingen en HA-scheduling te beoordelen.
 
 ## EV-laadsessies (experimenteel)
 
+### Direct starten met een vast laadprofiel (0.4.0-dev.6)
+
+Open **Vast laadprofiel**, vul het laadvermogen en de maximale laadduur in en sla op.
+Sluit vervolgens de auto aan en druk op **Nu laden**. Hiermee bevestig je zelf dat
+het snoer aangesloten is; vooraf laden of BMW-aansluitdetectie is niet nodig.
+Energy Devices schakelt de gekozen Shelly via HA in en controleert het vermogen.
+De profielduur is een schatting en harde maximale looptijd, geen bewijs van 100% SOC.
+Een gewijzigd profiel geldt pas voor de volgende sessie.
+
+Na twee minuten met de plug aan maar zonder gemeten laadvermogen verschijnt een
+melding. Ontbrekende metingen zijn geen bewijs dat de auto vol is. Een open sessie
+voorkomt dubbel starten. Annuleren schakelt de plug uit; handmatig uitschakelen
+pauzeert de sessie, waarna expliciet hervatten binnen de looptijd mogelijk is.
+Sessie en profiel blijven na herstart bewaard. De prijsplanning met eindtijd volgt
+later; de bestaande handmatige planning hieronder blijft afzonderlijk beschikbaar.
+
+
 ### Optionele lokale Shelly-meetbron
 
 Voor een Shelly Plug S Gen3 die via HA ongeveer iedere minuut rapporteert:

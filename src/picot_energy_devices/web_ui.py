@@ -54,7 +54,20 @@ DASHBOARD_HTML = """<!doctype html>
   <section class="panel" id="ev-panel" hidden>
     <h2>EV-laadtijdlijn</h2>
     <p id="ev-status"></p>
-    <p>Laat de aangesloten auto eerst 30 seconden laden. Zet daarna de plug uit om de sessie te plannen. Test eerst handmatig of de auto na uit/aan hervat.</p>
+    <p>Sluit de auto aan en druk op Nu laden. Daarmee bevestig je dat de stekker in de auto zit. Energy Devices schakelt de laadplug in en controleert het laadvermogen.</p>
+    <button id="ev-now" disabled>Nu laden</button>
+    <p id="ev-start-status" aria-live="polite"></p>
+    <details><summary>Vast laadprofiel</summary>
+      <p>Eenmalig instellen. De laadduur is een schatting en maximale looptijd, geen bewijs dat de accu vol is. Wijzigen geldt voor de volgende sessie.</p>
+      <form id="ev-profile">
+        <label>Laadvermogen (W)<input type="number" id="ev-profile-power" min="100" max="3680" required></label>
+        <label>Laadduur (minuten)<input type="number" id="ev-profile-duration" min="1" max="1440" required></label>
+        <button type="submit">Laadprofiel opslaan</button>
+      </form>
+      <p id="ev-profile-status"></p>
+    </details>
+    <details><summary>Bestaande sessie op een vaste starttijd plannen</summary>
+    <p>Deze handmatige planning gebruikt een al herkende sessie. Test voor uitgesteld hervatten eerst of de auto na uit/aan hervat.</p>
     <button id="ev-verify">Hervatten getest en geslaagd</button>
     <form id="ev-plan">
       <label>Starttijd<input type="datetime-local" id="ev-start" required></label>
@@ -62,6 +75,7 @@ DASHBOARD_HTML = """<!doctype html>
       <label>Duur (minuten)<input type="number" id="ev-duration" min="1" max="1440" required></label>
       <button type="submit">Laadsessie bevestigen</button>
     </form>
+    </details>
     <button id="ev-resume">Onderbroken sessie hervatten</button>
     <button id="ev-cancel">Sessie annuleren</button>
     <div id="ev-timeline"></div>
@@ -125,13 +139,22 @@ DASHBOARD_HTML = """<!doctype html>
       el("metrics").textContent = `${view.catalog.cards?.length ?? 0} kaarten · ${(view.database_size_bytes/1024).toLocaleString("nl-NL",{maximumFractionDigits:0})} kB`;
     }
     let evSession=null;
+    let evBusy=false;
     function renderEV(ev) {
       el("ev-panel").hidden=!ev;
       if(!ev)return;
       evSession=[...ev.sessions].reverse().find(s=>["recognized","planned","active","interrupted"].includes(s.state));
       const labels={recognized:"Herkend",planned:"Gepland",active:"Actief",interrupted:"Onderbroken",completed:"Voltooid",cancelled:"Geannuleerd"};
-      el("ev-status").textContent=evSession ? `${labels[evSession.state]} · ${number(evSession.current_power_w,"W")} · ${number(evSession.delivered_energy_wh,"Wh geleverd")} · ${number(evSession.remaining_energy_wh,"Wh resterend")} · ${number((evSession.remaining_duration_seconds??0)/60,"min resterend (schatting)")}${evSession.error ? " · "+evSession.error : ""}` : `Nog geen herkende sessie · ${ev.recognition?.reason??"wachten op meting"} · ${number(ev.recognition?.power_w,"W")} · meetleeftijd ${number(ev.recognition?.measurement_age_seconds,"s")}`;
+      el("ev-status").textContent=evSession ? `${labels[evSession.state]} · ${number(evSession.current_power_w,"W")} · ${number(evSession.delivered_energy_wh,"Wh geleverd")} · ${number(evSession.remaining_energy_wh,"Wh resterend")} · ${number((evSession.remaining_duration_seconds??0)/60,"min resterend (schatting)")}${evSession.error ? " · "+evSession.error : ""}` : `Geen open laadsessie · ${ev.recognition?.reason??"wachten op meting"} · ${number(ev.recognition?.power_w,"W")} · meetleeftijd ${number(ev.recognition?.measurement_age_seconds,"s")}`;
       el("ev-verify").disabled=ev.resume_verified;
+      el("ev-now").disabled=evBusy || !!evSession || !ev.profile;
+      el("ev-resume").disabled=evBusy || !evSession?.confirmed || !evSession?.manual_pause;
+      el("ev-cancel").disabled=evBusy || !evSession;
+      const startLabels={waiting_for_switch:"Wachten op inschakelen van de laadplug",waiting_for_charging:"Laadplug aan; wachten op laadvermogen",charging_not_started:"Laden niet gestart. Controleer stekker en auto; de sessie blijft beschikbaar.",measurement_unavailable:"Laadvermogen niet beschikbaar; laadstart niet bevestigd",charging:"Laden gemeten"};
+      el("ev-start-status").textContent=evSession?.manual_pause ? "Handmatig onderbroken" : startLabels[evSession?.start_status]??"";
+      el("ev-profile-status").textContent=ev.profile ? `${number(ev.profile.expected_power_w,"W")} / ${number(ev.profile.expected_duration_seconds/60,"min")}` : "Sla eerst je vaste laadvermogen en laadduur op.";
+      if(ev.profile && !el("ev-profile-power").value)el("ev-profile-power").value=ev.profile.expected_power_w;
+      if(ev.profile && !el("ev-profile-duration").value)el("ev-profile-duration").value=ev.profile.expected_duration_seconds/60;
       if(evSession && document.activeElement!==el("ev-power") && !el("ev-power").value)el("ev-power").value=Math.round(evSession.expected_power_w);
       if(evSession?.expected_duration_seconds && !el("ev-duration").value)el("ev-duration").value=Math.round(evSession.expected_duration_seconds/60);
       if(evSession?.planned_start && !el("ev-start").value){const d=new Date(evSession.planned_start);el("ev-start").value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
@@ -139,8 +162,14 @@ DASHBOARD_HTML = """<!doctype html>
       for(const s of [...ev.sessions].reverse()) {const p=document.createElement("p");p.textContent=`${s.planned_start ? new Date(s.planned_start).toLocaleString("nl-NL") : new Date(s.recognized_at).toLocaleString("nl-NL")} — ${labels[s.state]} · ${number(s.expected_power_w,"W")} · ${number((s.expected_duration_seconds??0)/60,"min")}`;timeline.append(p);}
     }
     async function evChange(payload) {
-      try {const response=await fetch("api/ev",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const result=await response.json();if(!response.ok)throw new Error(result.error);el("ev-message").textContent="Opgeslagen";await load();} catch(error){el("ev-message").textContent=error.message;}
+      if(evBusy)return;
+      evBusy=true;el("ev-now").disabled=true;
+      try {const response=await fetch("api/ev",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const result=await response.json();if(!response.ok)throw new Error(result.error);el("ev-message").textContent="Opgeslagen";} catch(error){el("ev-message").textContent=error.message;}
+      evBusy=false;
+      try {await load();} catch(error) {el("ev-message").textContent=error.message;}
     }
+    el("ev-now").onclick=()=>evChange({action:"start_now"});
+    el("ev-profile").onsubmit=(event)=>{event.preventDefault();evChange({action:"save_profile",expected_power_w:Number(el("ev-profile-power").value),expected_duration_seconds:Number(el("ev-profile-duration").value)*60});};
     el("ev-verify").onclick=()=>{if(confirm("Heb je met deze auto en plug getest dat laden na uit- en inschakelen werkelijk hervat?"))evChange({action:"verify_resume",confirmed:true});};
     el("ev-plan").onsubmit=(event)=>{event.preventDefault();if(!evSession){el("ev-message").textContent="Herken eerst een sessie";return;}evChange({action:"plan",session_id:evSession.session_id,planned_start:new Date(el("ev-start").value).toISOString(),expected_power_w:Number(el("ev-power").value),expected_duration_seconds:Number(el("ev-duration").value)*60});};
     el("ev-resume").onclick=()=>evChange({action:"resume"});

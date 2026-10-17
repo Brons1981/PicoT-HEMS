@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.300
+
+- Bereken EV-laadadvies met eindtijd en resterende kWh vanuit Energy Devices 0.4.0-dev.7.
+- Vergelijk aaneengesloten laadblokken met de bestaande simulatie, tarieven en Evaluation; behoud het batterijplan en de verwachte batterijvoorraad.
+- Toon voorlopig advies bij gedeeltelijke prijs- of plandekking en onderscheid een onhaalbare eindtijd van ontbrekende gegevens.
+- Verwerk exacte gedeeltelijke kwartieren en tijdzoneovergangen. Alleen advies: geen automatische EV-uitvoering of wijziging van batterijcommitments.
+
 ## 2.0.0-dev.299
 
 - Verhelpt een crash wanneer uitvoeringsresultaten na tussentijdse runtime-observaties worden verwerkt.

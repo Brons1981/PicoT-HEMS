@@ -68,6 +68,8 @@ class EVSessionManager:
                 )
             state["resume_verified"] = False
             state.pop("profile", None)
+            state.pop("charging_request", None)
+            state.pop("charging_advice", None)
         state.update(switch_entity=switch_entity, power_entity=power_entity)
         self.save(state)
 
@@ -102,12 +104,106 @@ class EVSessionManager:
             state = self.load()
             return {**state, "power_entity": self.power_entity, "switch_entity": self.switch_entity}
 
+    @staticmethod
+    def invalidate_advice(state: Payload) -> None:
+        request = state.get("charging_request")
+        if request and request["state"] == "requested":
+            request.update(state="cancelled", request_revision=request["request_revision"] + 1)
+        state["charging_advice"] = None
+
+    def advice_exchange(self) -> Payload:
+        with self.lock:
+            state = self.load()
+            # A physical session supersedes a pending hypothetical request.
+            if self.current(state) is not None:
+                self.invalidate_advice(state)
+                self.save(state)
+            return {"generated_at": self.now().isoformat(),
+                    "request": state.get("charging_request")}
+
+    def receive_advice(self, advice: Payload) -> bool:
+        with self.lock:
+            state = self.load()
+            request = state.get("charging_request")
+            if (not request or request["state"] != "requested"
+                    or self.current(state) is not None
+                    or advice.get("contract") != "energy-device-charging-advice:v1"
+                    or advice.get("session_id") != request["session_id"]
+                    or type(advice.get("request_revision")) is not int
+                    or advice.get("status") not in {"ready", "provisional", "blocked", "infeasible"}
+                    or advice.get("request_revision") != request["request_revision"]):
+                return False
+            try:
+                age = (self.now() - instant(advice.get("generated_at"))).total_seconds()
+                if not 0 <= age <= 300:
+                    return False
+                previous = state.get("charging_advice")
+                if previous and instant(previous["generated_at"]) > instant(advice["generated_at"]):
+                    return False
+                slots = advice.get("slots", [])
+                if not isinstance(slots, list) or len(slots) > 200:
+                    return False
+                end = instant(request["available_from"])
+                energy = 0.0
+                for slot in slots:
+                    if not isinstance(slot, dict):
+                        return False
+                    start, next_end = instant(slot.get("starts_at")), instant(slot.get("ends_at"))
+                    amount = slot.get("energy_wh")
+                    if (start < end or next_end <= start
+                            or next_end > instant(request["ready_by"])
+                            or isinstance(amount, bool) or not isinstance(amount, (int, float))
+                            or not isfinite(amount) or amount <= 0):
+                        return False
+                    energy += amount
+                    end = next_end
+                if energy > request["remaining_energy_wh"] + 1e-6:
+                    return False
+            except (ValueError, TypeError):
+                return False
+            state["charging_advice"] = advice
+            self.save(state)
+            return True
+
     def action(self, payload: Payload) -> Payload:
         with self.lock:
             state = self.load()
             session = self.current(state)
             action = payload.get("action")
-            if action == "save_profile":
+            if action == "request_advice":
+                if session is not None:
+                    raise ValueError("Annuleer of voltooi eerst de bestaande laadsessie")
+                profile = state.get("profile")
+                if not profile:
+                    raise ValueError("Sla eerst het laadprofiel op")
+                now = self.now()
+                deadline = instant(payload.get("ready_by"))
+                if not now < deadline <= now + timedelta(days=7):
+                    raise ValueError("Kies een eindtijd binnen de komende zeven dagen")
+                energy = payload.get("required_energy_wh")
+                if (isinstance(energy, bool) or not isinstance(energy, (int, float))
+                        or not isfinite(energy) or not 0 < energy <= 88320):
+                    raise ValueError("Geef een geldige laadbehoefte in kWh op")
+                old = state.get("charging_request") or {}
+                same = old.get("state") == "requested"
+                if (same and old["ready_by"] == deadline.isoformat()
+                        and old["remaining_energy_wh"] == energy
+                        and old["fixed_power_w"] == profile["expected_power_w"]):
+                    return self.view()
+                state["charging_request"] = {
+                    "contract": "energy-device-charging-request:v1",
+                    "session_id": old["session_id"] if same else str(uuid4()),
+                    "request_revision": old["request_revision"] + 1 if same else 1,
+                    "state": "requested", "available_from": now.isoformat(),
+                    "ready_by": deadline.isoformat(), "remaining_energy_wh": float(energy),
+                    "fixed_power_w": profile["expected_power_w"],
+                    "evidence_source": "user_grid_energy_estimate",
+                    "evidence_at": now.isoformat(), "charge_target": "requested_grid_energy",
+                }
+                state["charging_advice"] = None
+            elif action == "cancel_advice":
+                self.invalidate_advice(state)
+            elif action == "save_profile":
                 power = payload.get("expected_power_w")
                 duration = payload.get("expected_duration_seconds")
                 for value in (power, duration):
@@ -129,6 +225,7 @@ class EVSessionManager:
                 profile = state.get("profile")
                 if not profile:
                     raise ValueError("Sla eerst het laadprofiel op")
+                self.invalidate_advice(state)
                 now = self.now()
                 power = profile["expected_power_w"]
                 duration = profile["expected_duration_seconds"]

@@ -56,6 +56,18 @@ DASHBOARD_HTML = """<!doctype html>
     <p id="ev-status"></p>
     <p>Sluit de auto aan en druk op Nu laden. Daarmee bevestig je dat de stekker in de auto zit. Energy Devices schakelt de laadplug in en controleert het laadvermogen.</p>
     <button id="ev-now" disabled>Nu laden</button>
+    <details><summary>Goedkoop laden voor een eindtijd — laadadvies</summary>
+      <p>HEMS vergelijkt aaneengesloten laadblokken met de bekende prijzen, zonverwachting en het batterijplan. Dit advies schakelt de laadplug nog niet in en reserveert de thuisbatterij voor haar bestaande plan. De laadbehoefte is energie aan de stekker, inclusief laadverlies.</p>
+      <form id="ev-advice-form">
+        <label>Gereed voor (lokale tijd)<input type="datetime-local" id="ev-ready-by" required></label>
+        <label>Nog te laden (kWh)<input type="number" id="ev-required-kwh" min="0.01" max="88.32" step="0.01" required></label>
+        <button id="ev-advice-submit" type="submit">Laadadvies aanvragen</button>
+      </form>
+      <button id="ev-advice-cancel" type="button">Aanvraag annuleren</button>
+      <p id="ev-advice-status" aria-live="polite"></p>
+      <p id="ev-advice-cost"></p>
+      <ul id="ev-advice-slots"></ul>
+    </details>
     <p id="ev-start-status" aria-live="polite"></p>
     <details><summary>Vast laadprofiel</summary>
       <p>Eenmalig instellen. De laadduur is een schatting en maximale looptijd, geen bewijs dat de accu vol is. Wijzigen geldt voor de volgende sessie.</p>
@@ -143,6 +155,7 @@ DASHBOARD_HTML = """<!doctype html>
     function renderEV(ev) {
       el("ev-panel").hidden=!ev;
       if(!ev)return;
+      renderChargingAdvice(ev);
       evSession=[...ev.sessions].reverse().find(s=>["recognized","planned","active","interrupted"].includes(s.state));
       const labels={recognized:"Herkend",planned:"Gepland",active:"Actief",interrupted:"Onderbroken",completed:"Voltooid",cancelled:"Geannuleerd"};
       el("ev-status").textContent=evSession ? `${labels[evSession.state]} · ${number(evSession.current_power_w,"W")} · ${number(evSession.delivered_energy_wh,"Wh geleverd")} · ${number(evSession.remaining_energy_wh,"Wh resterend")} · ${number((evSession.remaining_duration_seconds??0)/60,"min resterend (schatting)")}${evSession.error ? " · "+evSession.error : ""}` : `Geen open laadsessie · ${ev.recognition?.reason??"wachten op meting"} · ${number(ev.recognition?.power_w,"W")} · meetleeftijd ${number(ev.recognition?.measurement_age_seconds,"s")}`;
@@ -161,6 +174,21 @@ DASHBOARD_HTML = """<!doctype html>
       const timeline=el("ev-timeline");timeline.replaceChildren();
       for(const s of [...ev.sessions].reverse()) {const p=document.createElement("p");p.textContent=`${s.planned_start ? new Date(s.planned_start).toLocaleString("nl-NL") : new Date(s.recognized_at).toLocaleString("nl-NL")} — ${labels[s.state]} · ${number(s.expected_power_w,"W")} · ${number((s.expected_duration_seconds??0)/60,"min")}`;timeline.append(p);}
     }
+    function renderChargingAdvice(ev) {
+      const request=ev.charging_request, advice=ev.charging_advice;
+      const pending=request?.state==="requested";
+      el("ev-advice-cancel").disabled=evBusy || !pending;
+      el("ev-advice-submit").disabled=evBusy || !ev.profile || ev.sessions.some(s=>["recognized","planned","active","interrupted"].includes(s.state));
+      if(!el("ev-required-kwh").value && (pending || ev.profile))el("ev-required-kwh").value=(pending ? request.remaining_energy_wh/1000 : ev.profile.expected_power_w*ev.profile.expected_duration_seconds/3600000).toFixed(2);
+      if(pending && !el("ev-ready-by").value){const d=new Date(request.ready_by);el("ev-ready-by").value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
+      const labels={ready:"Laadadvies beschikbaar",provisional:"Voorlopig advies: nog niet alle prijzen of plangegevens zijn bekend",blocked:"Nog geen bruikbaar laadadvies",infeasible:"Laadbehoefte niet haalbaar voor deze eindtijd"};
+      const reasons={deadline_capacity_insufficient:"Er is te weinig tijd voor de gevraagde energie",known_horizon_has_insufficient_capacity:"Er zijn nog onvoldoende uren met bekende prijzen en plangegevens",retained_battery_plan_unavailable:"Wachten op een actueel batterijplan",retained_battery_plan_requires_repair:"HEMS moet eerst het batterijplan bijwerken",no_placement_preserves_battery_commitments:"Geen passend laadblok gevonden dat het batterijplan behoudt",existing_ev_demand_requires_reconciliation:"Er is al een laadsessie actief"};
+      const fresh=advice && Date.now()-new Date(advice.generated_at).getTime()<=300000;
+      el("ev-advice-status").textContent=!pending ? "Geen open adviesaanvraag" : !advice ? "Wachten op HEMS" : !fresh ? "Advies verlopen; wachten op actuele beoordeling door HEMS" : (labels[advice.status]??"Wachten op HEMS")+(reasons[advice.reason] ? `. ${reasons[advice.reason]}` : "")+". Advies; automatisch laden is nog niet actief.";
+      el("ev-advice-cost").textContent=pending && fresh && advice.estimated_incremental_cost_eur!==undefined ? `Geschatte extra kosten: ${number(advice.estimated_incremental_cost_eur,"EUR")}. Beste van de beoordeelde laadblokken; geen garantie dat alle mogelijke starttijden zijn vergeleken.` : "";
+      const list=el("ev-advice-slots");list.replaceChildren();
+      if(pending && fresh)for(const slot of advice.slots??[]){const li=document.createElement("li");li.textContent=`${new Date(slot.starts_at).toLocaleString("nl-NL")} – ${new Date(slot.ends_at).toLocaleString("nl-NL")}: ${number(slot.energy_wh/1000,"kWh")}`;list.append(li);}
+    }
     async function evChange(payload) {
       if(evBusy)return;
       evBusy=true;el("ev-now").disabled=true;
@@ -169,6 +197,8 @@ DASHBOARD_HTML = """<!doctype html>
       try {await load();} catch(error) {el("ev-message").textContent=error.message;}
     }
     el("ev-now").onclick=()=>evChange({action:"start_now"});
+    el("ev-advice-form").onsubmit=(event)=>{event.preventDefault();const date=new Date(el("ev-ready-by").value);if(!Number.isFinite(date.getTime()))return;evChange({action:"request_advice",ready_by:date.toISOString(),required_energy_wh:Number(el("ev-required-kwh").value)*1000});};
+    el("ev-advice-cancel").onclick=()=>evChange({action:"cancel_advice"});
     el("ev-profile").onsubmit=(event)=>{event.preventDefault();evChange({action:"save_profile",expected_power_w:Number(el("ev-profile-power").value),expected_duration_seconds:Number(el("ev-profile-duration").value)*60});};
     el("ev-verify").onclick=()=>{if(confirm("Heb je met deze auto en plug getest dat laden na uit- en inschakelen werkelijk hervat?"))evChange({action:"verify_resume",confirmed:true});};
     el("ev-plan").onsubmit=(event)=>{event.preventDefault();if(!evSession){el("ev-message").textContent="Herken eerst een sessie";return;}evChange({action:"plan",session_id:evSession.session_id,planned_start:new Date(el("ev-start").value).toISOString(),expected_power_w:Number(el("ev-power").value),expected_duration_seconds:Number(el("ev-duration").value)*60});};

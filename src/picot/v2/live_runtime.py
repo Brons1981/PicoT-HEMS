@@ -51,6 +51,7 @@ from picot.v2.energy_device_cards import (
     EnergyDevicePlacementStore,
     HomeAssistantEnergyDeviceCatalogReader,
 )
+from picot.v2.ev_deadline_runtime import home_assistant_advisor
 from picot.v2.fast_grid_power_observation import FastGridPowerObserver
 from picot.v2.financial_measurement_observer import FinancialMeasurementObserver
 from picot.v2.financial_result_ledger import FinancialResultLedger
@@ -2759,6 +2760,12 @@ def main() -> None:
             options.get("plan_switching_margin_eur", 0.05)
         ),
     )
+    ev_deadline_advisor = (
+        home_assistant_advisor(
+            token,
+            lambda snapshot: market_daily_planner_runtime.planning_configuration(snapshot)[0],
+        ) if options.get("energy_device_sessions_enabled", False) is True else None
+    )
     web_view_store.set_diagnostic_paths(
         (
             PLANNING_INCIDENT_HISTORY_PATH,
@@ -3173,6 +3180,8 @@ def main() -> None:
         web_view_store.publish_planning_recalculation(status)
 
     def publish_input_sources(bundle: PlanningInputBundle) -> None:
+        if ev_deadline_advisor is not None:
+            ev_deadline_advisor.submit(bundle.snapshot)
         publish_recalculation_status()
         web_view_store.publish_planning_input_sources(
             _planning_input_sources(bundle)

@@ -1,5 +1,17 @@
 # PicoT HEMS — mandatory session start
 
+## EV-eindtijdadvies — HEMS dev.300 / Energy Devices dev.7, 17 oktober 2026
+
+Alex heeft release aangevraagd. Lees
+`docs/architecture/decisions/V2ADR-064.5-ev-deadline-advice.md` en
+`docs/development_log/2026-10-17-ev-deadline-advice.md`.
+Afzonderlijke duurzame adviesaanvraag; HEMS vergelijkt begrensde aaneengesloten
+laadblokken met canonieke simulatie, tariefafrekening en Evaluation. Het bestaande
+batterijplan en de batterijvoorraad blijven beschermd. Geen automatische EV-
+uitvoering en geen parallelle tariefberekening in Energy Devices. 70 lokale
+tests en statische controles slagen; publicatie via PR en CI. Installatie en
+livecontrole volgen afzonderlijk.
+
 ## Stabiel lopend hoofd-netladen - release dev.286, 6 oktober 2026
 
 Alex heeft de eerste reparatie om 18:38 Europe/Amsterdam bevestigd. Lees

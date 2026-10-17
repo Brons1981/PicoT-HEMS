@@ -98,7 +98,11 @@ def test_missing_pv_can_reduce_grid_through_canonical_pipeline(
             if (segment.starts_at < old.ends_at and old.starts_at < segment.ends_at
                     and segment.primitive is not ExecutionPrimitive.CHARGE_AT_POWER):
                 freed.append(segment)
-                assert segment.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                # Independent measured surplus admits review; it does not invent
+                # future PV in the released zero-forecast intervals.
+                assert all(i.pv_energy_wh == 0 for i in observation.pv_energy_timeline.intervals
+                           if i.starts_at < segment.ends_at and segment.starts_at < i.ends_at)
+                assert segment.primitive is ExecutionPrimitive.BALANCE_DISCHARGE_ONLY
                 assert any(s.starts_at <= segment.starts_at and segment.ends_at <= s.ends_at
                            and s.primitive is segment.primitive for s in path.segments)
     assert freed

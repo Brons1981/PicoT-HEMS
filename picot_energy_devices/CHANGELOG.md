@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0-dev.8
+
+- Zet een actueel HEMS-laadadvies vast met Automatisch uitvoeren; de knop bevestigt dat de auto aangesloten is.
+- Schakel de plug automatisch op de geplande start- en eindtijd; bewaar de uitvoering na herstart en respecteer annuleren en handmatig onderbreken.
+- Controleer adviesidentiteit, leeftijd, energie en laadduur voor acceptatie. Een voorlopig advies blijft een vastgezet laadblok en wordt niet automatisch herpland.
+- Toon resterende geschatte energie na afloop. HEMS 2.0.0-dev.300 blijft vereist.
+
 ## 0.4.0-dev.7
 
 - Vraag HEMS-laadadvies aan met een eindtijd en resterende energie aan de stekker; gebruikt het opgeslagen laadvermogen.
@@ -77,3 +84,4 @@ Na installatie: start een proefopname, controleer het vermogensverloop en rond d
 ## 0.1.0
 
 Eerste onafhankelijke Energy Devices-add-on met apparaatregistratie en automatische sessieprofielen.
+

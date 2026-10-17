@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.302
+
+- Kies alleen slim ontladen voor vrijgekomen netlaadkwartieren zonder verwacht PV-overschot; behoud NOM waar de ingestelde Solcast-basis meer PV dan totale belasting voorspelt.
+- Gebruik dezelfde regel in de vrijgaveproef en plankeuze, inclusief EV-verbruik in de totale belasting.
+- Bestaande opgeslagen plannen worden niet omgelabeld. Gebruik Planning opnieuw berekenen om de huidige indeling opnieuw te laten beoordelen.
+
 ## 2.0.0-dev.301
 
 - Houd EV-laadvraag buiten batterijondersteuning, ook bij ontbrekende of ongecorrigeerde regelmetingen.

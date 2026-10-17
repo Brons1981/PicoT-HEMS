@@ -111,26 +111,7 @@ class IndependentDailyIntentSimulator:
             maximum_discharge_output_power_w=maximum_discharge_output_power_w,
         )
         self._validate_schedule(snapshot_id, household, intent_schedule)
-        lower = next(s.timeline for s in pv_scenarios if s.scenario is PVScenario.LOWER)
-        central = next(s.timeline for s in pv_scenarios if s.scenario is PVScenario.CENTRAL)
-        if any(not isfinite(i.energy_wh) for s in pv_scenarios for i in s.timeline.intervals):
-            raise ValueError("planning PV energy must be finite")
-        if any(
-            a.energy_wh > b.energy_wh
-            for a, b in zip(lower.intervals, central.intervals, strict=True)
-        ):
-            raise ValueError("planning LOWER must not exceed CENTRAL")
-        method = "pv-lower-central-arithmetic-midpoint:v1"
-        choices = {s.planning_basis for s in pv_scenarios}
-        if len(choices) != 1 or not choices <= {"lower", "mean-lower-central", "central", "upper"}:
-            raise ValueError("PV scenarios require one valid planning basis")
-        choice = next(iter(choices))
-        if choice == "mean-lower-central":
-            basis = self._planning_basis(lower, central)
-        else:
-            method = f"pv-solcast-{choice}:v1"
-            source = next(s.timeline for s in pv_scenarios if s.scenario.value == choice)
-            basis = replace(source, timeline_id=f"{method}:{source.timeline_id}")
+        basis, method = self.planning_pv_basis(pv_scenarios)
         intervals, _ = self._simulate_timeline(
             household=household,
             pv_timeline=basis,
@@ -149,6 +130,33 @@ class IndependentDailyIntentSimulator:
             intervals=intervals,
             basis_method=method,
         )
+
+    @staticmethod
+    def planning_pv_basis(
+        pv_scenarios: tuple[ScenarioTimeline, ...],
+    ) -> tuple[PVEnergyTimeline, str]:
+        """Select the same configured PV evidence for simulation and candidate policy."""
+        lower = next(s.timeline for s in pv_scenarios if s.scenario is PVScenario.LOWER)
+        central = next(s.timeline for s in pv_scenarios if s.scenario is PVScenario.CENTRAL)
+        if any(not isfinite(i.energy_wh) for s in pv_scenarios for i in s.timeline.intervals):
+            raise ValueError("planning PV energy must be finite")
+        if any(
+            a.energy_wh > b.energy_wh
+            for a, b in zip(lower.intervals, central.intervals, strict=True)
+        ):
+            raise ValueError("planning LOWER must not exceed CENTRAL")
+        method = "pv-lower-central-arithmetic-midpoint:v1"
+        choices = {s.planning_basis for s in pv_scenarios}
+        if len(choices) != 1 or not choices <= {"lower", "mean-lower-central", "central", "upper"}:
+            raise ValueError("PV scenarios require one valid planning basis")
+        choice = next(iter(choices))
+        if choice == "mean-lower-central":
+            basis = IndependentDailyIntentSimulator._planning_basis(lower, central)
+        else:
+            method = f"pv-solcast-{choice}:v1"
+            source = next(s.timeline for s in pv_scenarios if s.scenario.value == choice)
+            basis = replace(source, timeline_id=f"{method}:{source.timeline_id}")
+        return basis, method
 
     @staticmethod
     @lru_cache(maxsize=4)

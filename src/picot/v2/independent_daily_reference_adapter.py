@@ -850,15 +850,19 @@ class IndependentDailyReferenceAdapter:
         assert schedule is not None
         pending = tuple(a for a in context.assignments if a.route_plan_id is not None
                         and a.completed_at is None and a.ends_at > snapshot.captured_at)
+        released = self._released_grid_intents(inputs)
         for index in reversed(range(len(schedule.intervals))):
             interval = schedule.intervals[index]
             if not any(s.starts_at <= interval.starts_at and interval.ends_at <= s.ends_at
                        for s in grid):
                 continue
-            trial = replace(schedule, schedule_id=f"pv-grid-removal:{snapshot.snapshot_id}:{index}",
-                            intervals=tuple(replace(i, intent=DailyStorageIntent.NOM)
-                                            if n == index else i
-                                            for n, i in enumerate(schedule.intervals)))
+            trial = replace(
+                schedule, schedule_id=f"pv-grid-removal:{snapshot.snapshot_id}:{index}",
+                intervals=tuple(
+                    replace(i, intent=released[(i.starts_at, i.ends_at)]) if n == index else i
+                    for n, i in enumerate(schedule.intervals)
+                ),
+            )
             projection = IndependentDailyIntentSimulator().simulate_planning_basis(
                 snapshot_id=snapshot.snapshot_id, household=inputs.household,
                 pv_scenarios=inputs.pv_scenarios, storage_state=inputs.storage,
@@ -1061,10 +1065,10 @@ class IndependentDailyReferenceAdapter:
                 or revision_schedule.horizon_end != published_end
             ):
                 raise DailyReferenceInputError("market_revision_requires_matching_replanning_basis")
-            # The explicit market seed changes only export. Own grid segments
-            # are rediscovered over NOM using the existing main-charge rules.
+            # Explicit market seeds use the same released-grid source policy.
+            released = self._released_grid_intents(inputs)
             retained_schedule = replace(revision_schedule, intervals=tuple(
-                replace(i, intent=DailyStorageIntent.NOM, storage_export_target_wh=0.0)
+                replace(i, intent=released[(i.starts_at, i.ends_at)], storage_export_target_wh=0.0)
                 if i.intent is DailyStorageIntent.GRID_REQUIREMENT and any(
                     s.starts_at <= i.starts_at and i.ends_at <= s.ends_at
                     for s in assignment.main_segments
@@ -1156,6 +1160,19 @@ class IndependentDailyReferenceAdapter:
         )
 
     @staticmethod
+    def _released_grid_intents(
+        inputs: _DailyReferenceInputs,
+    ) -> dict[tuple[datetime, datetime], DailyStorageIntent]:
+        basis, _ = IndependentDailyIntentSimulator.planning_pv_basis(inputs.pv_scenarios)
+        return {
+            (load.starts_at, load.ends_at): (
+                DailyStorageIntent.NOM if pv.energy_wh > load.expected_energy_wh + 1e-6
+                else DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY
+            )
+            for load, pv in zip(inputs.household.intervals, basis.intervals, strict=True)
+        }
+
+    @staticmethod
     def _retained_main_schedule(
         *, snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
         inputs: _DailyReferenceInputs, supplied: DailyReferenceIntentSchedule | None,
@@ -1207,6 +1224,8 @@ class IndependentDailyReferenceAdapter:
             ExecutionPrimitive.STANDBY: DailyStorageIntent.STANDBY,
             ExecutionPrimitive.DISCHARGE_AT_POWER: DailyStorageIntent.STORAGE_EXPORT,
         }
+        released = (IndependentDailyReferenceAdapter._released_grid_intents(inputs)
+                    if revising_assignment_id is not None else {})
         intervals = []
         for grid in inputs.household.intervals:
             export_wh = 0.0
@@ -1294,11 +1313,9 @@ class IndependentDailyReferenceAdapter:
                     source.main_assignment_id == revising_assignment_id
                     and source.primitive is ExecutionPrimitive.CHARGE_AT_POWER
                 ):
-                    # ADR-037.12: rediscover explicit grid charging over NOM.
-                    # A removed grid slot must keep PV capture available, just
-                    # like the feasibility trial that admitted this revision.
-                    # Only challengers use this baseline; the incumbent stays exact.
-                    intent = DailyStorageIntent.NOM
+                    # Released slots retain PV capture only where the configured
+                    # forecast exceeds total demand. The incumbent stays exact.
+                    intent = released[(grid.starts_at, grid.ends_at)]
                 if (revising_assignment_id is not None
                         and source.purpose == f"bridge:{revising_assignment_id}"
                         and source.main_assignment_id is None

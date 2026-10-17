@@ -279,6 +279,7 @@ class DailyMainPVSurplusTrigger:
     removable_grid_input_wh: float
     soc_based: bool = False
     net_balance_evidence_id: str | None = None
+    future_state_evidence_id: str | None = None
 
     @property
     def revision_reason(self) -> DailyChargeRevisionReason:
@@ -302,7 +303,12 @@ class DailyMainPVSurplusTrigger:
             )
         ):
             raise ValueError("PV trigger requires explicit lineage")
-        if self.net_balance_evidence_id is not None:
+        if self.future_state_evidence_id is not None:
+            if (not self.future_state_evidence_id or not self.soc_based
+                    or self.net_balance_evidence_id is not None
+                    or self.actual_wh is not None or self.central_wh is not None):
+                raise ValueError("Future state proof must not fabricate PV or net evidence")
+        elif self.net_balance_evidence_id is not None:
             if not self.net_balance_evidence_id or not self.soc_based or (
                 self.actual_wh is not None or self.central_wh is not None
             ):
@@ -338,5 +344,8 @@ class DailyMainPVSurplusTrigger:
             or assignment.completed_at is not None
             or self.snapshot_id != snapshot_id
             or (self.assessed_at != at or at >= assignment.ends_at)
+            or (self.future_state_evidence_id is not None
+                and (assignment.starts_at <= at
+                     or any(s.starts_at <= at for s in assignment.main_segments)))
         ):
             raise ValueError("PV surplus trigger does not match the current open route and input")

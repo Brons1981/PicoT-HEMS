@@ -22,7 +22,8 @@ def read_external_load_policy(
     if not payload or payload.get("contract") != METHOD:
         return None
     # Measurement freshness and regulation authority are separate evidence.
-    # A RAW fallback still carries a usable EV measurement, but proves no exclusion.
+    # A RAW fallback does not change the user's exclusion policy. The execution
+    # boundary separately guards discharge when corrected control is unavailable.
     exclusion_ready = (payload.get("control_enabled") is True
                        and payload.get("status") == "ready")
     independent_measurement = "ev_measured_at" in payload
@@ -55,9 +56,10 @@ def read_external_load_policy(
             revision,
             when,
             float(power),
-            not (exclusion_ready and control_fresh),
+            False,
             execution_scope_id,
             physical_evidence_available=True,
+            exclusion_control_available=exclusion_ready and control_fresh,
         )
     except (KeyError, ValueError):
         return None
@@ -130,8 +132,8 @@ def read_session_demand(
         if not physical_available:
             if session.get("switch_state") == "off":
                 physical_available = True  # a confirmed off charger cannot supply the EV
-            else:
-                return None  # do not add a profile to an unseparated live household load
+            # Without a measurement retain session identity for the discharge
+            # guard, but never add a profile to an unseparated household load.
         session_id = session.get("session_id")
         version = session.get("version")
         if (
@@ -147,7 +149,7 @@ def read_session_demand(
             str(version),
             generated,
             physical,
-            live_policy.storage_support_allowed if live_policy is not None else True,
+            False,
             execution_scope_id,
             session_id,
             str(state),
@@ -156,6 +158,9 @@ def read_session_demand(
             float(remaining),
             float(expected),
             physical_evidence_available=physical_available,
+            exclusion_control_available=bool(
+                live_policy and live_policy.exclusion_control_available
+            ),
         )
     except (ValueError, TypeError, OverflowError):
         return None
@@ -174,6 +179,8 @@ def apply_external_load_policy(
     snapshot; it is not accumulated. Costs and grid energy remain physical.
     """
     if policy.session_id is not None:
+        if not policy.physical_evidence_available:
+            return forecast
         if not policy.remaining_energy_wh or not policy.expected_power_w:
             return forecast
         start = max(captured_at, policy.planned_start or captured_at)

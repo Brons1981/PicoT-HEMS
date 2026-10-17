@@ -33,7 +33,7 @@ END = AT + timedelta(hours=1)
 
 
 class ExternalLoadTests(unittest.TestCase):
-    def simulate(self, pv_w, excluded=2000, soc=0.5):
+    def simulate(self, pv_w, excluded=2000, soc=0.5, intent=DailyStorageIntent.NOM):
         household = HouseholdLoadForecast(
             "house",
             AT,
@@ -65,7 +65,9 @@ class ExternalLoadTests(unittest.TestCase):
             "snapshot",
             AT,
             END,
-            (DailyReferenceIntentInterval(AT, END, DailyStorageIntent.NOM),),
+            (DailyReferenceIntentInterval(AT, END, intent,
+                storage_export_target_wh=500 if intent is DailyStorageIntent.STORAGE_EXPORT
+                else 0),),
             "test",
         )
         output = IndependentDailyIntentSimulator().simulate(
@@ -127,6 +129,15 @@ class ExternalLoadTests(unittest.TestCase):
         interval, _ = self.simulate(0, excluded=0)
         self.assertEqual(interval.storage_to_household_output_wh, 2200)
         self.assertEqual(interval.grid_to_household_wh, 0)
+
+    def test_fixed_export_cannot_feed_excluded_ev_or_credit_export_revenue(self):
+        interval, _ = self.simulate(0, intent=DailyStorageIntent.STORAGE_EXPORT)
+        self.assertEqual(interval.storage_to_household_output_wh, 0)
+        self.assertEqual(interval.storage_to_grid_output_wh, 0)
+        self.assertEqual(interval.storage_energy_at_end_wh, 4080)
+        self.assertEqual(interval.grid_to_household_wh, 2200)
+        ordinary, _ = self.simulate(0, excluded=0, intent=DailyStorageIntent.STORAGE_EXPORT)
+        self.assertGreater(ordinary.storage_to_grid_output_wh, 0)
 
     def test_reader_rejects_shadow_stale_and_missing_provenance(self):
         payload = {
@@ -422,12 +433,14 @@ def test_fresh_ev_measurement_survives_regulation_fallback():
     assert measured is not None
     assert measured.physical_evidence_available
     assert measured.power_w == 0
-    assert measured.storage_support_allowed  # RAW fallback permits ordinary NOM support.
+    assert not measured.storage_support_allowed
+    assert not measured.exclusion_control_available
     for change in ({"ev_w": 2350}, {"control_enabled": False}):
         measured = read_external_load_policy(
             dict(payload, **change), captured_at=AT, execution_scope_id="home",
         )
-        assert measured is not None and measured.storage_support_allowed
+        assert measured is not None and not measured.storage_support_allowed
+        assert not measured.exclusion_control_available
         assert measured.power_w == change.get("ev_w", 0)
     for change in ({"ev_measured_at": (AT - timedelta(seconds=4)).isoformat()},
                    {"ev_measured_at": None}, {"ev_w": -1}, {"ev_w": True}):
@@ -490,8 +503,8 @@ def test_recent_covered_measurements_guard_configured_fallback(tmp_path, monkeyp
     ev_power[0] = 2000
     charging = assemble(200)
     assert not charging.household_load_guard.active
-    # RAW fallback permits battery support: keep EV demand in physics, without
-    # contaminating historical household load or claiming battery exclusion.
+    # RAW fallback preserves physical costs and the requested EV exclusion;
+    # the execution boundary separately prevents unprotected discharge.
     first = charging.household_load_forecast.intervals[0]
     assert first.expected_energy_wh == 562.5  # (250 W house + 2000 W EV) * 0.25 h.
-    assert first.battery_excluded_energy_wh == 0
+    assert first.battery_excluded_energy_wh == 500

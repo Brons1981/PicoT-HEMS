@@ -267,3 +267,10 @@ def test_explicit_cancel_also_stops_a_manually_started_recognized_session(tmp_pa
     assert rig.commands == [False]
     rig.tick(0, "off")
     assert rig.manager.view()["sessions"][-1]["state"] == "cancelled"
+
+
+def test_ev_session_never_authorizes_battery_support(tmp_path):
+    rig = Rig(tmp_path / "ev")
+    assert rig.manager.snapshot()["storage_support_allowed"] is False
+    rig.recognize()
+    assert rig.manager.snapshot(storage_support_allowed=True)["storage_support_allowed"] is False

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0-dev.9
+
+- Sluit batterijondersteuning uit voor alle EV-sessies, inclusief direct laden en eerder opgeslagen sessies.
+- Werk ook HEMS bij naar 2.0.0-dev.301 voor de bijbehorende planning en uitvoeringsbeveiliging.
+
 ## 0.4.0-dev.8
 
 - Zet een actueel HEMS-laadadvies vast met Automatisch uitvoeren; de knop bevestigt dat de auto aangesloten is.

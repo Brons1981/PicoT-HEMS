@@ -20,6 +20,7 @@ class ExternalLoadPolicy:
     remaining_energy_wh: float | None = None
     expected_power_w: float | None = None
     physical_evidence_available: bool = False
+    exclusion_control_available: bool = False
 
     def __post_init__(self) -> None:
         if not self.source_id or not self.revision or not self.execution_scope_id:

@@ -278,9 +278,7 @@ class MaterialReplanningObservationProducer:
                 ):
                     continue
                 comparison = daily_grid_review_comparison(snapshot, state)
-                if (comparison.status != "complete" and net_balance_for(
-                    snapshot, owner.execution_scope_id,
-                ) is None) or (
+                if not adapter.grid_review_available(snapshot, owner, comparison) or (
                     comparison.evidence_id in state.assessed_evidence_ids
                 ):
                     continue
@@ -530,6 +528,16 @@ def daily_grid_review_comparison(
     )
     if net_proof is not None:
         identity += (net_proof.evidence_id,)
+    if owner.starts_at > snapshot.captured_at and snapshot.household_load_forecast is not None:
+        # Stable per-quarter power evidence: polling time and fractional current
+        # interval energy do not create another review, but excluding EV does.
+        identity += (tuple(
+            (i.ends_at, round(i.expected_energy_wh / ((i.ends_at - i.starts_at)
+              .total_seconds() / 3600)), round(i.battery_excluded_energy_wh
+              / ((i.ends_at - i.starts_at).total_seconds() / 3600)))
+            for i in snapshot.household_load_forecast.intervals
+            if i.ends_at > snapshot.captured_at and i.starts_at < owner.ends_at
+        ),)
     return replace(comparison, evidence_id="grid-review:" + sha256(
         repr(identity).encode(),
     ).hexdigest())

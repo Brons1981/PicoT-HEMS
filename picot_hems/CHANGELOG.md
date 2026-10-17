@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.301
+
+- Houd EV-laadvraag buiten batterijondersteuning, ook bij ontbrekende of ongecorrigeerde regelmetingen.
+- Bewaar de EV-ontlaadbeveiliging na herstart en respecteer handmatige bediening.
+- Herbeoordeel te lange toekomstige netlaadblokken met actuele SOC en de verwachte toekomstige laadbehoefte; behoud dagdoelen, reserve en bescherming van lopend laden.
+- Kies een goedkoper, korter laadblok wanneer de canonieke vergelijking aantoonbaar voordeel bewijst. Werk Energy Devices bij naar 0.4.0-dev.9.
+
 ## 2.0.0-dev.300
 
 - Bereken EV-laadadvies met eindtijd en resterende kWh vanuit Energy Devices 0.4.0-dev.7.
@@ -429,3 +436,4 @@ Ontwikkelrelease voor de gezamenlijke liveproef van de dagelijkse laadcyclus en 
 Na installeren: controleer dev.244 in PicoT en vul de gewenste handelsfractie en minimumspread in. Herstel kan voor de eerste proef uit blijven. Bestaande instellingen en historische diagnostiek blijven bewaard.
 
 Dit is een ontwikkelrelease: lokale controles zijn uitgevoerd; werking met de echte HA-meethistorie en modusfeedback wordt in de gezamenlijke liveproef beoordeeld.
+

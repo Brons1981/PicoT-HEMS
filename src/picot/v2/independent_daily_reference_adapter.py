@@ -766,6 +766,32 @@ class IndependentDailyReferenceAdapter:
                      and s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
                      and s.starts_at <= snapshot.captured_at < s.ends_at), None)
 
+    @staticmethod
+    def future_grid_review_available(
+        snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
+    ) -> bool:
+        """Fresh measured stock can review tomorrow, never reopen a running owner."""
+        states = tuple(s for s in snapshot.current_storage_states
+                       if s.execution_scope_id == assignment.execution_scope_id)
+        return bool(
+            assignment.starts_at > snapshot.captured_at
+            and assignment.completed_at is None and assignment.route_plan_id is not None
+            and assignment.main_segments
+            and all(s.starts_at > snapshot.captured_at for s in assignment.main_segments)
+            and len(states) == 1 and states[0].confidence > 0
+            and timedelta() <= snapshot.captured_at - (
+                states[0].state_read_at or states[0].measured_at) <= timedelta(minutes=2)
+        )
+
+    def grid_review_available(
+        self, snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
+        comparison: DailyPVComparison,
+    ) -> bool:
+        return (comparison.status == "complete"
+                or net_balance_for(snapshot, assignment.execution_scope_id) is not None
+                or (comparison.status == "no_closed_interval"
+                    and self.future_grid_review_available(snapshot, assignment)))
+
     def pv_surplus_trigger(
         self, *, snapshot: PlanningInputSnapshot, assignment: DailyChargeAssignment,
         comparison: DailyPVComparison, conversion_model: StorageConversionModel,
@@ -773,17 +799,28 @@ class IndependentDailyReferenceAdapter:
         """Prove a removable future grid interval before any price window search."""
         net_proof = net_balance_for(snapshot, assignment.execution_scope_id)
         if comparison.assignment_id != assignment.assignment_id or (
-            (comparison.status != "complete" and net_proof is None)
+            not self.grid_review_available(snapshot, assignment, comparison)
             or assignment.completed_at is not None or assignment.route_plan_id is None
         ):
             return None
+        future_proof = ("future-state:" + comparison.evidence_id
+                        if comparison.status == "no_closed_interval" and net_proof is None
+                        and self.future_grid_review_available(snapshot, assignment) else None)
         if self._protected_grid_end(
             snapshot, assignment,
         ) is not None:
             return None
+        guard = snapshot.household_load_guard
+        forecast = snapshot.household_load_forecast
+        if (future_proof is not None and guard is not None and guard.quality == "unknown"
+                and (guard.active or guard.extra_power_w > 0)):
+            return None
+        future_forecast_ready = (future_proof is not None and guard is not None
+                                and not guard.active and guard.extra_power_w == 0
+                                and forecast is not None and not forecast.fallback_active)
         if snapshot.household_load_guard is not None and (
             snapshot.household_load_guard.quality == "unknown"
-        ) and net_proof is None and not any(
+        ) and net_proof is None and not future_forecast_ready and not any(
                       s.execution_scope_id == assignment.execution_scope_id and s.current_soc >= 1.0
                       for s in snapshot.current_storage_states):
             return None
@@ -845,12 +882,14 @@ class IndependentDailyReferenceAdapter:
                     assignment.assignment_id, assignment.route_plan_id, assignment.revision,
                     plan.plan_id, snapshot.snapshot_id, snapshot.captured_at,
                     inputs.storage.usable_capacity_wh, comparison.basis_id, comparison.evidence_id,
-                    comparison.actual_wh if net_proof is None else None,
-                    comparison.central_wh if net_proof is None else None, prior_grid_wh,
+                    comparison.actual_wh if net_proof is None and future_proof is None else None,
+                    comparison.central_wh if net_proof is None and future_proof is None else None,
+                    prior_grid_wh,
                     inputs.maximum_charge_input_power_w
                     * (interval.ends_at - interval.starts_at).total_seconds() / 3600,
                     soc_based=net_proof is not None or comparison.boundary != "above_central",
                     net_balance_evidence_id=net_proof.evidence_id if net_proof else None,
+                    future_state_evidence_id=future_proof,
                 )
         return None
 
@@ -968,6 +1007,10 @@ class IndependentDailyReferenceAdapter:
                 "observed_main_goal_already_completed", 0)
         if optimisation_trigger is not None:
             optimisation_trigger.validate(assignment, snapshot.snapshot_id, snapshot.captured_at)
+            if (isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
+                    and optimisation_trigger.future_state_evidence_id is not None
+                    and not self.future_grid_review_available(snapshot, assignment)):
+                raise DailyReferenceInputError("future_grid_review_requires_fresh_future_owner")
             if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger) and (
                 optimisation_trigger.net_balance_evidence_id is not None
             ):

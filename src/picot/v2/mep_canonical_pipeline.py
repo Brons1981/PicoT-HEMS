@@ -1383,7 +1383,12 @@ def _build_daily_main_run(
             ))
             pending = [next(a for a in context.assignments
                             if a.assignment_id == optimisation_trigger.assignment_id)]
-        if not triggers and manual_owner is None:
+        if (not triggers and manual_owner is None
+                and commitment_store.pending_market_window_transition(
+                    snapshot.captured_at) is None):
+            # A pending market transition owns the next atomic publication.
+            # Do not persist an unrelated optional assessment before it can fail;
+            # review the future route on the next fresh post-transition input.
             optional_pv_review = bool(retained) and not pending
             for state in context.pv_comparison_states:
                 owner = next(

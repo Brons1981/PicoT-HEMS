@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from test_daily_main_charge_windows import inputs
 from test_market_revision_comparison import scenario
+from test_market_window_transition import legacy_morning
 
 from picot.domain.daily_reference_intent import DailyStorageIntent
 from picot.planner.mep_candidate_outcomes import produce_main_charge_portfolio
@@ -147,3 +148,20 @@ def test_full_battery_now_does_not_zero_future_refill_financial_benefit(tmp_path
                     if o.objective.value == 'financial_result')
         assert outcome.commitment_improvement_eur == pytest.approx(
             (reference_rate - rate) * deficit_kwh)
+
+
+def test_optional_review_waits_for_market_transition_then_retries(tmp_path, monkeypatch):
+    store, pipeline, recover, source, _ = legacy_morning(tmp_path, monkeypatch)
+    calls = []
+    original = IndependentDailyReferenceAdapter.pv_surplus_trigger
+
+    def observed(self, **kwargs):
+        calls.append(kwargs['assignment'].assignment_id)
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(IndependentDailyReferenceAdapter, 'pv_surplus_trigger', observed)
+    pipeline.run(planning_input=recover(source))
+    assert store.pending_market_window_transition(source.captured_at) is None
+    assert calls == []
+    pipeline.run(planning_input=recover(source))
+    assert calls

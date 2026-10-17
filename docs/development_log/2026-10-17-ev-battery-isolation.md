@@ -107,3 +107,11 @@ main 600b65c1d50b4c947644248b4ca0d25f8da37961. Both add-ons need updating.
 See V2ADR-064.7 for the accepted isolation and future-state contract.
 Installation and live verification remain separate; fresh live inputs may
 produce a different window from the diagnostic replay.
+
+The first full PR CI run passed 2209 tests with one skip and exposed one
+regression in failed legacy market-window transition atomicity. Optional future
+review persisted a no-change assessment before that transition's deliberately
+failed write. The repair defers optional grid review while a legacy transition
+is pending, preserving the original byte-identical store on failure. The
+existing transition regression is retained unchanged; future review can resume
+after the transition has completed. Full CI is rerun before publication.

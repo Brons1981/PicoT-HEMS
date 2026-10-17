@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Thread
 
+from picot_energy_devices.charging_advice import exchange_loop
 from picot_energy_devices.contracts import DeviceObservation
 from picot_energy_devices.diagnostics import DiagnosticsRecorder
 from picot_energy_devices.ev_sessions import EVSessionManager, instant
@@ -345,6 +346,8 @@ def main() -> None:
             name="ev-sessions",
             daemon=True,
         ).start()
+        Thread(target=exchange_loop, args=(ev_sessions, HomeAssistantClient(token)),
+               name="ev-charging-advice", daemon=True).start()
     server = create_web_server(store, host="0.0.0.0", port=8100, ev_sessions=ev_sessions,
                                diagnostics=diagnostics)
     Thread(target=server.serve_forever, name="energy-devices-web", daemon=True).start()

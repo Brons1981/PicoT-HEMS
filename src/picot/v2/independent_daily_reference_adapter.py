@@ -139,6 +139,7 @@ class IndependentDailyReferenceAdapter:
     def committed_plan_projection(
         self, *, snapshot: PlanningInputSnapshot, plan: ExecutionPlan,
         conversion_model: StorageConversionModel,
+        extra_boundaries: tuple[datetime, ...] = (),
     ) -> tuple[DailyPlanningProjection, DailyReferenceIntentSchedule]:
         """Read-only fresh expectation of the exact retained route, never a candidate."""
         context = snapshot.daily_charge_context
@@ -158,7 +159,8 @@ class IndependentDailyReferenceAdapter:
             raise DailyReferenceInputError("committed_expectation_owner_missing")
         inputs = self._inputs(
             snapshot, horizon_end=plan.valid_until, maximum_duration=timedelta(hours=49),
-            extra_boundaries=tuple(t for s in plan.segments for t in (s.starts_at, s.ends_at)),
+            extra_boundaries=extra_boundaries
+            + tuple(t for s in plan.segments for t in (s.starts_at, s.ends_at)),
         )
         schedule, _ = self._retained_main_schedule(
             snapshot=snapshot, assignment=owner, inputs=inputs, supplied=None,

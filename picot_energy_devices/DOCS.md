@@ -243,3 +243,27 @@ De diagnoseknop leest uitsluitend gegevens en wijzigt geen sessie, correctie,
 vergrendeling, HEMS-plan of @gielz-instelling. Live vergelijking blijft nodig;
 batterijvermogen is de ingestelde bron en niet een onafhankelijk gevalideerde
 AC-meting. Deze uitbreiding verandert de correctieberekening en drempels niet.
+
+## EV-laadadvies met eindtijd
+
+Werk HEMS bij naar **2.0.0-dev.300** en Energy Devices naar **0.4.0-dev.7**.
+HEMS gebruikt de bestaande optie `energy_device_sessions_enabled`; Energy Devices
+gebruikt `ev_sessions_enabled`. Bestaande configuratie blijft behouden.
+
+Open in Energy Devices **Goedkoop laden voor een eindtijd — laadadvies**.
+Sla eerst het vaste laadprofiel op, sluit de auto aan en vul een lokale eindtijd
+(binnen zeven dagen) en nog benodigde kWh aan de stekker in. Laadverliezen tellen
+mee in deze schatting. BMW-aansluitdetectie is niet nodig. Een bestaande fysieke
+laadsessie moet eerst voltooid of geannuleerd zijn.
+
+HEMS vergelijkt aaneengesloten laadblokken en retourneert het beste beoordeelde
+blok met geschatte extra kosten. Het bestaande batterijplan en zijn voorraad
+blijven beschermd. Zonder bruikbaar batterijplan volgt nog geen advies.
+Onbekende toekomstige prijzen blijven onbekend: de uitkomst kan voorlopig zijn.
+Dit is geen garantie op een volledig geladen auto of de goedkoopste van alle
+mogelijke starttijden. Bij wijzigen of annuleren vervalt eerder advies.
+
+**Dit is advies: de plug schakelt nog niet automatisch volgens dit tijdvak.**
+Gebruik voor direct laden de bestaande knop **Nu laden**.
+De uitwisseling gebruikt `sensor.picot_ev_charging_request` en
+`sensor.picot_ev_charging_advice`; een oud advies wordt als verlopen getoond.

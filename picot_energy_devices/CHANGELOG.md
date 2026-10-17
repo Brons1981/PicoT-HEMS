@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0-dev.7
+
+- Vraag HEMS-laadadvies aan met een eindtijd en resterende energie aan de stekker; gebruikt het opgeslagen laadvermogen.
+- Toon het geadviseerde aaneengesloten laadblok, geschatte extra kosten en eventuele voorlopige status. Vereist HEMS 2.0.0-dev.300.
+- Bewaar aanvragen na herstart en verwerp oud advies na wijzigen, annuleren of starten van een echte sessie.
+- Advies schakelt de plug nog niet automatisch. Nu laden en de bestaande EV-regeling blijven beschikbaar.
+
 ## 0.4.0-dev.6
 
 - Start een EV-sessie met Nu laden, zonder voorafgaande laadproef of BMW-aansluitdetectie.

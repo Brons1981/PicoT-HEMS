@@ -273,6 +273,22 @@ class ActivePlanCommitmentStore:
         self._path = path
         self._incident_path = incident_path
 
+    def load_ev_exclusion_scopes(self) -> set[str]:
+        """Restore physical exclusion independently of replaceable economic plans."""
+        raw = self._load_payload().get("ev_exclusion_scopes", [])
+        if not isinstance(raw, list) or any(not isinstance(v, str) or not v for v in raw):
+            raise ValueError("invalid persisted EV exclusion scopes")
+        return set(raw)
+
+    def save_ev_exclusion_scopes(self, scopes: set[str]) -> None:
+        if any(not isinstance(v, str) or not v for v in scopes):
+            raise ValueError("invalid EV exclusion scope")
+        payload = self._load_payload()
+        value = sorted(scopes)
+        if payload.get("ev_exclusion_scopes", []) != value:
+            payload["ev_exclusion_scopes"] = value
+            self._write(payload)
+
     def load(self, execution_scope_id: str) -> ActivePlanCommitment | None:
         if not self._path.exists():
             return None

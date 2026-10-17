@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -85,6 +85,76 @@ class CanonicalExecutionRuntime:
     _confirmed_daily_observation: _ChargeConfirmation | None = None
     _pending_daily_closure: _ChargeConfirmation | None = None
     completion_generation: int = 0
+
+    _ev_exclusion_scopes: set[str] = field(default_factory=set)
+    _ev_exclusion_dirty: bool = False
+
+    def __post_init__(self) -> None:
+        if self.commitment_store is not None:
+            self._ev_exclusion_scopes = self.commitment_store.load_ev_exclusion_scopes()
+
+    def _ev_primitive(
+        self, snapshot: PlanningInputSnapshot, scope_id: str,
+        requested: ExecutionPrimitive,
+        constraint: SocConstraint | None = None,
+    ) -> ExecutionPrimitive:
+        """Apply the requested EV isolation at the existing actuator boundary.
+
+        Losing a report cannot re-enable discharge after EV activity was seen.
+        A fresh, separated zero measurement releases that conservative latch.
+        Fixed discharge ignores the corrected meter and is always suppressed.
+        """
+        previous_scopes = set(self._ev_exclusion_scopes)
+        policy = snapshot.external_load_policy
+        control_available = False
+        if policy is not None and policy.execution_scope_id == scope_id:
+            fresh = 0 <= (snapshot.captured_at - policy.measured_at).total_seconds() <= 15
+            active_window = (
+                policy.planned_start is not None
+                and policy.expected_duration_seconds is not None
+                and policy.planned_start <= snapshot.captured_at
+                < policy.planned_start + timedelta(seconds=policy.expected_duration_seconds)
+                and bool(policy.remaining_energy_wh)
+            )
+            if not policy.storage_support_allowed:
+                if policy.power_w > 0 or (active_window and not policy.physical_evidence_available):
+                    self._ev_exclusion_scopes.add(scope_id)
+                elif fresh and policy.physical_evidence_available:
+                    self._ev_exclusion_scopes.discard(scope_id)
+                control_available = (
+                    0 <= (snapshot.captured_at - policy.measured_at).total_seconds() <= 3
+                    and policy.exclusion_control_available
+                )
+        self._ev_exclusion_dirty |= previous_scopes != self._ev_exclusion_scopes
+        if self.commitment_store is not None and self._ev_exclusion_dirty:
+            self.commitment_store.save_ev_exclusion_scopes(self._ev_exclusion_scopes)
+            self._ev_exclusion_dirty = False
+        if scope_id not in self._ev_exclusion_scopes:
+            return requested
+        if requested is ExecutionPrimitive.DISCHARGE_AT_POWER:
+            return ExecutionPrimitive.STANDBY
+        if not control_available:
+            if requested is ExecutionPrimitive.BALANCE_DISCHARGE_ONLY:
+                return ExecutionPrimitive.STANDBY
+            if requested is ExecutionPrimitive.BALANCE_BIDIRECTIONAL:
+                evidence = snapshot.storage_mode_capability_evidence
+                state = next((s for s in snapshot.current_storage_states
+                              if s.execution_scope_id == scope_id and evidence is not None
+                              and s.capability_id == evidence.capability_id), None)
+                maxima = [limit.maximum_soc for limit in snapshot.storage_physical_limits
+                          if limit.execution_scope_id == scope_id and evidence is not None
+                          and limit.capability_id == evidence.capability_id]
+                if constraint is not None and constraint.maximum is not None:
+                    maxima.append(constraint.maximum)
+                if state is None or state.current_soc >= min([1.0, *maxima]):
+                    return ExecutionPrimitive.STANDBY
+                if evidence is not None and self._mapping(
+                    evidence=evidence, primitive=ExecutionPrimitive.BALANCE_CHARGE_ONLY,
+                    capability_id=evidence.capability_id, execution_scope_id=scope_id,
+                ) is not None:
+                    return ExecutionPrimitive.BALANCE_CHARGE_ONLY
+                return ExecutionPrimitive.STANDBY
+        return requested
 
     def _market_primitive(
         self,
@@ -524,12 +594,19 @@ class CanonicalExecutionRuntime:
         prior_confirmation = self._confirmed_daily_segment
         self._confirmed_daily_segment = None
         context = snapshot.daily_charge_context
+        mode_evidence = snapshot.storage_mode_capability_evidence
+        ev_safe_stop = (
+            not snapshot.current_storage_states and mode_evidence is not None
+            and self._ev_primitive(snapshot, mode_evidence.execution_scope_id,
+                                   ExecutionPrimitive.DISCHARGE_AT_POWER)
+            is ExecutionPrimitive.STANDBY
+        )
         if context is not None and (
             self._daily_execution_suspended
             or not snapshot.price_points
             or snapshot.pv_energy_timeline is None
             or snapshot.household_load_forecast is None
-            or not snapshot.current_storage_states
+            or (not snapshot.current_storage_states and not ev_safe_stop)
         ):
             return CommittedBoundaryDispatchOutcome(
                 status="blocked",
@@ -634,6 +711,15 @@ class CanonicalExecutionRuntime:
                 market_reason = "market_execution_evidence_unavailable"
             market_override = guarded is not primitive
             primitive = guarded
+        ev_guarded = self._ev_primitive(
+            snapshot, scope_id, primitive,
+            segment.soc_constraint if isinstance(segment, ExecutionPlanSegment) else None,
+        )
+        ev_override = ev_guarded is not primitive
+        if ev_guarded is not primitive:
+            market_override = True
+            market_reason = "ev_storage_support_prohibited"
+            primitive = ev_guarded
         mapping = self._mapping(
             evidence=evidence,
             primitive=primitive,
@@ -737,7 +823,7 @@ class CanonicalExecutionRuntime:
                 status="already_active",
                 **common,
             )
-        if daily_plan is not None:
+        if daily_plan is not None and not (ev_override and primitive is ExecutionPrimitive.STANDBY):
             blocker = self._soc_blocker(
                 snapshot, scope_id, original.capability_id, primitive, original.soc_constraint
             )
@@ -902,6 +988,11 @@ class CanonicalExecutionRuntime:
         if fallback:
             scopes = {s.execution_scope_id for s in run.planning_input.current_storage_states}
             scopes.update(s.execution_scope_id for s in run.planning_input.storage_physical_limits)
+            if not scopes and evidence is not None and self._ev_primitive(
+                run.planning_input, evidence.execution_scope_id, boundary.planned_primitive,
+            ) is ExecutionPrimitive.STANDBY:
+                # A known EV isolation stop needs a verified selector, not SOC telemetry.
+                scopes.add(evidence.execution_scope_id)
             if evidence is None or len(scopes) != 1:
                 return replace(
                     run,
@@ -937,6 +1028,18 @@ class CanonicalExecutionRuntime:
                     request_id=f"{boundary.request_id}:market-stop",
                 )
                 requested_power_w = None
+        assert boundary.planned_primitive is not None
+        ev_guarded = self._ev_primitive(
+            run.planning_input, scope_id, boundary.planned_primitive,
+            segment.soc_constraint if not fallback else None,
+        )
+        ev_override = ev_guarded is not boundary.planned_primitive
+        if ev_guarded is not boundary.planned_primitive:
+            boundary = replace(
+                boundary, planned_primitive=ev_guarded,
+                request_id=f"{boundary.request_id}:ev-storage-exclusion",
+            )
+            requested_power_w = None
         if not fallback and run.planning_input.daily_charge_context is not None:
             assert boundary.planned_primitive is not None
             assert boundary.request_id is not None
@@ -1029,7 +1132,9 @@ class CanonicalExecutionRuntime:
                     status="already_active",
                 ),
             )
-        if not fallback:
+        if not fallback and not (
+            ev_override and boundary.planned_primitive is ExecutionPrimitive.STANDBY
+        ):
             blocker = self._soc_blocker(
                 run.planning_input, scope_id, capability_id,
                 boundary.planned_primitive, segment.soc_constraint,

@@ -70,7 +70,6 @@ from picot.v2.market_daily_runtime import (
 )
 from picot.v2.market_rule_planning import market_rule_portfolio
 from picot.v2.material_replanning import daily_grid_review_comparison
-from picot.v2.net_balance import net_balance_for
 from picot.v2.plan_commitment_store import (
     COMMITMENT_METHOD_VERSION,
     ActivePlanCommitment,
@@ -1384,7 +1383,12 @@ def _build_daily_main_run(
             ))
             pending = [next(a for a in context.assignments
                             if a.assignment_id == optimisation_trigger.assignment_id)]
-        if not triggers and manual_owner is None:
+        if (not triggers and manual_owner is None
+                and commitment_store.pending_market_window_transition(
+                    snapshot.captured_at) is None):
+            # A pending market transition owns the next atomic publication.
+            # Do not persist an unrelated optional assessment before it can fail;
+            # review the future route on the next fresh post-transition input.
             optional_pv_review = bool(retained) and not pending
             for state in context.pv_comparison_states:
                 owner = next(
@@ -1395,9 +1399,7 @@ def _build_daily_main_run(
                 ):
                     continue
                 pv_comparison = daily_grid_review_comparison(snapshot, state)
-                if (pv_comparison.status != "complete" and net_balance_for(
-                    snapshot, owner.execution_scope_id,
-                ) is None) or (
+                if not adapter.grid_review_available(snapshot, owner, pv_comparison) or (
                     pv_comparison.evidence_id in state.assessed_evidence_ids
                 ):
                     continue
@@ -1531,6 +1533,9 @@ def _build_daily_main_run(
                     and not isinstance(optimisation_trigger, DailyMainRecalculationTrigger)
                     and (windows.market_revision is not None or not isinstance(
                         optimisation_trigger, DailyBridgeTrigger)) else None,
+                    future_state_trigger=(optimisation_trigger if isinstance(
+                        optimisation_trigger, DailyMainPVSurplusTrigger)
+                        and optimisation_trigger.future_state_evidence_id is not None else None),
                 )
         elif not retained:
             raise ValueError("daily_main_active_plan_unavailable")

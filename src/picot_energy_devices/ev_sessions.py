@@ -571,7 +571,7 @@ class EVSessionManager:
             self.save(state)
             return self.view()
 
-    def snapshot(self, *, storage_support_allowed: bool = True) -> Payload:
+    def snapshot(self, *, storage_support_allowed: bool = False) -> Payload:
         with self.lock:
             state = self.load()
             session = self.current(state)
@@ -587,7 +587,7 @@ class EVSessionManager:
                     "generated_at": now.isoformat(),
                     "session": recent,
                     "recognition": state.get("recognition"),
-                    "storage_support_allowed": storage_support_allowed,
+                    "storage_support_allowed": False,
                 }
             return {
                 "contract": CONTRACT,
@@ -598,6 +598,5 @@ class EVSessionManager:
                 "generated_at": now.isoformat(),
                 "session": session,
                 "recognition": state.get("recognition"),
-                "storage_support_allowed": storage_support_allowed
-                and not bool(session.get("accepted_advice")),
+                "storage_support_allowed": False,
             }

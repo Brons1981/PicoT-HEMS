@@ -1,3 +1,3 @@
 """Independent Home Assistant energy-device profile producer."""
 
-__version__ = "0.4.0-dev.8"
+__version__ = "0.4.0-dev.9"

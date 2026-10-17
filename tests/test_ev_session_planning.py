@@ -31,7 +31,8 @@ def test_future_session_is_demand_without_claiming_regulation_authority():
     policy = read_session_demand(payload(), captured_at=AT, execution_scope_id="home")
     assert policy is not None
     assert policy.power_w == 0
-    assert policy.storage_support_allowed is True
+    assert policy.storage_support_allowed is False
+    assert policy.exclusion_control_available is False
     assert policy.remaining_energy_wh == 8000
 
 
@@ -76,7 +77,7 @@ def test_session_added_once_in_future_window_and_edit_replaces_contribution():
     assert sum(i.expected_energy_wh for i in first.intervals) == 9200
     assert sum(i.expected_energy_wh for i in second.intervals) == 5200
     assert first == apply_external_load_policy(base, policy, captured_at=AT)
-    assert all(i.battery_excluded_energy_wh == 0 for i in first.intervals)
+    assert sum(i.battery_excluded_energy_wh for i in first.intervals) == 8000
 
 
 def test_planned_session_enters_existing_material_monitor_but_heartbeat_does_not(tmp_path):
@@ -167,7 +168,8 @@ def test_real_ingestion_keeps_raw_and_removes_identified_ev_from_residual(tmp_pa
     intervals = bundle.snapshot.household_load_forecast.intervals
     first = next(i for i in intervals if i.starts_at == AT)
     assert first.expected_energy_wh == 550
-    assert first.battery_excluded_energy_wh == 0  # correction is off, never invent protection
+    assert first.battery_excluded_energy_wh == 500  # EV policy survives RAW fallback
+    assert not bundle.snapshot.external_load_policy.exclusion_control_available
     opts.write_text(json.dumps({"energy_device_sessions_enabled": False}))
     ignored = module.assemble_planning_input(
         "token",
@@ -210,8 +212,38 @@ def test_session_forecast_passes_through_real_mep_evaluation_and_plan_builder(tm
 def test_missing_ev_measurement_cannot_double_count_an_active_session():
     p = payload("active")
     p["session"]["current_power_w"] = None
-    assert read_session_demand(p, captured_at=AT, execution_scope_id="home") is None
+    unknown = read_session_demand(p, captured_at=AT, execution_scope_id="home")
+    assert unknown is not None and not unknown.physical_evidence_available
     p["session"]["state"] = "planned"
     p["session"]["switch_state"] = "off"
     policy = read_session_demand(p, captured_at=AT, execution_scope_id="home")
     assert policy is not None and policy.physical_evidence_available
+
+
+def test_missing_measurement_keeps_guard_identity_without_adding_demand():
+    from picot.v2.contracts import HouseholdLoadForecast, HouseholdLoadForecastInterval
+    p = payload("active")
+    p["session"]["current_power_w"] = None
+    policy = read_session_demand(p, captured_at=AT, execution_scope_id="home")
+    assert policy is not None and not policy.physical_evidence_available
+    base = HouseholdLoadForecast("base", "run", "snapshot", (
+        HouseholdLoadForecastInterval("one", AT, AT + timedelta(hours=1),
+                                      2200, 1, "raw", "test"),), False, None)
+    assert apply_external_load_policy(base, policy, captured_at=AT) == base
+
+
+def test_raw_fallback_cannot_reenable_session_battery_support():
+    from picot.domain.external_load_policy import ExternalLoadPolicy
+    raw = ExternalLoadPolicy("energy-devices:ev-regulation", "1", AT, 2000, True, "home",
+                             physical_evidence_available=True)
+    for legacy_permission in (True, False):
+        p = dict(payload(), storage_support_allowed=legacy_permission)
+        policy = read_session_demand(p, captured_at=AT, execution_scope_id="home",
+                                    live_policy=raw)
+        assert policy is not None and not policy.storage_support_allowed
+        assert not policy.exclusion_control_available
+    corrected = replace(raw, storage_support_allowed=False, exclusion_control_available=True)
+    policy = read_session_demand(payload(), captured_at=AT, execution_scope_id="home",
+                                live_policy=corrected)
+    assert policy is not None and policy.exclusion_control_available
+    assert not policy.storage_support_allowed

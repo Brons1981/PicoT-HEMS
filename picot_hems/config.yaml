@@ -1,5 +1,5 @@
 name: PicoT HEMS
-version: "2.0.0-dev.300"
+version: "2.0.0-dev.301"
 slug: picot_hems
 description: PicoT HEMS v2 canonical pipeline validation runtime
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -146,3 +146,4 @@ schema:
   grid_power_observation_interval_seconds: int(1,60)
   live_poll_interval_seconds: int(5,3600)
   execution_mode: list(observer|live)
+

@@ -99,6 +99,7 @@ from picot.v2.contracts import (
     StorageEnergyRequirement,
     StoragePhysicalLimits,
 )
+from picot.v2.daily_pv_comparison import DailyMainPVSurplusTrigger
 from picot.v2.energy_requirements import derive_storage_energy_requirement
 from picot.v2.independent_daily_reference_adapter import (
     DailyMainIncumbentAssessment,
@@ -1453,6 +1454,7 @@ def produce_main_charge_portfolio(
     tariffs: DailyReferenceTariffSchedule,
     opportunity_ids: tuple[str, ...],
     incumbent: DailyMainIncumbentAssessment | None = None,
+    future_state_trigger: DailyMainPVSurplusTrigger | None = None,
 ) -> MainChargeComparablePortfolio:
     """Project feasible main windows into the existing Candidate/Evaluation contract."""
     if windows.snapshot_id != snapshot.snapshot_id or tariffs.snapshot_id != snapshot.snapshot_id:
@@ -1801,6 +1803,25 @@ def produce_main_charge_portfolio(
         remaining_goal_kwh = max(
             0.0, storage.usable_capacity_wh - storage.current_stored_energy_wh,
         ) / 1000
+        if future_state_trigger is not None:
+            context = snapshot.daily_charge_context
+            owner = next((a for a in context.assignments
+                          if a.assignment_id == windows.assignment_id), None) if context else None
+            if (owner is None or not future_state_trigger.future_state_evidence_id
+                    or incumbent.assignment_id != owner.assignment_id):
+                raise ValueError("future acquisition comparison requires its retained owner proof")
+            future_state_trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
+            first_grid = min((s.starts_at for s in incumbent.main_segments
+                              if s.intent is DailyStorageIntent.GRID_REQUIREMENT), default=None)
+            interval = next((i for i in incumbent.projection.intervals
+                             if i.starts_at == first_grid), None)
+            if interval is None or first_grid is None or first_grid <= snapshot.captured_at:
+                raise ValueError(
+                    "future acquisition comparison requires the retained refill boundary")
+            # One shared future deficit from the unchanged physical route. Full
+            # storage now does not imply zero need after tonight's household use.
+            remaining_goal_kwh = max(0.0, incumbent.target_storage_energy_wh
+                                    - interval.storage_energy_at_start_wh) / 1000
         for index, outcome in enumerate(outcomes):
             financial_objective = next((o for o in outcome.objective_outcomes
                 if o.objective is ObjectiveKind.FINANCIAL_RESULT), None)

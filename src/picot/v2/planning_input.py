@@ -862,8 +862,8 @@ def assemble_planning_input(
             source.external_load_payload if source else None,
             captured_at=capture, execution_scope_id=selected_storage_config.execution_scope_id,
         )
-        if options.get("energy_device_policy_enabled", False) is not True:
-            external_load_policy = None
+        # Session control also needs independent EV measurement and proof of
+        # corrected regulation, including recognized/unconfirmed charging.
         if options.get("energy_device_sessions_enabled", False) is True:
             session_source = next(
                 (e for e in evidence if e.semantic_role == "ev_session_demand"), None

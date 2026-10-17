@@ -264,11 +264,16 @@ class IndependentDailyIntentSimulator:
             charge_loss_wh = 0.0
             discharge_loss_wh = 0.0
 
+            # Fixed discharge bypasses the corrected meter. The actuator guard
+            # prohibits it during excluded demand, so no export is credited.
             if intent.intent in {
                 DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
                 DailyStorageIntent.NOM,
                 DailyStorageIntent.STORAGE_EXPORT,
-            }:
+            } and not (
+                intent.intent is DailyStorageIntent.STORAGE_EXPORT
+                and load.battery_excluded_energy_wh > 0
+            ):
                 available_output_wh = max(
                     0.0, stored_energy_wh - minimum_storage_energy_wh
                 ) * conversion_model.discharge_efficiency

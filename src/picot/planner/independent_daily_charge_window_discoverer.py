@@ -73,7 +73,9 @@ class IndependentDailyChargeWindowDiscoverer:
         Candidate ownership only: all feasible market starts remain unranked.
         No prices, score, legacy deadline, micro-top-up suppression or trade
         recovery policy selects a winner here. The retained complete schedule
-        is simulated unchanged outside this assignment's main segments.
+        retains other owners' actions. Free surplus intervals after the daily
+        goal remain available for PV self-consumption, without extending the
+        daily charging obligation.
         """
         if assignment.execution_scope_id != storage_state.execution_scope_id:
             raise ValueError("main assignment and storage scope must match")
@@ -183,10 +185,16 @@ class IndependentDailyChargeWindowDiscoverer:
                     return i, interval.ends_at
             return None
 
-        def propose(owned: dict[int, DailyStorageIntent]) -> DailyReferenceIntentSchedule:
+        def propose(
+            owned: dict[int, DailyStorageIntent], *, completed_index: int | None = None,
+        ) -> DailyReferenceIntentSchedule:
             owned = {**owned, **required_grid}
             intervals = tuple(
-                replace(interval, intent=owned[i]) if i in owned else interval
+                replace(interval, intent=owned[i]) if i in owned else (
+                    replace(interval, intent=DailyStorageIntent.NOM)
+                    if completed_index is not None and i > completed_index and i in pv_indexes
+                    and interval.intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY else interval
+                )
                 for i, interval in enumerate(baseline.intervals)
             )
             digest = sha256(repr((assignment.assignment_id, intervals)).encode()).hexdigest()[:16]
@@ -215,7 +223,11 @@ class IndependentDailyChargeWindowDiscoverer:
             owned = {i: intent for i, intent in owned.items() if i <= last}
             if required_grid:
                 family = "hybrid" if DailyStorageIntent.NOM in owned.values() else "grid"
-            schedule = propose(owned)
+            # Completion trims only the owned main charge. Later free PV
+            # capture is part of the physical/executable schedule, not a new
+            # daily goal or a grid-charge commitment. Keep its energy outside
+            # the main-window acquisition-price calculation.
+            schedule = propose(owned, completed_index=last)
             if schedule.schedule_id in windows:
                 return True
             projection = simulate(schedule)

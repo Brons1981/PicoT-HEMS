@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.303
+
+- Behoud PV-bijladen na het bereiken van het dagelijkse 100%-doel, ook bij volledig herberekenen.
+- Plan NOM in latere vrije kwartieren met verwacht PV-overschot; neem dit mee in uitvoering en SOC-prognose zonder het hoofdlaadblok te verlengen.
+- Behoud bestaande laadacties, EV-isolatie en marktroutebeveiligingen. Gebruik na bijwerken Planning opnieuw berekenen voor een bestaand plan.
+
 ## 2.0.0-dev.302
 
 - Kies alleen slim ontladen voor vrijgekomen netlaadkwartieren zonder verwacht PV-overschot; behoud NOM waar de ingestelde Solcast-basis meer PV dan totale belasting voorspelt.

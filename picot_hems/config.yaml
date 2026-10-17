@@ -146,4 +146,3 @@ schema:
   grid_power_observation_interval_seconds: int(1,60)
   live_poll_interval_seconds: int(5,3600)
   execution_mode: list(observer|live)
-

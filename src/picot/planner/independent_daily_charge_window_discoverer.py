@@ -171,6 +171,12 @@ class IndependentDailyChargeWindowDiscoverer:
             if reference.basis_timeline.intervals[i].energy_wh
             > household.intervals[i].expected_energy_wh
         )
+        # Delegate the complete solar window to NOM. Temporary forecast
+        # deficits inside it do not require a mode change: NOM already serves
+        # household demand. Preserve protected intervals and other actions.
+        pv_capture_indexes = frozenset(
+            i for i in indexes if pv_indexes and pv_indexes[0] <= i <= pv_indexes[-1]
+        )
         windows: dict[str, DailyMainChargeWindow] = {}
 
         def reached(
@@ -192,7 +198,8 @@ class IndependentDailyChargeWindowDiscoverer:
             intervals = tuple(
                 replace(interval, intent=owned[i]) if i in owned else (
                     replace(interval, intent=DailyStorageIntent.NOM)
-                    if completed_index is not None and i > completed_index and i in pv_indexes
+                    if completed_index is not None and i > completed_index
+                    and i in pv_capture_indexes
                     and interval.intent is DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY else interval
                 )
                 for i, interval in enumerate(baseline.intervals)

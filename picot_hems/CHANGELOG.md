@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.304
+
+- Maak PV-bijladen na het dagelijkse laadblok aaneengesloten tussen het eerste en laatste verwachte zonne-overschot.
+- Voorkom onnodig schakelen tussen NOM en alleen ontladen bij tijdelijke tekorten binnen het zonnevenster; behoud bestaande laadacties en beveiligingen.
+- Gebruik na bijwerken Planning opnieuw berekenen om een versnipperd bestaand plan opnieuw op te bouwen.
+
 ## 2.0.0-dev.303
 
 - Behoud PV-bijladen na het bereiken van het dagelijkse 100%-doel, ook bij volledig herberekenen.

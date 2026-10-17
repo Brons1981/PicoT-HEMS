@@ -51,23 +51,27 @@ def test_later_surplus_is_captured_without_extending_daily_obligation(soc):
     assert window.projection.intervals[5].pv_to_storage_input_wh == pytest.approx(400)
     assert window.projection.intervals[7].pv_to_storage_input_wh == pytest.approx(
         100 if soc == 0.9 else 200)
-    assert window.schedule.intervals[6].intent is Intent.HOUSEHOLD_SUPPORT_ONLY
+    assert window.schedule.intervals[6].intent is Intent.NOM
+    assert window.schedule.intervals[4].intent is Intent.HOUSEHOLD_SUPPORT_ONLY
+    assert window.schedule.intervals[8].intent is Intent.HOUSEHOLD_SUPPORT_ONLY
     assert all(i.grid_to_storage_input_wh == 0 for i in window.projection.intervals[1:])
 
 
 @pytest.mark.parametrize("intent", [Intent.STANDBY, Intent.GRID_REQUIREMENT, Intent.STORAGE_EXPORT])
-def test_later_existing_actions_are_not_replaced(intent):
+@pytest.mark.parametrize("action_index", [5, 6])
+def test_later_existing_actions_are_not_replaced(intent, action_index):
     data = late_pv_inputs(soc=1.0)
     h = data["household"]
     schedule = DailyReferenceIntentSchedule(
         "retained", data["snapshot_id"], h.horizon_start, h.horizon_end,
         tuple(DailyReferenceIntentInterval(i.starts_at, i.ends_at,
-              intent if n == 5 else Intent.HOUSEHOLD_SUPPORT_ONLY,
-              storage_export_target_wh=100 if n == 5 and intent is Intent.STORAGE_EXPORT else 0)
+              intent if n == action_index else Intent.HOUSEHOLD_SUPPORT_ONLY,
+              storage_export_target_wh=(100 if n == action_index
+                                        and intent is Intent.STORAGE_EXPORT else 0))
               for n, i in enumerate(h.intervals)), "test:v1",
     )
     window = first_window(data, retained_schedule=schedule)
-    assert window.schedule.intervals[5].intent is intent
+    assert window.schedule.intervals[action_index].intent is intent
     assert window.schedule.intervals[7].intent is Intent.NOM
 
 
@@ -76,6 +80,15 @@ def test_protected_pv_interval_is_not_replaced():
     protected = data["household"].intervals[5]
     window = first_window(data, protected_intervals=((protected.starts_at, protected.ends_at),))
     assert window.schedule.intervals[5].intent is Intent.HOUSEHOLD_SUPPORT_ONLY
+    assert window.schedule.intervals[7].intent is Intent.NOM
+
+
+def test_protected_gap_splits_the_pv_window():
+    data = late_pv_inputs()
+    gap = data["household"].intervals[6]
+    window = first_window(data, protected_intervals=((gap.starts_at, gap.ends_at),))
+    assert window.schedule.intervals[5].intent is Intent.NOM
+    assert window.schedule.intervals[6].intent is Intent.HOUSEHOLD_SUPPORT_ONLY
     assert window.schedule.intervals[7].intent is Intent.NOM
 
 
@@ -144,7 +157,7 @@ def test_pipeline_recalculation_retains_post_goal_capture_and_main_ownership(tmp
     last_main = max(s.ends_at for s in day.main_segments)
     captures = [s for s in plan.segments if s.starts_at >= last_main
                 and s.primitive is Primitive.BALANCE_BIDIRECTIONAL]
-    assert captures
+    assert len(captures) == 1
     assert all(s.main_assignment_id is None for s in captures)
     projection, _ = IndependentDailyReferenceAdapter().committed_plan_projection(
         snapshot=recover(source), plan=plan, conversion_model=inputs()["conversion_model"],

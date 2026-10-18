@@ -1,3 +1,10 @@
+# 0.4.0-dev.13
+
+- Geef P1 exact door na 30 seconden bevestigd EV-sluimerverbruik (maximaal 5 W); reset afronding en demping.
+- Schakel de plug 60 seconden na een bevestigde BMW-eindmelding uit, ook bij handmatige sessies.
+- Bewaar de uitschakeltimer bij herstart; nieuwe laadactiviteit wist de oude timer.
+- Bestaande geplande eindtijd en beveiligingen blijven gelden.
+
 # 0.4.0-dev.12
 
 - BMW-laadeinde herkennen en fout-/herstelmeldingen via HA-events.

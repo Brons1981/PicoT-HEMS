@@ -121,9 +121,13 @@ class RegulationObserver:
 
     def __init__(self) -> None:
         self._previous_demand: float | None = None
+        self._idle_since: datetime | None = None
+        self._idle_last_report: datetime | None = None
 
     def reset(self) -> None:
         self._previous_demand = None
+        self._idle_since = None
+        self._idle_last_report = None
 
     def evaluate(
         self,
@@ -134,9 +138,25 @@ class RegulationObserver:
         now: datetime,
     ) -> dict[str, object]:
         result = regulation_candidate(raw, battery, ev, now=now)
-        if result["status"] != "ready" or ev.watts == 0:
-            self._previous_demand = None
+        if result["status"] != "ready":
+            self.reset()
             return result
+        if ev.watts <= 5:
+            previous_report = self._idle_last_report
+            if (previous_report is None or ev.reported_at < previous_report
+                    or (ev.reported_at - previous_report).total_seconds() > 3):
+                self._idle_since = ev.reported_at
+            self._idle_last_report = ev.reported_at
+            assert self._idle_since is not None
+            if ev.watts == 0 or (ev.reported_at - self._idle_since).total_seconds() >= 30:
+                self._previous_demand = None
+                result.update(candidate_w=raw.watts, excluded_ev_w=0.0,
+                              permitted_net_demand_w=raw.watts - battery.watts,
+                              quantization_w=0.0, update_dead_band_w=0.0)
+                return result
+        else:
+            self._idle_since = None
+            self._idle_last_report = None
         demand = result["permitted_net_demand_w"]
         assert isinstance(demand, (int, float))
         previous = self._previous_demand

@@ -29,6 +29,7 @@ from picot.domain.market_plan_binding import MarketPlanBinding
 from picot.domain.runtime import RuntimeObservation, RuntimeObservationKind
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
+from picot.health_notifications import HealthNotifier
 from picot.planner.market_daily_planner import MarketTradingPolicy
 from picot.runtime.runtime_monitor import RuntimeMonitorSession
 from picot.v2.canonical_execution_runtime import (
@@ -57,6 +58,7 @@ from picot.v2.financial_measurement_observer import FinancialMeasurementObserver
 from picot.v2.financial_result_ledger import FinancialResultLedger
 from picot.v2.grid_charge_review_runtime import GridChargeReviewObserver
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
+from picot.v2.health_alerts import observe_cycle, observe_execution, observe_planning_run
 from picot.v2.household_calendar_history import CALENDAR_REPORT_PATH
 from picot.v2.household_calendar_runtime import (
     maintain_calendar_observer,
@@ -2254,6 +2256,7 @@ def _execute_planning_bundle(
     canonical_execution_runtime: CanonicalExecutionRuntime | None = None,
     execution_enabled: bool = False,
     planning_fallback_notifier: PlanningFallbackNotifier | None = None,
+    health_notifier: HealthNotifier | None = None,
     planning_incident_history: PlanningIncidentHistory | None = None,
     daily_pv_basis_decision: DailyPVBasisDecision | None = None,
     financial_result_ledger: FinancialResultLedger | None = None,
@@ -2357,6 +2360,8 @@ def _execute_planning_bundle(
                 observed_at=execution_result_at,
                 observation_id=f"execution-result:{run.planning_input.run_id}",
             )
+    if health_notifier is not None:
+        observe_planning_run(health_notifier, run)
     if planning_incident_history is not None:
         try:
             planning_incident_history.record(
@@ -2630,6 +2635,11 @@ def main() -> None:
         raise RuntimeError("Supervisor token is required")
 
     options = load_options()
+    health_notifier = HealthNotifier(
+        token, "HEMS", Path("/data/picot_health_notifications.json"),
+        enabled=bool(options.get("health_notifications_enabled", True)),
+        recovery_enabled=bool(options.get("health_notifications_recovery_enabled", True)),
+    )
     user_rule_store = UserRuleStore(
         USER_RULES_PATH,
         migrated_trading_soc_percent=float(
@@ -3343,6 +3353,7 @@ def main() -> None:
             canonical_execution_runtime=canonical_execution_runtime,
             execution_enabled=execution_enabled,
             planning_fallback_notifier=planning_fallback_notifier,
+            health_notifier=health_notifier,
             planning_incident_history=planning_incident_history,
             monitor_diagnostics={
                 "state": asdict(runtime_monitor.state),
@@ -3366,6 +3377,10 @@ def main() -> None:
         outcome = canonical_execution_runtime.advance_committed_boundary(
             bundle.snapshot,
             execution_enabled=execution_enabled,
+        )
+        observe_execution(
+            health_notifier, status=outcome.status, reason=outcome.reason,
+            failure_reason=outcome.failure_reason,
         )
         _observe_execution_status(
             runtime_monitor, status=outcome.status,
@@ -3443,7 +3458,8 @@ def main() -> None:
         if planning_reset_requested.is_set():
             planning_reset_requested.clear()
             previous_signature = None
-        previous_signature = planning_reset_barrier.run_cycle(
+        previous_signature = observe_cycle(health_notifier, partial(
+            planning_reset_barrier.run_cycle,
             partial(
                 _poll_live_cycle,
                 previous_signature=previous_signature,
@@ -3458,7 +3474,7 @@ def main() -> None:
                 runtime_monitor=runtime_monitor,
                 runtime_observations=material_replanning.observe,
             )
-        )
+        ))
         _log_history_capture_trial(
             history_capture_trial,
             cycle_ms=(perf_counter() - cycle_started_clock) * 1000,

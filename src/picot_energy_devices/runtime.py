@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Thread
 
+from picot.health_notifications import HealthNotifier
 from picot_energy_devices.charging_advice import exchange_loop
 from picot_energy_devices.contracts import DeviceObservation
 from picot_energy_devices.diagnostics import DiagnosticsRecorder
@@ -28,6 +29,41 @@ from picot_energy_devices.web_ui import create_web_server
 
 DATA_PATH = Path("/data/picot_energy_devices.sqlite3")
 OPTIONS_PATH = Path("/data/options.json")
+
+
+def regulation_health(notifier: HealthNotifier, result: dict[str, object], *,
+                      control_enabled: bool) -> None:
+    if not control_enabled:
+        return
+    guard = result.get("correction_guard")
+    if result.get("status") == "blocked" or guard in {"latched", "recovering"}:
+        notifier.observe("p1_correction", True,
+                         "P1-correctie geblokkeerd of in herstel: "
+                         + str(result.get("reason") or guard)
+                         + ". Batterijondersteuning kan tijdelijk beperkt zijn.")
+    elif result.get("status") == "ready" and guard == "matched":
+        notifier.observe("p1_correction", False,
+                         "P1-correctie hersteld; ontvangst van de correctie bevestigd.")
+
+
+def session_health(notifier: HealthNotifier, snapshot: dict[str, object]) -> None:
+    session = snapshot.get("session")
+    if not isinstance(session, dict):
+        return
+    active = session.get("state") in {"recognized", "planned", "active", "interrupted"}
+    error = session.get("error") if active else None
+    start_failed = active and session.get("start_status") == "charging_not_started"
+    if active and session.get("start_status") == "measurement_unavailable":
+        try:
+            start_failed = (instant(snapshot.get("generated_at")) - instant(
+                session.get("switch_on_observed_at"))).total_seconds() >= 120
+        except ValueError:
+            pass
+    failed = bool(error or start_failed)
+    notifier.observe("ev_execution", failed,
+                     "Laadsessie heeft een uitvoeringsprobleem: "
+                     + str(error or session.get("start_status")) if failed else
+                     "Laadsessie heeft geen actief uitvoeringsprobleem meer.")
 
 
 def load_options(path: Path = OPTIONS_PATH) -> dict[str, object]:
@@ -80,6 +116,7 @@ def regulation_poll_once(
     guard: CorrectionGuard | None = None,
     offered_entity: str = "sensor.ct_shelly_pro_3em_api",
     diagnostics: DiagnosticsRecorder | None = None,
+    notifier: HealthNotifier | None = None,
 ) -> None:
     raw = battery = ev = None
     local = None
@@ -153,6 +190,9 @@ def regulation_poll_once(
                     source_ages_seconds=[age],
                 )
         api_result = snapshots.update(api_result)
+        if notifier is not None:
+            regulation_health(notifier, dict(api_result, correction_guard=result.get(
+                "correction_guard")), control_enabled=snapshots.control_enabled)
         if diagnostics is not None:
             diagnostics.record("regulation", dict(result, **{
                 k: api_result.get(k) for k in (
@@ -172,6 +212,7 @@ def _regulation_loop(
     snapshots: RegulationSnapshotStore | None = None,
     ev_source: ShellyEVSource | None = None,
     diagnostics: DiagnosticsRecorder | None = None,
+    notifier: HealthNotifier | None = None,
 ) -> None:
     entities = {
         "raw_entity": str(
@@ -206,8 +247,13 @@ def _regulation_loop(
         try:
             regulation_poll_once(client=client, observer=observer, snapshots=snapshots,
                                  ev_source=ev_source, guard=guard,
-                                 offered_entity=offered_entity, diagnostics=diagnostics, **entities)
+                                 offered_entity=offered_entity, diagnostics=diagnostics,
+                                 notifier=notifier, **entities)
+            if notifier is not None:
+                notifier.observe("regulation_loop", False, "P1-meetlus werkt weer.")
         except (OSError, ValueError) as error:
+            if notifier is not None:
+                notifier.observe("regulation_loop", True, "P1-meetlus mislukt: " + str(error))
             print(
                 json.dumps({"event": "regulation_shadow_failed", "error": str(error)}),
                 flush=True,
@@ -219,6 +265,7 @@ def ev_poll_once(
     manager: EVSessionManager, client: HomeAssistantClient,
     ev_source: ShellyEVSource | None = None,
     diagnostics: DiagnosticsRecorder | None = None,
+    notifier: HealthNotifier | None = None,
 ) -> None:
     power = None
     measured = None
@@ -245,14 +292,27 @@ def ev_poll_once(
                 switch_changed_at = instant(switch_payload["last_changed"])
         except (OSError, ValueError):
             pass
+    vehicle_state = None
+    vehicle_changed_at = None
+    if manager.vehicle_state_entity:
+        try:
+            vehicle = client.state(manager.vehicle_state_entity)
+            vehicle_state = str(vehicle.get("state", "unavailable"))
+            vehicle_changed_at = instant(vehicle.get("last_changed"))
+        except (OSError, ValueError):
+            pass
     manager.tick(
         measured_at=measured,
         power_w=power,
         switch_state=switch_state,
         switch_changed_at=switch_changed_at,
+        vehicle_state=vehicle_state,
+        vehicle_changed_at=vehicle_changed_at,
         set_switch=lambda enabled: client.set_ev_switch(manager.switch_entity, enabled),
     )
     snapshot = manager.snapshot()
+    if notifier is not None:
+        session_health(notifier, snapshot)
     snapshot["ev_measurement_source"] = (
         "local_rpc" if ev_source is not None else "home_assistant"
     )
@@ -266,12 +326,17 @@ def _ev_loop(
     manager: EVSessionManager, client: HomeAssistantClient,
     ev_source: ShellyEVSource | None = None,
     diagnostics: DiagnosticsRecorder | None = None,
+    notifier: HealthNotifier | None = None,
 ) -> None:
     while True:
         started = time.perf_counter()
         try:
-            ev_poll_once(manager, client, ev_source, diagnostics)
+            ev_poll_once(manager, client, ev_source, diagnostics, notifier)
+            if notifier is not None:
+                notifier.observe("ev_loop", False, "Laadsessie-meetlus werkt weer.")
         except (OSError, ValueError, sqlite3.Error) as error:
+            if notifier is not None:
+                notifier.observe("ev_loop", True, "Laadsessie-meetlus mislukt: " + str(error))
             print(json.dumps({"event": "ev_session_poll_failed", "error": str(error)}), flush=True)
         time.sleep(max(0.0, 1.0 - (time.perf_counter() - started)))
 
@@ -281,6 +346,11 @@ def main() -> None:
     if not token:
         raise RuntimeError("Supervisor token is required")
     options = load_options()
+    notifier = HealthNotifier(
+        token, "ED", DATA_PATH.parent / "picot_ed_health_notifications.json",
+        enabled=options.get("health_notifications_enabled", True) is True,
+        recovery_enabled=options.get("health_notifications_recovery_enabled", True) is True,
+    )
     raw_interval = options.get("poll_interval_seconds", 10)
     if isinstance(raw_interval, bool) or not isinstance(raw_interval, (int, float, str)):
         raise ValueError("poll interval must be numeric")
@@ -327,7 +397,7 @@ def main() -> None:
     if api_enabled or options.get("regulation_shadow_enabled", False) is True:
         Thread(
             target=_regulation_loop,
-            args=(HomeAssistantClient(token), options, snapshots, ev_source, diagnostics),
+            args=(HomeAssistantClient(token), options, snapshots, ev_source, diagnostics, notifier),
             name="ev-regulation-shadow",
             daemon=True,
         ).start()
@@ -339,10 +409,13 @@ def main() -> None:
                 options.get("ev_power_entity", "sensor.shellyplugsg3_d885ac1e8c94_vermogen")
             ),
             switch_entity=str(options.get("ev_switch_entity", "switch.shellyplugsg3_d885ac1e8c94")),
+            vehicle_state_entity=str(options.get(
+                "ev_vehicle_state_entity", "sensor.wba5x71010fj59919_charging_ev_charging_state"
+            ) or ""),
         )
         Thread(
             target=_ev_loop,
-            args=(ev_sessions, HomeAssistantClient(token), ev_source, diagnostics),
+            args=(ev_sessions, HomeAssistantClient(token), ev_source, diagnostics, notifier),
             name="ev-sessions",
             daemon=True,
         ).start()
@@ -360,6 +433,7 @@ def main() -> None:
                 catalog_entity_id=catalog_entity_id,
                 observed_at=datetime.now(UTC),
             )
+            notifier.observe("catalog_loop", False, "Apparaatmetingen en publicatie werken weer.")
             print(
                 json.dumps(
                     {
@@ -373,6 +447,7 @@ def main() -> None:
                 flush=True,
             )
         except OSError as error:
+            notifier.observe("catalog_loop", True, "Apparaatpublicatie mislukt: " + str(error))
             print(json.dumps({"event": "catalog_publish_failed", "error": str(error)}), flush=True)
         time.sleep(max(0.0, interval - (time.perf_counter() - started)))
 

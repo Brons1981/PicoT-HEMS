@@ -1,6 +1,6 @@
 {
   "name": "PicoT Home Climate",
-  "version": "0.1.0-dev.21",
+  "version": "0.1.0-dev.22",
   "slug": "picot_hc",
   "description": "Comfortvensters, vaste zonetemperaturen en handmatige bronbediening",
   "arch": [
@@ -100,7 +100,9 @@
     "outdoor_humidity": "sensor.0_energie_gw1200a_humidity",
     "outdoor_dewpoint": "sensor.0_energie_gw1200a_dewpoint",
     "outdoor_battery": "binary_sensor.0_energie_gw1200a_wh26_battery",
-    "outdoor_vpd": "sensor.0_energie_gw1200a_vapour_pressure_deficit"
+    "outdoor_vpd": "sensor.0_energie_gw1200a_vapour_pressure_deficit",
+    "health_notifications_enabled": true,
+    "health_notifications_recovery_enabled": true
   },
   "schema": {
     "outdoor": "str",
@@ -145,7 +147,9 @@
     "outdoor_humidity": "str?",
     "outdoor_dewpoint": "str?",
     "outdoor_battery": "str?",
-    "outdoor_vpd": "str?"
+    "outdoor_vpd": "str?",
+    "health_notifications_enabled": "bool?",
+    "health_notifications_recovery_enabled": "bool?"
   },
   "url": "https://github.com/Brons1981/PicoT-HEMS/tree/main/picot_hc"
 }

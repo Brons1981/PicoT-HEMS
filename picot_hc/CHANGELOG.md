@@ -1,3 +1,8 @@
+# 0.1.0-dev.22
+
+- Eigen fout- en herstelmeldingen via HA-events en centrale iPhone-blueprint.
+- Ontdubbeling en bewaarde verzendwachtrij buiten de regelcyclus.
+
 # Changelog
 
 ## 0.1.0-dev.21
@@ -145,3 +150,4 @@
 - Configuratie en Ingress via Home Assistant.
 - Installatie via dezelfde repository als PicoT HEMS en Energy Devices.
 - Nog geen apparaatbediening of automatische prijsoptimalisatie.
+

@@ -1,0 +1,46 @@
+blueprint:
+  name: PicoT - fouten, terugval en herstel
+  description: Stuur gezondheidsmeldingen van HEMS, HC en Energy Devices naar de HA Companion-app.
+  domain: automation
+  input:
+    phone:
+      name: Telefoon
+      selector:
+        device:
+          filter:
+            integration: mobile_app
+    apps:
+      name: Apps
+      default: [HEMS, HC, ED]
+      selector:
+        select:
+          multiple: true
+          options: [HEMS, HC, ED]
+    recovery:
+      name: Ook herstel melden
+      default: true
+      selector:
+        boolean: {}
+mode: queued
+max: 50
+triggers:
+  - trigger: event
+    event_type: picot_health_alert
+variables:
+  selected_apps: !input apps
+  include_recovery: !input recovery
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.event.data.get('app') in selected_apps
+         and (trigger.event.data.get('active', false) or include_recovery)
+         and trigger.event.data.get('message', '') != '' }}
+actions:
+  - domain: mobile_app
+    type: notify
+    device_id: !input phone
+    title: "{{ trigger.event.data.title }}"
+    message: "{{ trigger.event.data.message }}"
+    data:
+      tag: "{{ trigger.event.data.tag }}"
+      group: "PicoT {{ trigger.event.data.app }}"

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from picot.v2.passive_history.export import export_trial
 
@@ -51,40 +52,67 @@ def _tail_lines(path: Path, count: int) -> list[str]:
     ]
 
 
-def diagnostic_zip(paths: tuple[Path, ...]) -> bytes:
+def diagnostic_zip(
+    paths: tuple[Path, ...], *, progress: Callable[[int, int, str], None] | None = None,
+) -> bytes:
     """Build one archive from existing files in the explicit runtime allow-list."""
     output = BytesIO()
-    with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
-        for path in paths:
-            if path.name == "picot_history_capture_trial":
-                export_trial(archive, path)
-            elif path.is_file():
-                archive.write(path, arcname=path.name)
-        remaining = MAX_ROTATED_EXPORT_BYTES
-        omitted: list[str] = []
-        for path in paths:
-            if path.name != "picot_v2_planning_incident_history.jsonl":
+    files = [(path, path.stat().st_size) for path in paths
+             if path.name != "picot_history_capture_trial" and path.is_file()]
+    trials = [path for path in paths if path.name == "picot_history_capture_trial"]
+    remaining = MAX_ROTATED_EXPORT_BYTES
+    omitted: list[str] = []
+    for path in paths:
+        if path.name != "picot_v2_planning_incident_history.jsonl":
+            continue
+        cutoff = datetime.now(UTC) - timedelta(hours=36)
+        for rotated in sorted(path.parent.glob(f"{path.stem}.oversized-*.jsonl"), reverse=True):
+            match = re.fullmatch(
+                re.escape(path.stem) + r"\.oversized-(\d{8}T\d{6}Z)(?:-\d+)?\.jsonl",
+                rotated.name,
+            )
+            if match is None or rotated.is_symlink() or not rotated.is_file():
                 continue
-            cutoff = datetime.now(UTC) - timedelta(hours=36)
-            for rotated in sorted(path.parent.glob(f"{path.stem}.oversized-*.jsonl"), reverse=True):
-                match = re.fullmatch(
-                    re.escape(path.stem) + r"\.oversized-(\d{8}T\d{6}Z)(?:-\d+)?\.jsonl",
-                    rotated.name,
-                )
-                if match is None or rotated.is_symlink() or not rotated.is_file():
-                    continue
-                try:
-                    rotated_at = datetime.strptime(match[1], "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
-                except ValueError:
-                    continue
-                if rotated_at < cutoff:
-                    continue
-                size = rotated.stat().st_size
-                if size > remaining:
-                    omitted.append(rotated.name)
-                    continue
-                archive.write(rotated, arcname=rotated.name)
-                remaining -= size
+            try:
+                rotated_at = datetime.strptime(match[1], "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+            except ValueError:
+                continue
+            if rotated_at < cutoff:
+                continue
+            size = rotated.stat().st_size
+            if size > remaining:
+                omitted.append(rotated.name)
+                continue
+            files.append((rotated, size))
+            remaining -= size
+    total = sum(size for _, size in files)
+    completed = 0
+    with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
+        for path in trials:
+            if progress:
+                progress(0, 0, "Historische proefgegevens verzamelen")
+            export_trial(archive, path)
+        if progress:
+            progress(0, total, "Diagnosebestanden inpakken")
+        for path, size in files:
+            info = ZipInfo.from_file(path, arcname=path.name)
+            info.compress_type = ZIP_DEFLATED
+            # As with ZipFile.write, read to EOF; a live JSONL may grow during export.
+            read_bytes = 0
+            with path.open("rb") as source, archive.open(info, "w", force_zip64=True) as target:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        total -= max(0, size - read_bytes)
+                        break
+                    target.write(chunk)
+                    completed += len(chunk)
+                    read_bytes += len(chunk)
+                    if read_bytes > size:
+                        total += read_bytes - size
+                        size = read_bytes
+                    if progress:
+                        progress(completed, total, f"Inpakken: {path.name}")
         if omitted:
             archive.writestr("incident-export-coverage.json", json.dumps({
                 "complete": False,
@@ -92,6 +120,8 @@ def diagnostic_zip(paths: tuple[Path, ...]) -> bytes:
                 "omitted_files": omitted,
                 "budget_bytes": MAX_ROTATED_EXPORT_BYTES,
             }))
+    if progress:
+        progress(completed, total, "Diagnosearchief gereed")
     return output.getvalue()
 
 

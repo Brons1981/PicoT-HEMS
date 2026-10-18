@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0-dev.11
+
+- Toon ontvangstbevestiging en werkelijke voortgang bij het maken van diagnosebestanden.
+- Maak de ZIP op de achtergrond en toon daarna downloadvoortgang in MB.
+- Meld verbindingsfouten en bied opnieuw proberen; voorkom dubbele gelijktijdige exports.
+
 ## 0.4.0-dev.10
 
 - Herstel P1-correctie automatisch na tijdelijke meetuitval, ook bij eerder opgeslagen blokkeringen.

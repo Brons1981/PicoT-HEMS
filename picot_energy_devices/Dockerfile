@@ -8,6 +8,9 @@ RUN apk add --no-cache git \
     && git clone --depth 1 --branch main \
       https://github.com/Brons1981/PicoT-HEMS.git /tmp/picot-src \
     && cp -R /tmp/picot-src/src/picot_energy_devices /opt/picot_energy_devices \
+    && mkdir -p /opt/picot \
+    && cp /tmp/picot-src/src/picot/diagnostic_export_job.py /opt/picot/diagnostic_export_job.py \
+    && touch /opt/picot/__init__.py \
     && rm -rf /tmp/picot-src \
     && apk del git
 

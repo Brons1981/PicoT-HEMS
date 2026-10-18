@@ -110,7 +110,7 @@ def test_zip_includes_recent_rotated_incidents_but_not_other_files(tmp_path) -> 
     rotated.write_text("morning\n")
     (tmp_path / f"{incident.stem}.oversized-secrets.jsonl").write_text("secret")
     with ZipFile(BytesIO(diagnostic_zip((incident,)))) as archive:
-        assert archive.read(rotated.name) == b"morning\n"
+        assert archive.read(rotated.name) == rotated.read_bytes()
         assert not any("secrets" in name for name in archive.namelist())
 
 
@@ -129,5 +129,5 @@ def test_rotated_export_budget_reports_missing_evidence(tmp_path, monkeypatch) -
         coverage = json.loads(archive.read("incident-export-coverage.json"))
         assert coverage["complete"] is False
         assert coverage["omitted_files"] == [rotated.name]
-        assert archive.read(incident.name) == b"current\n"
+        assert archive.read(incident.name) == incident.read_bytes()
     assert rotated.read_text() == "morning\n"

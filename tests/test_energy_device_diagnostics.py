@@ -152,7 +152,7 @@ def test_diagnosis_download_is_real_zip_and_does_not_mutate_control(tmp_path):
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        assert 'href="api/diagnostics.zip"' in DASHBOARD_HTML
+        assert 'id="diagnostic-export-progress"' in DASHBOARD_HTML
         with urlopen(f"http://127.0.0.1:{server.server_port}/api/diagnostics.zip", timeout=5) as r:
             assert r.headers["Content-Type"] == "application/zip"
             assert "attachment; filename=" in r.headers["Content-Disposition"]

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-dev.306
+
+- Toon ontvangstbevestiging en werkelijke voortgang bij het maken van diagnosebestanden.
+- Maak de ZIP op de achtergrond en toon daarna downloadvoortgang in MB.
+- Meld verbindingsfouten en bied opnieuw proberen; voorkom dubbele gelijktijdige exports.
+
 ## 2.0.0-dev.305
 
 - Hervat het plan na bevestigd EV-sluipverbruik in plaats van blijvend standby.

@@ -95,7 +95,7 @@ def test_web_server_exposes_auto_refreshing_read_only_dashboard() -> None:
         thread.join(timeout=2)
 
     assert not thread.is_alive()
-    assert "<title>PicoT v2 — Canonical Pipeline</title>" in html
+    assert "<title>PicoT v2 - Canonical Pipeline</title>" in html
     assert 'data-observer-only="true"' in html
     assert 'id="sources"' in html
     assert 'aria-label="Brongegevens"' in html
@@ -122,7 +122,8 @@ def test_web_server_exposes_auto_refreshing_read_only_dashboard() -> None:
     assert 'data-tab="technical"' in html
     assert 'id="planning-incident-history"' in html
     assert 'href="downloads/planning-incidents.jsonl"' in html
-    assert 'href="downloads/picot-diagnostics.zip"' in html
+    assert 'id="diagnostic-export"' in html
+    assert 'id="diagnostic-export-progress"' in html
     assert "formatMeasurement" in html
     assert "formatMeasurement(source.raw_state, source.raw_unit)" in html
 
@@ -229,3 +230,4 @@ def test_dashboard_accepts_only_explicit_passive_stress_marker() -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+

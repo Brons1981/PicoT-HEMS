@@ -88,6 +88,7 @@ class CanonicalExecutionRuntime:
 
     _ev_exclusion_scopes: set[str] = field(default_factory=set)
     _ev_exclusion_dirty: bool = False
+    _ev_idle_observations: dict[str, tuple[datetime, datetime]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.commitment_store is not None:
@@ -102,11 +103,13 @@ class CanonicalExecutionRuntime:
 
         Losing a report cannot re-enable discharge after EV activity was seen.
         A fresh, separated zero measurement releases that conservative latch.
+        Plug idle consumption up to 5 W needs 30 seconds of fresh observations.
         Fixed discharge ignores the corrected meter and is always suppressed.
         """
         previous_scopes = set(self._ev_exclusion_scopes)
         policy = snapshot.external_load_policy
         control_available = False
+        idle_observed = False
         if policy is not None and policy.execution_scope_id == scope_id:
             fresh = 0 <= (snapshot.captured_at - policy.measured_at).total_seconds() <= 15
             active_window = (
@@ -117,14 +120,33 @@ class CanonicalExecutionRuntime:
                 and bool(policy.remaining_energy_wh)
             )
             if not policy.storage_support_allowed:
-                if policy.power_w > 0 or (active_window and not policy.physical_evidence_available):
+                if policy.power_w > 5 or (active_window and not policy.physical_evidence_available):
                     self._ev_exclusion_scopes.add(scope_id)
-                elif fresh and policy.physical_evidence_available:
+                elif fresh and policy.physical_evidence_available and policy.power_w == 0:
                     self._ev_exclusion_scopes.discard(scope_id)
+                elif 0 < policy.power_w <= 5:
+                    if fresh and policy.physical_evidence_available:
+                        idle_observed = True
+                        previous = self._ev_idle_observations.get(scope_id)
+                        # Allow the normal slow planning poll, but never bridge an outage.
+                        since = (
+                            previous[0] if previous is not None
+                            and 0 <= (policy.measured_at - previous[1]).total_seconds() <= 180
+                            else policy.measured_at
+                        )
+                        self._ev_idle_observations[scope_id] = (since, policy.measured_at)
+                        if (policy.measured_at - since).total_seconds() >= 30:
+                            self._ev_exclusion_scopes.discard(scope_id)
+                        else:
+                            self._ev_exclusion_scopes.add(scope_id)
+                    else:
+                        self._ev_exclusion_scopes.add(scope_id)
                 control_available = (
                     0 <= (snapshot.captured_at - policy.measured_at).total_seconds() <= 3
                     and policy.exclusion_control_available
                 )
+        if not idle_observed:
+            self._ev_idle_observations.pop(scope_id, None)
         self._ev_exclusion_dirty |= previous_scopes != self._ev_exclusion_scopes
         if self.commitment_store is not None and self._ev_exclusion_dirty:
             self.commitment_store.save_ev_exclusion_scopes(self._ev_exclusion_scopes)

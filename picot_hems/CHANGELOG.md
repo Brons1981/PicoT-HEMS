@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev.305
+
+- Hervat het plan na bevestigd EV-sluipverbruik in plaats van blijvend standby.
+- Toon een duidelijke melding wanneer EV-beveiliging het plan overschrijft.
+- Houd EV-isolatie actief zolang herstel van P1-correctie nog wordt gecontroleerd.
+- Werk Energy Devices ook bij naar 0.4.0-dev.10.
+
 ## 2.0.0-dev.304
 
 - Maak PV-bijladen na het dagelijkse laadblok aaneengesloten tussen het eerste en laatste verwachte zonne-overschot.

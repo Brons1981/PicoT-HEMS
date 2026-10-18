@@ -1029,6 +1029,7 @@ DASHBOARD_HTML = """<!doctype html>
     </header>
 
     <p id="dashboard-status" class="planning-attention" role="status" hidden></p>
+    <p id="ev-storage-warning" class="planning-attention" role="alert" hidden></p>
 
     <nav class="dashboard-tabs" aria-label="Dashboardweergave">
       <button class="tab-button" type="button" data-tab="planning"
@@ -5447,6 +5448,13 @@ DASHBOARD_HTML = """<!doctype html>
       const pipeline = Array.isArray(view.pipeline) ? view.pipeline : [];
       const planningInput = pipeline.find((item) => item.stage === 1);
       const primitiveBoundary = pipeline.find((item) => item.stage === 7);
+      const evWarning = element("ev-storage-warning");
+      evWarning.hidden = primitiveBoundary?.attributes?.execution_reason
+        !== "ev_storage_support_prohibited";
+      evWarning.textContent = evWarning.hidden ? "" :
+        "EV-beveiliging actief: de batterij wordt naar standby gestuurd omdat EV-verbruik " +
+        "is gemeten en de P1-correctie niet bevestigd beschikbaar is. Dit wijkt af van " +
+        "het getoonde plan. Controleer P1-correctie in Energy Devices.";
       const execution = pipeline.find((item) => item.stage === 6);
       const observerOnly = execution?.attributes?.observer_only !== false;
       document.body.dataset.observerOnly = String(observerOnly);
@@ -7235,6 +7243,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
                 applicable_plan.planned_vendor_mode if applicable_plan is not None else None
             ),
             "primitive_status": run.primitive_boundary.status,
+            "execution_reason": run.primitive_boundary.execution_reason,
             "blockers": list(run.primitive_boundary.blockers),
         },
         "execution_plans": [

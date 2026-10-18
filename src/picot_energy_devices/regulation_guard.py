@@ -18,6 +18,11 @@ class CorrectionGuard:
         self.latched_origin: dict[str, object] | None = None
         self.missing_origin: dict[str, object] | None = None
         self.mismatch_origin: dict[str, object] | None = None
+        self.recovery_since: datetime | None = None
+        self.recovery_previous: datetime | None = None
+        self.recovery_probe: datetime | None = None
+        self.recovery_matches = 0
+        self.recovery_consumer_at: datetime | None = None
         self.bad_since: datetime | None = None
         self.missing_since: datetime | None = None
         self.last_valid_measurement: datetime | None = None
@@ -50,6 +55,68 @@ class CorrectionGuard:
                                              "origin": self.latched_origin}))
             temporary.replace(self.path)
 
+    def _recover(self, result: dict[str, object], *, usable: bool,
+                 matched: bool, now: datetime) -> bool:
+        """Retry transient loss only; keep the persisted latch until delivery is proven."""
+        if not self.enabled or self.latched_reason != "persistent_measurement_loss":
+            return False
+        stamp = result.get("source_measured_at")
+        measured = None
+        if isinstance(stamp, str):
+            try:
+                measured = datetime.fromisoformat(stamp)
+            except ValueError:
+                pass
+        valid = (result.get("status") == "ready" and usable and measured is not None
+                 and measured.tzinfo is not None
+                 and 0 <= (now - measured).total_seconds() <= 3)
+        continuous = (self.recovery_previous is None or
+                      0 < (now - self.recovery_previous).total_seconds() <= 3)
+        if not valid or not continuous:
+            self.recovery_since = self.recovery_probe = None
+            self.recovery_matches = 0
+            self.offers.clear()
+        self.recovery_previous = now
+        if not valid:
+            return False
+        self.recovery_since = self.recovery_since or now
+        if (now - self.recovery_since).total_seconds() < 10:
+            return False
+        if self.recovery_probe is None:
+            self.recovery_probe = now
+            self.offers.clear()  # Shadow candidates were never transmitted.
+            return True
+        consumer_stamp = result.get("consumer_reported_at")
+        consumer_fresh = False
+        reported = None
+        if isinstance(consumer_stamp, str):
+            try:
+                reported = datetime.fromisoformat(consumer_stamp)
+                consumer_fresh = (reported.tzinfo is not None
+                                  and 0 <= (now - reported).total_seconds() <= 3)
+            except ValueError:
+                pass
+        confirmed = (matched and consumer_fresh and reported is not None
+                     and (self.recovery_consumer_at is None or reported > self.recovery_consumer_at)
+                     and result.get("consumer_fallback_active") is False)
+        self.recovery_consumer_at = reported
+        self.recovery_matches = self.recovery_matches + 1 if confirmed else 0
+        if self.recovery_matches >= 3:
+            if self.path is not None:
+                self.path.unlink(missing_ok=True)
+            self.latched_reason = self.latched_at = self.latched_origin = None
+            self.missing_since = self.bad_since = None
+            self.missing_origin = self.mismatch_origin = None
+            self.recovery_since = self.recovery_probe = None
+            self.recovery_matches = 0
+            return False
+        if (now - self.recovery_probe).total_seconds() >= 10:
+            self.recovery_since = self.recovery_probe = None
+            self.recovery_matches = 0
+            self.offers.clear()
+            return False
+        return True
+
     def check(self, *, result: dict[str, object], offered_w: float | None,
               now: datetime) -> dict[str, object]:
         candidate = result.get("candidate_w")
@@ -71,6 +138,7 @@ class CorrectionGuard:
                         self.last_valid_measurement = measured
                 except ValueError:
                     pass
+        recovering = self._recover(result, usable=usable, matched=matched, now=now)
         if self.enabled and self.latched_reason is None:
             if result.get("status") != "ready" or not usable:
                 # Match the hold deadline: an already ageing last-good source
@@ -117,14 +185,17 @@ class CorrectionGuard:
                 and isinstance(candidate, (int, float)) and isfinite(candidate)):
             expected.append((now, float(candidate)))
         result = dict(result, correction_guard=(
-            "disabled" if not self.enabled else "latched" if self.latched_reason else
+            "disabled" if not self.enabled else "recovering" if recovering else
+            "latched" if self.latched_reason else
             "matched" if matched else "checking"
         ), offered_p1_w=offered_w if usable else None,
             correction_source_reason=result.get("reason"), correction_tolerance_w=50,
             correction_transfer_seconds=5, correction_mismatch_seconds=30,
             measurement_loss_seconds=10, latched_at=self.latched_at,
             latched_origin=self.latched_origin)
-        if self.enabled and self.latched_reason:
+        if recovering:
+            result.update(reason="verifying_correction_recovery")
+        if self.enabled and self.latched_reason and not recovering:
             result.update(status="blocked", candidate_w=None,
                           reason=self.latched_reason, fallback="latched_raw_fallback")
         return result

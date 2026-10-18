@@ -25,7 +25,8 @@ def read_external_load_policy(
     # A RAW fallback does not change the user's exclusion policy. The execution
     # boundary separately guards discharge when corrected control is unavailable.
     exclusion_ready = (payload.get("control_enabled") is True
-                       and payload.get("status") == "ready")
+                       and payload.get("status") == "ready"
+                       and payload.get("correction_guard") != "recovering")
     independent_measurement = "ev_measured_at" in payload
     if not independent_measurement and not exclusion_ready:
         return None

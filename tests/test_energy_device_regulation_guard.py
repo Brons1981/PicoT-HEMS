@@ -184,3 +184,107 @@ def test_runtime_reads_actual_consumer_and_holds_then_latches_missing_source(mon
         if second >= 10:
             assert client.policy["reason"] == "persistent_measurement_loss"
             assert store.read(now=clock.when) is None
+
+
+def recovery_check(guard, second, *, consumer=False, blocked=False):
+    value = result(second)
+    value.update(consumer_fallback_active=not consumer,
+                 consumer_reported_at=(NOW + timedelta(seconds=second)).isoformat())
+    if blocked:
+        value.update(status="blocked", candidate_w=None)
+    return guard.check(result=value, offered_w=200 if consumer else 2500,
+                       now=NOW + timedelta(seconds=second))
+
+
+def test_measurement_loss_recovers_only_after_stability_and_consumer_confirmation(tmp_path):
+    path = tmp_path / "guard.json"
+    guard = CorrectionGuard(enabled=True, path=path)
+    guard.latch("persistent_measurement_loss", now=NOW)
+    guard = CorrectionGuard(enabled=True, path=path)
+    for second in range(10):
+        assert recovery_check(guard, second)["status"] == "blocked"
+    probe = recovery_check(guard, 10)
+    assert probe["status"] == "ready"
+    assert probe["correction_guard"] == "recovering"
+    assert path.exists()
+    for second in (11, 12):
+        assert recovery_check(guard, second, consumer=True)["correction_guard"] == "recovering"
+    assert recovery_check(guard, 13, consumer=True)["correction_guard"] == "matched"
+    assert not path.exists()
+    assert CorrectionGuard(enabled=True, path=path).latched_reason is None
+
+
+def test_failed_recovery_keeps_persisted_guard_and_restarts_stability(tmp_path):
+    guard = CorrectionGuard(enabled=True, path=tmp_path / "guard.json")
+    guard.latch("persistent_measurement_loss", now=NOW)
+    for second in range(11):
+        recovery_check(guard, second)
+    assert recovery_check(guard, 11, blocked=True)["status"] == "blocked"
+    for second in range(12, 22):
+        assert recovery_check(guard, second)["status"] == "blocked"
+    assert recovery_check(guard, 22)["correction_guard"] == "recovering"
+    for second in range(23, 32):
+        recovery_check(guard, second)
+    assert recovery_check(guard, 32)["status"] == "blocked"
+    assert guard.path.exists()
+
+
+def test_recovery_trial_does_not_authorize_hems_discharge():
+    from picot.v2.external_load_policy import read_external_load_policy
+    payload = dict(contract="measured-external-load-support-policy:v1",
+                   control_enabled=True, status="ready", correction_guard="recovering",
+                   ev_w=2300, ev_measured_at=NOW.isoformat(), measured_at=NOW.isoformat(),
+                   source_id="energy-devices:ev-regulation", revision="1")
+    policy = read_external_load_policy(payload, captured_at=NOW, execution_scope_id="home-battery")
+    assert policy is not None
+    assert not policy.exclusion_control_available
+
+
+@pytest.mark.parametrize("fault", ["fallback", "stale", "repeated"])
+def test_recovery_requires_fresh_distinct_nonfallback_consumer_reports(fault):
+    guard = CorrectionGuard(enabled=True)
+    guard.latch("persistent_measurement_loss", now=NOW)
+    for second in range(11):
+        recovery_check(guard, second)
+    for second in range(11, 21):
+        value = result(second)
+        value.update(consumer_fallback_active=fault == "fallback",
+                     consumer_reported_at=(NOW + timedelta(
+                         seconds=0 if fault == "stale" else 11 if fault == "repeated" else second
+                     )).isoformat())
+        guard.check(result=value, offered_w=200, now=NOW + timedelta(seconds=second))
+    assert guard.latched_reason == "persistent_measurement_loss"
+
+
+def test_poll_gap_restarts_recovery_stability():
+    guard = CorrectionGuard(enabled=True)
+    guard.latch("persistent_measurement_loss", now=NOW)
+    recovery_check(guard, 0)
+    assert recovery_check(guard, 60)["status"] == "blocked"
+    for second in range(61, 70):
+        assert recovery_check(guard, second)["status"] == "blocked"
+    assert recovery_check(guard, 70)["correction_guard"] == "recovering"
+
+
+
+def test_recovery_api_serves_trial_but_hems_waits_for_confirmed_delivery(tmp_path):
+    from picot.v2.external_load_policy import read_external_load_policy
+    guard = CorrectionGuard(enabled=True, path=tmp_path / "guard.json")
+    guard.latch("persistent_measurement_loss", now=NOW)
+    store = RegulationSnapshotStore(control_enabled=True, minimum_ready_reports=1)
+    for second in range(14):
+        when = NOW + timedelta(seconds=second)
+        value = result(second)
+        value.update(ev_w=2300, ev_measured_at=when.isoformat(),
+                     consumer_fallback_active=second <= 10,
+                     consumer_reported_at=when.isoformat())
+        output = guard.check(result=value, offered_w=2500 if second <= 10 else 200, now=when)
+        published = store.update(output)
+        api = store.read(now=when)
+        assert (api is not None) == (second >= 10)
+        if api is not None:
+            assert api["total_act_power"] == 200
+        policy = read_external_load_policy(published, captured_at=when,
+                                           execution_scope_id="home-battery")
+        assert policy is not None
+        assert policy.exclusion_control_available == (second == 13)

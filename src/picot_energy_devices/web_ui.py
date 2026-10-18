@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from picot_energy_devices.diagnostics import DiagnosticsRecorder
 from picot_energy_devices.ev_sessions import EVSessionManager
+from picot_energy_devices.regulation import RegulationSnapshotStore
 from picot_energy_devices.store import EnergyDeviceStore
 
 DASHBOARD_HTML = """<!doctype html>
@@ -46,6 +47,12 @@ DASHBOARD_HTML = """<!doctype html>
 <body><main>
   <h1>PicoT Energy Devices</h1>
   <p class="muted">Leert energieprofielen en voert door jou bevestigde EV-laadsessies uit.</p>
+  <section class="panel" id="regulation-panel" hidden>
+    <h2>P1-correctie voor EV</h2>
+    <p id="regulation-warning" role="alert"></p>
+    <p id="regulation-values"></p>
+    <p id="regulation-details" class="muted"></p>
+  </section>
   <section class="panel">
     <h2>Diagnose</h2>
     <p>Download de laatste 48 uur meetgegevens en de bewaarde gebeurtenissen om EV-correctie en terugvallen te beoordelen.</p>
@@ -114,10 +121,31 @@ DASHBOARD_HTML = """<!doctype html>
     const el = (id) => document.getElementById(id);
     const number = (value, suffix) => value !== null && value !== undefined && Number.isFinite(Number(value))
       ? `${Number(value).toLocaleString("nl-NL", {maximumFractionDigits: 1})} ${suffix}` : "Nog leren";
+    function renderRegulation(value) {
+      el("regulation-panel").hidden = !value;
+      if (!value) return;
+      const recovering = value.correction_guard === "recovering";
+      const blocked = value.status !== "ready" || value.fallback === "latched_raw_fallback";
+      el("regulation-panel").classList.toggle("danger", blocked || recovering);
+      el("regulation-warning").textContent = !value.control_enabled
+        ? "P1-correctie staat uit. De berekende waarde wordt niet gebruikt voor de regeling."
+        : recovering ? "P1-correctie wordt hersteld. Ontvangst van de gecorrigeerde waarde wordt gecontroleerd; EV-beveiliging blijft actief."
+        : blocked ? "P1-correctie niet beschikbaar. HEMS kan de batterij daarom in standby houden tijdens EV-verbruik. Een berekende correctie is geen bewijs dat deze wordt toegepast."
+        : "P1-correctie beschikbaar.";
+      el("regulation-values").textContent = `Ruwe P1: ${number(value.raw_grid_w,"W")} · Berekende correctie: ${number(value.intended_candidate_w ?? value.candidate_w,"W")} · Gemeten aangeboden P1: ${number(value.offered_p1_w,"W")}`;
+      const since = value.latched_at ? new Date(value.latched_at).toLocaleString("nl-NL") : "";
+      el("regulation-details").textContent = [
+        value.reason ? `Statusreden: ${value.reason}` : "",
+        since ? `Geblokkeerd sinds: ${since}` : "",
+        value.latched_origin ? `Oorzaak: ${value.latched_origin}` : "",
+        value.evaluated_at ? `Laatste meting: ${new Date(value.evaluated_at).toLocaleString("nl-NL")}` : "Nog geen metingen",
+      ].filter(Boolean).join(" · ");
+    }
     async function load() {
       const response = await fetch("api/view", {cache:"no-store"});
       const view = await response.json();
       renderEV(view.ev);
+      renderRegulation(view.regulation);
       const cards = el("cards"); cards.replaceChildren();
       for (const card of view.catalog.cards ?? []) {
         const article = document.createElement("article"); article.className = "card";
@@ -243,7 +271,8 @@ DASHBOARD_HTML = """<!doctype html>
 
 def create_web_server(store: EnergyDeviceStore, *, host: str, port: int,
                       ev_sessions: EVSessionManager | None = None,
-                      diagnostics: DiagnosticsRecorder | None = None) -> ThreadingHTTPServer:
+                      diagnostics: DiagnosticsRecorder | None = None,
+                      regulation: RegulationSnapshotStore | None = None) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
             self.send_response(int(status))
@@ -291,6 +320,7 @@ def create_web_server(store: EnergyDeviceStore, *, host: str, port: int,
                     {
                         "catalog": store.catalog(),
                         "ev": ev_sessions.view() if ev_sessions is not None else None,
+                        "regulation": regulation.view(now=datetime.now(UTC)) if regulation else None,
                         "database_size_bytes": store.database_size_bytes(),
                         "recordings": {d.device_id: store.recording_list(d.device_id)
                                        for d in store.devices()},

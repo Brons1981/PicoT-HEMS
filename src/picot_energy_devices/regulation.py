@@ -226,6 +226,21 @@ class RegulationSnapshotStore:
             self._snapshot = snapshot
             return dict(snapshot)
 
+    def view(self, *, now: datetime) -> dict[str, object]:
+        """Expose health including blocked snapshots; never authorize control."""
+        with self._lock:
+            result = dict(self._snapshot)
+        stamp = result.get("evaluated_at")
+        try:
+            age = ((now - datetime.fromisoformat(stamp)).total_seconds()
+                   if isinstance(stamp, str) else float("inf"))
+        except (ValueError, TypeError):
+            age = float("inf")
+        if not 0 <= age <= 3:
+            result.update(status="unavailable", reason="regulation_status_stale")
+        result["control_enabled"] = self.control_enabled
+        return result
+
     def read(self, *, now: datetime) -> dict[str, object] | None:
         with self._lock:
             result = dict(self._snapshot)

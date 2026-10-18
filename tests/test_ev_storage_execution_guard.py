@@ -269,3 +269,103 @@ def test_ev_stop_dispatches_at_full_or_unknown_soc(missing_soc, fallback):
     assert result.vendor_result.status == "dispatched"
     assert calls[0][0].primitive is P.STANDBY
     assert calls[0][1].fixed_value == "Standby"
+
+
+def test_idle_ev_power_releases_after_fresh_confirmation_and_stays_released():
+    source = _live_run().planning_input
+    executor, _ = runtime()
+    active = replace(source, external_load_policy=policy(source))
+    assert executor._ev_primitive(active, "home-battery", P.BALANCE_DISCHARGE_ONLY) is P.STANDBY
+    for seconds, expected in [
+        (0, P.STANDBY),
+        (29, P.STANDBY),
+        (30, P.BALANCE_DISCHARGE_ONLY),
+        (60, P.BALANCE_DISCHARGE_ONLY),
+    ]:
+        current = replace(
+            source,
+            captured_at=source.captured_at + timedelta(seconds=seconds),
+            storage_mode_capability_evidence=None,
+            capability_snapshot_set=None,
+        )
+        current = replace(current, external_load_policy=policy(current, power=2.2))
+        assert executor._ev_primitive(current, "home-battery", P.BALANCE_DISCHARGE_ONLY) is expected
+    current = replace(current, external_load_policy=policy(current, power=6))
+    assert executor._ev_primitive(current, "home-battery", P.BALANCE_DISCHARGE_ONLY) is P.STANDBY
+
+
+@pytest.mark.parametrize("interruption", ["missing", "stale", "unseparated", "charging", "gap"])
+def test_idle_confirmation_restarts_after_evidence_interruption(interruption):
+    source = _live_run().planning_input
+    executor, _ = runtime()
+    idle = replace(source, external_load_policy=policy(source, power=2.2))
+    assert executor._ev_primitive(idle, "home-battery", P.BALANCE_DISCHARGE_ONLY) is P.STANDBY
+    later = replace(
+        source,
+        captured_at=source.captured_at + timedelta(seconds=20),
+        storage_mode_capability_evidence=None,
+        capability_snapshot_set=None,
+    )
+    demand = policy(later, power=2.2)
+    if interruption == "missing":
+        demand = None
+    elif interruption == "stale":
+        demand = replace(demand, measured_at=source.captured_at)
+    elif interruption == "unseparated":
+        demand = replace(demand, physical_evidence_available=False)
+    elif interruption == "charging":
+        demand = replace(demand, power_w=2300)
+    if interruption != "gap":
+        executor._ev_primitive(
+            replace(later, external_load_policy=demand), "home-battery", P.BALANCE_DISCHARGE_ONLY
+        )
+    seconds = 200 if interruption == "gap" else 30
+    later = replace(
+        source,
+        captured_at=source.captured_at + timedelta(seconds=seconds),
+        storage_mode_capability_evidence=None,
+        capability_snapshot_set=None,
+    )
+    later = replace(later, external_load_policy=policy(later, power=2.2))
+    assert executor._ev_primitive(later, "home-battery", P.BALANCE_DISCHARGE_ONLY) is P.STANDBY
+
+
+def test_idle_confirmation_accepts_normal_slow_poll_and_persists_release(tmp_path):
+    source = _live_run().planning_input
+    store = ActivePlanCommitmentStore(tmp_path / "idle.json")
+    store.save_ev_exclusion_scopes({"home-battery"})
+    executor = CanonicalExecutionRuntime(dispatch=lambda *args: None, commitment_store=store)
+    for seconds in [0, 120]:
+        current = replace(
+            source,
+            captured_at=source.captured_at + timedelta(seconds=seconds),
+            storage_mode_capability_evidence=None,
+            capability_snapshot_set=None,
+        )
+        current = replace(current, external_load_policy=policy(current, power=5))
+        result = executor._ev_primitive(current, "home-battery", P.BALANCE_DISCHARGE_ONLY)
+    assert result is P.BALANCE_DISCHARGE_ONLY
+    assert store.load_ev_exclusion_scopes() == set()
+
+
+def test_repeated_idle_snapshot_cannot_accumulate_confirmation_time():
+    source = _live_run().planning_input
+    executor, _ = runtime()
+    idle = replace(source, external_load_policy=policy(source, power=2.2))
+    for _ in range(40):
+        assert executor._ev_primitive(idle, "home-battery", P.BALANCE_DISCHARGE_ONLY) is P.STANDBY
+
+
+@pytest.mark.parametrize("age", [-1, 16])
+def test_nonfresh_zero_cannot_release_existing_exclusion(age):
+    source = _live_run().planning_input
+    executor, _ = runtime()
+    active = replace(source, external_load_policy=policy(source))
+    executor._ev_primitive(active, "home-battery", P.BALANCE_DISCHARGE_ONLY)
+    zero = replace(
+        source,
+        external_load_policy=replace(
+            policy(source, power=0), measured_at=source.captured_at - timedelta(seconds=age)
+        ),
+    )
+    assert executor._ev_primitive(zero, "home-battery", P.BALANCE_DISCHARGE_ONLY) is P.STANDBY

@@ -349,7 +349,7 @@ def main() -> None:
         Thread(target=exchange_loop, args=(ev_sessions, HomeAssistantClient(token)),
                name="ev-charging-advice", daemon=True).start()
     server = create_web_server(store, host="0.0.0.0", port=8100, ev_sessions=ev_sessions,
-                               diagnostics=diagnostics)
+                               diagnostics=diagnostics, regulation=snapshots)
     Thread(target=server.serve_forever, name="energy-devices-web", daemon=True).start()
     while True:
         started = time.perf_counter()

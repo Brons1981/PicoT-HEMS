@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0-dev.10
+
+- Herstel P1-correctie automatisch na tijdelijke meetuitval, ook bij eerder opgeslagen blokkeringen.
+- Controleer stabiele metingen en daadwerkelijke ontvangst voordat de blokkering wordt opgeheven.
+- Toon blokkering, herstelstatus en ruwe, berekende en aangeboden P1 apart.
+- Werk HEMS ook bij naar 2.0.0-dev.305.
+
 ## 0.4.0-dev.9
 
 - Sluit batterijondersteuning uit voor alle EV-sessies, inclusief direct laden en eerder opgeslagen sessies.

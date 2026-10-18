@@ -351,6 +351,89 @@ class EVSessionManager:
             self.save(state)
             return self.view()
 
+    def vehicle_auto_off(
+        self, state: Payload, session: Payload, *, now: datetime,
+        switch_state: str, switch_changed_at: datetime | None,
+        vehicle_state: str | None, vehicle_changed_at: datetime | None,
+        set_switch: Callable[[bool], None],
+    ) -> bool:
+        """One minute after a current vehicle end event, stop even a manual session."""
+        value = (vehicle_state or "unavailable").strip().lower()
+        session["vehicle_state"] = value
+        changed_source = session.get("vehicle_state_entity") != self.vehicle_state_entity
+        session["vehicle_state_entity"] = self.vehicle_state_entity
+        new_switch_on = (
+            switch_state == "on" and switch_changed_at is not None
+            and (not session.get("vehicle_switch_on_at")
+                 or switch_changed_at > instant(session["vehicle_switch_on_at"]))
+        )
+        if new_switch_on:
+            assert switch_changed_at is not None
+            session["vehicle_switch_on_at"] = switch_changed_at.isoformat()
+        reset = changed_source or new_switch_on or not self.vehicle_state_entity
+        if reset:
+            for key in ("vehicle_active_at", "vehicle_end_seen_at", "vehicle_stop_requested",
+                        "vehicle_completion_at", "vehicle_end_event_at"):
+                session.pop(key, None)
+        # A pending stop is durable across transient missing BMW data and restart.
+        if session.get("vehicle_stop_requested") and switch_state == "off":
+            self.change(session, state="completed", confirmed=False, command=None,
+                        completion_reason="vehicle_charging_ended", error=None)
+            session.pop("vehicle_stop_requested", None)
+            session.pop("vehicle_end_seen_at", None)
+            session.pop("vehicle_active_at", None)
+            return True
+        fresh = (
+            bool(self.vehicle_state_entity) and vehicle_changed_at is not None
+            and 0 <= (now - vehicle_changed_at).total_seconds() <= 300
+            and vehicle_changed_at >= instant(session["recognized_at"])
+            and (switch_changed_at is None or vehicle_changed_at >= switch_changed_at)
+            and (not session.get("planned_start")
+                 or vehicle_changed_at >= instant(session["planned_start"]))
+        )
+        if fresh and value == "chargingactive" and switch_state == "on":
+            assert vehicle_changed_at is not None
+            session["vehicle_active_at"] = vehicle_changed_at.isoformat()
+            for key in ("vehicle_end_seen_at", "vehicle_stop_requested", "vehicle_end_event_at",
+                        "vehicle_completion_at"):
+                session.pop(key, None)
+        elif not session.get("vehicle_stop_requested"):
+            valid_end = (fresh and value == "chargingended" and switch_state == "on"
+                         and session.get("vehicle_active_at") and vehicle_changed_at is not None
+                         and vehicle_changed_at > instant(session["vehicle_active_at"])
+                         and (session.get("command") != "turn_off"
+                              or (session.get("last_command_at")
+                                  and instant(session["vehicle_active_at"])
+                                  > instant(session["last_command_at"]))))
+            if valid_end:
+                assert vehicle_changed_at is not None
+                session.setdefault("vehicle_end_seen_at", now.isoformat())
+                session["vehicle_end_event_at"] = vehicle_changed_at.isoformat()
+            else:
+                session.pop("vehicle_end_seen_at", None)
+                if switch_state != "on" or value not in {"chargingactive", "chargingended"}:
+                    session.pop("vehicle_active_at", None)
+        since = session.get("vehicle_end_seen_at")
+        if (since and (now - instant(since)).total_seconds() >= 60
+                and switch_state == "on"):
+            session["vehicle_stop_requested"] = True
+            session["vehicle_completion_at"] = session["vehicle_end_event_at"]
+        if not session.get("vehicle_stop_requested"):
+            return False
+        # Same persisted intent / ten-second retry rule as the scheduled executor.
+        last = session.get("last_command_at")
+        if switch_state == "on" and (
+            last is None or (now - instant(last)).total_seconds() >= 10
+        ):
+            session.update(command="turn_off", last_command_at=now.isoformat(), owns_switch=True)
+            self.save(state)
+            try:
+                set_switch(False)
+                session["error"] = None
+            except (OSError, ValueError) as error:
+                session["error"] = str(error)[:240]
+        return True
+
     def tick(
         self,
         *,
@@ -416,6 +499,14 @@ class EVSessionManager:
                     }
                     state["sessions"].append(session)
                     state["sessions"] = state["sessions"][-30:]
+            tracked = session or (state["sessions"][-1] if state["sessions"] else None)
+            vehicle_handled = False
+            if tracked is not None:
+                vehicle_handled = self.vehicle_auto_off(
+                    state, tracked, now=now, switch_state=switch_state,
+                    switch_changed_at=switch_changed_at, vehicle_state=vehicle_state,
+                    vehicle_changed_at=vehicle_changed_at, set_switch=set_switch,
+                )
             if (
                 session is not None
                 and measured_at is not None
@@ -423,43 +514,7 @@ class EVSessionManager:
                 and measured_at < instant(session["last_measured_at"])
             ):
                 fresh = False
-            if session is not None:
-                # BMW state changes are events, not a continuously refreshed meter.
-                # Arm only on active charging in this session, never an old 'ended'.
-                vehicle_value = (vehicle_state or "unavailable").strip().lower()
-                vehicle_fresh = (
-                    self.vehicle_state_entity != ""
-                    and vehicle_changed_at is not None
-                    and 0 <= (now - vehicle_changed_at).total_seconds() <= 300
-                    and vehicle_changed_at >= instant(session["recognized_at"])
-                    and (not session.get("planned_start")
-                         or vehicle_changed_at >= instant(session["planned_start"]))
-                )
-                session["vehicle_state"] = vehicle_value
-                if session.get("vehicle_state_entity") != self.vehicle_state_entity:
-                    session.pop("vehicle_active_at", None)
-                session["vehicle_state_entity"] = self.vehicle_state_entity
-                if switch_state != "on" or vehicle_value in {
-                    "chargingpaused", "charginginterrupted", "chargingdisrupted", "chargingerror"
-                }:
-                    session.pop("vehicle_active_at", None)
-                if (vehicle_fresh and vehicle_value == "chargingactive" and switch_state == "on"
-                        and (switch_changed_at is None or (
-                            vehicle_changed_at is not None
-                            and vehicle_changed_at >= switch_changed_at))):
-                    assert vehicle_changed_at is not None
-                    session["vehicle_active_at"] = vehicle_changed_at.isoformat()
-                if (vehicle_fresh and vehicle_value == "chargingended"
-                        and session.get("vehicle_active_at")
-                        and vehicle_changed_at is not None
-                        and vehicle_changed_at > instant(session["vehicle_active_at"])
-                        and switch_state == "on" and session.get("command") != "turn_off"
-                        and not session.get("manual_pause")
-                        and (not session.get("planned_end")
-                             or now < instant(session["planned_end"]))):
-                    session["vehicle_completion_at"] = vehicle_changed_at.isoformat()
-                    if session.get("owns_switch"):
-                        session["complete_requested"] = True
+            if session is not None and not vehicle_handled:
                 if session.get("direct_start_authorized") and measured_at is not None:
                     if (measured_at < instant(session["recognized_at"])
                             or (switch_changed_at is not None
@@ -606,9 +661,6 @@ class EVSessionManager:
                                 except (OSError, ValueError) as error:
                                     session["error"] = str(error)[:240]
             if session is not None:
-                if session.get("vehicle_completion_at") and not session.get("owns_switch"):
-                    self.change(session, state="completed",
-                                completion_reason="vehicle_charging_ended")
                 remaining = session.get("remaining_energy_wh")
                 session["remaining_duration_seconds"] = (
                     remaining * 3600 / session["expected_power_w"]

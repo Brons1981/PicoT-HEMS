@@ -11,6 +11,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from picot.diagnostic_export_job import DiagnosticExportJob
 from picot_energy_devices.diagnostics import DiagnosticsRecorder
 from picot_energy_devices.ev_sessions import EVSessionManager
 from picot_energy_devices.regulation import RegulationSnapshotStore
@@ -56,7 +57,9 @@ DASHBOARD_HTML = """<!doctype html>
   <section class="panel">
     <h2>Diagnose</h2>
     <p>Download de laatste 48 uur meetgegevens en de bewaarde gebeurtenissen om EV-correctie en terugvallen te beoordelen.</p>
-    <a class="download-button" href="api/diagnostics.zip" download>Diagnose downloaden</a>
+    <button id="diagnostic-export" type="button">Diagnose downloaden</button>
+          <div id="diagnostic-export-status" role="status" aria-live="polite"></div>
+          <progress id="diagnostic-export-progress" hidden aria-label="Voortgang diagnose"></progress>
   </section>
   <section class="panel" id="ev-panel" hidden>
     <h2>EV-laadtijdlijn</h2>
@@ -265,7 +268,94 @@ DASHBOARD_HTML = """<!doctype html>
       } catch (error) { el("message").textContent = `Opslaan mislukt: ${error.message}`; }
     });
     const refresh=()=>load().catch(error=>{el("message").textContent=`Ophalen mislukt: ${error.message}`;}); refresh(); setInterval(refresh, 10000);
-  </script>
+  
+    (() => {
+      const button = document.getElementById("diagnostic-export");
+      const status = document.getElementById("diagnostic-export-status");
+      const progress = document.getElementById("diagnostic-export-progress");
+      async function request(url, options = {}) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        try {
+          const response = await fetch(url, {...options, cache: "no-store", signal: controller.signal});
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return await response.json();
+        } finally { clearTimeout(timer); }
+      }
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        progress.hidden = false;
+        progress.removeAttribute("value");
+        status.textContent = "Verzoek versturen — nog geen ontvangstbevestiging.";
+        let downloadController;
+        let downloadTimer;
+        try {
+          let job = await request("api/diagnostics/export", {method: "POST"});
+          const jobId = job.job_id;
+          while (job.status === "building") {
+            status.textContent = `Opdracht ontvangen door PicoT. ${job.message}`;
+            if (job.total > 0) {
+              progress.max = job.total; progress.value = job.completed;
+              status.textContent += ` — ${Math.round(100 * job.completed / job.total)}%`;
+            } else { progress.removeAttribute("value"); }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            job = await request("api/diagnostics/export");
+            if (job.job_id !== jobId) throw new Error("Deze export is vervangen. Probeer opnieuw.");
+          }
+          if (job.status !== "ready") throw new Error(job.error || "Diagnose maken mislukt.");
+          status.textContent = "Diagnose gereed. Download starten…";
+          progress.removeAttribute("value");
+          downloadController = new AbortController();
+          const armTimeout = () => {
+            clearTimeout(downloadTimer);
+            downloadTimer = setTimeout(() => downloadController.abort(), 30000);
+          };
+          armTimeout();
+          const response = await fetch(`api/diagnostics/export/download?job_id=${encodeURIComponent(jobId)}`, {
+            cache: "no-store", signal: downloadController.signal,
+          });
+          if (!response.ok) throw new Error(`Download mislukt: HTTP ${response.status}`);
+          const total = Number(response.headers.get("Content-Length")) || job.size_bytes;
+          const chunks = [];
+          let received = 0;
+          if (response.body) {
+            const reader = response.body.getReader();
+            while (true) {
+              const {done, value} = await reader.read();
+              if (done) break;
+              armTimeout();
+              chunks.push(value);
+              received += value.length;
+              if (total > 0) { progress.max = total; progress.value = received; }
+              status.textContent = `Downloaden: ${(received / 1048576).toFixed(1)} van ${(total / 1048576).toFixed(1)} MB`;
+            }
+            if (total > 0 && received !== total) {
+              throw new Error("Download onvolledig ontvangen.");
+            }
+          } else { chunks.push(await response.blob()); }
+          const url = URL.createObjectURL(new Blob(chunks, {type: "application/zip"}));
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = job.filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+          progress.max = 1; progress.value = 1;
+          status.textContent = "Bestand ontvangen en aan de browser aangeboden. Controleer je downloads.";
+        } catch (error) {
+          status.textContent = error.name === "AbortError"
+            ? "Geen antwoord of downloadgegevens ontvangen binnen 30 seconden. Probeer opnieuw."
+            : `Diagnose mislukt: ${error.message} Probeer opnieuw.`;
+          progress.hidden = true;
+        } finally {
+          clearTimeout(downloadTimer);
+          if (downloadController) downloadController.abort();
+          button.disabled = false;
+        }
+      });
+    })();
+</script>
 </main></body></html>"""
 
 
@@ -273,6 +363,8 @@ def create_web_server(store: EnergyDeviceStore, *, host: str, port: int,
                       ev_sessions: EVSessionManager | None = None,
                       diagnostics: DiagnosticsRecorder | None = None,
                       regulation: RegulationSnapshotStore | None = None) -> ThreadingHTTPServer:
+    export_job = DiagnosticExportJob()
+
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
             self.send_response(int(status))
@@ -292,6 +384,25 @@ def create_web_server(store: EnergyDeviceStore, *, host: str, port: int,
 
         def do_GET(self) -> None:  # noqa: N802
             path = urlsplit(self.path).path
+            if path == "/api/diagnostics/export":
+                self._json(HTTPStatus.OK, export_job.status())
+                return
+            if path == "/api/diagnostics/export/download":
+                query = parse_qs(urlsplit(self.path).query)
+                result = export_job.download(query.get("job_id", [""])[0])
+                if result is None:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "Export niet beschikbaar"})
+                    return
+                body, filename = result
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path == "/":
                 self._send(HTTPStatus.OK, DASHBOARD_HTML.encode(), "text/html; charset=utf-8")
                 return
@@ -337,6 +448,15 @@ def create_web_server(store: EnergyDeviceStore, *, host: str, port: int,
             self._json(HTTPStatus.NOT_FOUND, {"status": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802
+            if urlsplit(self.path).path == "/api/diagnostics/export":
+                if diagnostics is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Diagnose niet beschikbaar"})
+                    return
+                filename = datetime.now(UTC).strftime("energy-devices-diagnostics-%Y%m%dT%H%M%SZ.zip")
+                self._json(HTTPStatus.ACCEPTED, export_job.start(
+                    lambda progress: diagnostics.export_zip(progress=progress), filename,
+                ))
+                return
             if urlsplit(self.path).path == "/api/ev":
                 try:
                     if ev_sessions is None:

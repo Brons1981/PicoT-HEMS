@@ -6,6 +6,7 @@ import io
 import json
 import sqlite3
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from queue import Empty, Full, Queue
@@ -146,7 +147,10 @@ class DiagnosticsRecorder:
         self.stop.set()
         self.thread.join(timeout=5)
 
-    def export_zip(self, *, now: datetime | None = None) -> bytes:
+    def export_zip(
+        self, *, now: datetime | None = None,
+        progress: Callable[[int, int, str], None] | None = None,
+    ) -> bytes:
         when = now or datetime.now(UTC)
         cutoff = when.timestamp() - 48 * 3600
         with self.lock:
@@ -159,6 +163,11 @@ class DiagnosticsRecorder:
             db.execute("BEGIN")
             rows = db.execute("SELECT kind, count(*), min(stamp), max(stamp) FROM samples "
                               "WHERE stamp >= ? GROUP BY kind", (cutoff,)).fetchall()
+            total = sum(row[1] for row in rows) + db.execute(
+                "SELECT count(*) FROM events").fetchone()[0]
+            completed = 0
+            if progress:
+                progress(completed, total, "Meetgegevens inpakken")
             manifest = {"schema_version": 1, "version": __version__,
                         "exported_at": when.isoformat(), "retention_hours": 48,
                         "nominal_sample_interval_seconds": 1, "observer_only": True,
@@ -179,6 +188,9 @@ class DiagnosticsRecorder:
                             row = {"recorded_at": datetime.fromtimestamp(stamp, UTC).isoformat(),
                                    "kind": kind, "data": json.loads(payload)}
                             output.write((json.dumps(row, separators=(",", ":")) + "\n").encode())
+                            completed += 1
+                            if progress and completed % 1000 == 0:
+                                progress(completed, total, f"Inpakken: {filename}")
                 archive.writestr("README.txt", "Energy Devices observer diagnostics.\n"
                                  "Measurements: latest 48 hours, up to one record/second/kind.\n"
                                  "Events persist independently of sample retention.\n"
@@ -186,4 +198,6 @@ class DiagnosticsRecorder:
                                  "Check coverage, gaps and logging_health.\n"
                                  "Battery values use the configured source.\n"
                                  "No measurements before installation are reconstructed.\n")
+        if progress:
+            progress(completed, total, "Diagnosearchief gereed")
         return buffer.getvalue()

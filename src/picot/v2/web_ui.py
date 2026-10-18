@@ -17,6 +17,7 @@ from typing import TypedDict
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
+from picot.diagnostic_export_job import DiagnosticExportJob
 from picot.domain.energy_path import PathSegment
 from picot.v2.contracts import (
     CanonicalPipelineRun,
@@ -1098,9 +1099,10 @@ DASHBOARD_HTML = """<!doctype html>
           <a href="downloads/planning-incidents.jsonl" download>
             Download incidenthistorie
           </a>
-          <a href="downloads/picot-diagnostics.zip" download>
-            Download alle diagnosebestanden
-          </a>
+          <button id="diagnostic-export" type="button">Diagnose downloaden</button>
+          <div id="diagnostic-export-status" role="status" aria-live="polite"></div>
+          <progress id="diagnostic-export-progress" hidden
+            aria-label="Voortgang diagnose"></progress>
         </div>
         <div id="planning-incident-history">
           Nog geen fallbackincidenten vastgelegd.
@@ -5642,7 +5644,99 @@ DASHBOARD_HTML = """<!doctype html>
     loadView().finally(watchViewUpdates);
     setInterval(loadView, 60000);
     setInterval(loadHouseholdCalendar, 60000);
-  </script>
+  
+    (() => {
+      const button = document.getElementById("diagnostic-export");
+      const status = document.getElementById("diagnostic-export-status");
+      const progress = document.getElementById("diagnostic-export-progress");
+      async function request(url, options = {}) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        try {
+          const response = await fetch(url, {
+            ...options, cache: "no-store", signal: controller.signal,
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return await response.json();
+        } finally { clearTimeout(timer); }
+      }
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        progress.hidden = false;
+        progress.removeAttribute("value");
+        status.textContent = "Verzoek versturen — nog geen ontvangstbevestiging.";
+        let downloadController;
+        let downloadTimer;
+        try {
+          let job = await request("api/diagnostics/export", {method: "POST"});
+          const jobId = job.job_id;
+          while (job.status === "building") {
+            status.textContent = `Opdracht ontvangen door PicoT. ${job.message}`;
+            if (job.total > 0) {
+              progress.max = job.total; progress.value = job.completed;
+              status.textContent += ` — ${Math.round(100 * job.completed / job.total)}%`;
+            } else { progress.removeAttribute("value"); }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            job = await request("api/diagnostics/export");
+            if (job.job_id !== jobId) throw new Error("Deze export is vervangen. Probeer opnieuw.");
+          }
+          if (job.status !== "ready") throw new Error(job.error || "Diagnose maken mislukt.");
+          status.textContent = "Diagnose gereed. Download starten…";
+          progress.removeAttribute("value");
+          downloadController = new AbortController();
+          const armTimeout = () => {
+            clearTimeout(downloadTimer);
+            downloadTimer = setTimeout(() => downloadController.abort(), 30000);
+          };
+          armTimeout();
+          const downloadUrl = `api/diagnostics/export/download?job_id=${encodeURIComponent(jobId)}`;
+          const response = await fetch(downloadUrl, {
+            cache: "no-store", signal: downloadController.signal,
+          });
+          if (!response.ok) throw new Error(`Download mislukt: HTTP ${response.status}`);
+          const total = Number(response.headers.get("Content-Length")) || job.size_bytes;
+          const chunks = [];
+          let received = 0;
+          if (response.body) {
+            const reader = response.body.getReader();
+            while (true) {
+              const {done, value} = await reader.read();
+              if (done) break;
+              armTimeout();
+              chunks.push(value);
+              received += value.length;
+              if (total > 0) { progress.max = total; progress.value = received; }
+              status.textContent = `Downloaden: ${(received / 1048576).toFixed(1)} `
+                + `van ${(total / 1048576).toFixed(1)} MB`;
+            }
+            if (total > 0 && received !== total) {
+              throw new Error("Download onvolledig ontvangen.");
+            }
+          } else { chunks.push(await response.blob()); }
+          const url = URL.createObjectURL(new Blob(chunks, {type: "application/zip"}));
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = job.filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+          progress.max = 1; progress.value = 1;
+          status.textContent = "Bestand ontvangen en aan de browser aangeboden. "
+            + "Controleer je downloads.";
+        } catch (error) {
+          status.textContent = error.name === "AbortError"
+            ? "Geen antwoord of downloadgegevens ontvangen binnen 30 seconden. Probeer opnieuw."
+            : `Diagnose mislukt: ${error.message} Probeer opnieuw.`;
+          progress.hidden = true;
+        } finally {
+          clearTimeout(downloadTimer);
+          if (downloadController) downloadController.abort();
+          button.disabled = false;
+        }
+      });
+    })();
+</script>
 </body>
 </html>
 """
@@ -6273,6 +6367,8 @@ def create_web_server(
 ) -> ThreadingHTTPServer:
     """Create, but do not start, the read-only observer HTTP server."""
 
+    export_job = DiagnosticExportJob()
+
     class Handler(BaseHTTPRequestHandler):
         def handle_one_request(self) -> None:
             try:
@@ -6339,6 +6435,18 @@ def create_web_server(
         def do_GET(self) -> None:
             parsed_url = urlsplit(self.path)
             path = parsed_url.path
+            if path == "/api/diagnostics/export":
+                self._send_json(HTTPStatus.OK, json.dumps(export_job.status()))
+                return
+            if path == "/api/diagnostics/export/download":
+                job_id = parse_qs(parsed_url.query).get("job_id", [""])[0]
+                result = export_job.download(job_id)
+                if result is None:
+                    self._send_json(HTTPStatus.NOT_FOUND, '{"error":"Export niet beschikbaar"}')
+                else:
+                    body, filename = result
+                    self._send_download(body, content_type="application/zip", filename=filename)
+                return
             if path == "/":
                 self._send_html(HTTPStatus.OK, DASHBOARD_HTML)
                 return
@@ -6432,6 +6540,13 @@ def create_web_server(
 
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
+            if path == "/api/diagnostics/export":
+                result = export_job.start(
+                    lambda progress: diagnostic_zip(store.diagnostic_paths(), progress=progress),
+                    "picot-diagnostics.zip",
+                )
+                self._send_json(HTTPStatus.ACCEPTED, json.dumps(result))
+                return
             if path not in {
                 "/api/storage-mode-override/reset",
                 "/api/planning/reset",

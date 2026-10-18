@@ -18,6 +18,7 @@ from .heating import Heating
 from .building import building_observation
 from .weather import DEFAULT_ENTITY, WeatherReader, forecast_view
 from .core import Store, fetch_states, snapshot, validate, number, observation
+from .health_notifications import HealthNotifier
 
 
 class Runtime:
@@ -68,7 +69,11 @@ class Runtime:
                         zone[key] = entity
             zone.update(saved_settings.get(zone['id'], {}))
         validate(self.config)
-        self.control = Control(self.config, store, url, token)
+        self.notifications = HealthNotifier(
+            token, 'HC', Path(store.path).with_name('hc_health_notifications.json'),
+            enabled=self.config.get('health_notifications_enabled', True),
+            recovery_enabled=self.config.get('health_notifications_recovery_enabled', True))
+        self.control = Control(self.config, store, url, token, notifications=self.notifications)
         self.schedule = Schedule(self.control, store, self.config)
         self.heating = Heating(self.control, self.schedule, store)
         previous = store.latest() or {}
@@ -132,6 +137,19 @@ class Runtime:
             self.control.connected = False
             # No URLs, tokens or remote exception bodies in logs or responses.
             self.connection, self.error = 'disconnected', 'Ophalen of opslaan mislukt (' + type(exc).__name__ + ')'
+        self._notify_health()
+
+    def _notify_health(self):
+        # Reporting must never change heating or command handling.
+        try:
+            self.notifications.observe('ha_connection', self.connection == 'disconnected',
+                self.error or 'HA-verbinding en gegevensverwerking hersteld.')
+            for source in self.control.bindings:
+                fault = self.heating.data['faults'].get(source)
+                self.notifications.observe('heating_' + source, bool(fault),
+                    'Verwarming ' + source + ': ' + (fault or 'blokkering opgeheven.'))
+        except Exception:
+            pass
 
     def run(self):
         while not self.stop.is_set():
@@ -319,6 +337,7 @@ def main():
     finally:
         rt.stop.set()
         rt.poll_now.set()
+        rt.notifications.close()
         server.server_close()
 
 

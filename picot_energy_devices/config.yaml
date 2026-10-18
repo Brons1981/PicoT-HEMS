@@ -1,5 +1,5 @@
 name: PicoT Energy Devices
-version: "0.4.0-dev.11"
+version: "0.4.0-dev.12"
 slug: picot_energy_devices
 description: Leert energieprofielen van door de gebruiker gekozen Home Assistant-meetpunten
 url: https://github.com/Brons1981/PicoT-HEMS
@@ -14,12 +14,15 @@ ingress_port: 8100
 panel_icon: mdi:power-plug-outline
 panel_title: Energy Devices
 options:
+  health_notifications_enabled: true
+  health_notifications_recovery_enabled: true
   poll_interval_seconds: 10
   catalog_entity_id: "sensor.picot_energy_devices_catalog"
   ev_local_rpc_url: ""
   ev_sessions_enabled: false
   ev_power_entity: "sensor.shellyplugsg3_d885ac1e8c94_vermogen"
   ev_switch_entity: "switch.shellyplugsg3_d885ac1e8c94"
+  ev_vehicle_state_entity: "sensor.wba5x71010fj59919_charging_ev_charging_state"
   regulation_api_enabled: false
   regulation_control_enabled: false
   regulation_shadow_enabled: false
@@ -28,12 +31,15 @@ options:
   regulation_ev_entity: "sensor.shellyplugsg3_d885ac1e8c94_vermogen"
   regulation_offered_entity: "sensor.ct_shelly_pro_3em_api"
 schema:
+  health_notifications_enabled: bool
+  health_notifications_recovery_enabled: bool
   poll_interval_seconds: int(5,300)
   catalog_entity_id: str
   ev_local_rpc_url: str
   ev_sessions_enabled: bool
   ev_power_entity: str
   ev_switch_entity: str
+  ev_vehicle_state_entity: str?
   regulation_api_enabled: bool
   regulation_control_enabled: bool
   regulation_shadow_enabled: bool

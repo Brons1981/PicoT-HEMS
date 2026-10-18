@@ -1,3 +1,8 @@
+# 0.4.0-dev.12
+
+- BMW-laadeinde herkennen en fout-/herstelmeldingen via HA-events.
+- Meldingen ontdubbeld, bewaard bij herstart en buiten de regelcyclus verzonden.
+
 # Changelog
 
 ## 0.4.0-dev.11

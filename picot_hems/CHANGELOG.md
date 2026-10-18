@@ -1,3 +1,8 @@
+# 2.0.0-dev.307
+
+- Eigen fout-, terugval- en herstelmeldingen via HA-events en centrale iPhone-blueprint.
+- Meldingen ontdubbeld, bewaard bij herstart en buiten de regelcyclus verzonden.
+
 # Changelog
 
 ## 2.0.0-dev.306

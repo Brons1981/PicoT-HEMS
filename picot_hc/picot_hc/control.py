@@ -44,8 +44,9 @@ def numeric(value):
 
 
 class Control:
-    def __init__(self, config, store, url, token):
+    def __init__(self, config, store, url, token, *, notifications=None):
         self.store, self.url, self.token = store, url, token
+        self.notifications = notifications
         self.bindings = source_bindings(config)
         self.temperature_entities = [z.get('temperature') for z in config['zones']] + [config.get('outdoor')]
         self.timeout = config.get('command_timeout_seconds', 300)
@@ -70,6 +71,17 @@ class Control:
         with self.store.connect() as db:
             db.execute('INSERT OR REPLACE INTO commands VALUES (?, ?, ?)',
                        (command['id'], command['created'], json.dumps(command, allow_nan=False)))
+        if self.notifications is not None:
+            status = command['status']
+            if status in {'failed', 'uncertain', 'timed_out', 'interrupted', 'confirmed', 'already_set'}:
+                try:
+                    active = status not in {'confirmed', 'already_set'}
+                    self.notifications.observe('command_' + command['source'], active,
+                        'Bronopdracht ' + command['source'] + ': ' +
+                        ((command.get('error') or 'Opdracht niet bevestigd.') if active
+                         else 'apparaatstand bevestigd.'))
+                except Exception:
+                    pass
 
     def record_intent(self, command, superseded):
         # Preemption and the new intent must either both persist or neither.

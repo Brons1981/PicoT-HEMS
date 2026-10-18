@@ -204,7 +204,8 @@ DASHBOARD_HTML = """<!doctype html>
       if(evSession?.expected_duration_seconds && !el("ev-duration").value)el("ev-duration").value=Math.round(evSession.expected_duration_seconds/60);
       if(evSession?.planned_start && !el("ev-start").value){const d=new Date(evSession.planned_start);el("ev-start").value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
       const timeline=el("ev-timeline");timeline.replaceChildren();
-      for(const s of [...ev.sessions].reverse()) {const p=document.createElement("p");p.textContent=`${s.planned_start ? new Date(s.planned_start).toLocaleString("nl-NL") : new Date(s.recognized_at).toLocaleString("nl-NL")} — ${labels[s.state]} · ${number(s.expected_power_w,"W")} · ${number((s.expected_duration_seconds??0)/60,"min")}`;timeline.append(p);}
+      const completionLabels={vehicle_charging_ended:"BMW heeft laden beëindigd (geen bewijs van 100%)",scheduled_deadline:"Gepland laadvenster afgelopen",measured_low_power:"Laden gestopt op basis van laag vermogen",cancelled:"Geannuleerd"};
+      for(const s of [...ev.sessions].reverse()) {const p=document.createElement("p");p.textContent=`${s.planned_start ? new Date(s.planned_start).toLocaleString("nl-NL") : new Date(s.recognized_at).toLocaleString("nl-NL")} — ${labels[s.state]}${s.completion_reason ? " — "+(completionLabels[s.completion_reason]??s.completion_reason) : ""} · ${number(s.expected_power_w,"W")} · ${number((s.expected_duration_seconds??0)/60,"min")}`;timeline.append(p);}
     }
     function renderChargingAdvice(ev) {
       const request=ev.charging_request, advice=ev.charging_advice;

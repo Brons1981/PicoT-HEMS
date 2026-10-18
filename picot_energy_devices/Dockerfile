@@ -10,6 +10,7 @@ RUN apk add --no-cache git \
     && cp -R /tmp/picot-src/src/picot_energy_devices /opt/picot_energy_devices \
     && mkdir -p /opt/picot \
     && cp /tmp/picot-src/src/picot/diagnostic_export_job.py /opt/picot/diagnostic_export_job.py \
+    && cp /tmp/picot-src/src/picot/health_notifications.py /opt/picot/health_notifications.py \
     && touch /opt/picot/__init__.py \
     && rm -rf /tmp/picot-src \
     && apk del git

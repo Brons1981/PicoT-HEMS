@@ -38,6 +38,7 @@ class EVSessionManager:
         *,
         power_entity: str,
         switch_entity: str,
+        vehicle_state_entity: str = "",
         now: Callable[[], datetime] | None = None,
     ) -> None:
         if not power_entity.startswith("sensor.") or not switch_entity.startswith("switch."):
@@ -45,6 +46,9 @@ class EVSessionManager:
         self.path = path
         self.power_entity = power_entity
         self.switch_entity = switch_entity
+        if vehicle_state_entity and not vehicle_state_entity.startswith("sensor."):
+            raise ValueError("Voertuigstatus vraagt een sensor")
+        self.vehicle_state_entity = vehicle_state_entity
         self.now = now or (lambda: datetime.now(UTC))
         self.lock = RLock()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -355,6 +359,8 @@ class EVSessionManager:
         switch_state: str,
         set_switch: Callable[[bool], None],
         switch_changed_at: datetime | None = None,
+        vehicle_state: str | None = None,
+        vehicle_changed_at: datetime | None = None,
     ) -> Payload:
         """Called every second; missing data never proves charge completion."""
         with self.lock:
@@ -418,6 +424,42 @@ class EVSessionManager:
             ):
                 fresh = False
             if session is not None:
+                # BMW state changes are events, not a continuously refreshed meter.
+                # Arm only on active charging in this session, never an old 'ended'.
+                vehicle_value = (vehicle_state or "unavailable").strip().lower()
+                vehicle_fresh = (
+                    self.vehicle_state_entity != ""
+                    and vehicle_changed_at is not None
+                    and 0 <= (now - vehicle_changed_at).total_seconds() <= 300
+                    and vehicle_changed_at >= instant(session["recognized_at"])
+                    and (not session.get("planned_start")
+                         or vehicle_changed_at >= instant(session["planned_start"]))
+                )
+                session["vehicle_state"] = vehicle_value
+                if session.get("vehicle_state_entity") != self.vehicle_state_entity:
+                    session.pop("vehicle_active_at", None)
+                session["vehicle_state_entity"] = self.vehicle_state_entity
+                if switch_state != "on" or vehicle_value in {
+                    "chargingpaused", "charginginterrupted", "chargingdisrupted", "chargingerror"
+                }:
+                    session.pop("vehicle_active_at", None)
+                if (vehicle_fresh and vehicle_value == "chargingactive" and switch_state == "on"
+                        and (switch_changed_at is None or (
+                            vehicle_changed_at is not None
+                            and vehicle_changed_at >= switch_changed_at))):
+                    assert vehicle_changed_at is not None
+                    session["vehicle_active_at"] = vehicle_changed_at.isoformat()
+                if (vehicle_fresh and vehicle_value == "chargingended"
+                        and session.get("vehicle_active_at")
+                        and vehicle_changed_at is not None
+                        and vehicle_changed_at > instant(session["vehicle_active_at"])
+                        and switch_state == "on" and session.get("command") != "turn_off"
+                        and not session.get("manual_pause")
+                        and (not session.get("planned_end")
+                             or now < instant(session["planned_end"]))):
+                    session["vehicle_completion_at"] = vehicle_changed_at.isoformat()
+                    if session.get("owns_switch"):
+                        session["complete_requested"] = True
                 if session.get("direct_start_authorized") and measured_at is not None:
                     if (measured_at < instant(session["recognized_at"])
                             or (switch_changed_at is not None
@@ -533,6 +575,8 @@ class EVSessionManager:
                                     command=None,
                                     completion_reason="cancelled"
                                     if session.get("cancel_requested")
+                                    else "vehicle_charging_ended"
+                                    if session.get("vehicle_completion_at")
                                     else "measured_low_power"
                                     if session.get("complete_requested")
                                     else "scheduled_deadline",
@@ -562,6 +606,9 @@ class EVSessionManager:
                                 except (OSError, ValueError) as error:
                                     session["error"] = str(error)[:240]
             if session is not None:
+                if session.get("vehicle_completion_at") and not session.get("owns_switch"):
+                    self.change(session, state="completed",
+                                completion_reason="vehicle_charging_ended")
                 remaining = session.get("remaining_energy_wh")
                 session["remaining_duration_seconds"] = (
                     remaining * 3600 / session["expected_power_w"]
@@ -585,7 +632,8 @@ class EVSessionManager:
                     "switch_entity_id": self.switch_entity,
                     "revision": str(recent["version"]) if recent else "0",
                     "generated_at": now.isoformat(),
-                    "session": recent,
+                    "session": {k: v for k, v in recent.items()
+                                if not k.startswith("vehicle_")} if recent else None,
                     "recognition": state.get("recognition"),
                     "storage_support_allowed": False,
                 }
@@ -596,7 +644,7 @@ class EVSessionManager:
                 "switch_entity_id": self.switch_entity,
                 "revision": str(session["version"]),
                 "generated_at": now.isoformat(),
-                "session": session,
+                "session": {k: v for k, v in session.items() if not k.startswith("vehicle_")},
                 "recognition": state.get("recognition"),
                 "storage_support_allowed": False,
             }

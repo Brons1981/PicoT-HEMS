@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
 from hashlib import sha256
@@ -42,6 +43,7 @@ from picot.v2.daily_recalculation import (
     DailyMainRecalculationTrigger,
     DailyPlanRecalculationRequest,
 )
+from picot.v2.json_file_cache import JSONFileCache
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("plan_store", __name__)
 COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v9"
@@ -272,10 +274,11 @@ class ActivePlanCommitmentStore:
     def __init__(self, path: Path, *, incident_path: Path | None = None) -> None:
         self._path = path
         self._incident_path = incident_path
+        self._read_cache = JSONFileCache(path)
 
     def load_ev_exclusion_scopes(self) -> set[str]:
         """Restore physical exclusion independently of replaceable economic plans."""
-        raw = self._load_payload().get("ev_exclusion_scopes", [])
+        raw = self._read_payload().get("ev_exclusion_scopes", [])
         if not isinstance(raw, list) or any(not isinstance(v, str) or not v for v in raw):
             raise ValueError("invalid persisted EV exclusion scopes")
         return set(raw)
@@ -350,7 +353,7 @@ class ActivePlanCommitmentStore:
 
     def load_daily_assignments(self) -> tuple[DailyChargeAssignment, ...]:
         """Load durable daily tasks without treating corrupt state as a new day."""
-        payload = self._load_payload()
+        payload = self._read_payload()
         try:
             records = payload.get("daily_assignments", {})
             if not isinstance(records, dict):
@@ -770,7 +773,7 @@ class ActivePlanCommitmentStore:
 
     def load_supplemental_assignments(self) -> tuple[SupplementalChargeAssignment, ...]:
         try:
-            payload = self._load_payload()
+            payload = self._read_payload()
             records = payload.get("supplemental_assignments", {})
             result = []
             for key, value in records.items():
@@ -980,7 +983,7 @@ class ActivePlanCommitmentStore:
 
     def load_daily_bridge_state(self, assignment_id: str) -> DailyBridgeState | None:
         try:
-            raw = self._load_payload().get("daily_bridge_states", {}).get(assignment_id)
+            raw = self._read_payload().get("daily_bridge_states", {}).get(assignment_id)
             if raw is None:
                 return None
             return DailyBridgeState(
@@ -1042,7 +1045,7 @@ class ActivePlanCommitmentStore:
     def load_daily_pv_comparison(self, assignment_id: str) -> DailyPVComparisonState:
         """Unavailable optional comparison evidence cannot erase the main route."""
         try:
-            raw = self._load_payload().get("daily_pv_comparison", {}).get(assignment_id)
+            raw = self._read_payload().get("daily_pv_comparison", {}).get(assignment_id)
             if raw is None:
                 return DailyPVComparisonState(assignment_id, None,
                                               unavailable_reason="initial_reference_unavailable")
@@ -1075,7 +1078,7 @@ class ActivePlanCommitmentStore:
 
     def load_active_daily_main_plan(self, execution_scope_id: str) -> ExecutionPlan | None:
         """Read the explicit active pointer; never guess from plan timestamps."""
-        payload = self._load_payload()
+        payload = self._read_payload()
         pointers = payload.get("active_execution_plan_ids", {})
         if not isinstance(pointers, dict):
             raise ValueError("active execution plan pointers must be an object")
@@ -1307,7 +1310,7 @@ class ActivePlanCommitmentStore:
         if assignment is None:
             raise ValueError("daily assignment does not exist")
         try:
-            records = self._load_payload().get("daily_execution_plans", {})
+            records = self._read_payload().get("daily_execution_plans", {})
             if not isinstance(records, dict):
                 raise ValueError("daily execution plans must be an object")
             raw = records.get(assignment_id)
@@ -1345,7 +1348,7 @@ class ActivePlanCommitmentStore:
                 if owner.route_plan_id == origin.plan_id:
                     original_plan = _deserialize_execution_plan(records[owner.assignment_id])
                 else:
-                    historical = self._load_payload().get("daily_main_history", {}).get(
+                    historical = self._read_payload().get("daily_main_history", {}).get(
                         origin.plan_id,
                     )
                     if historical is None:
@@ -1403,14 +1406,14 @@ class ActivePlanCommitmentStore:
         return removed
 
     def daily_recalculation_status(self) -> dict[str, Any]:
-        record = self._load_payload().get("daily_recalculation")
+        record = self._read_payload().get("daily_recalculation")
         if record is None:
             return {"status": "idle"}
         if not isinstance(record, dict) or record.get("status") not in {
             "pending", "completed", "failed", "not_applicable",
         } or not isinstance(record.get("results"), dict):
             raise ValueError("daily recalculation state is unreadable")
-        return cast(dict[str, Any], record)
+        return deepcopy(cast(dict[str, Any], record))
 
     def load_daily_recalculation_request(self) -> DailyPlanRecalculationRequest | None:
         record = self.daily_recalculation_status()
@@ -1507,7 +1510,7 @@ class ActivePlanCommitmentStore:
         return self.daily_recalculation_status()
 
     def deferred_recovery_assignment_ids(self) -> frozenset[str]:
-        return frozenset(self._load_payload().get("recovery_unreachable_assignments", {}))
+        return frozenset(self._read_payload().get("recovery_unreachable_assignments", {}))
 
     def defer_unreachable_recovery_goal(
         self, *, assignment_id: str, snapshot_id: str, assessed_at: datetime,
@@ -1592,7 +1595,7 @@ class ActivePlanCommitmentStore:
         )
 
     def load_market_progress(self, assignment_id: str) -> MarketExecutionProgress | None:
-        raw = self._load_payload().get("market_execution_progress", {}).get(assignment_id)
+        raw = self._read_payload().get("market_execution_progress", {}).get(assignment_id)
         if raw is None:
             return None
         try:
@@ -1670,7 +1673,7 @@ class ActivePlanCommitmentStore:
         self._write(payload)
 
     def load_market_plan_bindings(self) -> tuple[MarketPlanBinding, ...]:
-        payload = self._load_payload()
+        payload = self._read_payload()
         records = payload.get("market_plan_bindings", {})
         if not isinstance(records, dict):
             raise ValueError("market plan bindings must be an object")
@@ -1802,11 +1805,11 @@ class ActivePlanCommitmentStore:
         binding = next(
             b for b in self.load_market_plan_bindings() if b.assignment_id == assignment_id
         )
-        return _registered_execution_plan(self._load_payload(), binding.plan_id)
+        return _registered_execution_plan(self._read_payload(), binding.plan_id)
 
     def load_market_original_plan(self, binding: MarketPlanBinding) -> ExecutionPlan:
         return _registered_execution_plan(
-            self._load_payload(), binding.original_plan_id or binding.plan_id
+            self._read_payload(), binding.original_plan_id or binding.plan_id
         )
 
     @staticmethod
@@ -2087,7 +2090,7 @@ class ActivePlanCommitmentStore:
                 raise ValueError("market transition must retain completion lineage")
 
     def load_market_transition_plan_ids(self) -> tuple[str, ...]:
-        payload = self._load_payload()
+        payload = self._read_payload()
         try:
             records = payload.get("market_window_transitions", {})
             result = []
@@ -2116,7 +2119,7 @@ class ActivePlanCommitmentStore:
 
     def pending_market_window_transition(self, at: datetime) -> MarketPlanBinding | None:
         """Identify unstarted pre-main bindings; never select their replacement."""
-        payload = self._load_payload()
+        payload = self._read_payload()
         transitioned = payload.get("market_window_transitions", {})
         assignments = {a.assignment_id: a for a in self.load_market_daily_assignments()}
         owners = self.load_daily_assignments()
@@ -2142,7 +2145,7 @@ class ActivePlanCommitmentStore:
         return None
 
     def market_transition_export_limit(self, assignment_id: str) -> float | None:
-        record = self._load_payload().get("market_window_transitions", {}).get(assignment_id)
+        record = self._read_payload().get("market_window_transitions", {}).get(assignment_id)
         return float(record["maximum_export_wh"]) if record is not None else None
 
     def bind_market_window_transition(
@@ -2268,7 +2271,7 @@ class ActivePlanCommitmentStore:
 
     def load_market_daily_assignments(self) -> tuple[MarketDailyAssignment, ...]:
         """Read explicit daily trade identities, never infer them from charge plans."""
-        records = self._load_payload().get("market_daily_assignments", {})
+        records = self._read_payload().get("market_daily_assignments", {})
         if not isinstance(records, dict):
             raise ValueError("market daily assignments must be an object")
         result = []
@@ -2338,11 +2341,23 @@ class ActivePlanCommitmentStore:
         result["ended_at"] = assignment.ended_at.isoformat() if assignment.ended_at else None
         return result
 
+    def _read_payload(self) -> dict[str, Any]:
+        """Shared internal read snapshot; callers must never mutate or expose it."""
+        return self._payload(cached=True)
+
     def _load_payload(self) -> dict[str, Any]:
+        """Private mutable payload for a write operation; never shares cached objects."""
+        return self._payload(cached=False)
+
+    def _payload(self, *, cached: bool) -> dict[str, Any]:
+        if not cached:
+            self._read_cache.invalidate()
         if not self._path.exists():
+            self._read_cache.invalidate()
             return {"schema_version": 1, "commitments": {}}
         try:
-            payload = json.loads(self._path.read_text(encoding="utf-8"))
+            payload = (self._read_cache.read() if cached
+                       else json.loads(self._path.read_text(encoding="utf-8")))
             if not isinstance(payload, dict):
                 raise ValueError("commitment state must be an object")
             if payload.get("schema_version") != 1:
@@ -2351,10 +2366,12 @@ class ActivePlanCommitmentStore:
                 raise ValueError("commitments must be an object")
             return cast(dict[str, Any], payload)
         except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+            self._read_cache.invalidate()
             self._record_incident("commitment_store_write_refused", exc)
             raise ValueError("commitment state unreadable; refusing destructive reset") from exc
 
     def _write(self, payload: dict[str, Any]) -> None:
+        self._read_cache.invalidate()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self._path.with_suffix(f"{self._path.suffix}.tmp")
         with temporary.open("w", encoding="utf-8") as handle:
@@ -2362,6 +2379,7 @@ class ActivePlanCommitmentStore:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, self._path)
+        self._read_cache.invalidate()
 
     def _record_incident(self, code: str, exc: Exception) -> None:
         if self._incident_path is None:

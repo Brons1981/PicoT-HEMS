@@ -1,3 +1,9 @@
+# 2.0.0-dev.312
+
+- Hergebruik ongewijzigde plangegevens om herhaald inlezen tijdens opstarten en berekeningen te verminderen.
+- Ververs de leesversie bij bestandswijzigingen en behoud afzonderlijke schrijfgegevens.
+- Behoud plannerbeslissingen en actuele broncontroles; de leesversie houdt extra geheugen vast.
+
 # 2.0.0-dev.311
 
 - Splits opstartmetingen verder uit voor voorbereiding, planovergangen en bronpublicatie.
@@ -80,7 +86,7 @@
 ## 2.0.0-dev.299
 
 - Verhelpt een crash wanneer uitvoeringsresultaten na tussentijdse runtime-observaties worden verwerkt.
-- Slaat succesvolle eigen opdrachten op vóór monitorverwerking, zodat een daaropvolgende fout ze na herstart niet als handmatige wijziging aanmerkt.
+- Slaat succesvolle eigen opdrachten op v��r monitorverwerking, zodat een daaropvolgende fout ze na herstart niet als handmatige wijziging aanmerkt.
 - Behoudt bestaande EV-, planning- en fallbackregels. Een reeds actieve handmatige blokkering wordt niet automatisch vrijgegeven.
 
 ## 2.0.0-dev.298
@@ -89,14 +95,14 @@
 - Solcast op Vandaag en een centrale statusmelding; schakelhistorie standaard vandaag, meer dagen oproepbaar.
 - SOC onder de 48-uursprijsgrafiek: lege kwartierstaven, groene werkelijke vulling en gele verwachting met behouden prognosehistorie.
 - Verversen behoudt invoer, tabkeuze, open toelichtingen en toetsenbordfocus. Nieuwe invoer tijdens opslaan blijft onopgeslagen behouden.
-- Bestaande berekeningen, financiële dagbedragen, voorraad, planning en uitvoering blijven ongewijzigd.
+- Bestaande berekeningen, financi�le dagbedragen, voorraad, planning en uitvoering blijven ongewijzigd.
 
 ## 2.0.0-dev.297
 
-- Kolom geschatte batterijwaarde met één aanklikbare toelichting bij de titel.
+- Kolom geschatte batterijwaarde met ��n aanklikbare toelichting bij de titel.
 - Afzonderlijke bruto eigenverbruiksschatting na minimumreserve en ontlaadverlies, tegen de gemiddelde inkoopprijs van de komende 24 uur.
 - Onvoldoende prijs- of SOC-bewijs toont een streepje; verse uitlezing van een gelijkblijvende SOC blijft geldig.
-- Bestaande financiële bedragen, voorraadkosten, weektotalen en terugverdientijd ongewijzigd; geen historische aanvulling of zonnebonus.
+- Bestaande financi�le bedragen, voorraadkosten, weektotalen en terugverdientijd ongewijzigd; geen historische aanvulling of zonnebonus.
 
 ## 2.0.0-dev.296
 
@@ -104,7 +110,7 @@
 - Uitklapbare meetonderbouwing behouden bij automatisch verversen; historische bedragen herkenbaar houden zonder herberekening.
 - Herkomst van huisverbruik per dag tonen: PV geel, net rood, batterij groen.
 - Zendure-terugverdienvoortgang met afzonderlijke tijdschatting op basis van 28 volledige meetdagen; geen schatting bij ontbrekende of kortere perioden.
-- Bestaande financiële berekeningen, opgeslagen dagbedragen, planning en voorraad ongewijzigd; zonnebonus niet meegerekend.
+- Bestaande financi�le berekeningen, opgeslagen dagbedragen, planning en voorraad ongewijzigd; zonnebonus niet meegerekend.
 
 ## 2.0.0-dev.295
 
@@ -114,7 +120,7 @@
 
 ## 2.0.0-dev.294
 
-- Oude bridge-overgangen niet binnen nieuwe hoofdlaadsegmenten kopiëren; dubbele segment-ID’s en ongeldige planbinding voorkomen.
+- Oude bridge-overgangen niet binnen nieuwe hoofdlaadsegmenten kopi�ren; dubbele segment-ID's en ongeldige planbinding voorkomen.
 - Verse EV-metingen onafhankelijk van regelterugval verwerken; bij RAW-terugval batterijondersteuning correct blijven simuleren.
 - Recente huisbelasting bij beperkte historie bewaken met de ingestelde basislast en voldoende meetdekking; herstelbewijs en SOC-grenzen behouden.
 
@@ -122,7 +128,7 @@
 
 - Bij ingeschakelde EV-koppeling dezelfde historische EV-dekking eisen tijdens en na een sessie, ook bij een ontbrekend snapshot.
 - Oude ongeclassificeerde belasting niet opnieuw als huisverbruik toelaten; bij onvoldoende gedekte historie de ingestelde basislast gebruiken.
-- Actuele huisvraag en afzonderlijk geïdentificeerde EV-metingen behouden.
+- Actuele huisvraag en afzonderlijk ge�dentificeerde EV-metingen behouden.
 
 ## 2.0.0-dev.292
 
@@ -134,7 +140,7 @@
 - Kleine voorspelde tekorten alleen uitstellen met bewezen herstelruimte; fysieke SOC-reserve en 100%-dagdoel blijven behouden.
 - Overbodige netlaadblokken zonder batterijopslag vervangen door passende huishoudondersteuning.
 - Oude bridge-bijdragen bij planherziening opnieuw beoordelen en herkenbaar houden.
-- Eerder geïdentificeerde EV-belasting buiten de huishoudbasis houden, ook na uitschakelen van de policy.
+- Eerder ge�dentificeerde EV-belasting buiten de huishoudbasis houden, ook na uitschakelen van de policy.
 - Na installatie eenmaal **Maak een nieuw plan** gebruiken voor bestaande plannen uit eerdere versies.
 
 ## 2.0.0-dev.290
@@ -167,14 +173,14 @@
 ## 2.0.0-dev.287-evtest.1
 
 - Optionele actuele EV-belasting en afzonderlijk batterijondersteuningsbeleid via Energy Devices; fysieke RAW-P1 blijft leidend.
-- MEP, brugtekorten, financiële afrekening en commitments verwerken dezelfde fysieke en uitgesloten energiestromen.
-- Geïdentificeerde EV-metingen worden niet dubbel in de huishoudprognose geteld. Geen sessieplanning; actuele EV wordt maximaal 15 minuten doorgetrokken.
+- MEP, brugtekorten, financi�le afrekening en commitments verwerken dezelfde fysieke en uitgesloten energiestromen.
+- Ge�dentificeerde EV-metingen worden niet dubbel in de huishoudprognose geteld. Geen sessieplanning; actuele EV wordt maximaal 15 minuten doorgetrokken.
 - Experimentele gezamenlijke testversie: functies standaard uit, offline gecontroleerd; nog geen live stabiliteitsbewijs.
 
 ## 2.0.0-dev.286
 
 - Lopend snel laden blijft beschermd tot de bestaande eindtijd of werkelijk 100% SOC, ook bij normale huisbelasting.
-- Optionele vermindering of vervanging vraagt minstens één cent expliciet berekend voordeel; noodzakelijk aanvullend laden blijft mogelijk.
+- Optionele vermindering of vervanging vraagt minstens ��n cent expliciet berekend voordeel; noodzakelijk aanvullend laden blijft mogelijk.
 - Voorkomt de drie onnodige reductietriggers uit de diagnose van 6 oktober. Het laadmodel bij hoge SOC volgt afzonderlijk.
 
 ## 2.0.0-dev.285
@@ -192,19 +198,19 @@
 ## 2.0.0-dev.283
 
 - Nieuwe optie `solcast_planning_basis`: lower, mean-lower-central, central of upper. Het gemiddelde blijft de standaard.
-- Laadplanning, beoordeling van korter netladen en marktherstel gebruiken dezelfde ingestelde prognosebasis; originele scenario’s blijven behouden.
+- Laadplanning, beoordeling van korter netladen en marktherstel gebruiken dezelfde ingestelde prognosebasis; originele scenario's blijven behouden.
 - Nieuwe plannen bewaren de gekozen basis voor diagnose. Na wijzigen en herstarten kan Planning opnieuw berekenen een bestaand dagplan opnieuw beoordelen.
 
 ## 2.0.0-dev.282
 
 - Herstelt de toelating van een marktroute wanneer volledig betaald laadherstel tot 100% eindigt met meer batterijvoorraad dan het ongewijzigde dagplan.
-- Alle herstelkosten tellen mee; extra voorraad krijgt geen financiële waarde. Werkelijk 100%, reserve en winsttoets blijven verplicht.
+- Alle herstelkosten tellen mee; extra voorraad krijgt geen financi�le waarde. Werkelijk 100%, reserve en winsttoets blijven verplicht.
 - De Solcast-keuze en dagelijkse laadplanning blijven ongewijzigd.
 
 ## 2.0.0-dev.281
 
 - Nieuwe marktroutes vallen na de hoofdlaadroute van de eigen dag tot lokale middernacht. Toelating wacht op de prijzen en aantoonbaar laadherstel van de volgende dag.
-- De bestaande financiële vergelijking kiest binnen dat venster; herstelkosten, reserve en afzonderlijke 100%-dagdoelen blijven gelden. Er wordt niet vooraf een ochtendroute voor morgen vastgelegd.
+- De bestaande financi�le vergelijking kiest binnen dat venster; herstelkosten, reserve en afzonderlijke 100%-dagdoelen blijven gelden. Er wordt niet vooraf een ochtendroute voor morgen vastgelegd.
 - Een eerder opgeslagen, nog niet begonnen ochtendroute kan eenmalig worden vrijgegeven voor beoordeling binnen het nieuwe venster. Dezelfde dagopdracht en maximaal het resterende exportbudget blijven behouden, ook na herstart.
 - Begonnen of afgesloten handel wordt niet heropend. Een mislukte overgang behoudt het bestaande plan en de historie.
 
@@ -224,46 +230,46 @@
 - De afsluiting van een oude exportopdracht overschrijft geen geldige nieuwe laad- of ontlaadactie. Ontbrekende afsluitmetingen blijven zichtbaar, ook na een herstart.
 - Lokale overbrugging behoudt de omliggende modi. Extra NOM vraagt verwacht PV-overschot; standby vraagt een zelfstandige huishoudelijke reden en wordt niet toegevoegd om alleen export mogelijk te maken.
 - Een uitsluitend toekomstig onhaalbaar dagdoel onderbreekt geen aantoonbaar geldige huidige uitvoering. Het toekomstige doel blijft zichtbaar onopgelost; de bestaande reserve-, veiligheids- en 100%-controles blijven gelden.
-- De opgenomen situatie van 28 september behoudt in de replay de eerdere route zonder extra nacht-NOM of exportgerichte standby. Lokale verificatie: 1.869 tests geslaagd, één bestaande optionele test overgeslagen; livegedrag volgt na installatie.
+- De opgenomen situatie van 28 september behoudt in de replay de eerdere route zonder extra nacht-NOM of exportgerichte standby. Lokale verificatie: 1.869 tests geslaagd, ��n bestaande optionele test overgeslagen; livegedrag volgt na installatie.
 
 ## 2.0.0-dev.278
 
 - Herstelt een leeg dashboard bij grote marktroutevergelijkingen. Gedeelde bronverwijzingen worden compact en verliesvrij doorgegeven; alle alternatieven, bedragen en afwijsredenen blijven beschikbaar.
 - De volledige vergelijking staat eenmaal in het webantwoord. In de diagnose van 28 september daalt het plandeel van 10,5 naar 1,93 miljoen tekens, binnen de bestaande grens van 8 miljoen.
 - Bij te veel extra schermdetail blijven het actieve plan, de segmenten en de uitvoeringsstatus zichtbaar. Een melding legt uit dat een deel van de extra informatie niet wordt getoond.
-- MEP, planselectie, aansturing en financiële meetverwerking blijven ongewijzigd. Werkelijke meetgaten blijven als onvolledig herkenbaar.
+- MEP, planselectie, aansturing en financi�le meetverwerking blijven ongewijzigd. Werkelijke meetgaten blijven als onvolledig herkenbaar.
 
 ## 2.0.0-dev.277
 
-- Financiële nacalculatie herstelt ontbrekend huisverbruik met de bestaande volledige kwartierbalans. Een korte negatieve deelbalans laat een geldig kwartier niet meer verdwijnen; afgeleide energie wordt eenmaal meegeteld.
+- Financi�le nacalculatie herstelt ontbrekend huisverbruik met de bestaande volledige kwartierbalans. Een korte negatieve deelbalans laat een geldig kwartier niet meer verdwijnen; afgeleide energie wordt eenmaal meegeteld.
 - Nachtelijke PV-afleiding gebruikt de geregistreerde dag/nachtstatus van Home Assistant. Historische zonattributen die Home Assistant niet bewaart, zijn daarvoor niet meer nodig.
 - Afgeleide bedragen blijven herkenbaar. Onvolledige bronnen, negatieve volledige kwartieren en nog niet gesloten kwartieren blijven onbekend.
-- Herstelt in de diagnose van 27 september alle negen financiële bedragen van vandaag. Oude nachtgegevens moeten na installatie uit Home Assistant beschikbaar komen.
-- MEP, oorspronkelijke metingen, financiële tariefformules, planningvoorraad en de strikte netlaadterugblik blijven ongewijzigd.
+- Herstelt in de diagnose van 27 september alle negen financi�le bedragen van vandaag. Oude nachtgegevens moeten na installatie uit Home Assistant beschikbaar komen.
+- MEP, oorspronkelijke metingen, financi�le tariefformules, planningvoorraad en de strikte netlaadterugblik blijven ongewijzigd.
 
 ## 2.0.0-dev.276
 
 - Een herstelvraag van vandaag heropent niet de marktroute na de laadopdracht van morgen. Dagelijkse laadopdrachten en de volledige fysieke SOC-controle blijven behouden.
 - Behoud, inkorten en verwijderen worden financieel vergeleken tot het relevante laadherstel. De hoogste eindvoorraad aan het einde van morgen bepaalt niet meer welke alternatieven mogen meedoen.
 - Nieuwe marktroutes wachten op bekende herstelprijzen, vergelijkbaar herstel en een positieve bijdrage na herstelkosten en ingestelde slijtage. Het gewone laadplan kan tijdens het wachten doorgaan.
-- Eerste toelating en herziening gebruiken dezelfde financiële grondslag. De bestaande hersteloptie stelt voortaan alleen een aanvullende minimale nettomarge in; de toelichting in het instellingenscherm is aangepast.
+- Eerste toelating en herziening gebruiken dezelfde financi�le grondslag. De bestaande hersteloptie stelt voortaan alleen een aanvullende minimale nettomarge in; de toelichting in het instellingenscherm is aangepast.
 - Ontbrekend economisch bewijs alleen wist geen geldige bestaande route. Een reeds verwijderde marktopdracht wordt door deze update niet automatisch opnieuw geopend.
 
 ## 2.0.0-dev.275
 
 - Herstelt onterechte terugval na het verwijderen van de laatste marktroute: de herberekening behoudt alle werkelijke planovergangen, ook buiten klokkwartieren.
-- Werkelijke gaten blijven afgewezen. Moduskeuze, financiële berekening en marktselectie blijven ongewijzigd.
+- Werkelijke gaten blijven afgewezen. Moduskeuze, financi�le berekening en marktselectie blijven ongewijzigd.
 
 ## 2.0.0-dev.274
 
-- Financiële nacalculatie kan ontbrekende nacht-PV met zonhistorie afleiden en korte PV-/batterijonderbrekingen begrensd aanvullen.
-- Ontbrekend huisverbruik kan uit de geïntegreerde energiebalans worden afgeleid. Afgeleide bedragen krijgen ≈, bronperioden en uitleg over onzekerheid.
+- Financi�le nacalculatie kan ontbrekende nacht-PV met zonhistorie afleiden en korte PV-/batterijonderbrekingen begrensd aanvullen.
+- Ontbrekend huisverbruik kan uit de ge�ntegreerde energiebalans worden afgeleid. Afgeleide bedragen krijgen ~, bronperioden en uitleg over onzekerheid.
 - Ontbrekende zonhistorie en resterende meetgaten blijven zichtbaar; onbekende bedragen worden niet als nul getoond.
 - De bestaande achtergrondberekening verwerkt vandaag en gisteren. Oorspronkelijke metingen, planningvoorraad, MEP en de strikte terugblik blijven behouden.
 
 ## 2.0.0-dev.273
 
-- Financiële historie en bestaande totalen blijven zichtbaar als het resultaat van de huidige dag onvolledig is.
+- Financi�le historie en bestaande totalen blijven zichtbaar als het resultaat van de huidige dag onvolledig is.
 - Netinkoop, teruglevering en het gezamenlijke energieresultaat worden afzonderlijk getoond zodra hun eigen metingen en prijzen compleet zijn.
 - Ontbrekende batterij- en PicoT-voordelen blijven onbekend. Het tabblad toont welke bronnen en meetperioden ontbreken en hoeveel dagen meetellen in de totalen.
 - De oorspronkelijke numerieke historie en voorraadkosten voor planning blijven behouden; ontbrekende metingen worden niet ingevuld.
@@ -271,18 +277,18 @@
 ## 2.0.0-dev.272
 
 - Bij herplanning tijdens beschermd netladen biedt PicoT behoud en ononderbroken verlenging van het laadblok aan, ook als latere PV op papier het dagdoel kan halen.
-- Herstelt de kandidaatuitputting achter de onderbreking rond 15:25 op 26 september. De replay kiest nu doorladen; de bestaande financiële selectie bepaalt de beste geldige optie.
+- Herstelt de kandidaatuitputting achter de onderbreking rond 15:25 op 26 september. De replay kiest nu doorladen; de bestaande financi�le selectie bepaalt de beste geldige optie.
 - De schakelhistorie toont de werkelijke uitvoeringsreden. De afzonderlijke plankeuzereden blijft beschikbaar in de diagnose.
-- Het 100%-dagdoel, andere beschermde intervallen en de bestaande financiële regels blijven gelden. Het financiële tabblad volgt als afzonderlijk herstelpunt.
+- Het 100%-dagdoel, andere beschermde intervallen en de bestaande financi�le regels blijven gelden. Het financi�le tabblad volgt als afzonderlijk herstelpunt.
 
 ## 2.0.0-dev.271
 
 - Herstelt de NOM-terugval bij overbrugging: omzetting van export naar NOM wist ook het exportdoel.
 - Bestaande marktroutes kunnen bij een toegelaten herplanning behouden, ingekort of verwijderd worden, met aanvullend laden als dat voordeliger is.
-- Financiële selectie vergelijkt de resterende uren van vandaag én morgen, inclusief laadkosten, ingestelde slijtage en gelijkwaardige eindvoorraad. Dagdoelen, reserve en bescherming van lopend laden blijven vereist.
+- Financi�le selectie vergelijkt de resterende uren van vandaag �n morgen, inclusief laadkosten, ingestelde slijtage en gelijkwaardige eindvoorraad. Dagdoelen, reserve en bescherming van lopend laden blijven vereist.
 - Ontbrekende prijzen, prognosedekking of een nog ongebonden dagdoel leveren geen fictief financieel voordeel op; een geldige uitvoering en toegelaten laadreparatie blijven mogelijk.
-- Dashboard en diagnose tonen de financiële alternatieven en afwijsredenen. Geselecteerde revisies bewaren het oorspronkelijke dagbudget en de uitvoeringshistorie, ook na herstart.
-- Het afzonderlijke onderzoek naar de schakelingen rond 15:25–15:31 is geen onderdeel van deze release. Dev.268 blijft de afgesproken eerste terugvalbasis.
+- Dashboard en diagnose tonen de financi�le alternatieven en afwijsredenen. Geselecteerde revisies bewaren het oorspronkelijke dagbudget en de uitvoeringshistorie, ook na herstart.
+- Het afzonderlijke onderzoek naar de schakelingen rond 15:25-15:31 is geen onderdeel van deze release. Dev.268 blijft de afgesproken eerste terugvalbasis.
 
 ## 2.0.0-dev.270
 
@@ -310,7 +316,7 @@
 
 ## 2.0.0-dev.266
 
-- Nieuwe diagnose- en proefrecords behouden de oorspronkelijke tijdzone-offset voor reproduceerbare historische ID’s.
+- Nieuwe diagnose- en proefrecords behouden de oorspronkelijke tijdzone-offset voor reproduceerbare historische ID's.
 - Wijzigingsdetectie blijft UTC gebruiken; plannerregels en aansturing blijven gelijk.
 - Bestaande archieven blijven behouden. Laat `history_capture_trial_enabled` op `false` staan.
 
@@ -318,7 +324,7 @@
 
 - Diagnose-download bevat nu de bewaarde snapshotproefobjecten en een exportmanifest.
 - Export is begrensd op 16 MiB en 64 objecten; opgeslagen gegevens blijven behouden.
-- Laat `history_capture_trial_enabled` op `false` staan bij installatie en download daarna één nieuwe diagnose-ZIP. Een nieuwe opnameproef is niet nodig.
+- Laat `history_capture_trial_enabled` op `false` staan bij installatie en download daarna ��n nieuwe diagnose-ZIP. Een nieuwe opnameproef is niet nodig.
 
 ## 2.0.0-dev.264
 
@@ -348,7 +354,7 @@
 - Een vervallen eigen netlaadsegment blijft NOM in de revisiekandidaat.
 - Gele SOC-verwachting wordt vanuit actuele SOC vernieuwd voor het geldende plan; verstreken voorspellingen blijven behouden en planwissels krijgen een markering.
 - Paarse SOC-lijn blijft meetgeschiedenis; ontbrekende actuele prognose-invoer wist alleen de toekomst.
-- Onbekende confidence verschijnt als — in plaats van 0%.
+- Onbekende confidence verschijnt als - in plaats van 0%.
 - Dagdoel, reserve, belastingbescherming en uitvoeringsautoriteit blijven gelden. Dev.254 blijft terugvalbasis.
 
 ## 2.0.0-dev.260
@@ -383,7 +389,7 @@ Na installatie: observeer langdurige belasting, vrijgave na afloop en werkelijk 
 - Bewaart de lijnsecties en bronverwijzingen na herstart; vergroot de begrensde cache voor de extra snijpunten.
 - Alleen SOC-weergave gewijzigd. MEP en aansturing blijven ongewijzigd; dev.254 blijft de vaste pre-stable terugvalbasis.
 
-Na installatie: controleer dev.257 en vergelijk hetzelfde verstreken tijdstip vóór en na een nieuwe prognose.
+Na installatie: controleer dev.257 en vergelijk hetzelfde verstreken tijdstip v��r en na een nieuwe prognose.
 
 ## 2.0.0-dev.256
 
@@ -398,7 +404,7 @@ Na installatie: controleer dev.256 en of verstreken prognosepunten bij updates b
 
 - Gebruikt vaste klokkwartieren voor historische huisvraag, zodat alleen een verschoven polltijd de toekomstige verbruiksverwachting niet verandert.
 - Rekent gedeeltelijke begin- en eindkwartieren evenredig mee. Dagdoel, reserve, prijsselectie en actuele invoer blijven van kracht.
-- Begrensde observatieproef: dev.254 blijft de vaste pre-stable terugvalbasis. Bij slechter gedrag direct terug; maximaal één kleine optimalisatie als het gedrag niet slechter is. Daarna bij onvoldoende resultaat terug en opnieuw ontwerpen.
+- Begrensde observatieproef: dev.254 blijft de vaste pre-stable terugvalbasis. Bij slechter gedrag direct terug; maximaal ��n kleine optimalisatie als het gedrag niet slechter is. Daarna bij onvoldoende resultaat terug en opnieuw ontwerpen.
 
 ## 2.0.0-dev.254
 
@@ -421,7 +427,7 @@ Na installatie: controleer dev.253 en of oorspronkelijke handel ongearceerd is.
 - Corrigeert arcering: alleen afwijkende delen ten opzichte van het eerste vastgelegde dagplan worden gearceerd. Ongewijzigde delen blijven zonder arcering, ook bij een nieuwe planrevisie.
 - Herstelt de oorspronkelijke referentie uit de bestaande planhistorie na herstart. Ontbrekende referentie wordt expliciet gemeld.
 - Toont het kostenverschil bij minder netladen boven de terugbliktabel onder Financieel, met datum en status of de reden waarom nog geen bedrag beschikbaar is.
-- MEP, financiële rekenregels en aansturing blijven ongewijzigd.
+- MEP, financi�le rekenregels en aansturing blijven ongewijzigd.
 
 Na installatie: controleer dev.252, de arcering bij aangepaste plandelen en Financieel > Terugblik netladen.
 
@@ -490,11 +496,11 @@ Ontwikkelrelease voor de gezamenlijke liveproef van de dagelijkse laadcyclus en 
 
 - Dagelijkse laadopdracht met eigen identiteit en 100%-doel; PV-, hybride en netlaadsegmenten blijven bij dezelfde opdracht horen.
 - Aanvullende laadopdrachten behouden hun eigen doel en voltooiing.
-- Marktvolume en minimumspread instelbaar in de strategiepagina; maximaal één handelsopdracht per regel per leveringsdag.
+- Marktvolume en minimumspread instelbaar in de strategiepagina; maximaal ��n handelsopdracht per regel per leveringsdag.
 - Optionele herstel-/nettowinsttoets, standaard uit. Een lege minimumspread schakelt nieuwe handel uit.
 - Bestaande laad- en handelsvensters blijven behouden tijdens optimalisatie en herstart.
 - Stopbewaking gebruikt actuele SOC, het handelsvenster, gemeten export en werkelijke modusterugmelding. Meetgaten leveren geen verzonnen volume op.
-- Minder herhaalde laadberekeningen. Tijdens marktberekeningen komt de bestaande uitvoeringsbewaking tussentijds aan bod; vóór uitvoering wordt nieuwe input ingelezen.
+- Minder herhaalde laadberekeningen. Tijdens marktberekeningen komt de bestaande uitvoeringsbewaking tussentijds aan bod; v��r uitvoering wordt nieuwe input ingelezen.
 
 Na installeren: controleer dev.244 in PicoT en vul de gewenste handelsfractie en minimumspread in. Herstel kan voor de eerste proef uit blijven. Bestaande instellingen en historische diagnostiek blijven bewaard.
 

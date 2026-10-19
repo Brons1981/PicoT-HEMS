@@ -1,3 +1,9 @@
+# 2.0.0-dev.312
+
+- Hergebruik ongewijzigde plangegevens om herhaald inlezen tijdens opstarten en berekeningen te verminderen.
+- Ververs de leesversie bij bestandswijzigingen en behoud afzonderlijke schrijfgegevens.
+- Behoud plannerbeslissingen en actuele broncontroles; de leesversie houdt extra geheugen vast.
+
 # 2.0.0-dev.311
 
 - Splits opstartmetingen verder uit voor voorbereiding, planovergangen en bronpublicatie.

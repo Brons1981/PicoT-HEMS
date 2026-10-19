@@ -1,3 +1,10 @@
+# 2.0.0-dev.309
+
+- Bewaar huisverbruikmetingen ook tijdens planningsberekeningen en voorkom administratieve meetgaten.
+- Herstel financiele reconstructie bij meer dan twintig meetgaten; echte ontbrekende brongegevens blijven gemarkeerd.
+- Toon complete afgeleide resultaten als geldig, zonder uitroepteken of benaderingsteken; behoud de onderbouwing.
+- Behoud geldige resultaten tot het laatste afgesloten kwartier wanneer alleen het lopende huisverbruikkwartier nog open is.
+
 # 2.0.0-dev.308
 
 - Laat toekomstige aanvullende laadopdrachten vervallen als een volledig doorgerekende vervangende route ze niet meer nodig heeft.

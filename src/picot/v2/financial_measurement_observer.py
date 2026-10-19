@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict, replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from math import isfinite
 from typing import Any
 
@@ -86,7 +86,7 @@ class FinancialMeasurementObserver:
     def _review(
         self, snapshot: PlanningInputSnapshot, history: PowerHistorySnapshot,
         prices: tuple[PriceForecastPoint, ...], settings: ReviewSettings,
-        settings_changed: bool, day: str,
+        settings_changed: bool, day: str, *, pending_until: datetime | None = None,
     ) -> None:
         if (settings_changed or settings.charge_efficiency != self.ledger.charge_efficiency
                 or settings.discharge_efficiency != self.ledger.discharge_efficiency
@@ -125,6 +125,27 @@ class FinancialMeasurementObserver:
             charge_maximum_power_w=settings.charge_power_w,
             discharge_maximum_power_w=settings.discharge_power_w,
         )
+        # An unfinished household quarter must not erase the complete day-to-date
+        # result. Shorten all displayed amounts together, only when every
+        # unresolved energy gap lies in the current quarter. Real older gaps stay
+        # incomplete. Raw measurements and the authoritative inventory are untouched.
+        end_utc = history.ends_at.astimezone(UTC)
+        closed_end = end_utc.replace(minute=(end_utc.minute // 15) * 15,
+                                     second=0, microsecond=0)
+        remaining = financial_measurement_coverage(prepared.history, max_reported_gaps=None)
+        gaps = [gap for role in SETTLEMENT_ROLES for gap in remaining[role]["gaps"]]
+        if (pending_until is None and history.starts_at < closed_end < end_utc
+                and not any(remaining[role]["gap_count"]
+                            for role in SETTLEMENT_ROLES - {"household_load"})
+                and gaps and all(datetime.fromisoformat(gap["starts_at"]) >= closed_end
+                                 for gap in gaps)):
+            closed_history = replace(history, ends_at=closed_end, series=tuple(
+                replace(s, points=tuple(p for p in s.points if p.sampled_at <= closed_end))
+                for s in history.series
+            ))
+            self._review(snapshot, closed_history, prices, settings, settings_changed, day,
+                         pending_until=history.ends_at)
+            return
         source_state = snapshot.current_storage_states[0]
         # Recorder evidence has its own timestamp. A current HA read/valid-since
         # envelope must never be transplanted onto yesterday's closing SOC.
@@ -179,6 +200,11 @@ class FinancialMeasurementObserver:
             "solar_history_method_version": solar.method_version,
             "household_energy_sources": settlement.get("household_energy_sources", {}),
         })
+        if pending_until is not None:
+            metrics["pending_period"] = {
+                "starts_at": history.ends_at.isoformat(), "ends_at": pending_until.isoformat(),
+                "reason": "current_quarter_not_closed",
+            }
         solar_evidence: dict[str, Any] = {
             "source_entity_id": solar.source_entity_id, "status": solar.status,
             "error": solar.error, "starts_at": solar.starts_at.isoformat(),

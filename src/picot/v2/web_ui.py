@@ -4537,7 +4537,7 @@ DASHBOARD_HTML = """<!doctype html>
     ];
     const financialQuality = {
       available: "Beschikbaar volgens de opgeslagen meetcontrole",
-      estimated: "Afgeleid: dit bedrag is niet volledig bewezen met metingen",
+      estimated: "Geldig: volledig berekend met afgeleide meetgegevens",
       historical: "Historisch: niet opnieuw beoordeeld met de huidige kwaliteitscriteria",
       incomplete: "Onvolledig: onvoldoende gegevens voor dit bedrag",
     };
@@ -4696,10 +4696,15 @@ DASHBOARD_HTML = """<!doctype html>
         "De drie resultaten zijn niet bij elkaar op te tellen." +
         (rows.some(row => row.date === today) ? (until ? ` Vandaag tot ${formatTimestamp(until)}.` :
           " Vandaag is nog niet afgerond.") : ""), "muted"));
+      if (current?.financial_metrics?.pending_period?.reason === "current_quarter_not_closed") {
+        container.append(node("p", "Het lopende kwartier is nog niet afgerond. " +
+          "Het resultaat van vandaag geldt tot het getoonde tijdstip.", "muted"));
+      }
       const evidence = node("details");
       financialDisclosure(evidence, `week:${financialSelectedWeek}`);
       const special = rows.filter(row => !row.future && financialColumns.some(([, name, sign]) =>
-        financialMetric(row.record, name, sign).quality !== "available")).length;
+        !["available", "estimated"].includes(
+          financialMetric(row.record, name, sign).quality))).length;
       evidence.append(node("summary",
         `Onderbouwing en meetkwaliteit · ${special} dagen met bijzonderheden`));
       evidence.append(node("p",
@@ -4749,7 +4754,8 @@ DASHBOARD_HTML = """<!doctype html>
         card.append(node("span", label, "muted"));
         const value = node("div", total.value === null ? "—" : formatCurrency(total.value),
           "value");
-        for (const quality of total.qualities.filter(item => item !== "available")) {
+        for (const quality of total.qualities.filter(item =>
+          !["available", "estimated"].includes(item))) {
           value.append(marker(quality, undefined, label));
         }
         card.append(value, node("small",
@@ -4793,7 +4799,7 @@ DASHBOARD_HTML = """<!doctype html>
           const item = financialMetric(row.record, name, sign);
           const cell = node("td", row.future ? "·" : item.value === null ?
             "—" : formatCurrency(item.value));
-          if (!row.future && item.quality !== "available") {
+          if (!row.future && !["available", "estimated"].includes(item.quality)) {
             cell.append(marker(item.quality, row.date, label));
           }
           tr.append(cell);
@@ -4839,7 +4845,8 @@ DASHBOARD_HTML = """<!doctype html>
             segment.style.background = sourceMeta[i][1]; bar.append(segment);
           });
           line.append(bar, node("span", `${formatDutchNumber(allocation.total)} kWh`));
-          if (allocation.quality !== "available") line.append(marker(allocation.quality, row.date));
+          if (!["available", "estimated"].includes(allocation.quality))
+            line.append(marker(allocation.quality, row.date));
         } else line.append(bar, node("span", row.future ? "·" : "Geen volledige verdeling",
           "muted"));
         chart.append(line);

@@ -23,7 +23,9 @@ REVIEW_ROLES = (
 MAX_REPORTED_GAPS = 20
 
 
-def measurement_coverage(history: PowerHistorySnapshot) -> dict[str, Any]:
+def measurement_coverage(
+    history: PowerHistorySnapshot, *, max_reported_gaps: int | None = MAX_REPORTED_GAPS,
+) -> dict[str, Any]:
     """Report exact failing spans, including anchors and every required role."""
     result: dict[str, Any] = {}
     raw = {series.role: series for series in history.series}
@@ -43,7 +45,7 @@ def measurement_coverage(history: PowerHistorySnapshot) -> dict[str, Any]:
             if end < start:
                 return
             count += 1
-            if len(gaps) < MAX_REPORTED_GAPS:
+            if max_reported_gaps is None or len(gaps) < max_reported_gaps:
                 gaps.append({"reason": reason, "starts_at": start.isoformat(),
                              "ends_at": end.isoformat(),
                              "duration_seconds": (end - start).total_seconds()})

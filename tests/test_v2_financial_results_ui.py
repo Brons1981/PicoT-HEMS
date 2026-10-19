@@ -105,7 +105,7 @@ def test_empty_history_has_no_invented_payback():
     assert not any("€" in text or "NaN" in text for text in texts)
 
 
-def test_estimated_amounts_and_cumulative_days_have_explicit_quality_labels():
+def test_complete_estimated_amounts_are_valid_with_derivation_in_evidence():
     today = {"day": "2026-09-26", "status": "incomplete", "financial_metrics": {
         "status": "estimated", "ends_at": "2026-09-26T21:00:00+00:00",
         "values": {
@@ -125,7 +125,7 @@ def test_estimated_amounts_and_cumulative_days_have_explicit_quality_labels():
     texts = [node["text"] for node in nodes]
     assert "≈ €0.25" in texts and "≈ €-0.1" in texts
     assert "€-1.5" in texts
-    assert any("Afgeleid: dit bedrag" in text for text in texts)
+    assert any("Geldig: volledig berekend met afgeleide meetgegevens" in text for text in texts)
     assert "Afgeleide meetgegevens" in texts
     assert any("1 met afgeleide bedragen" in t for t in texts)
     assert any("0.3 Wh" in t for t in texts)
@@ -231,7 +231,7 @@ def test_payback_estimate_uses_all_28_closed_calendar_days_and_excludes_today():
 
 def test_amount_marker_opens_the_day_evidence_with_keyboard_focus():
     day = {"day": "2026-09-26", "financial_metrics": {"values": {
-        "net_battery_value_eur": {"status": "estimated", "value_eur": 0.25}}}}
+        "net_battery_value_eur": {"status": "incomplete", "value_eur": None}}}}
     nodes = _render({"days": [day]}, """
       flatten(root).find(e=>e.tag==='button' &&
         e.attributes['aria-label']?.startsWith('Batterijvoordeel netto: 26 sep')).onclick();
@@ -346,3 +346,47 @@ def test_stored_value_help_can_be_opened_and_closed_without_row_disclosures():
       button.onclick();
       if(!help.hidden || button.attributes['aria-expanded']!=='false') throw Error('Cannot close');
     """)
+
+
+def test_complete_derived_week_has_no_warning_markers_for_amounts_totals_or_sources():
+    days = [{"day": f"2026-09-{day}", "financial_metrics": {
+        "status": "estimated", "values": {name: {"status": "estimated", "value_eur": .25}
+            for name in ["actual_energy_cost_eur", "net_battery_value_eur",
+                         "net_picot_value_eur", "net_total_energy_value_eur"]}},
+        "household_energy_sources": {"household_load_kwh": 6, "sources": [
+            {"source": "battery", "energy_kwh": 3}, {"source": "pv_direct", "energy_kwh": 2},
+            {"source": "grid", "energy_kwh": 1}]}} for day in range(21, 27)]
+    nodes = _render({"days": days})
+    assert not any(n["tag"] == "button" and n["text"] == "!" for n in nodes)
+    assert not any(n["text"].startswith("~ ") for n in nodes)
+    assert any("0 dagen met bijzonderheden" in n["text"] for n in nodes)
+    assert any("afgeleide meetgegevens" in n["text"] for n in nodes)
+
+
+def test_missing_metric_keeps_warning_next_to_valid_derived_metric():
+    day = {"day": "2026-09-26", "financial_metrics": {"status": "partial", "values": {
+        "actual_energy_cost_eur": {"status": "estimated", "value_eur": 1},
+        "net_battery_value_eur": {"status": "incomplete", "value_eur": None},
+        "net_picot_value_eur": {"status": "estimated", "value_eur": 0}}}}
+    nodes = _render({"days": [day]})
+    warnings = [n for n in nodes if n["tag"] == "button" and "26 sep" in n["aria"]]
+    assert len(warnings) == 1
+    assert warnings[0]["text"] == "!"
+    assert "Batterijvoordeel netto" in warnings[0]["aria"]
+
+
+def test_pending_current_quarter_is_neutral_and_keeps_completed_period_visible():
+    days = [{"day": f"2026-09-{day}", "financial_metrics": {
+        "status": "estimated", "ends_at": "2026-09-26T12:00:00Z",
+        "values": {name: {"status": "estimated", "value_eur": .25}
+            for name in ["actual_energy_cost_eur", "net_battery_value_eur",
+                         "net_picot_value_eur", "net_total_energy_value_eur"]}}}
+        for day in range(21, 27)]
+    days[-1]["financial_metrics"]["pending_period"] = {
+        "starts_at": "2026-09-26T12:00:00Z", "ends_at": "2026-09-26T12:07:00Z",
+        "reason": "current_quarter_not_closed"}
+    nodes = _render({"days": days})
+    assert any("Vandaag tot 2026-09-26T12:00:00Z" in n["text"] for n in nodes)
+    assert any("Het lopende kwartier is nog niet afgerond" in n["text"] for n in nodes)
+    assert not any(n["tag"] == "button" and n["text"] == "!" for n in nodes)
+    assert not any("Dagresultaat onvolledig" in n["text"] for n in nodes)

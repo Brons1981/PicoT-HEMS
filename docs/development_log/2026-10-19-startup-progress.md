@@ -31,3 +31,7 @@ publication/startup/household-recording/poll and dashboard tests. Windows tests
 use PYTHONUTF8=1 and a workspace basetemp; default temporary-directory permissions
 and cp1252 encoding initially prevented unrelated test setup/syntax checks.
 Ruff and Linux-targeted mypy pass. No HA installation or release performed.
+
+## Follow-up: attribute repeated preparation and the sources interval
+User supplied dev.310 startup log: first view at 281929.618 ms, full loop 308768.372 ms. Four preparation passes total 106543.798 ms; an uninstrumented sources interval took 60428.262 ms. These timings do not identify a single slow operation.
+Added finer observer-only phase boundaries for balance, mode provenance, SOC recovery, committed plans, market history, PV basis, actual PV and household objectives. Clock-boundary execution, feedback, incident recording, source publication, advice and review preparation now have separate labels/timings. No caching, skipped refreshes or control changes. Existing log event/schema preserved. Not released yet.

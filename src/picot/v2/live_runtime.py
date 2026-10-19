@@ -3058,11 +3058,14 @@ def main() -> None:
         nonlocal previous_household_regime
         nonlocal household_regime_started_at
         nonlocal latest_daily_pv_basis_decision
+        startup.enter("prepare_balance", "Energiebalans controleren", 30)
         bundle = net_balance_observer.observe(bundle)
+        startup.enter("prepare_mode", "Herkomst batterijmodus controleren", 30)
         bundle = attach_storage_mode_provenance(
             bundle,
             storage_mode_provenance_runtime,
         )
+        startup.enter("prepare_soc", "Laadgeschiedenis controleren", 30)
         for storage in bundle.snapshot.current_storage_states:
             previous_status = soc_history_recovery.status
             try:
@@ -3081,6 +3084,7 @@ def main() -> None:
                     "snapshot_id": bundle.snapshot.snapshot_id,
                     "scope_id": storage.execution_scope_id,
                 }), flush=True)
+        startup.enter("prepare_commitments", "Vastgelegde dagplannen laden", 30)
         bundle = replace(
             bundle,
             snapshot=_restore_active_plan_commitments(
@@ -3094,6 +3098,7 @@ def main() -> None:
                 active_plan_commitment_store,
             ),
         )
+        startup.enter("prepare_market", "Marktroute en exportmetingen laden", 30)
         try:
             context = bundle.snapshot.daily_charge_context
             if context is None or context.status != "ready":
@@ -3130,11 +3135,13 @@ def main() -> None:
                 )
         except (ValueError, OSError):
             bundle = replace(bundle, snapshot=replace(bundle.snapshot, market_power_history=None))
+        startup.enter("prepare_pv_basis", "Zonprognose vastleggen", 30)
         if bundle.snapshot.pv_energy_timeline is not None:
             pv_attenuation_learning.capture_forecast_basis(
                 timeline=bundle.snapshot.pv_energy_timeline,
                 captured_at=bundle.snapshot.captured_at,
             )
+        startup.enter("prepare_pv_actual", "Werkelijke zonneopbrengst verwerken", 30)
         prepared_bundle, diagnostics = apply_latest_closed_actual_pv(
             bundle,
             entity_id=pv_power_entity,
@@ -3144,6 +3151,7 @@ def main() -> None:
                 pv_telemetry_interval_seconds
             ),
         )
+        startup.enter("prepare_household", "Huisverbruik en zonbasis voorbereiden", 30)
         captured_at = prepared_bundle.snapshot.captured_at
         previous_duration_seconds = (
             int((captured_at - household_regime_started_at).total_seconds())
@@ -3215,13 +3223,17 @@ def main() -> None:
             status = {"status": "failed", "reason": "recalculation_state_unavailable"}
         web_view_store.publish_planning_recalculation(status)
 
+    @startup.stage("source_publication", "Bronstatus en terugblik voorbereiden", 40)
     def publish_input_sources(bundle: PlanningInputBundle) -> None:
+        startup.enter("source_advice", "Energieadvies bijwerken", 40)
         if ev_deadline_advisor is not None:
             ev_deadline_advisor.submit(bundle.snapshot)
+        startup.enter("source_status", "Bronstatus publiceren", 40)
         publish_recalculation_status()
         web_view_store.publish_planning_input_sources(
             _planning_input_sources(bundle)
         )
+        startup.enter("source_review", "Terugblik op netladen voorbereiden", 40)
         if grid_charge_review.due(bundle.snapshot.captured_at):
             try:
                 assignments = active_plan_commitment_store.load_daily_assignments()
@@ -3400,12 +3412,14 @@ def main() -> None:
         publish_recalculation_status()
         return completed
 
+    @startup.stage("boundaries", "Lopende planovergangen controleren", 40)
     def advance_clock_boundaries(bundle: PlanningInputBundle) -> bool:
         before_completion = canonical_execution_runtime.completion_generation
         outcome = canonical_execution_runtime.advance_committed_boundary(
             bundle.snapshot,
             execution_enabled=execution_enabled,
         )
+        startup.enter("boundary_feedback", "Uitvoeringsstatus verwerken", 40)
         observe_execution(
             health_notifier, status=outcome.status, reason=outcome.reason,
             failure_reason=outcome.failure_reason,
@@ -3416,6 +3430,7 @@ def main() -> None:
             observed_at=bundle.snapshot.captured_at,
             observation_id=f"boundary-result:{bundle.snapshot.snapshot_id}",
         )
+        startup.enter("boundary_history", "Planovergang in diagnose vastleggen", 40)
         try:
             planning_incident_history.record_boundary(
                 bundle=bundle,
@@ -3428,6 +3443,7 @@ def main() -> None:
                 "snapshot_id": bundle.snapshot.snapshot_id,
                 "error": type(exc).__name__,
             }), flush=True)
+        startup.enter("boundary_result", "Resultaat planovergang verwerken", 40)
         if outcome.status == "dispatched":
             assert outcome.application_id is not None
             assert outcome.plan_id is not None

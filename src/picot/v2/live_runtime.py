@@ -2280,6 +2280,7 @@ def _execute_planning_bundle(
         3,
     )
 
+    web_view_store.startup_progress.enter("pipeline", "Eerste planning berekenen", 55)
     _log_runtime_memory("before_pipeline", run_id=bundle.snapshot.run_id)
 
     checkpoint_arguments: dict[str, Any] = (
@@ -2298,6 +2299,7 @@ def _execute_planning_bundle(
         return False
     execution_observed_at = bundle.snapshot.captured_at
     execution_observation: dict[str, Any] | None = None
+    web_view_store.startup_progress.enter("execution", "Uitvoering controleren", 70)
     _log_runtime_memory("after_pipeline", run_id=run.planning_input.run_id)
     if canonical_execution_runtime is not None:
         if (
@@ -2433,6 +2435,7 @@ def _execute_planning_bundle(
     planner_cycle_ms = stage_timings.canonical_total_ms
     pipeline_total_ms = round(planning_input_ms + stage_timings.canonical_total_ms, 3)
 
+    web_view_store.startup_progress.enter("projection", "Dashboardgegevens opbouwen", 80)
     projection = _with_planning_input_diagnostics(
         project(run),
         bundle,
@@ -2497,6 +2500,7 @@ def _execute_planning_bundle(
             else ()
         ),
     )
+    web_view_store.startup_progress.enter("financial", "Financieel overzicht bijwerken", 90)
     if financial_result_ledger is not None and power_history is not None:
         try:
             web_view["financial_results"] = financial_result_ledger.update(
@@ -2523,7 +2527,9 @@ def _execute_planning_bundle(
     )
     _log_runtime_memory("after_web_view_build", run_id=run.planning_input.run_id)
     web_view_publish_started = perf_counter()
+    web_view_store.startup_progress.enter("publish", "Dashboard publiceren", 95)
     web_view_store.publish(web_view)
+    web_view_store.startup_progress.complete()
     web_view_publish_ms = round(
         (perf_counter() - web_view_publish_started) * 1000.0,
         3,
@@ -2660,6 +2666,7 @@ def main() -> None:
     web_view_store = WebViewStore(soc_cache=SOCProjectionCache(
         SOC_PROJECTION_CACHE_PATH, history_path=PLANNING_INCIDENT_HISTORY_PATH,
     ), price_reference=PricePlanReference(ACTIVE_PLAN_COMMITMENT_PATH))
+    startup = web_view_store.startup_progress
     energy_device_placement_store = EnergyDevicePlacementStore(
         ENERGY_DEVICE_PLACEMENTS_PATH
     )
@@ -2989,6 +2996,7 @@ def main() -> None:
         )
 
     _start_web_server(web_view_store)
+    startup.enter("sources", "Actuele gegevens ophalen", 10)
     def publish_energy_device_catalog(catalog: EnergyDeviceCatalog) -> None:
         nonlocal latest_energy_device_catalog
         with energy_device_catalog_lock:
@@ -3019,6 +3027,7 @@ def main() -> None:
         poll_interval_seconds = 60.0
     poll_interval_seconds = max(5.0, poll_interval_seconds)
 
+    @startup.stage("input", "Actuele gegevens en huisverbruik ophalen", 15)
     def load_bundle() -> PlanningInputBundle:
         current = _load_live_planning_input(
             token,
@@ -3039,6 +3048,7 @@ def main() -> None:
     latest_daily_pv_basis_decision: DailyPVBasisDecision | None = None
     net_balance_observer = NetBalanceObserver()
 
+    @startup.stage("prepare", "Historie en prognoses voorbereiden", 30)
     def prepare_bundle(
         bundle: PlanningInputBundle,
     ) -> tuple[
@@ -3287,6 +3297,7 @@ def main() -> None:
                 flush=True,
             )
 
+    @startup.stage("planning", "Eerste planning berekenen", 50)
     def execute(
         bundle: PlanningInputBundle,
         pv_actual_diagnostics: LivePVActualDiagnostics,
@@ -3302,7 +3313,8 @@ def main() -> None:
             poll_interval_seconds=poll_interval_seconds,
             next_check_at=bundle.snapshot.captured_at,
         )
-        power_history, measurement_history, power_history_read_ms = read_power_history(bundle)
+        with startup.stage("history", "Energiemetingen ophalen", 45):
+            power_history, measurement_history, power_history_read_ms = read_power_history(bundle)
         timeline = bundle.snapshot.pv_energy_timeline
         pv_sunset_source = pv_sunset_reader.read(
             local_timezone=pv_sunset_timezone
@@ -3466,6 +3478,12 @@ def main() -> None:
             snapshot
         )[0],
     )
+    def startup_runtime_observations(
+        bundle: PlanningInputBundle,
+    ) -> tuple[RuntimeObservation, ...]:
+        with startup.stage("observations", "Huisverbruik en planwijzigingen controleren", 35):
+            return material_replanning.observe(bundle)
+
     previous_signature: str | None = None
     while True:
         cycle_started_at = datetime.now(UTC)
@@ -3486,7 +3504,7 @@ def main() -> None:
                 observe=publish_input_sources,
                 advance_clock_boundaries=advance_clock_boundaries,
                 runtime_monitor=runtime_monitor,
-                runtime_observations=material_replanning.observe,
+                runtime_observations=startup_runtime_observations,
             )
         ))
         _log_history_capture_trial(

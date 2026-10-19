@@ -31,6 +31,7 @@ from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.price_plan_reference import PricePlanReference
 from picot.v2.projection import Projection, project_market_revision_comparison
 from picot.v2.soc_projection_cache import SOCDisplayHistory, SOCProjectionCache
+from picot.v2.startup_progress import StartupProgress
 from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
 
 POWER_HISTORY_DISPLAY_INTERVAL = timedelta(minutes=5)
@@ -5552,6 +5553,70 @@ DASHBOARD_HTML = """<!doctype html>
       restoreDashboardState(dashboardState);
     }
 
+    // Startup progress reflects backend phases, not an artificial countdown.
+    let firstViewRendered = false;
+    let startupFailed = false;
+    function renderStartup(progress) {
+      if (firstViewRendered) return;
+      startupFailed = progress.state === "failed";
+      const bar = element("execution-mode");
+      const percent = Math.min(99, Math.max(0, Number(progress.percent) || 0));
+      const elapsed = Math.max(0, Math.floor(Number(progress.elapsed_seconds) || 0));
+      const elapsedText = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
+      const label = progress.state === "ready" ? "Dashboardgegevens weergeven" : progress.label;
+      bar.style.background = `linear-gradient(to right, #b8e2c5 ${percent}%, #edf1f5 ${percent}%)`;
+      bar.style.color = "#173d26";
+      bar.setAttribute("role", "progressbar");
+      bar.setAttribute("aria-valuemin", "0");
+      bar.setAttribute("aria-valuemax", "100");
+      bar.setAttribute("aria-valuenow", String(percent));
+      bar.setAttribute("aria-valuetext", `${label || "Opstarten"}; ${elapsedText} verstreken`);
+      bar.textContent = `${label || "Opstarten"} · ${elapsedText} verstreken`;
+      if (progress.state === "failed") {
+        element("central-health").dataset.health = "fault";
+        element("central-health").textContent = "PicoT · opstarten mislukt";
+        element("status").dataset.state = "error";
+        element("status").textContent = `Opstarten mislukt: ${progress.label}`;
+      }
+    }
+    function finishStartup() {
+      firstViewRendered = true;
+      const bar = element("execution-mode");
+      bar.style.removeProperty("background");
+      bar.style.removeProperty("color");
+      for (const name of [
+        "role", "aria-valuemin", "aria-valuemax", "aria-valuenow", "aria-valuetext",
+      ]) {
+        bar.removeAttribute(name);
+      }
+    }
+    async function pollStartup() {
+      while (!firstViewRendered && !updateWatcherStopped) {
+        try {
+          const response = await fetch("api/startup", { cache: "no-store" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          renderStartup(await response.json());
+        } catch (error) {
+          // View requests own connection errors; progress must not hide them.
+        }
+        if (!firstViewRendered && !updateWatcherStopped) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
+    }
+    async function isWaitingForFirstRun(response) {
+      if (response.status !== 503) return false;
+      const body = await response.json();
+      if (body.status !== "waiting_for_first_run") return false;
+      if (!firstViewRendered && !startupFailed) {
+        element("central-health").dataset.health = "waiting";
+        element("central-health").textContent = "PicoT · bezig met opstarten";
+        element("status").dataset.state = "waiting";
+        element("status").textContent = "Verbonden · wachten op de eerste berekening.";
+      }
+      return true;
+    }
+
     function applyView(view) {
       const status = element("status");
       if (shouldDeferRenderForSelection()) {
@@ -5563,6 +5628,7 @@ DASHBOARD_HTML = """<!doctype html>
       }
       pendingView = null;
       renderView(view);
+      finishStartup();
       status.dataset.state = "ready";
       status.textContent = "Realtime verbonden";
     }
@@ -5571,13 +5637,7 @@ DASHBOARD_HTML = """<!doctype html>
       const status = element("status");
       try {
         const response = await fetch("api/view", { cache: "no-store" });
-        if (response.status === 503) {
-          element("central-health").dataset.health = "fault";
-          element("central-health").textContent = "PicoT · wachten op actuele gegevens";
-          status.dataset.state = "waiting";
-          status.textContent = "Wachten op de eerste pipeline-run…";
-          return false;
-        }
+        if (await isWaitingForFirstRun(response)) return false;
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         applyView(await response.json());
         return true;
@@ -5598,6 +5658,10 @@ DASHBOARD_HTML = """<!doctype html>
             `api/view/updates?revision=${viewRevision}`,
             { cache: "no-store" }
           );
+          if (await isWaitingForFirstRun(response)) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+          }
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const update = await response.json();
           if (update.revision > viewRevision) {
@@ -5648,6 +5712,7 @@ DASHBOARD_HTML = """<!doctype html>
       }
     });
     initializeTabs();
+    pollStartup();
     loadView().finally(watchViewUpdates);
     setInterval(loadView, 60000);
     setInterval(loadHouseholdCalendar, 60000);
@@ -5815,6 +5880,7 @@ class WebViewStore:
         self, *, soc_cache: SOCProjectionCache | None = None,
         price_reference: PricePlanReference | None = None,
     ) -> None:
+        self.startup_progress = StartupProgress()
         self._soc_cache = soc_cache
         self._soc_display = SOCDisplayHistory()
         self._price_reference = price_reference
@@ -6442,6 +6508,9 @@ def create_web_server(
         def do_GET(self) -> None:
             parsed_url = urlsplit(self.path)
             path = parsed_url.path
+            if path == "/api/startup":
+                self._send_json(HTTPStatus.OK, json.dumps(store.startup_progress.snapshot()))
+                return
             if path == "/api/diagnostics/export":
                 self._send_json(HTTPStatus.OK, json.dumps(export_job.status()))
                 return

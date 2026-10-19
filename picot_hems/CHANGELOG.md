@@ -1,3 +1,10 @@
+# 2.0.0-dev.310
+
+- Toon echte opstartfasen en verstreken tijd in de bestaande statusbalk met groene voortgang.
+- Behandel wachten op de eerste berekening niet meer als een verbroken realtimeverbinding.
+- Leg de duur per opstartfase vast om lange opstarttijden gericht te onderzoeken.
+- Behoud bestaande planner- en batterijaansturing.
+
 # 2.0.0-dev.309
 
 - Bewaar huisverbruikmetingen ook tijdens planningsberekeningen en voorkom administratieve meetgaten.

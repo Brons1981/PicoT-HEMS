@@ -58,6 +58,8 @@ def test_completed_live_pipeline_run_publishes_latest_web_view(
 
     latest_json = store.latest_json()
     assert latest_json is not None
+    assert store.startup_progress.snapshot()["state"] == "ready"
+    assert store.startup_progress.snapshot()["percent"] == 100
     view = json.loads(latest_json)
 
     assert len(published_cards) == 10

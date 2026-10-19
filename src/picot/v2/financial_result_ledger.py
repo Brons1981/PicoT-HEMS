@@ -177,8 +177,10 @@ class FinancialResultLedger:
             if not isinstance(record, dict):
                 return
             previous = record.get("financial_estimate", {})
-            if previous and datetime.fromisoformat(previous["ends_at"]) > datetime.fromisoformat(
-                metrics["ends_at"]
+            if previous and datetime.fromisoformat(
+                previous.get("pending_period", {}).get("ends_at", previous["ends_at"])
+            ) > datetime.fromisoformat(
+                metrics.get("pending_period", {}).get("ends_at", metrics["ends_at"])
             ):
                 return
             record["financial_estimate"] = metrics

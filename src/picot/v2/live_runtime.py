@@ -1316,6 +1316,33 @@ def _run_live_cycle(
     return _planning_input_signature(bundle)
 
 
+def _persist_household_input(
+    current: PlanningInputBundle,
+    *,
+    persist_observation: Callable[[HouseholdLoadObservation], None] | None = None,
+    persist_rejection: Callable[[PlanningInputBundle], None] | None = None,
+) -> None:
+    """Record each atomic input capture, including in-planning refreshes."""
+    observation = current.household_load_observation
+    if persist_observation is not None and observation is not None:
+        try:
+            persist_observation(observation)
+        except OSError as exc:
+            print(json.dumps({
+                "event": "picot_v2_household_load_history_unavailable",
+                "error": type(exc).__name__,
+            }, separators=(",", ":")), flush=True)
+    if persist_rejection is not None and observation is None:
+        try:
+            persist_rejection(current)
+        except (OSError, ValueError, TypeError) as exc:
+            print(json.dumps({
+                "event": "picot_v2_household_load_rejection_history_unavailable",
+                "error": type(exc).__name__,
+                "reason": str(exc),
+            }, separators=(",", ":")), flush=True)
+
+
 def _poll_live_cycle(
     *,
     previous_signature: str | None,
@@ -1346,30 +1373,11 @@ def _poll_live_cycle(
     """Load fresh Planning Input and execute only when decision input changed."""
     def load_current_bundle() -> PlanningInputBundle:
         current = load_bundle()
-        observation = current.household_load_observation
-        if persist_observation is not None and observation is not None:
-            try:
-                persist_observation(observation)
-            except OSError as exc:
-                print(
-                    json.dumps(
-                        {
-                            "event": "picot_v2_household_load_history_unavailable",
-                            "error": type(exc).__name__,
-                        },
-                        separators=(",", ":"),
-                    ),
-                    flush=True,
-                )
-        if persist_rejection is not None and observation is None:
-            try:
-                persist_rejection(current)
-            except (OSError, ValueError, TypeError) as exc:
-                print(json.dumps({
-                    "event": "picot_v2_household_load_rejection_history_unavailable",
-                    "error": type(exc).__name__,
-                    "reason": str(exc),
-                }, separators=(",", ":")), flush=True)
+        _persist_household_input(
+            current,
+            persist_observation=persist_observation,
+            persist_rejection=persist_rejection,
+        )
         return current
 
     bundle = load_current_bundle()
@@ -3012,11 +3020,19 @@ def main() -> None:
     poll_interval_seconds = max(5.0, poll_interval_seconds)
 
     def load_bundle() -> PlanningInputBundle:
-        return _load_live_planning_input(
+        current = _load_live_planning_input(
             token,
             options,
             household_load_history=household_load_history,
         )
+        # All consumers (poll, clock boundary and planning execution refresh)
+        # share this capture seam. Persist before preparation or execution.
+        _persist_household_input(
+            current,
+            persist_observation=household_load_history.append,
+            persist_rejection=household_load_rejections.append,
+        )
+        return current
 
     previous_household_regime: HouseholdPlanningRegime | None = None
     household_regime_started_at: datetime | None = None
@@ -3466,8 +3482,6 @@ def main() -> None:
                 load_bundle=load_bundle,
                 prepare_bundle=prepare_bundle,
                 execute=execute,
-                persist_observation=household_load_history.append,
-                persist_rejection=household_load_rejections.append,
                 refresh_unchanged=refresh_unchanged,
                 observe=publish_input_sources,
                 advance_clock_boundaries=advance_clock_boundaries,

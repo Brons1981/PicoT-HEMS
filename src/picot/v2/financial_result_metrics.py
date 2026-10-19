@@ -8,7 +8,7 @@ from math import isfinite
 from typing import Any
 
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
-from picot.v2.review_measurements import measurement_coverage
+from picot.v2.review_measurements import MAX_REPORTED_GAPS, measurement_coverage
 
 SETTLEMENT_ROLES = frozenset({
     "pv_generation", "household_load", "grid_import", "grid_export",
@@ -42,9 +42,11 @@ def financial_metric_value(day: Mapping[str, Any], name: str) -> float | None:
     return None
 
 
-def financial_measurement_coverage(history: PowerHistorySnapshot) -> dict[str, Any]:
+def financial_measurement_coverage(
+    history: PowerHistorySnapshot, *, max_reported_gaps: int | None = MAX_REPORTED_GAPS,
+) -> dict[str, Any]:
     """Combine contiguous reports for display; leave the strict replay unchanged."""
-    result = measurement_coverage(history)
+    result = measurement_coverage(history, max_reported_gaps=max_reported_gaps)
     for value in result.values():
         gaps: list[dict[str, Any]] = []
         for gap in value["gaps"]:

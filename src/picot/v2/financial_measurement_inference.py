@@ -100,6 +100,8 @@ def infer_financial_measurements(
                                              for p in s.points)) for s in history.series),
     )
     raw_coverage = financial_measurement_coverage(history)
+    # Diagnostic truncation must never decide whether reconstruction is attempted.
+    complete_coverage = financial_measurement_coverage(history, max_reported_gaps=None)
     if (history.status != "available" or history.error or history.ends_at <= history.starts_at
             or history.ends_at - history.starts_at > timedelta(hours=26)):
         return FinancialInferredHistory(history, (), frozenset(), 0.0, raw_coverage, ())
@@ -113,8 +115,8 @@ def infer_financial_measurements(
     def view() -> PowerHistorySnapshot:
         return replace(history, series=tuple(series[s.role] for s in history.series))
 
-    if "pv_generation" in series and not raw_coverage["pv_generation"]["omitted_gap_count"]:
-        for gap in raw_coverage["pv_generation"]["gaps"]:
+    if "pv_generation" in series:
+        for gap in complete_coverage["pv_generation"]["gaps"]:
             lo, hi = (datetime.fromisoformat(gap[k]) for k in ("starts_at", "ends_at"))
             for window in night_windows:
                 if not window.evidence_ids:
@@ -130,7 +132,7 @@ def infer_financial_measurements(
 
     bounds = {"pv_generation": pv_maximum_power_w, "battery_charge": charge_maximum_power_w,
               "battery_discharge": discharge_maximum_power_w}
-    coverage = financial_measurement_coverage(view())
+    coverage = financial_measurement_coverage(view(), max_reported_gaps=None)
     candidates: list[dict[str, Any]] = []
     for role, maximum in bounds.items():
         if role not in series or coverage[role]["omitted_gap_count"]:
@@ -176,7 +178,7 @@ def infer_financial_measurements(
         events.append(item)
 
     household = series.get("household_load")
-    gaps = raw_coverage["household_load"]
+    gaps = complete_coverage["household_load"]
     if household is not None and not gaps["omitted_gap_count"] and set(FLOW_SIGNS) <= series.keys():
         # Explicit NaNs preserve all unresolved sampled gaps when the financial
         # copy changes to held interval averages. No stale sample bridges a hole.

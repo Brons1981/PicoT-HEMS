@@ -1,3 +1,9 @@
+# 2.0.0-dev.311
+
+- Splits opstartmetingen verder uit voor voorbereiding, planovergangen en bronpublicatie.
+- Toon concretere stappen in de bestaande opstartbalk om vertragingen te lokaliseren.
+- Behoud plannerlogica, actuele gegevenscontroles en batterijaansturing.
+
 # 2.0.0-dev.310
 
 - Toon echte opstartfasen en verstreken tijd in de bestaande statusbalk met groene voortgang.

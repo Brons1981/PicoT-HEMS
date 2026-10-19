@@ -622,15 +622,42 @@ class ActivePlanCommitmentStore:
                 raise ValueError("PV comparison evidence was already assessed")
             prior_plan = self.load_active_daily_main_plan(plan.execution_scope_id)
             assert prior_plan is not None
+            protected_market_segments = {
+                sid for binding in self.load_market_plan_bindings() for sid in binding.segment_ids
+            }
+            supplemental_ids: set[str] = set()
+            supplemental_segment_ids: set[str] = set()
+            for goal in self.load_supplemental_assignments():
+                if (goal.completed_at is not None
+                        or goal.next_assignment_id != assignment.assignment_id
+                        or goal.starts_at <= plan.created_at or goal.plan_id != prior_plan.plan_id
+                        or not goal.segment_ids):
+                    continue
+                parts = tuple(s for s in prior_plan.segments if s.segment_id in goal.segment_ids)
+                if len(parts) == len(goal.segment_ids) and all(
+                    s.starts_at > plan.created_at and s.main_assignment_id is None
+                    and s.segment_id not in protected_market_segments and s.primitive in {
+                        ExecutionPrimitive.CHARGE_AT_POWER,
+                        ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                    } for s in parts
+                ):
+                    supplemental_ids.add(goal.assignment_id)
+                    supplemental_segment_ids.update(goal.segment_ids)
             prior_grid = tuple(
                 s for s in prior_plan.segments
-                if s.main_assignment_id == assignment.assignment_id
+                if (s.main_assignment_id == assignment.assignment_id
+                    or s.segment_id in supplemental_segment_ids)
                 and s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
                 and s.ends_at > plan.created_at
             )
+            proposed_grid = tuple(
+                s for s in plan.segments
+                if (s.main_assignment_id == assignment.assignment_id
+                    or s.purpose in supplemental_ids)
+                and s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+            )
             if any(s.requested_power_w is None for s in prior_grid) or any(
-                s.requested_power_w is None for s in matched
-                if s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
+                s.requested_power_w is None for s in proposed_grid
             ):
                 raise ValueError("PV revision requires explicit grid power")
             prior_grid_wh = sum(
@@ -643,8 +670,7 @@ class ActivePlanCommitmentStore:
             new_grid_wh = sum(
                 float(part.requested_power_w)
                 * (part.ends_at - part.starts_at).total_seconds() / 3600
-                for part in matched if part.primitive is ExecutionPrimitive.CHARGE_AT_POWER
-                and part.requested_power_w is not None
+                for part in proposed_grid if part.requested_power_w is not None
             )
             if new_grid_wh >= optimisation_trigger.prior_grid_input_wh - 1e-6:
                 raise ValueError("PV revision must reduce the owned future grid charge")
@@ -809,8 +835,22 @@ class ActivePlanCommitmentStore:
         proposed = {a.assignment_id: a for a in window.supplemental_assignments}
         if len(proposed) != len(window.supplemental_assignments):
             raise ValueError("duplicate supplemental ownership")
+        retired = set(window.supplemental_retirements)
+        if len(retired) != len(window.supplemental_retirements):
+            raise ValueError("duplicate supplemental retirement")
+        if retired & proposed.keys():
+            raise ValueError("supplemental retirement cannot retain the same goal")
+        if proposed.keys() & payload.get("supplemental_retirements", {}).keys():
+            raise ValueError("retired supplemental assignment cannot be reopened")
+        for key in retired:
+            old = previous.get(key)
+            if old is None or old.completed_at is not None or old.starts_at <= plan.created_at:
+                raise ValueError("supplemental retirement requires an unstarted open goal")
+            if any(s.purpose == key for s in plan.segments):
+                raise ValueError("retired supplemental execution cannot remain in the plan")
         if any(
             a.completed_at is None and a.required_by > plan.created_at and key not in proposed
+            and key not in retired
             for key, a in previous.items()
         ):
             raise ValueError("open supplemental assignment cannot be discarded")
@@ -851,6 +891,18 @@ class ActivePlanCommitmentStore:
             payload.setdefault("supplemental_assignments", {})[key] = self._supplemental_record(
                 bound_goal
             )
+        # The selected candidate owns the need decision. Store only validates its
+        # lifecycle and commits retirement alongside the replacement route.
+        for key in sorted(retired):
+            record = self._supplemental_record(previous[key])
+            payload.setdefault("supplemental_history", {}).setdefault(key, []).append(record)
+            payload.setdefault("supplemental_retirements", {})[key] = {
+                "assignment": record,
+                "retired_at": plan.created_at.isoformat(),
+                "replacement_plan_id": plan.plan_id,
+                "reason": "bridge_need_no_longer_present",
+            }
+            del payload["supplemental_assignments"][key]
 
     def observe_supplemental_completion(
         self,

@@ -268,6 +268,8 @@ class IndependentDailyReferenceAdapter:
             trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
         return DailyBridgeAssessment(
             "completion_reconciliation" if obsolete_retry else
+            "supplemental_goal_review" if missed_goal is not None
+            and not any(i.deficit_wh > 1e-6 for i in deficits) else
             "energy_shortfall" if needed else "accepted_grid_support" if state else "sufficient",
             owner.assignment_id, until, deficits, trigger,
         )
@@ -422,6 +424,8 @@ class IndependentDailyReferenceAdapter:
             snapshot=snapshot, assignment=owner, inputs=inputs, supplied=None,
         )
         assert baseline is not None
+        retirement_exports_unchanged = (
+            revision_schedule is None or self._same_exports(baseline, revision_schedule))
         if revision_schedule is not None:
             baseline = revision_schedule
         owned = tuple(r for r in retained if r.assignment_id == owner.assignment_id)
@@ -539,6 +543,17 @@ class IndependentDailyReferenceAdapter:
                 add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT,
                                   storage_export_target_wh=0.0)
                           if k in consecutive[:lo] else i for k, i in enumerate(surrounding)))
+        retiring = (self._retirable_supplementals(snapshot, owner.assignment_id)
+                    if retirement_exports_unchanged else ())
+        retirement_schedules = {}
+        if retiring:
+            # Complete alternatives use the same main/export constraints. No
+            # stored goal is changed until Evaluation selects a proven route.
+            for group in self._retirement_groups(retiring):
+                released_schedule = self._release_supplementals(snapshot, baseline, inputs, group)
+                schedules[released_schedule.intervals] = released_schedule
+                retirement_schedules[released_schedule.schedule_id] = tuple(
+                    g.assignment_id for g in group)
         windows = []
         rejected = []
         main = tuple(DailyMainChargeSegment(
@@ -550,6 +565,7 @@ class IndependentDailyReferenceAdapter:
             else DailyStorageIntent.NOM,
         ) for r in owned)
         for schedule in schedules.values():
+            retirement_ids = retirement_schedules.get(schedule.schedule_id, ())
             projection = project(schedule)
             # Explicit charging with no acquired storage energy is direct grid
             # support, not a latent refill order. Materialise that exact physics
@@ -568,6 +584,15 @@ class IndependentDailyReferenceAdapter:
                 projection = project(schedule)
             reaches = {}
             invalid = []
+            if retirement_ids and any(i.deficit_wh > 1e-6 for i in energy_deficits(
+                projection, schedule, until=trigger.next_starts_at,
+                maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+            )):
+                invalid.append("supplemental_retirement_bridge_deficit")
+            if retirement_ids and not self._retirement_exports_valid(schedule, projection):
+                invalid.append("supplemental_retirement_market_deficit")
+            if retirement_ids and not self._same_exports(baseline, schedule):
+                invalid.append("supplemental_retirement_market_changed")
             for a in context.assignments:
                 if (a.completed_at is not None or not a.main_segments
                         or a.ends_at <= snapshot.captured_at):
@@ -590,10 +615,14 @@ class IndependentDailyReferenceAdapter:
                 windows.append(DailyMainChargeWindow(
                     owner.assignment_id, "hybrid", schedule, main, projection,
                     reaches[owner.assignment_id], inputs.storage.usable_capacity_wh, others,
+                    supplemental_retirements=retirement_ids,
                 ))
         attached_windows = []
         for window in windows:
-            attached = attach_supplemental_goals(window, snapshot, trigger)
+            attachment_snapshot = (self._without_supplementals(
+                snapshot, window.supplemental_retirements)
+                if window.supplemental_retirements else snapshot)
+            attached = attach_supplemental_goals(window, attachment_snapshot, trigger)
             if attached is not None:
                 attached_windows.append(attached)
             else:
@@ -831,7 +860,11 @@ class IndependentDailyReferenceAdapter:
         if len(active) != 1:
             raise DailyReferenceInputError("main_charge_active_plan_required_for_monitoring")
         plan = active[0]
-        grid = tuple(s for s in plan.segments if s.main_assignment_id == assignment.assignment_id
+        retiring = self._retirable_supplementals(snapshot, assignment.assignment_id)
+        supplemental_ids = {sid for g in retiring for sid in g.segment_ids}
+        grid = tuple(s for s in plan.segments if (
+                     s.main_assignment_id == assignment.assignment_id
+                     or s.segment_id in supplemental_ids)
                      and s.primitive is ExecutionPrimitive.CHARGE_AT_POWER
                      and s.ends_at > snapshot.captured_at)
         if not grid:
@@ -851,6 +884,15 @@ class IndependentDailyReferenceAdapter:
         pending = tuple(a for a in context.assignments if a.route_plan_id is not None
                         and a.completed_at is None and a.ends_at > snapshot.captured_at)
         released = self._released_grid_intents(inputs)
+        trials = []
+        for group in self._retirement_groups(retiring):
+            group_ids = {sid for g in group for sid in g.segment_ids}
+            removable = sum(float(s.requested_power_w or 0)
+                            * (s.ends_at - s.starts_at).total_seconds() / 3600
+                            for s in grid if s.segment_id in group_ids)
+            if removable > 0:
+                trials.append((self._release_supplementals(snapshot, schedule, inputs, group),
+                               removable))
         for index in reversed(range(len(schedule.intervals))):
             interval = schedule.intervals[index]
             if not any(s.starts_at <= interval.starts_at and interval.ends_at <= s.ends_at
@@ -863,6 +905,9 @@ class IndependentDailyReferenceAdapter:
                     for n, i in enumerate(schedule.intervals)
                 ),
             )
+            trials.append((trial, inputs.maximum_charge_input_power_w
+                           * (interval.ends_at - interval.starts_at).total_seconds() / 3600))
+        for trial, removed_wh in trials:
             projection = IndependentDailyIntentSimulator().simulate_planning_basis(
                 snapshot_id=snapshot.snapshot_id, household=inputs.household,
                 pv_scenarios=inputs.pv_scenarios, storage_state=inputs.storage,
@@ -875,6 +920,12 @@ class IndependentDailyReferenceAdapter:
             reserve_ok = all(min(i.storage_energy_at_start_wh, i.storage_energy_at_end_wh)
                              + 1e-6 >= inputs.minimum_storage_energy_wh
                              for i in projection.intervals)
+            next_start = min((s.starts_at for s in assignment.main_segments
+                              if s.starts_at > snapshot.captured_at), default=snapshot.captured_at)
+            reserve_ok = reserve_ok and not any(i.deficit_wh > 1e-6 for i in energy_deficits(
+                projection, trial, until=next_start,
+                maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w))
+            reserve_ok = reserve_ok and self._retirement_exports_valid(trial, projection)
             if reserve_ok and all(any(
                 main.starts_at <= at <= main.ends_at
                 and energy + 1e-6 >= inputs.storage.usable_capacity_wh
@@ -889,8 +940,7 @@ class IndependentDailyReferenceAdapter:
                     comparison.actual_wh if net_proof is None and future_proof is None else None,
                     comparison.central_wh if net_proof is None and future_proof is None else None,
                     prior_grid_wh,
-                    inputs.maximum_charge_input_power_w
-                    * (interval.ends_at - interval.starts_at).total_seconds() / 3600,
+                    removed_wh,
                     soc_based=net_proof is not None or comparison.boundary != "above_central",
                     net_balance_evidence_id=net_proof.evidence_id if net_proof else None,
                     future_state_evidence_id=future_proof,
@@ -985,6 +1035,100 @@ class IndependentDailyReferenceAdapter:
             supplemental, tuple(invalid),
         )
 
+    @staticmethod
+    def _retirable_supplementals(
+        snapshot: PlanningInputSnapshot, assignment_id: str,
+    ) -> tuple[SupplementalChargeAssignment, ...]:
+        """Only explicit, wholly future charging ownership may be reconsidered."""
+        context = snapshot.daily_charge_context
+        if context is None:
+            return ()
+        plans = {p.plan_id: p for p in context.main_plans
+                 if p.plan_id in context.active_main_plan_ids}
+        protected = {sid for b in context.market_plan_bindings for sid in b.segment_ids}
+        eligible = []
+        for goal in context.supplemental_assignments:
+            if (goal.completed_at is not None or goal.next_assignment_id != assignment_id
+                    or goal.starts_at <= snapshot.captured_at or goal.plan_id not in plans
+                    or not goal.segment_ids):
+                continue
+            segments = tuple(s for s in plans[goal.plan_id].segments
+                             if s.segment_id in goal.segment_ids)
+            if len(segments) == len(goal.segment_ids) and all(
+                s.starts_at > snapshot.captured_at and s.main_assignment_id is None
+                and s.segment_id not in protected and s.primitive in {
+                    ExecutionPrimitive.CHARGE_AT_POWER, ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                } for s in segments
+            ):
+                eligible.append(goal)
+        return tuple(eligible)
+
+    @staticmethod
+    def _retirement_groups(
+        goals: tuple[SupplementalChargeAssignment, ...],
+    ) -> tuple[tuple[SupplementalChargeAssignment, ...], ...]:
+        # Bounded discovery: individual goals plus the complete release, never
+        # an exponential subset search. Later revisions can remove more.
+        if len(goals) <= 1:
+            return (goals,) if goals else ()
+        return tuple((goal,) for goal in goals) + (goals,)
+
+    @staticmethod
+    def _release_supplementals(
+        snapshot: PlanningInputSnapshot, schedule: DailyReferenceIntentSchedule,
+        inputs: _DailyReferenceInputs, goals: tuple[SupplementalChargeAssignment, ...],
+    ) -> DailyReferenceIntentSchedule:
+        assert snapshot.daily_charge_context is not None
+        ids = {sid for g in goals for sid in g.segment_ids}
+        segments = tuple(s for p in snapshot.daily_charge_context.main_plans
+                         if p.plan_id in snapshot.daily_charge_context.active_main_plan_ids
+                         for s in p.segments if s.segment_id in ids)
+        released = IndependentDailyReferenceAdapter._released_grid_intents(inputs)
+        suffix = ":retire-" + sha256("|".join(sorted(ids)).encode()).hexdigest()[:12]
+        return replace(schedule, schedule_id=schedule.schedule_id + suffix,
+                       intervals=tuple(
+                           replace(i, intent=released[(i.starts_at, i.ends_at)])
+                           if any(s.starts_at <= i.starts_at and i.ends_at <= s.ends_at
+                                  for s in segments) else i for i in schedule.intervals))
+
+    @staticmethod
+    def _without_supplementals(
+        snapshot: PlanningInputSnapshot, ids: tuple[str, ...],
+    ) -> PlanningInputSnapshot:
+        context = snapshot.daily_charge_context
+        assert context is not None
+        return replace(snapshot, daily_charge_context=replace(
+            context, supplemental_assignments=tuple(
+                g for g in context.supplemental_assignments if g.assignment_id not in ids)))
+
+    @staticmethod
+    def _same_exports(
+        original: DailyReferenceIntentSchedule, proposed: DailyReferenceIntentSchedule,
+    ) -> bool:
+        return tuple(i for i in original.intervals if i.intent is DailyStorageIntent.STORAGE_EXPORT
+                     ) == tuple(i for i in proposed.intervals
+                                if i.intent is DailyStorageIntent.STORAGE_EXPORT)
+
+    @staticmethod
+    def _retirement_exports_valid(
+        schedule: DailyReferenceIntentSchedule, projection: DailyPlanningProjection,
+    ) -> bool:
+        return all(actual.storage_to_grid_output_wh + 1e-6 >= intent.storage_export_target_wh
+                   for intent, actual in zip(schedule.intervals, projection.intervals, strict=True)
+                   if intent.intent is DailyStorageIntent.STORAGE_EXPORT)
+
+    @staticmethod
+    def _retirement_bridge_valid(
+        window: DailyMainChargeWindow, inputs: _DailyReferenceInputs,
+    ) -> bool:
+        """A retired target cannot be replaced with hidden direct household import."""
+        until = min(s.starts_at for s in window.main_segments)
+        exports_valid = IndependentDailyReferenceAdapter._retirement_exports_valid(
+            window.schedule, window.projection)
+        return exports_valid and not any(i.deficit_wh > 1e-6 for i in energy_deficits(
+            window.projection, window.schedule, until=until,
+            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w))
+
     def main_charge_windows(
         self,
         *,
@@ -1058,6 +1202,9 @@ class IndependentDailyReferenceAdapter:
                 optimisation_trigger, DailyMainRecalculationTrigger,
             ),
         )
+        retirement_exports_unchanged = (
+            revision_schedule is None or retained_schedule is not None
+            and self._same_exports(retained_schedule, revision_schedule))
         if revision_schedule is not None:
             if optimisation_trigger is None or (
                 revision_schedule.snapshot_id != snapshot.snapshot_id
@@ -1074,24 +1221,47 @@ class IndependentDailyReferenceAdapter:
                     for s in assignment.main_segments
                 ) else i for i in revision_schedule.intervals
             ))
-        result = IndependentDailyChargeWindowDiscoverer().discover_main_charge(
-            snapshot_id=snapshot.snapshot_id,
-            assignment=assignment,
-            household=inputs.household,
-            pv_scenarios=inputs.pv_scenarios,
-            storage_state=inputs.storage,
-            conversion_model=conversion_model,
-            minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
-            target_storage_energy_wh=inputs.target_storage_energy_wh,
-            maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
-            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
-            retained_schedule=retained_schedule,
-            optimisation_trigger=optimisation_trigger,
-            required_grid_until=protected_end,
-        )
-        windows = tuple(
-            replace(window, retained_main_segments=retained_main) for window in result.windows
-        )
+        def discover(seed: DailyReferenceIntentSchedule | None) -> DailyMainChargeWindowSet:
+            return IndependentDailyChargeWindowDiscoverer().discover_main_charge(
+                snapshot_id=snapshot.snapshot_id,
+                assignment=assignment,
+                household=inputs.household,
+                pv_scenarios=inputs.pv_scenarios,
+                storage_state=inputs.storage,
+                conversion_model=conversion_model,
+                minimum_storage_energy_wh=inputs.minimum_storage_energy_wh,
+                target_storage_energy_wh=inputs.target_storage_energy_wh,
+                maximum_charge_input_power_w=inputs.maximum_charge_input_power_w,
+                maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w,
+                retained_schedule=seed,
+                optimisation_trigger=optimisation_trigger,
+                required_grid_until=protected_end,
+            )
+
+        result = discover(retained_schedule)
+        windows = tuple(replace(w, retained_main_segments=retained_main) for w in result.windows)
+        retiring = (self._retirable_supplementals(snapshot, assignment.assignment_id)
+                    if optimisation_trigger is not None and retirement_exports_unchanged else ())
+        if retiring and retained_schedule is not None:
+            for group in self._retirement_groups(retiring):
+                released_schedule = self._release_supplementals(
+                    snapshot, retained_schedule, inputs, group)
+                alternative = discover(released_schedule)
+                result = replace(result, simulation_count=(
+                    result.simulation_count + alternative.simulation_count))
+                retired_ids = tuple(g.assignment_id for g in group)
+                suffix = ":retire-" + sha256("|".join(retired_ids).encode()).hexdigest()[:12]
+                alternatives = tuple(replace(
+                    w, retained_main_segments=retained_main,
+                    supplemental_retirements=retired_ids,
+                    schedule=replace(w.schedule, schedule_id=w.schedule.schedule_id + suffix),
+                    projection=replace(w.projection,
+                                       intent_schedule_id=w.schedule.schedule_id + suffix))
+                    for w in alternative.windows if self._retirement_bridge_valid(w, inputs)
+                    and self._same_exports(retained_schedule, w.schedule))
+                windows += alternatives
+            if windows:
+                result = replace(result, windows=windows, status="discovered")
         context = snapshot.daily_charge_context
         pending = tuple(
             owner for owner in (context.assignments if context is not None else ())
@@ -1137,7 +1307,12 @@ class IndependentDailyReferenceAdapter:
             feasible = tuple(w for w in feasible if sum(
                 (i.ends_at - i.starts_at).total_seconds() / 3600
                 * inputs.maximum_charge_input_power_w
-                for i in w.main_segments if i.intent is DailyStorageIntent.GRID_REQUIREMENT
+                for i in w.schedule.intervals if i.intent is DailyStorageIntent.GRID_REQUIREMENT
+                and (any(m.starts_at <= i.starts_at and i.ends_at <= m.ends_at
+                         for m in w.main_segments) or any(
+                    g.assignment_id not in w.supplemental_retirements
+                    and g.starts_at <= i.starts_at and i.ends_at <= g.ends_at
+                    for g in self._retirable_supplementals(snapshot, assignment.assignment_id)))
             ) < optimisation_trigger.prior_grid_input_wh - 1e-6)
             if not feasible:
                 return replace(result, windows=(), status="unreachable",
@@ -1154,7 +1329,9 @@ class IndependentDailyReferenceAdapter:
         if not feasible:
             return result
         feasible = tuple(attached for w in feasible
-                         if (attached := attach_supplemental_goals(w, snapshot)) is not None)
+                         if (attached := attach_supplemental_goals(
+                             w, self._without_supplementals(snapshot, w.supplemental_retirements)
+                             if w.supplemental_retirements else snapshot)) is not None)
         return replace(result, windows=feasible) if feasible else replace(
             result, windows=(), status="unreachable", reason="supplemental_goal_unreachable"
         )

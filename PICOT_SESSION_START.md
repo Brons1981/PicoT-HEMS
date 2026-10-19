@@ -1,5 +1,16 @@
 # PicoT HEMS — mandatory session start
 
+## Aanvullend laden op noodzaak - HEMS dev.308, 19 oktober 2026
+
+Alex heeft controle en release aangevraagd. Lees
+`docs/architecture/ADR-037.25-conditional-supplemental-charge-necessity.md` en
+`docs/development_log/2026-10-19-conditional-supplemental-charge.md`.
+Toekomstige aanvullende opdrachten mogen via de canonieke keten vervallen als
+de volledige vervangende route hun overbrugging niet meer nodig heeft. Geen
+anonieme netlaadrestanten; marktexport, dagdoelen en lopend laden blijven beschermd.
+84 gerichte tests en de gereconstrueerde diagnose-replay slagen. Publicatie via
+PR en CI; installatie en liveverificatie volgen afzonderlijk.
+
 ## EV-eindtijdadvies — HEMS dev.300 / Energy Devices dev.7, 17 oktober 2026
 
 Alex heeft release aangevraagd. Lees

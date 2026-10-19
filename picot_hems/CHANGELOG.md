@@ -1,3 +1,10 @@
+# 2.0.0-dev.308
+
+- Laat toekomstige aanvullende laadopdrachten vervallen als een volledig doorgerekende vervangende route ze niet meer nodig heeft.
+- Voorkom dat oude laaddoelen aan ongerelateerde NOM worden gekoppeld of losse netlaadkwartieren achterblijven.
+- Behoud dagdoelen, reserve, lopend laden en vastgelegde marktexport; bewaar vervallen opdrachten bij herstart.
+- Nachtelijk hoofdnetladen blijft mogelijk wanneer de volledige vergelijking daarvoor kiest.
+
 # 2.0.0-dev.307
 
 - Eigen fout-, terugval- en herstelmeldingen via HA-events en centrale iPhone-blueprint.

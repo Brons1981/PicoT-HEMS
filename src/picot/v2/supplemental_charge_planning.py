@@ -5,6 +5,7 @@ from hashlib import sha256
 
 from picot.domain.daily_reference_charge_window import DailyMainChargeWindow
 from picot.domain.daily_reference_intent import DailyStorageIntent
+from picot.domain.execution_primitive import ExecutionPrimitive
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.v2.contracts import PlanningInputSnapshot
 from picot.v2.daily_bridge import DailyBridgeTrigger
@@ -41,6 +42,7 @@ def attach_supplemental_goals(
         and a.required_by > snapshot.captured_at
     )
     runs: list[list[int]] = []
+    old_boundaries = {at for g in pending for at in (g.starts_at, g.ends_at)}
     for n, (intent, energy) in enumerate(
         zip(window.schedule.intervals, window.projection.intervals, strict=True)
     ):
@@ -59,6 +61,8 @@ def attach_supplemental_goals(
         if (
             not runs
             or runs[-1][-1] != n - 1
+            or window.schedule.intervals[n - 1].intent is not intent.intent
+            or intent.starts_at in old_boundaries
             or (
                 (
                     window.projection.intervals[n - 1].storage_energy_at_end_wh
@@ -73,17 +77,44 @@ def attach_supplemental_goals(
     used: set[int] = set()
     for old in pending:
         found = False
-        for k, run in enumerate(runs):
+        original_grid = tuple(
+            s for p in context.main_plans if p.plan_id == old.plan_id
+            for s in p.segments if s.segment_id in old.segment_ids
+            and s.primitive is ExecutionPrimitive.CHARGE_AT_POWER)
+        retained_grid = tuple(i for i in window.schedule.intervals
+                              if i.intent is DailyStorageIntent.GRID_REQUIREMENT
+                              and any(s.starts_at <= i.starts_at and i.ends_at <= s.ends_at
+                                      for s in original_grid))
+        # Prefer the actual bound window. An unrelated earlier NOM interval
+        # with already-high SOC is not execution of this charge assignment.
+        ordered_runs = sorted(enumerate(runs), key=lambda item: not (
+            window.projection.intervals[item[1][0]].starts_at < old.ends_at
+            and old.starts_at < window.projection.intervals[item[1][-1]].ends_at
+        ))
+        for k, run in ordered_runs:
             if k in used:
                 continue
             first = window.projection.intervals[run[0]]
             last = window.projection.intervals[run[-1]]
+            overlaps_original = first.starts_at < old.ends_at and old.starts_at < last.ends_at
+            # A surviving old grid command must retain its own goal. Rebinding
+            # to earlier PV while leaving that command anonymous is not repair.
+            if retained_grid and not any(first.starts_at <= i.starts_at
+                                         and i.ends_at <= last.ends_at for i in retained_grid):
+                continue
+            if not overlaps_original and (
+                first.storage_energy_at_start_wh + 1e-6
+                >= old.target_soc * storage.usable_capacity_wh
+            ):
+                continue
             hit = next(
                 (
                     i.ends_at
                     for n in run
                     if (
                         (i := window.projection.intervals[n]).ends_at <= old.required_by
+                        and i.storage_energy_at_end_wh
+                        > first.storage_energy_at_start_wh + 1e-6
                         and i.storage_energy_at_end_wh + 1e-6
                         >= old.target_soc * storage.usable_capacity_wh
                     )
@@ -143,4 +174,22 @@ def attach_supplemental_goals(
                     due,
                 )
             )
+    # Future commanded charging from an old supplemental route may disappear
+    # or be explicitly owned in the new candidate, never survive anonymously.
+    old_grid = tuple(s for old in pending for p in context.main_plans if p.plan_id == old.plan_id
+                     for s in p.segments if s.segment_id in old.segment_ids
+                     and s.primitive is ExecutionPrimitive.CHARGE_AT_POWER)
+    for interval in window.schedule.intervals:
+        if interval.intent is not DailyStorageIntent.GRID_REQUIREMENT or not any(
+            s.starts_at <= interval.starts_at and interval.ends_at <= s.ends_at for s in old_grid
+        ):
+            continue
+        if not (any(g.starts_at <= interval.starts_at and interval.ends_at <= g.ends_at
+                    for g in goals)
+                or any(s.starts_at <= interval.starts_at and interval.ends_at <= s.ends_at
+                       for s in window.main_segments)
+                or any(r.segment.starts_at <= interval.starts_at
+                       and interval.ends_at <= r.segment.ends_at
+                       for r in window.retained_main_segments)):
+            return None
     return replace(window, supplemental_assignments=tuple(goals))

@@ -1480,6 +1480,12 @@ def produce_main_charge_portfolio(
             and s.starts_at < incumbent.schedule.horizon_end
         ), capability, limits, incumbent=True))
     market_basis = windows.market_revision
+    # Retiring bridge charging changes costs outside the main acquisition
+    # window. Compare complete cash flows only with the same terminal stock;
+    # never grant a fictitious inventory value or alter market commitments.
+    supplemental_comparison = (windows.purpose != "bridge" and market_basis is None
+        and incumbent is not None
+        and any(w.supplemental_retirements for w in windows.windows))
     financial_market_comparison = (market_basis is not None and market_basis.horizon_complete
                                    and not market_basis.unplanned_assignment_ids)
     incomplete_comparison = (() if market_basis is None else (
@@ -1672,6 +1678,13 @@ def produce_main_charge_portfolio(
         if isinstance(window, DailyMainIncumbentAssessment):
             invalid = incumbent_invalidity
         intervals = window.projection.intervals
+        if supplemental_comparison:
+            assert incumbent is not None
+            if (window.schedule.horizon_start != incumbent.schedule.horizon_start
+                    or window.schedule.horizon_end != incumbent.schedule.horizon_end
+                    or abs(intervals[-1].storage_energy_at_end_wh
+                           - incumbent.projection.intervals[-1].storage_energy_at_end_wh) > 1e-6):
+                invalid += ("supplemental_revision_terminal_inventory_not_equal",)
         wear = 0.0
         if market_basis is not None:
             assert incumbent is not None
@@ -1717,7 +1730,7 @@ def produce_main_charge_portfolio(
                 ObjectiveKind.FINANCIAL_RESULT, round(market_financial.cash_result_eur - wear, 12),
                 ComparisonDirection.HIGHER_IS_BETTER, "EUR", confidence, evidence,
             ),) if window.schedule.schedule_id in recovered_schedule_ids else ()
-        elif windows.purpose == "bridge":
+        elif windows.purpose == "bridge" or supplemental_comparison:
             objectives = _objective_outcomes(
                 financial=financial.cash_result_eur,
                 self_consumption=sum(
@@ -1803,7 +1816,7 @@ def produce_main_charge_portfolio(
         remaining_goal_kwh = max(
             0.0, storage.usable_capacity_wh - storage.current_stored_energy_wh,
         ) / 1000
-        if future_state_trigger is not None:
+        if future_state_trigger is not None and not supplemental_comparison:
             context = snapshot.daily_charge_context
             owner = next((a for a in context.assignments
                           if a.assignment_id == windows.assignment_id), None) if context else None

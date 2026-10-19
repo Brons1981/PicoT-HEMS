@@ -168,8 +168,14 @@ class DailyMainChargeWindow:
     target_storage_energy_wh: float
     retained_main_segments: tuple[DailyRetainedMainSegment, ...] = ()
     supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
+    supplemental_retirements: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if (len(set(self.supplemental_retirements)) != len(self.supplemental_retirements)
+                or any(not identity.strip() for identity in self.supplemental_retirements)
+                or set(self.supplemental_retirements).intersection(
+                    a.assignment_id for a in self.supplemental_assignments)):
+            raise ValueError("supplemental retirement must be explicit and disjoint")
         if any(s.assignment_id == self.assignment_id for s in self.retained_main_segments):
             raise ValueError("first discovery cannot also retain its own bound main route")
         if self.family not in {"pv", "grid", "hybrid", "already_full"}:

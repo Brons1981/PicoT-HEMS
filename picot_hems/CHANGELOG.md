@@ -1,3 +1,12 @@
+# 2.0.0-dev.313
+
+- Kies een aangeboden PV-route voor één laadopdracht; PicoT controleert de haalbaarheid opnieuw met actuele gegevens.
+- Behoud die voorkeur bij economische herplanning en meld een beter alternatief ter heroverweging.
+- Noodzakelijk herstel voor reserve en laaddoel blijft mogelijk met uitleg en behoud van de voorkeur.
+- Geef de keuze via 'Laat PicoT weer kiezen' terug aan PicoT voor dezelfde laadopdracht.
+- Ondersteun keuzemeldingen via de HA-app met een teksthelper en de nieuwe routekeuze-blueprint; zie docs/route-choice-notifications.md voor de eenmalige instelling.
+- De financiële berekening en de besproken EUR 0,10-drempel zijn niet gewijzigd.
+
 # 2.0.0-dev.312
 
 - Hergebruik ongewijzigde plangegevens om herhaald inlezen tijdens opstarten en berekeningen te verminderen.

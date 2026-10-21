@@ -27,6 +27,7 @@ class DailyChargeRevisionReason(StrEnum):
     LOAD = "additional_load_with_execution_impact"
     RESERVE = "projected_reserve_shortfall"
     MANUAL_RECALCULATION = "explicit_user_recalculation"
+    USER_ROUTE_CHOICE = "explicit_user_route_choice"
 
 
 @dataclass(frozen=True, slots=True)

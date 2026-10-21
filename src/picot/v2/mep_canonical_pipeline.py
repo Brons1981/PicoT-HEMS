@@ -79,6 +79,12 @@ from picot.v2.plan_commitment_store import (
     CommittedStorageEnergyCheckpoint,
     active_pv_preservation_dates,
 )
+from picot.v2.route_choice_policy import (
+    constrain,
+    locked_candidates,
+    prepare_offer,
+    requested_candidates,
+)
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("pipeline_composition", __name__)
 PV_CHARGE_PROGRESS_METHOD_VERSION = "pv-charge-progress:v1"
@@ -1550,6 +1556,54 @@ def _build_daily_main_run(
     candidate_ms = round((perf_counter() - started) * 1000, 3)
     started = perf_counter()
     if comparable is not None:
+        # User consent is admission, not a modified financial score. Physical
+        assert commitment_store is not None
+        # invalidity is never overridden and Evaluation remains the selector.
+        requested_choice = (commitment_store.pending_route_choice(manual_owner.assignment_id)
+                            if manual_owner is not None and manual_request is not None
+                            and manual_request.route_choice_token else None)
+        if requested_choice is not None:
+            allowed = (requested_candidates(comparable, requested_choice, snapshot.captured_at)
+                       if snapshot.captured_at < datetime.fromisoformat(
+                           requested_choice["expires_at"]) else set())
+            comparable = constrain(comparable, allowed, "user_route_choice_no_longer_available")
+        else:
+            repair_owner = (optimisation_trigger.assignment_id
+                            if isinstance(optimisation_trigger,
+                                          (DailyMainShortfallTrigger, DailyBridgeTrigger))
+                            else None)
+            locks = [record for a in context.assignments
+                     if a.assignment_id != repair_owner
+                     and (record := commitment_store.active_route_choice(
+                         a.assignment_id, snapshot.captured_at)) is not None]
+            if locks:
+                unrestricted = EvaluationEngine().evaluate(
+                    comparable.candidate_set, comparable.strategy, comparable.outcome_set,
+                    created_at=snapshot.captured_at,
+                    incumbent_candidate_id=comparable.incumbent_candidate_id,
+                    minimum_commitment_improvement_eur=(
+                        MINIMUM_OPTIONAL_GRID_REDUCTION_BENEFIT_EUR
+                        if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger) else 0.0
+                    ),
+                )
+                for record in locks:
+                    permitted = locked_candidates(comparable, [record], snapshot.captured_at)
+                    if (unrestricted.winning_energy_path is not None
+                            and unrestricted.record.winning_candidate_id not in permitted):
+                        try:
+                            commitment_store.record_route_choice_notice(
+                                assignment_id=record["assignment_id"],
+                                key="financial-reconsideration",
+                                message="PicoT beoordeelt een andere netlaadroute als beter. "
+                                "Je gekozen route blijft gelden. Gebruik 'Laat PicoT weer kiezen' "
+                                "om opnieuw automatisch te laten plannen.",
+                                at=snapshot.captured_at,
+                            )
+                        except (ValueError, OSError):
+                            pass  # A notification cannot release the stored preference.
+                comparable = constrain(comparable,
+                    locked_candidates(comparable, locks, snapshot.captured_at),
+                    "user_route_choice_requires_consent")
         # Fresh unchanged incumbent and challengers share units and horizon.
         # ADR-037.16 applies net-charge duration only after objective equality.
         result = EvaluationEngine().evaluate(
@@ -1660,6 +1714,31 @@ def _build_daily_main_run(
                 ) if isinstance(optimisation_trigger, DailyBridgeTrigger) else (),
             )
             canonical_set = proposed
+            # Offer creation is optional and cannot invalidate a committed plan.
+            try:
+                if isinstance(optimisation_trigger,
+                              (DailyMainShortfallTrigger, DailyBridgeTrigger)):
+                    commitment_store.record_route_choice_notice(
+                        assignment_id=selected_window.assignment_id,
+                        key="repair:" + proposed.plans[0].plan_id,
+                        message="De gekozen route moest worden hersteld om het laaddoel of de "
+                        "reserve te halen. Je voorkeur blijft gelden voor deze laadopdracht.",
+                        at=snapshot.captured_at,
+                    )
+                owner = next(a for a in commitment_store.load_daily_assignments()
+                             if a.assignment_id == selected_window.assignment_id)
+                offer = prepare_offer(comparable, result.record.winning_candidate_id,
+                                      owner, snapshot.captured_at) if (
+                    comparable is not None and result.record.winning_candidate_id is not None
+                ) else None
+                if (offer is not None and offer[1] > snapshot.captured_at
+                        and owner.route_plan_id is not None):
+                    commitment_store.offer_route_choice(
+                        assignment_id=owner.assignment_id, plan_id=owner.route_plan_id,
+                        revision=owner.revision, offer=offer[0], expires_at=offer[1],
+                        created_at=snapshot.captured_at)
+            except (ValueError, OSError):
+                pass  # Notification availability never grants planning authority.
         except (ValueError, OSError) as exc:
             planning_blocked = not isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
             reason = str(exc) or exc.__class__.__name__
@@ -1743,6 +1822,36 @@ def _build_daily_main_run(
                     if not market.comparable.candidate_set.candidates:
                         reason = "market_not_admitted:" + ",".join(market.reasons)
                         continue
+                    locks = [record for a in context.assignments
+                             if (record := commitment_store.active_route_choice(
+                                 a.assignment_id, snapshot.captured_at)) is not None]
+                    if locks:
+                        unrestricted_market = EvaluationEngine().evaluate(
+                            market.comparable.candidate_set, market.comparable.strategy,
+                            market.comparable.outcome_set, created_at=snapshot.captured_at,
+                            incumbent_candidate_id=market.comparable.incumbent_candidate_id,
+                        )
+                        for record in locks:
+                            permitted = locked_candidates(
+                                market.comparable, [record], snapshot.captured_at)
+                            if (unrestricted_market.winning_energy_path is not None
+                                    and unrestricted_market.record.winning_candidate_id
+                                    not in permitted):
+                                try:
+                                    commitment_store.record_route_choice_notice(
+                                        assignment_id=record["assignment_id"],
+                                        key="financial-reconsideration",
+                                        message="Een betere marktroute vraagt ander netladen. "
+                                        "Je gekozen laadroute blijft gelden. Gebruik "
+                                        "'Laat PicoT weer kiezen' om dit opnieuw te beoordelen.",
+                                        at=snapshot.captured_at,
+                                    )
+                                except (ValueError, OSError):
+                                    pass
+                        market = replace(market, comparable=constrain(
+                            market.comparable,
+                            locked_candidates(market.comparable, locks, snapshot.captured_at),
+                            "user_route_choice_requires_consent"))
                     market_result = EvaluationEngine().evaluate(
                         market.comparable.candidate_set,
                         market.comparable.strategy,
@@ -1830,12 +1939,18 @@ def _build_daily_main_run(
             waiting = commitment_store.load_daily_recalculation_request()
             if (waiting is not None and waiting.request_id == manual_request.request_id
                     and manual_owner.assignment_id in waiting.assignment_ids):
-                commitment_store.finish_daily_recalculation(
-                    request_id=manual_request.request_id, assignment_id=manual_owner.assignment_id,
-                    status="failed", reason=reason,
-                    plan_id=retained_manual_plan.plan_id if retained_manual_plan else None,
-                    snapshot_id=snapshot.snapshot_id,
-                )
+                if manual_request.route_choice_token:
+                    commitment_store.reject_route_choice(
+                        token=manual_request.route_choice_token, reason=reason,
+                        at=snapshot.captured_at)
+                else:
+                    commitment_store.finish_daily_recalculation(
+                        request_id=manual_request.request_id,
+                        assignment_id=manual_owner.assignment_id,
+                        status="failed", reason=reason,
+                        plan_id=retained_manual_plan.plan_id if retained_manual_plan else None,
+                        snapshot_id=snapshot.snapshot_id,
+                    )
         except (ValueError, OSError) as exc:
             reason = "manual_recalculation_result_not_saved:" + str(exc)
     candidate_set_id = (comparable.outcome_set.candidate_set_reference

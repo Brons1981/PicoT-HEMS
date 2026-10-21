@@ -1064,6 +1064,11 @@ DASHBOARD_HTML = """<!doctype html>
     </details>
     <p id="central-health" class="status" role="status">Status nog onbekend</p>
     <div id="today-summary" class="today-summary" aria-live="polite"></div>
+    <section id="route-choice-panel" class="timeline-panel" hidden>
+      <h2>Keuze voor deze laadopdracht</h2>
+      <div id="route-choices"></div>
+      <p id="route-choice-feedback" role="status" aria-live="polite"></p>
+    </section>
     <section
       id="tab-overview" class="tab-panel" data-tab-panel="overview"
     ></section>
@@ -5229,6 +5234,119 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
+    let routeChoiceRequestPending = false;
+
+    function renderRouteChoices(state) {
+      const choices = Array.isArray(state?.choices) ? state.choices : [];
+      const panel = element("route-choice-panel");
+      const container = element("route-choices");
+      panel.hidden = choices.length === 0;
+      container.replaceChildren();
+      const statuses = {
+        offered: "Alternatief met meer zonnestroom beschikbaar",
+        pending: "PicoT controleert je keuze; het huidige plan blijft actief.",
+        selected: "PV-route gekozen door gebruiker",
+        declined: "PicoT kiest de route automatisch.",
+        released: "PicoT heeft de regie terug; de route wordt opnieuw beoordeeld.",
+        rejected: "Je keuze kon niet worden toegepast. Het huidige plan blijft actief.",
+        expired: "Deze keuze is verlopen. Het huidige plan blijft actief.",
+        completed: "Deze laadopdracht is afgerond; je voorkeur is vervallen.",
+      };
+      const number = (value, digits = 2) => typeof value === "number" && Number.isFinite(value)
+        ? value.toLocaleString("nl-NL", {maximumFractionDigits: digits}) : "—";
+      for (const choice of choices) {
+        const card = document.createElement("div");
+        card.className = "strategy-rule";
+        const title = document.createElement("strong");
+        title.textContent = statuses[choice.status] ?? "Routekeuze wordt bijgewerkt.";
+        card.appendChild(title);
+        const offer = choice.offer ?? {};
+        if (choice.last_notice?.message) {
+          const notice = document.createElement("p");
+          notice.textContent = choice.last_notice.message;
+          card.appendChild(notice);
+        }
+        const dateText = offer.delivery_date ?? choice.delivery_date;
+        if (dateText) {
+          const date = document.createElement("p");
+          date.textContent = `Laadopdracht ${dateText}`;
+          card.appendChild(date);
+        }
+        if (["offered", "pending", "selected"].includes(choice.status)) {
+          for (const [key, fallback] of [["automatic", "Automatische route"],
+                                         ["alternative", "PV-alternatief"]]) {
+            const route = offer[key];
+            if (!route) continue;
+            const summary = document.createElement("p");
+            summary.textContent = `${route.label || fallback}: ` +
+              `${Array.isArray(route.windows) ? route.windows.join(", ") + "; " : ""}` +
+              `netinkoop ${number(route.grid_import_kwh)} kWh · ` +
+              `PV-opslag ${number(route.pv_storage_kwh)} kWh · ` +
+              `SOC einde ${number(route.terminal_soc, 1)}% · ` +
+              `vergelijkingsprijs € ${number(route.acquisition_eur_per_stored_kwh, 3)}` +
+              "/kWh opgeslagen";
+            card.appendChild(summary);
+          }
+          const note = document.createElement("p");
+          note.className = "muted";
+          note.textContent = "Verwachtingen bij het voorstel. De vergelijkingsprijs is geen " +
+            "totale besparing. Je voorkeur geldt alleen voor deze laadopdracht; " +
+            "noodzakelijk herstel blijft mogelijk.";
+          card.appendChild(note);
+        }
+        const action = (label, payload) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = label;
+          button.disabled = routeChoiceRequestPending;
+          button.addEventListener("click", () => submitRouteChoice(payload));
+          card.appendChild(button);
+        };
+        const expires = Date.parse(choice.expires_at);
+        if (choice.status === "offered" && Number.isFinite(expires) && expires > Date.now()) {
+          if (offer.alternative) {
+            action("Kies PV-route", {token: choice.token, action: "pv"});
+          } else {
+            const unavailable = document.createElement("p");
+            unavailable.textContent =
+              "Er is op dit moment geen haalbaar PV-alternatief beschikbaar.";
+            card.appendChild(unavailable);
+          }
+          action("Behoud automatisch plan", {token: choice.token, action: "automatic"});
+        } else if (choice.status === "selected") {
+          action("Laat PicoT weer kiezen",
+            {assignment_id: choice.assignment_id, action: "release"});
+        }
+        container.appendChild(card);
+      }
+    }
+
+    async function submitRouteChoice(payload) {
+      if (routeChoiceRequestPending) return;
+      routeChoiceRequestPending = true;
+      const feedback = element("route-choice-feedback");
+      feedback.textContent = "Keuze verzenden. Het huidige plan blijft actief tot bevestiging.";
+      element("route-choices").querySelectorAll("button").forEach(button => button.disabled = true);
+      try {
+        const response = await fetch("api/route-choice", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({...payload, request_id: storageModeResetId()}),
+        });
+        if (!response.ok) throw new Error("Keuze niet beschikbaar of niet opgeslagen");
+        const result = await response.json();
+        if (result.route_choices) renderRouteChoices(result.route_choices);
+        feedback.textContent = "Verzoek ontvangen. De actuele status verschijnt zodra PicoT " +
+          "de keuze heeft verwerkt.";
+      } catch (_) {
+        feedback.textContent = "De keuze is niet bevestigd. Controleer de actuele status en " +
+          "probeer opnieuw als de optie nog beschikbaar is.";
+      } finally {
+        routeChoiceRequestPending = false;
+        element("route-choices").querySelectorAll("button")
+          .forEach(button => button.disabled = false);
+      }
+    }
+
     function renderUserRules(rules) {
       const form = element("user-rules-form");
       if (form.dataset.dirty === "true" || form.contains(document.activeElement)) return;
@@ -5500,6 +5618,7 @@ DASHBOARD_HTML = """<!doctype html>
       renderFinancialResults(view.financial_results ?? {});
       renderGridChargeReview(view.grid_charge_review ?? {});
       renderUserRules(view.user_rules ?? {});
+      renderRouteChoices(view.route_choices ?? {});
       renderEnergyDevices(
         view.energy_device_catalog ?? {},
         view.energy_device_placements ?? {},
@@ -5892,6 +6011,8 @@ class WebViewStore:
         self._financial_results: dict[str, object] | None = None
         self._grid_charge_review: dict[str, object] | None = None
         self._user_rules: dict[str, object] | None = None
+        self._route_choices: dict[str, object] | None = None
+        self._update_route_choice: Callable[[dict[str, object]], dict[str, object]] | None = None
         self._planning_recalculation: dict[str, object] | None = None
         self._energy_device_catalog: dict[str, object] | None = None
         self._energy_device_placements: dict[str, object] | None = None
@@ -5947,6 +6068,8 @@ class WebViewStore:
             view["grid_charge_review"] = dict(self._grid_charge_review)
         if self._user_rules is not None:
             view["user_rules"] = dict(self._user_rules)
+        if self._route_choices is not None:
+            view["route_choices"] = dict(self._route_choices)
         if self._planning_recalculation is not None:
             view["planning_recalculation"] = dict(self._planning_recalculation)
         if self._energy_device_catalog is not None:
@@ -6277,6 +6400,27 @@ class WebViewStore:
             self._planning_recalculation = copied
             if self._latest_json is not None:
                 self._replace_latest_locked(json.loads(self._latest_json))
+
+    def publish_route_choices(self, status: dict[str, object]) -> None:
+        copied = json.loads(json.dumps(status))
+        if not isinstance(copied, dict) or not isinstance(copied.get("choices"), list):
+            raise ValueError("route choices require an explicit choices list")
+        with self._condition:
+            if copied == self._route_choices:
+                return
+            self._route_choices = copied
+            if self._latest_json is not None:
+                self._replace_latest_locked(json.loads(self._latest_json))
+
+    def set_route_choice_update(
+        self, update: Callable[[dict[str, object]], dict[str, object]],
+    ) -> None:
+        with self._lock:
+            self._update_route_choice = update
+
+    def route_choice_update(self) -> Callable[[dict[str, object]], dict[str, object]] | None:
+        with self._lock:
+            return self._update_route_choice
 
     def publish_user_rules(self, user_rules: dict[str, object]) -> None:
         copied = json.loads(json.dumps(user_rules))
@@ -6628,9 +6772,42 @@ def create_web_server(
                 "/api/planning/reset",
                 "/api/planner-comparison/stress",
                 "/api/user-rules",
+                "/api/route-choice",
                 "/api/energy-device-placements",
             }:
                 self._reject_write()
+                return
+            if path == "/api/route-choice":
+                update = store.route_choice_update()
+                if update is None:
+                    self._send_json(HTTPStatus.CONFLICT, '{"status":"route_choice_unavailable"}')
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 4096:
+                        raise ValueError
+                    payload = json.loads(self.rfile.read(length))
+                    if not isinstance(payload, dict):
+                        raise ValueError
+                    action = payload.get("action")
+                    required = (
+                        ("assignment_id", "request_id") if action == "release" else ("token",)
+                    )
+                    if action not in {"pv", "automatic", "release"} or any(
+                        not isinstance(payload.get(key), str) or not payload[key].strip()
+                        for key in required
+                    ):
+                        raise ValueError
+                    result = update(payload)
+                except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+                    self._send_json(HTTPStatus.BAD_REQUEST,
+                                    '{"status":"route_choice_not_available"}')
+                    return
+                except OSError:
+                    self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                                    '{"status":"route_choice_not_saved"}')
+                    return
+                self._send_json(HTTPStatus.OK, json.dumps(result, separators=(",", ":")))
                 return
             if path == "/api/energy-device-placements":
                 update = store.energy_device_placement_update()

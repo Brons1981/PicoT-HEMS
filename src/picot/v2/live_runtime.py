@@ -1532,6 +1532,32 @@ class PlanningResetBarrier:
             return self._generation, result
 
 
+def _request_route_choice_and_replan(
+    *, store: ActivePlanCommitmentStore, barrier: PlanningResetBarrier,
+    replan_requested: Event, web_view_store: WebViewStore,
+    payload: dict[str, Any], requested_at: datetime,
+) -> dict[str, Any]:
+    """Persist consent under the same barrier as planning, never dispatch directly."""
+    def persist() -> dict[str, Any]:
+        if payload.get("action") == "release":
+            result = store.release_route_choice(
+                assignment_id=payload["assignment_id"], request_id=payload["request_id"],
+                requested_at=requested_at,
+            )
+        else:
+            result = store.request_route_choice(
+                token=payload["token"], action=payload["action"], requested_at=requested_at,
+            )
+        view = store.route_choice_status(requested_at)
+        web_view_store.publish_route_choices(view)
+        if result["status"] in {"pending", "released"}:
+            replan_requested.set()
+        return {**result, "route_choices": view}
+
+    generation, result = barrier.reset(persist)
+    return {**result, "reset_generation": generation}
+
+
 def _request_daily_recalculation_and_replan(
     *, store: ActivePlanCommitmentStore, barrier: PlanningResetBarrier,
     replan_requested: Event, web_view_store: WebViewStore,
@@ -2839,6 +2865,34 @@ def main() -> None:
 
     web_view_store.set_planning_reset(reset_planning)
 
+    def update_route_choice(payload: dict[str, Any]) -> dict[str, Any]:
+        return _request_route_choice_and_replan(
+            store=active_plan_commitment_store, barrier=planning_reset_barrier,
+            replan_requested=planning_reset_requested, web_view_store=web_view_store,
+            payload=payload, requested_at=datetime.now(UTC),
+        )
+
+    from picot.v2.route_choice_notifications import RouteChoiceNotifier, publish_choice_status
+
+    def receive_route_choice(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return update_route_choice(payload)
+        except ValueError as exc:
+            route_notifier.publish(
+                "rejected:" + payload["token"] + ":" + payload["request_id"],
+                "Routekeuze niet overgenomen",
+                "De melding is niet meer geldig voor het huidige plan. " + str(exc),
+            )
+            return {"status": "rejected", "reason": str(exc)}
+
+    route_notifier = RouteChoiceNotifier(
+        token, Path("/data/picot_route_choice_notifications.json"),
+        mailbox_entity=str(options.get("route_choice_response_entity", "")).strip(),
+        on_choice=receive_route_choice,
+    )
+    web_view_store.set_route_choice_update(update_route_choice)
+    route_notifier.start()
+
     def update_user_rules(payload: dict[str, object]) -> dict[str, object]:
         profile = user_rule_store.update(
             preserve_pv_during_grid_charge=payload.get("preserve_pv_during_grid_charge"),
@@ -3222,6 +3276,13 @@ def main() -> None:
         except (ValueError, OSError):
             status = {"status": "failed", "reason": "recalculation_state_unavailable"}
         web_view_store.publish_planning_recalculation(status)
+        try:
+            choices = active_plan_commitment_store.route_choice_status(datetime.now(UTC))
+            web_view_store.publish_route_choices(choices)
+            publish_choice_status(route_notifier, choices)
+        except (ValueError, OSError):
+            # Optional presentation/transport must not affect executable plans.
+            pass
 
     @startup.stage("source_publication", "Bronstatus en terugblik voorbereiden", 40)
     def publish_input_sources(bundle: PlanningInputBundle) -> None:

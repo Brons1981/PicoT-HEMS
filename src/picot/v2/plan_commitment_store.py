@@ -44,6 +44,7 @@ from picot.v2.daily_recalculation import (
     DailyPlanRecalculationRequest,
 )
 from picot.v2.json_file_cache import JSONFileCache
+from picot.v2.route_choice import RouteChoiceStoreMixin
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership("plan_store", __name__)
 COMMITMENT_METHOD_VERSION = "household-energy-path-commitment:v9"
@@ -268,7 +269,7 @@ def active_pv_preservation_dates(
     return tuple(sorted(derived))
 
 
-class ActivePlanCommitmentStore:
+class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
     """Atomically persist at most one active commitment per execution scope."""
 
     def __init__(self, path: Path, *, incident_path: Path | None = None) -> None:
@@ -755,10 +756,12 @@ class ActivePlanCommitmentStore:
             )
             payload.setdefault("execution_plans", {})[plan.plan_id] = serialized
         if isinstance(optimisation_trigger, DailyMainRecalculationTrigger):
+            if optimisation_trigger.request.route_choice_token:
+                self._accept_route_choice(payload, optimisation_trigger, bound, plan)
             self._finish_daily_recalculation(
                 payload, request_id=optimisation_trigger.request.request_id,
                 assignment_id=bound.assignment_id, status="replanned",
-                reason="explicit_user_recalculation", plan_id=plan.plan_id,
+                reason=optimisation_trigger.revision_reason.value, plan_id=plan.plan_id,
                 snapshot_id=plan.snapshot_id,
             )
         recovery = payload.get("daily_recalculation", {})
@@ -1426,6 +1429,7 @@ class ActivePlanCommitmentStore:
                 request_id=record["request_id"],
                 requested_at=datetime.fromisoformat(record["requested_at"]),
                 assignment_ids=tuple(record["pending_assignment_ids"]),
+                route_choice_token=record.get("route_choice_token"),
             )
         except (KeyError, TypeError, AttributeError, ValueError) as exc:
             raise ValueError("saved recalculation request is invalid") from exc

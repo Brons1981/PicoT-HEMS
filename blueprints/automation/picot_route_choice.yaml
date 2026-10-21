@@ -1,0 +1,73 @@
+blueprint:
+  name: PicoT HEMS - een laadroute kiezen
+  description: >-
+    Ontvang een voorstel van HEMS en kies een PV-route of behoud de automatische
+    keuze. Maak een teksthelper met maximale lengte 255 en stel dezelfde entiteit
+    bij PicoT HEMS in als route_choice_response_entity. HEMS controleert iedere
+    keuze opnieuw. Deze automatisering schakelt zelf geen batterijmodus.
+  domain: automation
+  input:
+    phone:
+      name: Telefoon
+      selector:
+        device:
+          filter:
+            integration: mobile_app
+    response_helper:
+      name: Teksthelper voor routekeuzes
+      description: Gebruik een aparte input_text-helper met maximale lengte 255.
+      selector:
+        entity:
+          filter:
+            domain: input_text
+mode: queued
+max: 20
+triggers:
+  - trigger: event
+    event_type: picot_route_choice
+    id: proposal
+  - trigger: event
+    event_type: mobile_app_notification_action
+    id: response
+variables:
+  response_helper: !input response_helper
+conditions:
+  - condition: template
+    value_template: >-
+      {{ (trigger.id == 'proposal'
+          and trigger.event.data.get('message', '') != ''
+          and trigger.event.data.get('response_entity', '') in ['', response_helper])
+         or (trigger.id == 'response'
+          and (trigger.event.data.get('action', '').startswith('PICOT_ROUTE_PV:')
+               or trigger.event.data.get('action', '').startswith('PICOT_ROUTE_AUTO:'))) }}
+actions:
+  - choose:
+      - conditions: "{{ trigger.id == 'proposal' }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input phone
+            title: "{{ trigger.event.data.title }}"
+            message: "{{ trigger.event.data.message }}"
+            data:
+              tag: "{{ trigger.event.data.tag }}"
+              group: PicoT HEMS routekeuze
+              actions: >-
+                {{ [
+                  {'action': 'PICOT_ROUTE_PV:' ~ trigger.event.data.offer_id,
+                   'title': 'Kies PV-route', 'authenticationRequired': true},
+                  {'action': 'PICOT_ROUTE_AUTO:' ~ trigger.event.data.offer_id,
+                   'title': 'Behoud PicoT-keuze', 'authenticationRequired': true}
+                ] if trigger.event.data.get('offer_id') else [] }}
+      - conditions: "{{ trigger.id == 'response' }}"
+        sequence:
+          - action: input_text.set_value
+            target:
+              entity_id: !input response_helper
+            data:
+              value: >-
+                {{ {
+                  'token': trigger.event.data.action.split(':', 1)[1],
+                  'action': 'pv' if trigger.event.data.action.startswith('PICOT_ROUTE_PV:') else 'automatic',
+                  'request_id': trigger.event.context.id
+                } | to_json }}

@@ -12,12 +12,17 @@ class DailyPlanRecalculationRequest:
     request_id: str
     requested_at: datetime
     assignment_ids: tuple[str, ...]
+    route_choice_token: str | None = None
 
     def __post_init__(self) -> None:
         if not self.request_id.strip() or self.requested_at.utcoffset() is None:
             raise ValueError("daily recalculation requires explicit identity and time")
         if not self.assignment_ids or any(not item.strip() for item in self.assignment_ids):
             raise ValueError("daily recalculation requires remaining daily owners")
+        if self.route_choice_token is not None and (
+            not self.route_choice_token.strip() or len(self.assignment_ids) != 1
+        ):
+            raise ValueError("route choice must target exactly one daily assignment")
         if len(set(self.assignment_ids)) != len(self.assignment_ids):
             raise ValueError("daily recalculation cannot duplicate owners")
 
@@ -35,7 +40,8 @@ class DailyMainRecalculationTrigger:
 
     @property
     def revision_reason(self) -> DailyChargeRevisionReason:
-        return DailyChargeRevisionReason.MANUAL_RECALCULATION
+        return (DailyChargeRevisionReason.USER_ROUTE_CHOICE if self.request.route_choice_token
+                else DailyChargeRevisionReason.MANUAL_RECALCULATION)
 
     def validate(self, owner: DailyChargeAssignment, snapshot_id: str, at: datetime) -> None:
         if (

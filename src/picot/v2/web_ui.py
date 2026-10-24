@@ -1030,6 +1030,16 @@ DASHBOARD_HTML = """<!doctype html>
     .today-summary strong { display: block; font-size: 1.5rem; margin: 6px 0; }
     .today-summary small { display: block; color: #647588; }
     #central-health { padding: 10px 14px; border-radius: 10px; }
+    #planning-reset { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+    #reset-planning { order:-1; background:#246b50; color:white;
+      font-weight:700; padding:12px 18px; }
+    .comparison-scroll { overflow-x:auto; }
+    .comparison-chart { width:100%; min-width:680px; display:block; }
+    .comparison-legend { display:flex; flex-wrap:wrap; gap:12px; }
+    .comparison-legend span { padding-left:6px; }
+    .comparison-differences { padding-left:22px; line-height:1.6; }
+    #central-health p { margin:8px 0; overflow-wrap:anywhere; }
+    [hidden] { display:none !important; }
   </style>
 </head>
 <body data-observer-only="true">
@@ -1045,6 +1055,15 @@ DASHBOARD_HTML = """<!doctype html>
     <p id="dashboard-status" class="planning-attention" role="status" hidden></p>
     <p id="ev-storage-warning" class="planning-attention" role="alert" hidden></p>
 
+    <section id="planning-reset" class="status" aria-live="polite">
+      <span id="planning-reset-result">
+        Nieuwe planning maken vanaf actuele gegevens; oude plannen worden gearchiveerd.
+      </span>
+      <button id="reset-planning" type="button">
+        Maak een nieuw plan
+      </button>
+    </section>
+
     <nav class="dashboard-tabs" aria-label="Dashboardweergave">
       <button class="tab-button" type="button" data-tab="planning"
         aria-selected="true">Vandaag</button>
@@ -1057,8 +1076,7 @@ DASHBOARD_HTML = """<!doctype html>
         aria-selected="false"
       >Financieel</button>
     </nav>
-    <details id="dashboard-tools" class="dashboard-tools">
-      <summary>Instellingen & diagnose</summary>
+    <div id="dashboard-tools" class="dashboard-tools">
       <nav aria-label="Aanvullende weergaven">
       <button
         class="tab-button" type="button" data-tab="strategy"
@@ -1071,10 +1089,10 @@ DASHBOARD_HTML = """<!doctype html>
       <button
         class="tab-button" type="button" data-tab="technical"
         aria-selected="false"
-      >Techniek</button>
+      >Instellingen</button>
       </nav>
-    </details>
-    <p id="central-health" class="status" role="status">Status nog onbekend</p>
+    </div>
+    <section id="central-health" class="status" role="status">Status nog onbekend</section>
     <div id="today-summary" class="today-summary" aria-live="polite"></div>
     <section id="route-choice-panel" class="timeline-panel" hidden>
       <h2>Keuze voor deze laadopdracht</h2>
@@ -1162,14 +1180,6 @@ DASHBOARD_HTML = """<!doctype html>
       <div id="financial-results" aria-live="polite">
         Nog geen volledige financiële meetperiode beschikbaar.
       </div>
-      <h2>Terugblik netladen</h2>
-      <p class="muted">
-        Minder netladen met de werkelijk gemeten zon en huisvraag. Batterij-export,
-        dagdoel binnen het hoofdlaadvenster en eindvoorraad blijven behouden.
-        Dit is een modelmatige terugblik met voorkennis, geen vooraf uitvoerbaar
-        optimaal plan. Een positief kostenverschil is voordeliger.
-      </p>
-      <div id="grid-charge-review" aria-live="polite">Meetgegevens verzamelen…</div>
     </section>
     <section
       id="tab-strategy" class="tab-panel" data-tab-panel="strategy" hidden
@@ -1299,58 +1309,17 @@ DASHBOARD_HTML = """<!doctype html>
       </button>
     </section>
 
-    <section id="planning-reset" class="status" aria-live="polite">
-      <span id="planning-reset-result">
-        Nieuwe planning maken vanaf actuele gegevens; oude plannen worden gearchiveerd.
-      </span>
-      <button id="reset-planning" type="button">
-        Maak een nieuw plan
-      </button>
-    </section>
 
-    <h2>Zendure nu</h2>
-    <section id="zendure-now" class="zendure-now" aria-live="polite">
-      Nog geen actuele Zendure-status beschikbaar.
-    </section>
 
-    <h2>Brongegevens</h2>
-    <section
-      id="sources"
-      class="source-grid"
-      aria-label="Brongegevens"
-      aria-live="polite"
-    >
-      Nog geen brongegevens beschikbaar.
-    </section>
+
 
     <h2>Prijsverloop vandaag en morgen</h2>
     <section id="price-timeline" class="price-panel" aria-live="polite">
       Nog geen prijsgegevens beschikbaar.
     </section>
 
-    <h2>Pipeline ①→⑨ + Live-canary</h2>
-    <p id="pipeline-health" class="status pipeline-health" aria-live="polite">
-      Wachten op de eerste pipeline-run…
-    </p>
-    <section id="pipeline" class="pipeline" aria-live="polite"></section>
 
-    <h2>Huidige planning en besluit</h2>
-    <section
-      id="planning-status"
-      class="timeline-panel"
-      aria-live="polite"
-    >
-      Nog geen actuele planningsfeiten beschikbaar.
-    </section>
 
-    <h2>Onderliggende energiekansen</h2>
-    <section
-      id="plan-explanation"
-      class="timeline-panel"
-      aria-live="polite"
-    >
-      Nog geen planuitleg beschikbaar.
-    </section>
 
     <h2>Planwijzigingen vergelijken</h2>
     <section id="plan-history" class="timeline-panel" aria-label="Planwijzigingen vergelijken">
@@ -1362,24 +1331,8 @@ DASHBOARD_HTML = """<!doctype html>
       <div id="plan-history-panels" class="plan-history-panels"></div>
     </section>
 
-    <h2>Energieplan batterij</h2>
-    <section
-      id="storage-energy-source-needs"
-      class="timeline-panel"
-      aria-live="polite"
-    >
-      Nog geen energieplan voor de batterij beschikbaar.
-    </section>
 
-    <h2>PV Energy Timeline</h2>
-    <section id="pv-energy-timeline" class="timeline-panel" aria-live="polite">
-      Nog geen PV-tijdlijn beschikbaar.
-    </section>
 
-    <h2>Verwacht huishoudverbruik</h2>
-    <section id="household-load-forecast" class="timeline-panel" aria-live="polite">
-      Nog geen prognose voor huishoudverbruik beschikbaar.
-    </section>
   </main>
 
   <script>
@@ -1567,29 +1520,7 @@ DASHBOARD_HTML = """<!doctype html>
         ? "Arcering: latere aanpassingen ten opzichte van het oorspronkelijke plan, " +
           "inclusief handel."
         : "Oorspronkelijk plan niet beschikbaar; verschillen worden niet gearceerd.";
-      const plannerDetails = document.createElement("details");
-      plannerDetails.id = "price-planner-details";
-      plannerDetails.className = "planner-details";
-      const plannerSummary = document.createElement("summary");
-      plannerSummary.textContent = "Planning en wijzigingen toelichten";
-      plannerDetails.append(plannerSummary, referenceNote);
-      container.appendChild(plannerDetails);
-
-      if (plannerWindows.length) {
-        const summary = document.createElement("div");
-        summary.className = "planner-window-summary";
-        for (const window of plannerWindows) {
-          const chip = document.createElement("span");
-          chip.className = `planner-window-chip ${window.kind}`;
-          chip.textContent = [
-            window.label,
-            `${formatTimestamp(window.starts_at)} – ` +
-              formatTimestamp(window.ends_at),
-          ].join(": ");
-          summary.appendChild(chip);
-        }
-        plannerDetails.appendChild(summary);
-      }
+      container.appendChild(referenceNote);
 
       const width = 1280;
       const height = 430;
@@ -2062,9 +1993,9 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function appendTechnicalDetails(container, value) {
-      const details = document.createElement("details");
+      const details = document.createElement("section");
       details.className = "technical-details";
-      const summary = document.createElement("summary");
+      const summary = document.createElement("h3");
       const raw = document.createElement("pre");
       summary.textContent = "Technische details";
       raw.textContent = JSON.stringify(value, null, 2);
@@ -2974,6 +2905,184 @@ DASHBOARD_HTML = """<!doctype html>
       container.appendChild(scroll);
     }
 
+    function dashboardFaults(view) {
+      const faults = [];
+      const names = {p1:"P1 netmeting", pv:"Zonnepanelen", zendure:"Zendure batterij",
+        solcast:"Solcast voorspelling", nordpool:"Nord Pool prijzen"};
+      const stages = ["Planningsinvoer", "Energiekansen", "Mogelijke plannen", "Planbeoordeling",
+        "Uitvoeringsplan", "Uitvoering", "Uitvoerbare opdracht", "Apparaatkoppeling", "Zendure"];
+      for (const item of view.pipeline ?? []) {
+        const attrs = item.attributes ?? {};
+        const sources = (attrs.sources ?? []).filter(
+          s => s.availability === "unavailable" || s.error);
+        for (const source of sources) {
+          const label = source.semantic_role === "controlled_load_measurement"
+            ? "Home Climate-belastingsmeting" : names[source.category] ?? source.category ?? "Bron";
+          faults.push(`${label}: ` +
+            `${source.error || "geen bruikbare meting beschikbaar"}` +
+            (source.entity_id ? ` (${source.entity_id})` : ""));
+        }
+        if (item.health !== "fault") continue;
+        if (sources.length && !attrs.error) continue;
+        const reasons = [attrs.error, ...(Array.isArray(attrs.blockers) ? attrs.blockers : [])]
+          .filter(value => typeof value === "string" && value && value !== "-");
+        faults.push(`${stages[item.stage - 1] ?? "PicoT"}: ` +
+          (reasons.join("; ") || `stap mislukt (${item.state ?? "oorzaak niet aangeleverd"})`));
+      }
+      const catalog = view.energy_device_catalog;
+      if (catalog && ["error", "failed", "unavailable"].includes(catalog.status)) {
+        faults.push("Energy Devices: apparaatcatalogus niet beschikbaar" +
+          (catalog.error ? ` — ${catalog.error}` : ". Controleer of Energy Devices draait.") +
+          " Nieuwe apparaatkaarten kunnen niet worden opgehaald.");
+      }
+      if (!faults.length && view.pipeline_health?.healthy === false) {
+        faults.push("PicoT meldt een probleem, maar heeft de oorzaak niet aangeleverd. " +
+          "Download een diagnose om de ontbrekende foutdetails te onderzoeken.");
+      }
+      const readiness = view.plan_explanation?.readiness;
+      if (readiness?.status === "blocked" && readiness.warning_nl) {
+        faults.push(readiness.warning_nl);
+      }
+      return [...new Set(faults)];
+    }
+
+    function renderDashboardFaults(view) {
+      const target = element("central-health");
+      const faults = dashboardFaults(view);
+      target.replaceChildren();
+      target.hidden = faults.length === 0;
+      target.dataset.health = faults.length ? "fault" : "healthy";
+      for (const message of faults) {
+        const line = document.createElement("p"); line.textContent = message; target.append(line);
+      }
+    }
+
+    function comparisonSegments(route) {
+      const source = route?.timeline ?? route ?? {};
+      const full = Array.isArray(source.segments);
+      const raw = full ? source.segments : (route?.main_signature ?? []).map(
+        item => ({starts_at:item[0], ends_at:item[1], intent:item[2]}));
+      const segments = raw.map(item => ({start:Date.parse(item.starts_at),
+        end:Date.parse(item.ends_at), mode:item.intent ?? item.primitive,
+        power:item.requested_power_w ?? null, exportWh:item.storage_export_target_wh ?? null,
+        policy:item.charge_source_policy ?? null})).filter(item =>
+          Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start);
+      return {segments:segments.sort((a,b) => a.start-b.start),
+        partial:!full || source.truncated === true || source.segments_truncated === true ||
+          segments.length !== raw.length};
+    }
+
+    function comparisonDifferences(left, right) {
+      const points = [...new Set([...left.segments,...right.segments]
+        .flatMap(s => [s.start,s.end]))].sort((a,b) => a-b);
+      const result = [];
+      for (let i=0;i<points.length-1;i++) {
+        const start=points[i], end=points[i+1];
+        const a=left.segments.find(s => s.start<=start && s.end>=end);
+        const b=right.segments.find(s => s.start<=start && s.end>=end);
+        const signature = s => s ? JSON.stringify([s.mode,s.power,
+          s.exportWh == null ? null : Math.round(s.exportWh/(s.end-s.start)*3600000*1e6)/1e6,
+          s.policy]) : "unknown";
+        if (signature(a)===signature(b)) continue;
+        const item={start,end,from:a?.mode ?? "unknown",to:b?.mode ?? "unknown",
+          parameters: a?.mode === b?.mode};
+        const last=result.at(-1);
+        if (last && last.end===start && last.from===item.from && last.to===item.to &&
+            last.parameters===item.parameters) last.end=end;
+        else result.push(item);
+      }
+      return result;
+    }
+
+    function comparisonMode(mode) {
+      return ({balance_bidirectional:["Nul op de meter","#2b9663"],
+        balance_charge_only:["Alleen slim opladen","#2b9663"],
+        balance_discharge_only:["Slim ontladen","#df8e20"],
+        charge_at_power:["Laden","#2878b8"],discharge_at_power:["Terugleveren","#9a5cc6"],
+        stop_all:["Stand-by","#94a3b8"],grid_requirement:["Netladen","#2878b8"],grid_charge:["Netladen","#2878b8"],
+        charge:["Laden","#2878b8"],nom:["Nul op de meter","#2b9663"],
+        household_support_only:["Slim ontladen","#df8e20"],
+        discharge_only:["Slim ontladen","#df8e20"],self_consumption:["Slim ontladen","#df8e20"],
+        standby:["Stand-by","#94a3b8"],hold_storage:["Stand-by","#94a3b8"],
+        storage_export:["Terugleveren","#9a5cc6"],discharge:["Terugleveren","#9a5cc6"],
+        unknown:["Geen gegevens","#e2e8f0"]})[mode] ?? [mode ?? "Geen gegevens","#64748b"];
+    }
+
+    function appendPlanComparison(target, a, b, labels) {
+      const single=labels.length === 1;
+      const left=comparisonSegments(a), right=comparisonSegments(single ? a : b);
+      const changes=comparisonDifferences(left,right);
+      const all=[...left.segments,...right.segments];
+      const note=document.createElement("p");
+      if (!left.segments.length || !right.segments.length) {
+        note.textContent="Tijdlijnvergelijking niet beschikbaar: " +
+          "van een route ontbreken de tijdvakken.";
+        target.append(note); return;
+      }
+      const start=Math.min(...all.map(s=>s.start)), end=Math.max(...all.map(s=>s.end));
+      const svg=createSvgElement("svg", {
+        viewBox:single ? "0 0 1000 130" : "0 0 1000 210",role:"img",
+        "aria-label":single ? labels[0] : `${labels[0]} en ${labels[1]} op dezelfde tijdschaal`});
+      svg.classList.add("comparison-chart");
+      const x=time=>20+(time-start)/(end-start)*960;
+      for (let i=0;i<=4;i++) {
+        const time=start+(end-start)*i/4;
+        appendSvgText(svg,planHistoryTime(new Date(time).toISOString()),
+          {x:x(time),y:single ? 122 : 202,
+            "text-anchor":i===0?"start":i===4?"end":"middle","font-size":11});
+      }
+      (single ? [left] : [left,right]).forEach((route,row)=> {
+        const y=25+row*80;
+        appendSvgText(svg,labels[row],{x:20,y:y-8,"font-size":14,"font-weight":600});
+        svg.append(createSvgElement("rect",{x:20,y,width:960,height:35,fill:"#eef2f6"}));
+        for (const s of route.segments) {
+          const rect=createSvgElement("rect",{x:x(s.start),y,width:x(s.end)-x(s.start),
+            height:35,fill:comparisonMode(s.mode)[1]});
+          const title=createSvgElement("title");
+          title.textContent=`${comparisonMode(s.mode)[0]}: `+
+            `${planHistoryTime(new Date(s.start).toISOString())} – `+
+            planHistoryTime(new Date(s.end).toISOString());
+          rect.append(title); svg.append(rect);
+        }
+        for (const change of changes) svg.append(createSvgElement("rect",{
+          x:x(change.start),y:y-2,width:Math.max(2,x(change.end)-x(change.start)),height:39,
+          fill:"none",stroke:"#172b4d","stroke-width":2,"stroke-dasharray":"4 2"}));
+      });
+      const scroll=document.createElement("div"); scroll.className="comparison-scroll";
+      scroll.append(svg); target.append(scroll);
+      const legend=document.createElement("p"); legend.className="comparison-legend";
+      for (const mode of [...new Set(all.map(s=>s.mode))]) {
+        const swatch=document.createElement("span");
+        swatch.style.borderLeft=`12px solid ${comparisonMode(mode)[1]}`;
+        swatch.textContent=comparisonMode(mode)[0]; legend.append(swatch);
+      }
+      target.append(legend);
+      note.textContent=single ? labels[0] : changes.length
+        ? "Gestippelde kaders markeren de verschillen." :
+        "Geen verschil in de getoonde batterijmodi, tijden en vastgelegde instellingen.";
+      if (left.partial || right.partial) note.textContent +=
+        " Onvolledige vergelijking: oudere voorstellen bevatten alleen laadvensters " +
+        "of de reeks is afgekapt. " +
+        "Lege delen zijn onbekend; dit is geen volledige planvergelijking.";
+      target.append(note);
+      const list=document.createElement("ul"); list.className="comparison-differences";
+      for (const change of changes.slice(0,12)) {
+        const line=document.createElement("li");
+        line.textContent=`${planHistoryTime(new Date(change.start).toISOString())} – `+
+          `${planHistoryTime(new Date(change.end).toISOString())}: `+
+          `${comparisonMode(change.from)[0]} → ${comparisonMode(change.to)[0]}`+
+          (change.parameters ? " (vastgelegde vermogens-/broninstelling verschilt)" : "");
+        list.append(line);
+      }
+      if (changes.length>12) {
+        const line=document.createElement("li");
+        line.textContent=`Nog ${changes.length-12} verschillen; ` +
+          "alle verschillen zijn gemarkeerd in de tijdlijn.";
+        list.append(line);
+      }
+      target.append(list);
+    }
+
     function renderSources(sources) {
       const container = element("sources");
       container.replaceChildren();
@@ -3039,10 +3148,10 @@ DASHBOARD_HTML = """<!doctype html>
       const fragment = document.createDocumentFragment();
 
       for (const item of items) {
-        const details = document.createElement("details");
+        const details = document.createElement("section");
         details.className = "stage-card";
 
-        const summary = document.createElement("summary");
+        const summary = document.createElement("h3");
         summary.className = "stage-summary";
 
         const heading = document.createElement("h3");
@@ -3133,7 +3242,7 @@ DASHBOARD_HTML = """<!doctype html>
       if (!latestLiveView) return;
       const status = currentStorageStatus(latestLiveView.zendure_now);
       renderTodaySummary({...latestLiveView, zendure_now: status});
-      renderZendureNow(status);
+
     }
 
     async function loadStorageStatus() {
@@ -3206,10 +3315,10 @@ DASHBOARD_HTML = """<!doctype html>
         fragment.appendChild(empty);
       }
       for (const group of groups) {
-        const details = document.createElement("details");
+        const details = document.createElement("section");
         details.className = "plan-explanation-detail";
         details.dataset.explanationKey = `opportunity:${group.label_nl}`;
-        const summary = document.createElement("summary");
+        const summary = document.createElement("h3");
         summary.textContent = `${group.label_nl} (${group.count})`;
         details.appendChild(summary);
         const table = document.createElement("table");
@@ -3353,7 +3462,7 @@ DASHBOARD_HTML = """<!doctype html>
           const option = document.createElement("option");
           option.value = plan.plan_id;
           option.textContent = `${plan.active ? "Huidig" : "Historisch"} · ` +
-            `${planHistoryTime(plan.created_at)} · ${plan.plan_id}`;
+            `${planHistoryTime(plan.created_at)}`;
           picker.append(option);
         }
         planHistoryOptionsKey = optionsKey;
@@ -3362,43 +3471,25 @@ DASHBOARD_HTML = """<!doctype html>
       picker.disabled = planHistoryPlans.length === 0;
       const panels = element("plan-history-panels");
       panels.replaceChildren();
-      const addPlan = (plan, title) => {
-        const panel = document.createElement("article");
-        const heading = document.createElement("h3"); heading.textContent = title;
-        const metadata = document.createElement("p");
-        const identity = document.createElement("code"); identity.textContent = plan.plan_id;
-        metadata.append(identity, document.createElement("br"),
-          `Vastgelegd: ${planHistoryTime(plan.created_at)}`, document.createElement("br"),
-          `Reden: ${planHistoryReason(plan.revision_reason)}`);
-        const table = document.createElement("table");
-        const head = document.createElement("tr");
-        for (const label of ["Van", "Tot", "Batterijmodus"]) {
-          const cell = document.createElement("th"); cell.scope = "col"; cell.textContent = label;
-          head.append(cell);
-        }
-        table.append(head);
-        const labels = {balance_bidirectional: "NOM / PV laden", charge_at_power: "Snel opladen",
-          balance_discharge_only: "Alleen slim ontladen", standby: "Stand-by — woning op netstroom",
-          discharge_at_power: "Ontladen naar het net"};
-        for (const segment of plan.segments ?? []) {
-          const row = document.createElement("tr");
-          for (const text of [planHistoryTime(segment.starts_at), planHistoryTime(segment.ends_at),
-            labels[segment.primitive] ?? segment.primitive ?? "Onbekend"]) {
-            const cell = document.createElement("td"); cell.textContent = text; row.append(cell);
-          }
-          table.append(row);
-        }
-        panel.append(heading, metadata);
+      for (const [plan, label] of [[current, "Huidig plan"],
+          [selected !== current ? selected : null, "Historisch plan - niet actief"]]) {
+        if (!plan) continue;
+        const heading=document.createElement("p");
+        heading.textContent=`${label}: ${planHistoryTime(plan.created_at)}. `+
+          `Reden: ${planHistoryReason(plan.revision_reason)}`;
+        panels.append(heading);
         if (plan.segments_truncated) {
-          const note = document.createElement("p"); note.className = "muted";
-          note.textContent =
-            "Dit plan bevat meer segmenten; alleen het beschikbare deel staat hieronder.";
-          panel.append(note);
+          const warning=document.createElement("p");
+          warning.textContent="Dit plan bevat meer segmenten dan hier getoond worden.";
+          panels.append(warning);
         }
-        panel.append(table); panels.append(panel);
-      };
-      if (current) addPlan(current, "Huidig plan");
-      if (selected && selected !== current) addPlan(selected, "Historisch plan — niet actief");
+      }
+      if (current && selected && selected !== current) {
+        appendPlanComparison(panels, selected, current, ["Historisch plan", "Huidig plan"]);
+      } else if (selected) {
+        appendPlanComparison(panels, selected, null,
+          [selected === current ? "Huidig plan" : "Historisch plan - niet actief"]);
+      }
       let message = !planHistoryPlans.length
         ? "Geen opgeslagen planhistorie beschikbaar."
         : !current ? "Historische vergelijking; geen actief plan in deze gegevens."
@@ -3708,11 +3799,7 @@ DASHBOARD_HTML = """<!doctype html>
       const manualOverrideActive =
         item?.attributes?.manual_override_active === true;
       resetButton.hidden = !manualOverrideActive;
-      if (manualOverrideActive) {
-        element("central-health").dataset.health = "fault";
-        element("central-health").textContent =
-          "PicoT · handmatige batterij-instelling actief; zie Instellingen & diagnose";
-      }
+      element("storage-mode-override").hidden = !manualOverrideActive;
       result.textContent = manualOverrideActive
         ? "Een handmatige batterij-instelling blokkeert PicoT."
         : "Geen actieve handmatige blokkade.";
@@ -3976,10 +4063,10 @@ DASHBOARD_HTML = """<!doctype html>
 
       if (intervals.length === 0) return;
 
-      const details = document.createElement("details");
+      const details = document.createElement("section");
       details.className = "technical-details";
       details.open = quarterDetailsOpen;
-      const summary = document.createElement("summary");
+      const summary = document.createElement("h3");
       summary.textContent = `Kwartierdetails (${intervals.length})`;
       details.appendChild(summary);
 
@@ -4190,6 +4277,7 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function activateTab(tabName, revealTools = true) {
+      if (tabName === "overview") tabName = "planning";
       const available = Array.from(
         document.querySelectorAll("[data-tab-panel]")
       ).map((panel) => panel.dataset.tabPanel);
@@ -4281,8 +4369,8 @@ DASHBOARD_HTML = """<!doctype html>
           Object.entries(comparison.models ?? {}).map(([key, s]) => [labels[key] ?? key,
             formatMeasurement(s.mean_absolute_quarter_error_wh, "Wh"),
             formatMeasurement(s.mean_signed_quarter_error_wh, "Wh")]));
-        const details = document.createElement("details");
-        const summary = document.createElement("summary");
+        const details = document.createElement("section");
+        const summary = document.createElement("h3");
         summary.textContent = "Dagsommen en meetdekking (laatste 28 dagen)";
         details.append(summary); target.append(details);
         table(["Datum", "Dag", "Gemeten verbruik", "Dekking", "Status"],
@@ -4302,43 +4390,16 @@ DASHBOARD_HTML = """<!doctype html>
     function initializeTabs() {
       const technical = element("tab-technical");
       technical.append(document.querySelector(".metadata"), element("status"));
-      movePanelContent("zendure-now", "technical");
       element("tab-planning").prepend(element("today-summary"));
       movePanelContent("price-timeline", "planning");
       movePanelContent("pv-forecast-actual-chart", "planning");
-      movePanelContent("storage-energy-source-needs", "planning");
-      movePanelContent("plan-explanation", "planning");
-      movePanelContent("plan-history", "planning");
-      movePanelContent("planning-status", "technical");
-      movePanelContent("pv-energy-timeline", "technical");
-      movePanelContent("household-load-forecast", "technical");
-      movePanelContent("sources", "technical");
-      movePanelContent("pipeline-health", "technical");
-      movePanelContent("pipeline", "technical", false);
-      movePanelContent("planning-reset", "technical", false);
-      movePanelContent("storage-mode-override", "technical", false);
+      movePanelContent("plan-history", "history");
+      element("central-health").after(element("storage-mode-override"));
       const history = element("tab-history");
       const power = element("power-history-chart");
       const selfUse = element("self-consumption-history-chart");
       history.prepend(power.previousElementSibling, power,
         selfUse.previousElementSibling, selfUse);
-      for (const [id, label] of [["household-calendar-history", "Verbruik vergelijken"],
-        ["planning-incident-history", "Incidenten en diagnose"]]) {
-        const node = element(id);
-        const section = id === "planning-incident-history" ? node.parentElement : node;
-        const introduction = section.previousElementSibling?.tagName === "P"
-          ? section.previousElementSibling : null;
-        const heading = (introduction ?? section).previousElementSibling;
-        const disclosure = document.createElement("details");
-        disclosure.id = id + "-disclosure";
-        const summary = document.createElement("summary");
-        summary.textContent = label;
-        disclosure.append(summary);
-        if (heading?.tagName === "H2") disclosure.append(heading);
-        if (introduction) disclosure.append(introduction);
-        disclosure.append(section);
-        history.append(disclosure);
-      }
       element("switch-history-period").addEventListener("change", () =>
         renderStorageModeTransitionHistory(lastSwitchEvents));
       document.querySelectorAll(".tab-button").forEach((button) => {
@@ -4685,8 +4746,8 @@ DASHBOARD_HTML = """<!doctype html>
           const alignmentRow = document.createElement("tr");
           const alignmentCell = document.createElement("td");
           alignmentCell.colSpan = 7;
-          const details = document.createElement("details");
-          const summary = document.createElement("summary");
+          const details = document.createElement("section");
+          const summary = document.createElement("h3");
           summary.textContent = alignment.status === "unavailable"
             ? "Kwartierbalans niet beschikbaar"
             : `Kwartierbalans: ${alignment.derived_interval_count} berekend, ` +
@@ -4720,8 +4781,8 @@ DASHBOARD_HTML = """<!doctype html>
           const detailRow = document.createElement("tr");
           const cell = document.createElement("td");
           cell.colSpan = 7;
-          const details = document.createElement("details");
-          const label = document.createElement("summary");
+          const details = document.createElement("section");
+          const label = document.createElement("h3");
           label.textContent = `Meetonderbrekingen (${missing.length} meetreeksen)`;
           details.appendChild(label);
           for (const [role, item] of missing) {
@@ -4924,12 +4985,12 @@ DASHBOARD_HTML = """<!doctype html>
         container.append(node("p", "Het lopende kwartier is nog niet afgerond. " +
           "Het resultaat van vandaag geldt tot het getoonde tijdstip.", "muted"));
       }
-      const evidence = node("details");
+      const evidence = node("section");
       financialDisclosure(evidence, `week:${financialSelectedWeek}`);
       const special = rows.filter(row => !row.future && financialColumns.some(([, name, sign]) =>
         !["available", "estimated"].includes(
           financialMetric(row.record, name, sign).quality))).length;
-      evidence.append(node("summary",
+      evidence.append(node("h3",
         `Onderbouwing en meetkwaliteit · ${special} dagen met bijzonderheden`));
       evidence.append(node("p",
         "Elk bedrag heeft een eigen meetcontrole. Netresultaat is gebaseerd op " +
@@ -4939,9 +5000,9 @@ DASHBOARD_HTML = """<!doctype html>
         "muted"));
       const evidenceByDay = new Map();
       for (const row of rows.filter(row => !row.future)) {
-        const detail = node("details");
+        const detail = node("section");
         financialDisclosure(detail, `day:${row.date}`);
-        detail.append(node("summary", dateLabel(row.date)));
+        detail.append(node("h3", dateLabel(row.date)));
         for (const [label, name, sign] of financialColumns) {
           const value = financialMetric(row.record, name, sign);
           detail.append(node("p",
@@ -4966,7 +5027,9 @@ DASHBOARD_HTML = """<!doctype html>
           evidence.open = true;
           const target = evidenceByDay.get(day) ?? evidence;
           if (target !== evidence) target.open = true;
-          target.querySelector("summary").focus();
+          const heading = target.querySelector("h3");
+          heading?.setAttribute("tabindex", "-1");
+          heading?.focus();
           target.scrollIntoView({block: "nearest"});
         };
         return button;
@@ -5090,9 +5153,9 @@ DASHBOARD_HTML = """<!doctype html>
         "Aankoopbedrag terugverdiend volgens de geregistreerde resultaten." :
         duration ? `Geschatte resterende terugverdientijd: circa ${duration}` :
           "Geschatte resterende terugverdientijd: nog niet te bepalen.", "value"));
-      const estimateEvidence = node("details");
+      const estimateEvidence = node("section");
       financialDisclosure(estimateEvidence, "payback-estimate");
-      estimateEvidence.append(node("summary", "Onderbouwing van de tijdschatting"));
+      estimateEvidence.append(node("h3", "Onderbouwing van de tijdschatting"));
       estimateEvidence.append(node("p", (estimate.reason ? estimate.reason + " " : "") +
         "Resterend aankoopbedrag gedeeld door het gemiddelde netto batterijvoordeel " +
         "van de laatste 28 afgesloten dagen. " +
@@ -5215,9 +5278,9 @@ DASHBOARD_HTML = """<!doctype html>
         container.append(cards);
         const coverage = today.financial_metrics?.measurement_coverage ??
           today.coverage_by_role ?? {};
-        const details = document.createElement("details");
+        const details = document.createElement("section");
         financialDisclosure(details, `day:${today.day}:gaps`);
-        const detailsTitle = document.createElement("summary");
+        const detailsTitle = document.createElement("h3");
         detailsTitle.textContent = "Ontbrekende meetgegevens";
         details.style.overflowWrap = "anywhere";
         details.append(detailsTitle);
@@ -5254,9 +5317,9 @@ DASHBOARD_HTML = """<!doctype html>
         }
         const inferences = today.financial_metrics?.inferences ?? [];
         if (inferences.length) {
-          const inferred = document.createElement("details");
+          const inferred = document.createElement("section");
           financialDisclosure(inferred, `day:${today.day}:inferences`);
-          const title = document.createElement("summary");
+          const title = document.createElement("h3");
           title.textContent = "Afgeleide meetgegevens";
           inferred.append(title);
           const kinds = {night_zero: "Nachtelijke PV als 0 W afgeleid",
@@ -5390,7 +5453,7 @@ DASHBOARD_HTML = """<!doctype html>
         return;
       }
       for (const incident of [...events].reverse()) {
-        const details = document.createElement("details");
+        const details = document.createElement("section");
         const incidentKey = [
           incident.incident_id,
           incident.event,
@@ -5399,7 +5462,7 @@ DASHBOARD_HTML = """<!doctype html>
         ].map(displayValue).join("|");
         details.dataset.incidentKey = incidentKey;
         details.open = openIncidentKeys.has(incidentKey);
-        const summary = document.createElement("summary");
+        const summary = document.createElement("h3");
         const moment = new Date(incident.captured_at_local);
         summary.textContent = [
           Number.isNaN(moment.getTime())
@@ -5479,6 +5542,9 @@ DASHBOARD_HTML = """<!doctype html>
         title.textContent = statuses[choice.status] ?? "Routekeuze wordt bijgewerkt.";
         card.appendChild(title);
         const offer = choice.offer ?? {};
+        if (choice.status === "offered" && !offer.alternative) {
+          title.textContent = "Automatisch laadplan; geen haalbaar PV-alternatief beschikbaar";
+        }
         if (choice.last_notice?.message) {
           const notice = document.createElement("p");
           notice.textContent = choice.last_notice.message;
@@ -5497,7 +5563,6 @@ DASHBOARD_HTML = """<!doctype html>
             if (!route) continue;
             const summary = document.createElement("p");
             summary.textContent = `${route.label || fallback}: ` +
-              `${Array.isArray(route.windows) ? route.windows.join(", ") + "; " : ""}` +
               `netinkoop ${number(route.grid_import_kwh)} kWh · ` +
               `PV-opslag ${number(route.pv_storage_kwh)} kWh · ` +
               `SOC einde ${number(route.terminal_soc, 1)}% · ` +
@@ -5512,6 +5577,25 @@ DASHBOARD_HTML = """<!doctype html>
             "noodzakelijk herstel blijft mogelijk.";
           card.appendChild(note);
         }
+        const obsolete = choice.status === "offered" && (
+          (choice.current_plan_id != null && choice.plan_id !== choice.current_plan_id) ||
+          (choice.current_revision != null && choice.revision !== choice.current_revision));
+        if (["offered", "pending", "selected"].includes(choice.status)) {
+          const comparison = document.createElement("section");
+          comparison.className = "route-comparison";
+          appendPlanComparison(comparison, offer.automatic, offer.alternative,
+            offer.alternative ? ["Automatisch plan bij voorstel", "PV-alternatief bij voorstel"]
+              : ["Automatisch plan bij voorstel"]);
+          card.appendChild(comparison);
+          if (obsolete) {
+            title.textContent = "Voorstel verouderd: het actieve plan is gewijzigd";
+            const warning = document.createElement("p");
+            warning.textContent = "Dit voorstel hoort bij een ouder plan. " +
+              "Het actieve plan is inmiddels " +
+              "gewijzigd; wacht op een nieuw voorstel. Deze keuze kan niet meer worden toegepast.";
+            card.appendChild(warning);
+          }
+        }
         const action = (label, payload) => {
           const button = document.createElement("button");
           button.type = "button";
@@ -5521,7 +5605,8 @@ DASHBOARD_HTML = """<!doctype html>
           card.appendChild(button);
         };
         const expires = Date.parse(choice.expires_at);
-        if (choice.status === "offered" && Number.isFinite(expires) && expires > Date.now()) {
+        if (choice.status === "offered" && !obsolete &&
+            Number.isFinite(expires) && expires > Date.now()) {
           if (offer.alternative) {
             action("Kies PV-route", {token: choice.token, action: "pv"});
           } else {
@@ -5635,7 +5720,7 @@ DASHBOARD_HTML = """<!doctype html>
       status.dataset.state = catalog?.status === "available" ? "ready" : "waiting";
       status.textContent = catalog?.status === "available"
         ? `${cards.length} kaart(en) beschikbaar · uitsluitend na jouw selectie`
-        : "PicoT werkt normaal; de optionele apparaatcatalogus is niet beschikbaar.";
+        : "Apparaatcatalogus niet beschikbaar; nieuwe kaarten kunnen niet worden opgehaald.";
 
       const cardContainer = element("energy-device-cards");
       const select = element("energy-device-card-select");
@@ -5772,7 +5857,8 @@ DASHBOARD_HTML = """<!doctype html>
       for (const [label, value, note] of [
         ["Zendure", soc == null ? "—" : `${formatDutchNumber(soc)}%`,
           soc == null ? "Geen actuele SOC-meting" : "Gemeten batterijvulling"],
-        ["Actieve modus", view.zendure_now?.active_mode ?? "—", "Laatst waargenomen modus"],
+        ["Actieve modus", view.zendure_now?.active_mode ?? "—",
+          modeFreshness(view.zendure_now).label],
         ["Stroomprijs nu", price?.value_eur_per_kwh == null ? "—" :
           formatPrice(price.value_eur_per_kwh), "Actuele inkoopprijs"]
       ]) {
@@ -5787,6 +5873,7 @@ DASHBOARD_HTML = """<!doctype html>
     function renderView(view) {
       const dashboardState = captureDashboardState();
       renderTodaySummary(view);
+      renderDashboardFaults(view);
       renderDashboardStatus(view.dashboard_status);
       renderPlanningRecalculation(view.planning_recalculation);
       element("version").textContent = displayValue(view.picot_version);
@@ -5808,8 +5895,7 @@ DASHBOARD_HTML = """<!doctype html>
       element("execution-mode").textContent = observerOnly
         ? "Alleen meekijken"
         : "Live uitvoering";
-      const sources = planningInput?.attributes?.sources;
-      renderSources(Array.isArray(sources) ? sources : []);
+
       renderPvForecastActualChart(
         planningInput?.attributes?.pv_interval_deviations ?? [],
         view.pv_energy_timeline ?? { intervals: [] },
@@ -5835,7 +5921,7 @@ DASHBOARD_HTML = """<!doctype html>
         view.storage_mode_transition_history ?? []
       );
       renderFinancialResults(view.financial_results ?? {});
-      renderGridChargeReview(view.grid_charge_review ?? {});
+
       renderUserRules(view.user_rules ?? {});
       renderRouteChoices(view.route_choices ?? {});
       renderEnergyDevices(
@@ -5861,34 +5947,12 @@ DASHBOARD_HTML = """<!doctype html>
         view.grid_charge_review?.actual_soc ?? {},
         view.original_price_plan ?? {}
       );
-      renderPipeline(pipeline);
-      renderPipelineHealth(view.pipeline_health);
-      renderZendureNow(view.zendure_now);
-      renderPlanningStatus(view.planning_status);
-      renderPlanExplanation(view.plan_explanation);
+
+
+
+
+
       renderStorageModeOverride(primitiveBoundary);
-      renderBatteryEnergyPlan(
-        view.planning_status?.execution_plans ?? [],
-        view.planning_status?.execution ?? {}
-      );
-      renderTimeline(view.pv_energy_timeline ?? {
-        available: false,
-        interval_count: 0,
-        total_wh: 0,
-        intervals: []
-      });
-      renderHouseholdLoadForecast(view.household_load_forecast ?? {
-        available: false,
-        forecast_id: null,
-        interval_count: 0,
-        total_wh: 0,
-        average_confidence: 0,
-        starts_at: null,
-        ends_at: null,
-        fallback_active: false,
-        fallback_reason: null,
-        intervals: []
-      });
       restoreDashboardState(dashboardState);
     }
 
@@ -5912,8 +5976,9 @@ DASHBOARD_HTML = """<!doctype html>
       bar.setAttribute("aria-valuetext", `${label || "Opstarten"}; ${elapsedText} verstreken`);
       bar.textContent = `${label || "Opstarten"} · ${elapsedText} verstreken`;
       if (progress.state === "failed") {
+        element("central-health").hidden = false;
         element("central-health").dataset.health = "fault";
-        element("central-health").textContent = "PicoT · opstarten mislukt";
+        element("central-health").textContent = `PicoT opstarten mislukt: ${progress.label}`;
         element("status").dataset.state = "error";
         element("status").textContent = `Opstarten mislukt: ${progress.label}`;
       }
@@ -5948,6 +6013,7 @@ DASHBOARD_HTML = """<!doctype html>
       const body = await response.json();
       if (body.status !== "waiting_for_first_run") return false;
       if (!firstViewRendered && !startupFailed) {
+        element("central-health").hidden = false;
         element("central-health").dataset.health = "waiting";
         element("central-health").textContent = "PicoT · bezig met opstarten";
         element("status").dataset.state = "waiting";
@@ -5959,6 +6025,8 @@ DASHBOARD_HTML = """<!doctype html>
     function applyView(view) {
       const status = element("status");
       refreshLiveStatus(view);
+      renderDashboardFaults(view);
+      renderStorageModeOverride(view.pipeline?.find(item => item.stage === 7));
       if (shouldDeferRenderForSelection()) {
         pendingView = view;
         status.dataset.state = "ready";
@@ -5984,8 +6052,11 @@ DASHBOARD_HTML = """<!doctype html>
       } catch (error) {
         status.dataset.state = "error";
         status.textContent = `Dashboarddata niet beschikbaar: ${error.message}`;
+        element("central-health").hidden = false;
         element("central-health").dataset.health = "fault";
-        element("central-health").textContent = "PicoT · dashboardverbinding niet beschikbaar";
+        element("central-health").textContent =
+          `Dashboardverbinding niet beschikbaar: ${error.message}. ` +
+          "De getoonde gegevens kunnen verouderd zijn; PicoT probeert opnieuw verbinding te maken.";
         return false;
       }
     }
@@ -6012,8 +6083,11 @@ DASHBOARD_HTML = """<!doctype html>
           status.dataset.state = "error";
           status.textContent =
             `Realtime verbinding verbroken: ${error.message}; opnieuw verbinden…`;
+          element("central-health").hidden = false;
           element("central-health").dataset.health = "fault";
-          element("central-health").textContent = "PicoT · realtime verbinding onderbroken";
+          element("central-health").textContent =
+            `Realtime verbinding onderbroken: ${error.message}. ` +
+            "De getoonde gegevens kunnen verouderd zijn; opnieuw verbinden wordt geprobeerd.";
           await new Promise((resolve) => setTimeout(resolve, 5000));
         }
       }
@@ -7247,6 +7321,19 @@ def pipeline_result_nl(
     if state == "mode_feedback_timeout":
         return "De HA-keuzestand bevestigde de aangevraagde modus niet binnen de wachttijd."
     if stage == 1:
+        if pipeline_stage_health(stage=stage, state=state, attributes=attributes) == "fault":
+            error = attributes.get("error")
+            if error:
+                return f"Planningsinvoer niet bruikbaar: {error}"
+            sources = attributes.get("sources")
+            missing = [
+                str(source.get("entity_id") or source.get("category") or "onbekende bron")
+                for source in sources if isinstance(source, dict)
+                and (source.get("availability") == "unavailable" or source.get("error"))
+            ] if isinstance(sources, (list, tuple)) else []
+            return "Planningsinvoer niet bruikbaar: " + (
+                ", ".join(missing) if missing else state.replace("_", " ")
+            )
         return "De planningsgegevens zijn compleet en klaar voor beoordeling."
     if stage == 2:
         count = _result_count(attributes, "opportunity_count")

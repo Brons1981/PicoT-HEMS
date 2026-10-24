@@ -293,11 +293,9 @@ def test_web_view_represents_missing_household_load_forecast() -> None:
     }
 
 
-def test_dashboard_contains_readable_household_load_forecast_panel() -> None:
-    assert "Verwacht huishoudverbruik" in DASHBOARD_HTML
-    assert 'id="household-load-forecast"' in DASHBOARD_HTML
-    assert "renderHouseholdLoadForecast" in DASHBOARD_HTML
-    assert "view.household_load_forecast" in DASHBOARD_HTML
+def test_dashboard_omits_unused_household_forecast_panel() -> None:
+    assert 'id="household-load-forecast"' not in DASHBOARD_HTML
+    assert "renderHouseholdLoadForecast(view.household_load_forecast" not in DASHBOARD_HTML
 
 
 def test_dashboard_contains_passive_financial_result_tab() -> None:
@@ -841,14 +839,10 @@ def test_web_view_store_refreshes_history_without_replacing_planner_run() -> Non
     assert latest["power_history"]["ends_at"] == ends_at.isoformat()
 
 
-def test_dashboard_exposes_canonical_mep_execution_plan() -> None:
-    assert "Energieplan batterij" in DASHBOARD_HTML
-    assert 'id="storage-energy-source-needs"' in DASHBOARD_HTML
-    assert "renderBatteryEnergyPlan" in DASHBOARD_HTML
-    assert "executionPlanDayLabel" in DASHBOARD_HTML
-    assert "MEP-uitvoeringsplan" in DASHBOARD_HTML
-    assert "Handmatige instelling actief" in DASHBOARD_HTML
-    assert "storage_source_needs" not in DASHBOARD_HTML
+def test_dashboard_keeps_plan_on_price_chart_without_duplicate_energy_panel() -> None:
+    assert 'id="storage-energy-source-needs"' not in DASHBOARD_HTML
+    assert "selectedExecutionPlanWindows(view)" in DASHBOARD_HTML
+    assert 'id="price-timeline"' in DASHBOARD_HTML
 
 
 def test_price_bars_use_existing_energy_palette_for_mep_actions() -> None:

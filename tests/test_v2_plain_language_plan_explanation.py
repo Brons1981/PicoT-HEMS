@@ -122,15 +122,11 @@ def test_day_planning_exposes_one_run_of_canonical_decision_facts() -> None:
     assert sum(item["selected"] for item in status["alternatives"]) == 1
 
 
-def test_day_planning_dashboard_renders_fact_sections_not_a_merged_sentence() -> None:
+def test_day_planning_details_are_not_rendered_as_a_separate_panel() -> None:
     html = import_module("picot.v2.web_ui").DASHBOARD_HTML
-
-    assert "function renderPlanningStatus" in html
-    assert 'id="planning-status"' in html
-    assert '"Huidige strategie"' in html
-    assert '"Besluit"' in html
-    assert '"Uitvoering"' in html
-    assert '"Geldigheid"' in html
+    assert 'id="planning-status"' not in html
+    assert "renderPlanningStatus(view.planning_status)" not in html
+    assert 'id="central-health"' in html
 
 
 def test_zero_confidence_is_a_visible_readiness_blocker() -> None:
@@ -155,11 +151,9 @@ def test_zero_confidence_is_a_visible_readiness_blocker() -> None:
     assert run.primitive_boundary.request_id is None
 
 
-def test_dashboard_renders_the_plain_language_explanation_before_details() -> None:
+def test_energy_opportunities_do_not_add_another_dashboard_information_layer() -> None:
     html = import_module("picot.v2.web_ui").DASHBOARD_HTML
-
-    assert '<h2>Onderliggende energiekansen</h2>' in html
-    assert 'id="plan-explanation"' in html
-    assert "function renderPlanExplanation" in html
-    assert "renderPlanExplanation(view.plan_explanation)" in html
-    assert html.index('id="pipeline"') < html.index('id="plan-explanation"')
+    assert '<h2>Onderliggende energiekansen</h2>' not in html
+    assert 'id="plan-explanation"' not in html
+    assert "renderPlanExplanation(view.plan_explanation)" not in html
+    assert "renderDashboardFaults(view)" in html

@@ -97,10 +97,11 @@ def test_web_server_exposes_auto_refreshing_read_only_dashboard() -> None:
     assert not thread.is_alive()
     assert "<title>PicoT v2 — Canonical Pipeline</title>" in html
     assert 'data-observer-only="true"' in html
-    assert 'id="sources"' in html
-    assert 'aria-label="Brongegevens"' in html
-    assert 'id="pipeline"' in html
-    assert 'id="pv-energy-timeline"' in html
+    assert 'id="sources"' not in html
+    assert 'id="central-health"' in html
+    assert 'renderDashboardFaults(view)' in html
+    assert 'id="pipeline"' not in html
+    assert 'id="pv-energy-timeline"' not in html
     assert "renderSources" in html
     assert '"p1": "P1 netmeting"' in html
     assert '"pv": "Zonnepanelen"' in html
@@ -230,3 +231,4 @@ def test_dashboard_accepts_only_explicit_passive_stress_marker() -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+

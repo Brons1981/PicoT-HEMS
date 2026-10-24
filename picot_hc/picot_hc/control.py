@@ -49,6 +49,8 @@ class Control:
         self.notifications = notifications
         self.bindings = source_bindings(config)
         self.temperature_entities = [z.get('temperature') for z in config['zones']] + [config.get('outdoor')]
+        self.report_entities = self.temperature_entities + [
+            z.get('power') for z in config['zones'] if z.get('id') == 'beneden']
         self.timeout = config.get('command_timeout_seconds', 300)
         if not isinstance(self.timeout, int) or not 30 <= self.timeout <= 900:
             raise ValueError('command_timeout_seconds moet tussen 30 en 900 liggen.')
@@ -173,7 +175,7 @@ class Control:
             # Fresh independent read immediately before any device write.
             started = time.time()
             try:
-                states = fetch_states(self.url, self.token, self.temperature_entities)
+                states = fetch_states(self.url, self.token, self.report_entities)
             except Exception:
                 self.connected = False
                 raise ValueError('HA niet bereikbaar; geen opdracht verstuurd.') from None

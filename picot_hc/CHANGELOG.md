@@ -1,3 +1,9 @@
+# 0.1.0-dev.24
+
+- Lees de actuele HA-bronrapportage ook voor de beneden-aircovermogensmeter, zodat een gecachte tijdstempel ongewijzigd vermogen niet onterecht afkeurt.
+- Blijf echte veroudering en mislukte uitlezing weigeren; geen nulvulling of verruimde meettermijn.
+- Publiceer een concrete foutreden voor HEMS dev.318.
+
 # 0.1.0-dev.23
 
 - Centrale comfortinstellingen beneden, met handmatige thermostaat zonder actief schema.

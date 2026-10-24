@@ -123,10 +123,15 @@ def test_choice_js_renders_status_and_actions_without_html_injection():
         "let routeChoiceRequestPending = false;"
         + script.split("    function renderUserRules", 1)[0]
     )
+    for name in ("comparisonSegments", "comparisonDifferences", "comparisonMode",
+                 "appendPlanComparison", "planHistoryTime", "createSvgElement", "appendSvgText"):
+        start = DASHBOARD_HTML.index(f"    function {name}(")
+        script += DASHBOARD_HTML[start:DASHBOARD_HTML.index("\n    }", start) + 6]
     harness = r"""
 class Elem {
   constructor() { this.children = []; this.disabled = false; this.hidden = false; }
   appendChild(child) { this.children.push(child); }
+  append(...children) { this.children.push(...children); }
   replaceChildren() { this.children = []; }
   addEventListener(event, callback) { this[event] = callback; }
   querySelectorAll() {

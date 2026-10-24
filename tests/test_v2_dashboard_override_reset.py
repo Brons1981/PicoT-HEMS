@@ -116,27 +116,14 @@ def test_pipeline_result_translation_is_explicit_and_deterministic(
     assert result == expected
 
 
-def test_pipeline_cards_are_compact_collapsible_and_preserve_open_state() -> None:
+def test_pipeline_faults_are_direct_without_nested_stage_cards() -> None:
     html = _web_ui_module().DASHBOARD_HTML
-
-    assert 'details.className = "stage-card"' in html
-    assert 'summary.className = "stage-summary"' in html
-    assert 'result.className = "stage-result"' in html
-    assert 'health.className = "stage-health"' in html
-    assert 'health.dataset.health = item.health' in html
-    assert 'id="pipeline-health"' in html
-    assert 'id="zendure-now"' in html
+    assert 'id="pipeline-health"' not in html
+    assert 'id="pipeline"' not in html
     assert 'id="execution-mode"' in html
     assert '"Live uitvoering"' in html
-    assert "result.textContent = item.result_nl" in html
-    assert 'document.querySelectorAll("details.stage-card")' in html
-    assert "details.open = state.openStageCards[index] ?? false" in html
-    assert 'const card = document.createElement("article")' not in (
-        html[
-            html.index("function renderPipeline") :
-            html.index("function renderBatteryEnergyPlan")
-        ]
-    )
+    assert 'renderDashboardFaults(view)' in html
+    assert 'renderPipeline(pipeline)' not in html
 
 
 def test_pipeline_health_only_marks_real_faults_red() -> None:

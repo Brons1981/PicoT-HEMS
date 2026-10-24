@@ -13,29 +13,51 @@ def measurement(config, states, now):
     zone = next((z for z in config['zones'] if z['id'] == 'beneden'), {})
     result = dict(contract='controlled-load-measurement:v1', status='unavailable',
                   generated_at=datetime.fromtimestamp(now, timezone.utc).isoformat(),
-                  source_id=None, measured_at=None, power_w=None)
+                  source_id=None, measured_at=None, power_w=None,
+                  source_entity_id=zone.get('power'), source_reported_at=None)
+
+    def unavailable(reason, error):
+        return dict(result, reason=reason, error=error)
+
     # This physical scope was explicitly confirmed by the installation owner.
-    # Another meter requires a new scope confirmation; a label is not evidence.
     if (zone.get('power') != 'sensor.kwh_meter_airco_vermogen'
             or zone.get('energy') != 'sensor.kwh_meter_airco_energie_import'):
-        return result
+        return unavailable('source_scope_unconfirmed', 'De meetbron is niet bevestigd voor deze airco.')
     identity = '|'.join(str(zone.get(k, '')) for k in ('power', 'energy', 'device'))
     result['source_id'] = hashlib.sha256(identity.encode()).hexdigest()
     item = states.get(zone['power']) or {}
+    if item.get('hc_report_error'):
+        return unavailable('source_report_unavailable',
+                           'Actuele bronrapportage van de aircovermogensmeter kon niet worden opgehaald.')
+    raw = item.get('state')
+    if raw in (None, 'unknown', 'unavailable'):
+        return unavailable('source_unavailable', 'De aircovermogensmeter levert geen meting.')
     try:
-        raw = item.get('state')
         if isinstance(raw, bool):
-            return result
+            raise ValueError('boolean power')
         power = float(raw)
+        if not math.isfinite(power) or not 0 <= power <= 20000:
+            raise ValueError('invalid power')
+    except (ValueError, TypeError, OverflowError):
+        return unavailable('source_value_invalid', 'De aircovermogensmeter levert geen geldig vermogen.')
+    if (item.get('attributes') or {}).get('unit_of_measurement') != 'W':
+        return unavailable('source_unit_invalid', 'De aircovermogensmeter rapporteert niet in watt.')
+    try:
         stamp = item.get('last_reported') or item.get('last_updated')
         when = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
-        if (when.utcoffset() is None or not 0 <= now-when.timestamp() <= 60
-                or not math.isfinite(power) or not 0 <= power <= 20000
-                or (item.get('attributes') or {}).get('unit_of_measurement') != 'W'):
-            return result
-        return dict(result, status='available', measured_at=when.isoformat(), power_w=power)
+        if when.utcoffset() is None:
+            raise ValueError('missing timezone')
+        result['source_reported_at'] = when.isoformat()
+        age = now - when.timestamp()
+        if age < 0:
+            return unavailable('source_report_future', 'De bronrapportage ligt in de toekomst.')
+        if age > 60:
+            return unavailable('source_report_stale',
+                               'De laatste bronrapportage van de aircovermogensmeter is ouder dan 60 seconden.')
+        return dict(result, status='available', measured_at=when.isoformat(), power_w=power,
+                    reason=None, error=None)
     except (ValueError, TypeError, AttributeError, OverflowError):
-        return result
+        return unavailable('source_timestamp_invalid', 'De bronrapportage heeft geen geldige tijdstempel.')
 
 
 class MeasurementPublisher:

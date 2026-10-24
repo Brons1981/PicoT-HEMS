@@ -69,18 +69,23 @@ def test_historical_selection_renders_read_only_comparison_without_changing_plan
             "planHistoryTime",
             "planHistorySelection",
             "planHistoryReason",
-            "renderPlanHistory",
+            "renderPlanHistory", "comparisonSegments", "comparisonDifferences",
+            "comparisonMode", "appendPlanComparison", "createSvgElement", "appendSvgText",
         )
     )
     result = run(
         """
 class Element {
- constructor(tag) {this.tag=tag;this.children=[];this.textContent='';}
+ constructor(tag) {this.tag=tag;this.children=[];this.textContent='';
+ this.style={};this.classList={add(){}};}
+ setAttribute() {}
+ appendChild(child) {this.children.push(child);}
  append(...children) {this.children.push(...children);}
  replaceChildren() {this.children=[];}
 }
 const nodes={}; const element=id=>nodes[id]??=new Element('div');
-const document={createElement:tag=>new Element(tag)};
+const SVG_NAMESPACE='http://www.w3.org/2000/svg';
+const document={createElement:tag=>new Element(tag),createElementNS:(ns,tag)=>new Element(tag)};
 const segments=[{starts_at:'2026-10-25T00:15:00Z',
  ends_at:'2026-10-25T01:15:00Z',primitive:'standby'}];
 let planHistoryPlans=[{plan_id:'current',active:true,created_at:'2026-10-24T16:57:00Z',
@@ -106,9 +111,10 @@ console.log(JSON.stringify({text:texts(element('plan-history-panels')).join('|')
     assert result["unchanged"] is True
     assert result["selected"] == "previous"
     assert "Huidig plan" in result["text"]
-    assert "Historisch plan — niet actief" in result["text"]
+    assert "Historisch plan - niet actief" in result["text"]
     assert "Actuele SOC maakt minder netladen mogelijk" in result["text"]
-    assert "Stand-by — woning op netstroom" in result["text"]
+    assert "Stand-by" in result["text"]
+    assert "Geen verschil" in result["text"]
     assert "UTC+02:00" in result["text"] and "UTC+01:00" in result["text"]
     assert "999" not in result["text"]
 

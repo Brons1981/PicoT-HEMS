@@ -160,7 +160,7 @@ class Runtime:
     def _collect(self):
         try:
             started = time.time()
-            states = fetch_states(self.url, self.token, self.control.temperature_entities)
+            states = fetch_states(self.url, self.token, self.control.report_entities)
             now = time.time()
             self.control.observe(states, started, now)
             data = snapshot(self.config, states, now)

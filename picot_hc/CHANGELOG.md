@@ -1,3 +1,14 @@
+# 0.1.0-dev.23
+
+- Centrale comfortinstellingen beneden, met handmatige thermostaat zonder actief schema.
+- Temperatuur handhaven zonder uitschakelen uitsluitend omdat het doel is bereikt.
+- Begrensd bijleren van opwarmtijd en afkoeling, plus eerder afbouwen binnen de comfortmarge.
+- Maximaal vijf airco/CV-energieplannen voor HEMS, met verse toestemming voor uitvoering.
+- CV-keuze op basis van beneden; veilige overdracht van de airco boven met minimumlooptijd en uitschakelbevestiging.
+- Vertraagde tapwatertoewijzing, expliciet geschatte CV-hulpstroom en optionele uurweeronderbouwing.
+- Vereist HEMS 2.0.0-dev.315 voor de nieuwe planuitwisseling. Werk HEMS eerst bij.
+- Automatische regeling staat na herstart uit. Controleer schema, bronnen en meldingen voordat je inschakelt; leren en gekozen starts uitvoeren zijn aparte opties.
+
 # 0.1.0-dev.22
 
 - Eigen fout- en herstelmeldingen via HA-events en centrale iPhone-blueprint.

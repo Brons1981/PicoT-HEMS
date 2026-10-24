@@ -1,8 +1,8 @@
 # PicoT Home Climate
 
-Handleiding voor de lokale HC/HEMS-ontwikkelversie van 24 oktober 2026.
-Deze wijzigingen zijn nog niet gepubliceerd. Het bestaande versienummer in de
-appconfiguratie is geen bewijs dat deze functies al live beschikbaar zijn.
+Handleiding voor Home Climate **0.1.0-dev.23** met HEMS **2.0.0-dev.315**
+(24 oktober 2026). Werk eerst HEMS bij en daarna HC. De nieuwe planuitwisseling
+vereist beide versies; installatie schakelt de automatische regeling niet in.
 
 ## Beneden instellen
 
@@ -158,10 +158,9 @@ configuratie. Ontbrekende of conflicterende prijstijdvakken worden niet ingevuld
 
 HC is een eigen app naast HEMS en Energy Devices, met eigen container, configuratie,
 Ingress-paneel en database. De bestaande PicoT HEMS-repository levert de app via
-de HA-appwinkel. Deze ontwikkelwijzigingen zijn pas beschikbaar na afzonderlijke
-publicatie en installatie. De nieuwe container en woningwerking zijn nog niet volledig geverifieerd.
-De lokale browserproef slaagt met een nagebootste HA-omgeving; ook de
-typecontrole van de HEMS-uitbreiding slaagt na herstel van de contracttypen.
+de HA-appwinkel. Werk eerst HEMS bij en daarna HC. De containerbouw, containercontrole,
+browserinteracties en typecontrole zijn in CI geslaagd. De werking met de echte
+HA-bronnen en de woning moet na installatie nog worden gecontroleerd.
 
 Gegevens staan in `/data/hc.sqlite3` en blijven bij gewone herstart/update behouden.
 Maak voor installatie en teruggaan een HA-back-up inclusief HC; oudere versies
@@ -191,11 +190,10 @@ en een verbindingsmelding. Een echte lokale verbinding gebruikt `HC_HA_API`
 (eindigend op `/api`) en `HC_HA_TOKEN` via de beveiligde omgeving. Zet de lokale
 ontwikkelserver niet rechtstreeks op internet.
 
-De volledige lokale HC-testreeks leverde op 24 oktober 2026 428 geslaagde tests en
-30 subtests op. Dit is geen bewijs van een geslaagde containerbuild, volledige
-typecontrole, browserproef of live woningproef. Zie
-[releasecontroles](../docs/development_log/2026-10-24-hc-release-checks.md) en
-[reserve en uurweer](../docs/development_log/2026-10-24-hc-reserve-completion.md).
+De functionele releasebasis slaagde in Linux CI met 438 HC-tests en 30 subtests,
+2.559 HEMS-tests (1 overgeslagen), containerbouw en browserinteracties.
+Dit is geen bewijs van live woningwerking. Zie
+[release en ingebruikname](../docs/development_log/2026-10-24-hc-hems-release.md).
 
 ## Historische installatiegegevens
 

@@ -15,7 +15,7 @@ from test_startup_energy import run
 
 
 class EnergyStartTests(DownstairsComfortTests):
-    def test_cv_recipe_starts_once_and_holds_into_comfort_after_permit_expiry(self):
+    def prepare_cv(self, before_renew=None, cv_offset=0):
         from pathlib import Path
 
         from picot_hc.cv_warmup import cv_sample
@@ -87,15 +87,18 @@ class EnergyStartTests(DownstairsComfortTests):
             cv_context=context,
         )
         self.assertIsNotNone(generator.pending)
-        index = next(
+        index = [
             i for i, p in enumerate(generator.local["candidates"]) if p.get("source") == "cv"
-        )
+        ][cv_offset]
         self.choose(index)
         self.assertEqual(self.runtime.start_intent.current["source"], "cv")
         chosen = self.runtime.start_intent.current["heat_starts_at"]
         window = self.runtime.start_intent.current["window"]
+        self.cv_context, self.cv_outlook = context, copy.deepcopy(outlook)
+        if before_renew is not None:
+            before_renew(chosen)
         self.now = chosen - 60
-        self.fresh()
+        self.fresh_cv()
         generator.withdraw("renew before execution")
         generator.fixed_start = chosen
         generator.standby.points = []
@@ -122,6 +125,12 @@ class EnergyStartTests(DownstairsComfortTests):
             i for i, p in enumerate(generator.local["candidates"]) if p.get("source") == "cv"
         )
         self.choose(index)
+        self.fresh_cv()
+        self.cv_outlook = copy.deepcopy(outlook)
+        return chosen, window
+
+    def test_cv_recipe_starts_once_and_holds_into_comfort_after_permit_expiry(self):
+        chosen, window = self.prepare_cv()
         self.now = chosen
         for entity in (self.config["gas"], self.config["cv_dhw_active"]):
             self.states[entity]["last_reported"] = self.stamp(self.now)
@@ -144,6 +153,185 @@ class EnergyStartTests(DownstairsComfortTests):
         self.assertEqual(
             self.runtime.energy_execution_publisher.submit.call_args.args[0]["state"], "running"
         )
+
+    def start_upstairs_before_cv(self, chosen):
+        self.temperature("boven", 18)
+        self.fresh_cv()
+        self.heat.tick(self.config, self.now)
+        self.assertIn("boven", self.heat.data["owned"])
+        self.assertGreater(chosen - self.now, 360)
+        self.now += 30
+        self.fresh_cv()
+        self.heat.tick(self.config, self.now)
+
+    def test_cv_plan_survives_upstairs_run_and_confirmed_handover(self):
+        chosen, _ = self.prepare_cv(self.start_upstairs_before_cv, cv_offset=1)
+        self.assertIsNotNone(self.runtime.energy_proposals.pending)
+        self.assertEqual(self.runtime.start_intent.current["source"], "cv")
+        started = self.heat.data["owned"]["boven"]["since"]
+        self.calls.clear()
+        self.heat.tick(self.config, self.now)
+        self.assertEqual(self.calls, [("/services/climate/set_hvac_mode", {
+            "entity_id": self.ctl.bindings["boven"]["entity_id"], "hvac_mode": "off"})])
+        self.assertGreaterEqual(self.now - started, 300)
+        self.now += 30
+        self.fresh_cv()
+        self.heat.tick(self.config, self.now)
+        self.assertNotIn("boven", self.heat.data["owned"])
+        self.assertEqual(len(self.calls), 1)
+        self.now = chosen
+        self.fresh_cv()
+        self.heat.tick(self.config, self.now)
+        self.assertEqual(self.calls[-1][1]["entity_id"], self.config["cv"])
+        self.assertEqual(self.calls[-1][1]["hvac_mode"], "heat")
+        self.assertIn("energy_start", self.heat.data["owned"]["cv"])
+
+    def test_near_cv_start_does_not_start_upstairs_for_a_short_run(self):
+        chosen, _ = self.prepare_cv()
+        self.temperature("boven", 18)
+        self.fresh_cv()
+        self.heat.tick(self.config, self.now)
+        self.assertEqual(self.calls, [])
+        self.assertNotIn("boven", self.heat.view(self.config, self.now)["desired"])
+        self.now = chosen
+        self.fresh_cv()
+        self.heat.tick(self.config, self.now)
+        self.assertEqual(self.calls[0][1]["entity_id"], self.config["cv"])
+        self.assertNotIn("boven", self.heat.view(self.config, self.now)["desired"])
+
+    def test_cv_handover_waits_for_off_feedback_without_repeating_stop(self):
+        chosen, _ = self.prepare_cv(self.start_upstairs_before_cv, cv_offset=1)
+        self.calls.clear()
+        self.heat.tick(self.config, self.now)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls[0][1]["hvac_mode"], "off")
+        upper = self.ctl.bindings["boven"]["entity_id"]
+        self.states[upper]["state"] = "heat"  # HA accepted the command; unit has not stopped.
+        for at in (chosen - 30, chosen, chosen + 30, chosen + 301):
+            self.now = at
+            self.fresh_cv()
+            self.heat.tick(self.config, self.now)
+            self.assertEqual(len(self.calls), 1)
+            self.assertNotIn("cv", self.heat.data["owned"])
+        self.assertIn("boven", self.heat.data["faults"])
+
+    def test_cv_handover_does_not_override_manual_upstairs_control(self):
+        import uuid
+
+        self.prepare_cv(self.start_upstairs_before_cv, cv_offset=1)
+        self.ctl.submit(dict(request_id=str(uuid.uuid4()), source="boven",
+                             field="temperature", value=21), self.config["stale_seconds"])
+        self.now += 1
+        self.fresh_cv()
+        self.calls.clear()
+        self.heat.tick(self.config, self.now)
+        self.assertEqual(self.calls, [])
+        self.assertNotIn("cv", self.heat.data["owned"])
+        self.assertNotIn("boven", self.heat.data["owned"])
+        self.assertTrue(any(h["source"] == "boven" and h["active"]
+                            for h in self.schedule.view(self.now)["overrides"]))
+
+    def test_cv_handover_requires_current_start_permission(self):
+        self.prepare_cv(self.start_upstairs_before_cv, cv_offset=1)
+        self.states[PERMIT_ENTITY]["state"] = "unavailable"
+        self.fresh_cv()
+        self.calls.clear()
+        self.heat.tick(self.config, self.now)
+        self.assertEqual(self.calls, [])
+        self.assertIn("boven", self.heat.data["owned"])
+
+    def test_runtime_cv_handover_keeps_request_current_through_ha_feedback(self):
+        chosen, _ = self.prepare_cv(self.start_upstairs_before_cv, cv_offset=1)
+        generator = self.runtime.energy_proposals
+        self.states[self.config["cv_status"]] = dict(state="off", attributes={})
+        for age in range(420, -1, -30):
+            for entity in (self.config["cv_status"], self.config["cv_dhw_active"]):
+                self.states[entity]["last_reported"] = self.stamp(self.now - age)
+            self.runtime.auxiliary_history.sample(self.config, self.states, self.now - age)
+        # Fake HA persists publications: a withdrawal cannot leave an old request
+        # or permit usable on the next control read.
+        generator.publisher.submit.side_effect = lambda message: self.states.__setitem__(
+            REQUEST_ENTITY, copy.deepcopy(message))
+
+        def outlook(*args):
+            value = copy.deepcopy(self.cv_outlook)
+            value.update(generated_at=self.now, valid_until=self.now + 180)
+            value["replacement_basis"]["modeled_source_id"] = self.runtime.auxiliary_history.identity
+            return value
+
+        with patch("picot_hc.__main__.read_outlook", side_effect=outlook):
+            self.now += 1
+            self.fresh_cv()
+            self.calls.clear()
+            self.runtime.collect()
+            self.assertEqual(self.runtime.connection, "connected")
+            self.assertEqual(self.calls[0][1]["hvac_mode"], "off")
+            self.assertEqual(self.states[REQUEST_ENTITY]["state"], "requested")
+            self.assertIsNotNone(generator.pending)
+            # HEMS independently reassesses the refreshed request at its boundary.
+            index = next(i for i, p in enumerate(generator.local["candidates"])
+                         if p.get("source") == "cv")
+            self.choose(index)
+            self.now = chosen - 30
+            self.fresh_cv()
+            self.runtime.collect()
+            self.assertEqual(self.states[REQUEST_ENTITY]["state"], "requested")
+            self.assertNotIn("boven", self.heat.data["owned"])
+            index = next(i for i, p in enumerate(generator.local["candidates"])
+                         if p.get("source") == "cv")
+            self.choose(index)
+            self.now = chosen
+            self.fresh_cv()
+            self.runtime.collect()
+            self.assertEqual(self.calls[-1][1]["entity_id"], self.config["cv"])
+            self.assertEqual(self.calls[-1][1]["hvac_mode"], "heat")
+            self.assertEqual(self.runtime.start_intent.current["status"], "started")
+
+    def test_selected_cv_survives_upstairs_start_on_same_hems_basis(self):
+        def check_same_basis(chosen):
+            self.start_upstairs_before_cv(chosen)
+            generator = self.runtime.energy_proposals
+            generator.fixed_start, generator.fixed_source = chosen, "cv"
+            original_basis = generator.pending["basis_snapshot_id"]
+            generator.tick(None, self.schedule.view(self.now), self.heat.view(self.config, self.now),
+                           self.cv_outlook, self.now, startup=self.runtime.startup_energy,
+                           idle_sample=self.sample, cv_context=self.cv_context)
+            self.assertIsNotNone(generator.pending)
+            self.assertEqual(generator.pending["basis_snapshot_id"], original_basis)
+            self.assertTrue(all(p.get("source") == "cv" and p["heat_starts_at"] == chosen
+                                for p in generator.local["candidates"]))
+            request_id = generator.pending["request_id"]
+            self.now += 30
+            self.fresh_cv()
+            generator.tick(None, self.schedule.view(self.now), self.heat.view(self.config, self.now),
+                           self.cv_outlook, self.now, startup=self.runtime.startup_energy,
+                           idle_sample=self.sample, cv_context=self.cv_context)
+            self.assertEqual(generator.pending["request_id"], request_id)
+            self.states[REQUEST_ENTITY] = copy.deepcopy(generator.publisher.submit.call_args.args[0])
+            from picot_hc.energy_start import permitted
+            self.assertFalse(permitted(self.states, self.runtime.start_intent.current, self.now))
+
+        self.prepare_cv(check_same_basis, cv_offset=1)
+
+    def test_supported_cv_batch_survives_last_minute_of_same_basis(self):
+        def check_late_choice(chosen):
+            generator = self.runtime.energy_proposals
+            original = copy.deepcopy(generator.pending)
+            generator.fixed_start, generator.fixed_source = chosen, "cv"
+            self.now += 61
+            self.fresh_cv()
+            generator.tick(None, self.schedule.view(self.now), self.heat.view(self.config, self.now),
+                           self.cv_outlook, self.now, startup=self.runtime.startup_energy,
+                           idle_sample=self.sample, cv_context=self.cv_context)
+            self.assertEqual(generator.pending, original)
+
+        self.prepare_cv(check_late_choice, cv_offset=1)
+
+    def fresh_cv(self):
+        for entity in (self.config["gas"], self.config["cv_dhw_active"], self.config["cv_status"]):
+            if entity in self.states:
+                self.states[entity]["last_reported"] = self.stamp(self.now)
+        self.fresh()
 
     def fresh(self):
         for zone in self.config["zones"]:

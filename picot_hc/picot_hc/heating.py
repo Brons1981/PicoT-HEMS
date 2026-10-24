@@ -338,6 +338,7 @@ class Heating:
         result = dict(desired=desired, zones=zones, demand=demand, costs=costs, price=price,
                     door_stop=door_stop, sources=sources, enabled=enabled,
                     estimate=True, strategy='current_heat_cost', preheating=learning['preheating'], learning=learning['enabled'], learning_status=learning, learning_context=context)
+        result['cv_handover_seconds'] = max(60, 2 * config.get('poll_seconds', 30))
         if hasattr(self, 'hourly_weather'):
             result['hourly_weather'] = self.hourly_weather(now)
         if self.energy_start is not None:

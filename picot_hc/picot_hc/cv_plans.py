@@ -32,8 +32,22 @@ def candidates(
     ):
         return []
     original = context["sample"]
-    if plan.get("owned", {}).get("boven"):
-        return []  # A conflicting owned controller must finish before a shared-source start.
+    upstairs = plan.get("owned", {}).get("boven")
+    source = plan.get("sources", {}).get("boven", {})
+    earliest = now
+    if upstairs:
+        since = upstairs.get("since")
+        if (not finite(since) or since > now or upstairs.get("released")
+                or "boven" in plan.get("faults", {})):
+            return []
+        # A renewed fixed plan keeps its original transfer deadline while Off
+        # feedback is pending. Execution still requires observed, confirmed Off.
+        earliest = since + 300
+        if fixed_start is None:
+            earliest = max(now, earliest)
+        earliest += plan.get("cv_handover_seconds", 60)
+    elif source.get("state", "off") != "off" or source.get("pending"):
+        return []  # Never claim or stop a manually operated upstairs source.
     if (
         original.get("gas_screening", {}).get("status") != "available"
         or original["gas_screening"].get("active") is not False
@@ -101,5 +115,6 @@ def candidates(
     return [
         p
         for p in options
-        if finite(p["non_electric_cost_eur"]) and 0 <= p["non_electric_cost_eur"] <= 1000
+        if p["heat_starts_at"] >= earliest
+        and finite(p["non_electric_cost_eur"]) and 0 <= p["non_electric_cost_eur"] <= 1000
     ]

@@ -363,9 +363,19 @@ class Proposals:
                 "voor een starttijd binnen de comfortgrenzen."
             )
             return
+        narrowing_cv = False
         if self.pending and self.local and self.local.get("action") == "scheduled_start":
             old = self.local["sample"]
             previous = self.local["candidates"]
+            # Pin a captured CV choice once, retaining its time/source while
+            # removing unchosen alternatives that an upstairs run can invalidate.
+            # A new request still requires fresh HEMS assessment and permission.
+            narrowing_cv = (
+                self.fixed_source == "cv" and self.fixed_start is not None
+                and len(previous) > 1
+                and any(p.get("source") == "cv" and p["heat_starts_at"] == self.fixed_start
+                        for p in previous)
+            )
             checked = self.delayed_options(
                 sample,
                 view,
@@ -394,9 +404,12 @@ class Proposals:
                 <= p["maintenance"]["power_w"] + 1e-6
                 for p in previous
             )
+            # Do not replace a fully supported batch merely because a choice
+            # was captured, especially in its last minute of validity.
+            narrowing_cv = narrowing_cv and not supported
             if (
                 now < self.local["expires"]
-                and supported
+                and supported and not narrowing_cv
                 and view["revision"] == self.local["schedule_revision"]
                 and self.model.same(sample, old)
                 and sample["indoor"] == old["indoor"]
@@ -410,9 +423,22 @@ class Proposals:
         expires = min(outlook["valid_until"], outlook["generated_at"] + 120, now + 120)
         expires = min(expires, self.feedback.until) if self.feedback.until is not None else expires
         key = (outlook["snapshot_id"], basis["basis_id"])
-        if key in self.attempted or expires - now < 60:
+        if (key in self.attempted and not narrowing_cv) or expires - now < 60:
             self.withdraw("Wachten op een nieuwe HEMS-basis voor starttijdvoorstellen.")
             return
+        if (narrowing_cv and self.pending["basis_snapshot_id"] == outlook["snapshot_id"]
+                and self.pending["replacement_basis_id"] == basis["basis_id"]):
+            # Keep the original future profile boundary on the same basis.
+            # Shortening it to now+30 would make the next poll invalidate its
+            # already-started standby prefix before the chosen heating time.
+            start = max(start, self.local["starts_at"])
+            options = self.delayed_options(
+                sample, view, plan, startup.model, self.model, standby,
+                now, start, end, fixed_start=self.fixed_start,
+            )
+            if not options:
+                self.withdraw("Gekozen CV-plan past niet meer binnen de actuele basis.")
+                return
         self.offer_options(
             sample,
             view,

@@ -91,3 +91,27 @@ def test_cv_comparison_requires_whole_comfort_window_and_ignores_upstairs_temper
     before = candidates(sample, view, plan, context, standby, now, now + 120, end)
     plan["zones"]["boven"] = dict(temperature=5, target=25, demand=True)
     assert candidates(sample, view, plan, context, standby, now, now + 120, end) == before
+
+
+def test_owned_upstairs_allows_cv_after_minimum_run_and_feedback(tmp_path):
+    now, sample, view, plan, context, standby = setup(tmp_path)
+    plan["owned"] = {"boven": {"command": "upper", "since": now}}
+    options = candidates(sample, view, plan, context, standby, now, now + 120,
+                         view["next"]["ends_at"])
+    assert options
+    assert all(p["heat_starts_at"] >= now + 360 for p in options)
+    fixed = options[0]["heat_starts_at"]
+    # Renewal must not move the transfer deadline forward during off confirmation.
+    assert candidates(sample, view, plan, context, standby, fixed - 30, fixed,
+                      view["next"]["ends_at"], fixed_start=fixed)
+
+
+def test_cv_candidate_transfer_budget_tracks_poll_interval(tmp_path):
+    now, sample, view, plan, context, standby = setup(tmp_path)
+    plan["owned"] = {"boven": {"command": "upper", "since": now - 200}}
+    plan["cv_handover_seconds"] = 120
+    end = view["next"]["ends_at"]
+    assert not candidates(sample, view, plan, context, standby, now, now + 120,
+                          end, fixed_start=now + 120)
+    assert candidates(sample, view, plan, context, standby, now, now + 220,
+                      end, fixed_start=now + 220)

@@ -79,6 +79,22 @@ class EnergyStart:
         result["learning_status"].update(phase="hems_waiting_start", preheating=False, target=floor)
         return result
 
+    def prepare_cv_handover(self, plan, current, now):
+        """Reserve time for an owned upstairs run and its confirmed stop."""
+        remaining = current["heat_starts_at"] - now
+        margin = plan.get("cv_handover_seconds", 60)
+        own = self.heating.data["owned"].get("boven")
+        if own:
+            # Do not shorten a run to make a late/stale economic plan fit.
+            since = own.get("since")
+            if (finite(since) and now - since >= 300 and remaining <= margin
+                    and not own.get("released")):
+                plan["desired"].pop("boven", None)
+        elif remaining <= 300 + margin:
+            # Starting now would require a short stop or miss the fixed CV start.
+            plan["desired"].pop("boven", None)
+        return plan
+
     def apply(self, plan, config, now, direct_desired):
         """Pure decision: ownership and one-shot dispatch are persisted by Heating.guard."""
         heat = self.heating
@@ -133,6 +149,12 @@ class EnergyStart:
             or plan["sources"][other_source]["pending"]
         ):
             return plan
+        if chosen_source == "cv" and (
+            "boven" in heat.data["faults"]
+            or any(h["source"] == "boven" and h["active"] for h in view["overrides"])
+            or heat.data["owned"].get("boven", {}).get("released")
+        ):
+            return plan
         if active:
             # A permit only gates initiation. Expiry must never stop an incumbent.
             if own.get("released"):
@@ -143,7 +165,7 @@ class EnergyStart:
                 or heat.data["owned"].get("cv")
                 or now >= current["heat_starts_at"] + 30
                 or now < current["heat_starts_at"]
-                and not plan["preheating"]
+                and not plan["preheating"] and chosen_source != "cv"
                 or not permitted(heat.control.states, current, now)
             ):
                 return plan
@@ -279,11 +301,21 @@ class EnergyStart:
                 or holding["power_w"] > recipe["maintenance"]["power_w"] + 1e-6
             ):
                 return plan
+            if chosen_source == "cv":
+                checked = self.prepare_cv_handover(checked, current, now)
+                upstairs = plan["sources"]["boven"]
+                if not waiting and (
+                    heat.data["owned"].get("boven") or upstairs["pending"]
+                    or not upstairs["available"] or upstairs["state"] != "off"
+                ):
+                    return checked
             if waiting:
                 return checked
         # Use the existing action, minimum-off time, fresh-read guard and command feedback.
         result = copy.deepcopy(plan)
-        if "cv" in result["desired"] and "boven" in direct_desired:
+        if chosen_source == "cv":
+            result["desired"].pop("boven", None)
+        elif "cv" in result["desired"] and "boven" in direct_desired:
             result["desired"]["boven"] = direct_desired["boven"]
         result["desired"].pop(other_source, None)
         if active and full_window and plan["learning_status"].get("phase") == "coast":

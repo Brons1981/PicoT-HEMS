@@ -27,6 +27,15 @@ Na uitschakelen geldt minimaal drie minuten rust voordat HC opnieuw start.
 Een economische bronwissel wacht op de bestaande minimumlooptijd van vijf minuten
 en op bevestigde uitschakeling van de vorige bron.
 
+Bij een gekozen CV-start voor beneden kan boven tot de overdracht blijven
+verwarmen. HC plant minimaal vijf minuten looptijd en ruimte voor twee polls
+(minimaal zestig seconden) voor de uitschakelbevestiging. Vlak voor die overdracht
+start HC boven geen nieuwe korte run. De CV start pas na bevestigde uitschakeling;
+een handmatige overname, storing of ontbrekende bevestiging wordt niet omzeild.
+Een geldig gekozen CV-tijdstip blijft bij planvernieuwing behouden. Als andere
+alternatieven afvallen, kan HC het voorstel eenmalig beperken tot dat gekozen
+CV-plan; daarvoor is opnieuw beoordeling en toestemming van HEMS nodig.
+
 De CV-keuze wordt bepaald door beneden. De temperatuur boven blokkeert die keuze
 niet en kan de CV ook niet zelfstandig aanvragen. Als de CV boven meeverwarmt,
 is dat een gevolg van de installatie. Bij alleen warmtevraag boven gebruikt HC

@@ -999,6 +999,34 @@ def _restore_daily_charge_context(
             and a.assignment_id not in deferred_recovery_ids
             and (a.ends_at >= earliest_observation or a.assignment_id in latest_completed_ids)
         )
+        # Calendar expiry does not expire a still-admitted remaining route.
+        # Read and validate the explicit active pointer before excluding its
+        # owner; never reconstruct or select a plan from timestamps here.
+        active_plans = tuple(
+            active for scope in sorted(scopes)
+            if (active := store.load_active_daily_main_plan(scope)) is not None
+            and active.valid_until > snapshot.captured_at
+        )
+        active_route_ids = {p.plan_id for p in active_plans}
+        active_owner_ids = {
+            a.assignment_id for a in existing
+            if a.route_plan_id in active_route_ids or any(
+                p.execution_scope_id == a.execution_scope_id
+                and s.main_assignment_id == a.assignment_id
+                and s.retained_execution_origin is not None
+                and s.retained_execution_origin.plan_id == a.route_plan_id
+                and any(part.segment_id == s.retained_execution_origin.segment_id
+                        for part in a.main_segments)
+                for p in active_plans for s in p.segments
+            )
+        }
+        # A shared market plan keeps the original charge owner through its
+        # validated plan/segment lineage, not equality with the shared plan ID.
+        assignments += tuple(
+            a for a in existing if a.execution_scope_id in scopes
+            and a.assignment_id not in deferred_recovery_ids
+            and a.assignment_id in active_owner_ids and a not in assignments
+        )
         for assignment in assignments:
             if assignment.route_plan_id is not None:
                 plan = store.load_daily_main_plan(assignment.assignment_id)
@@ -1010,17 +1038,15 @@ def _restore_daily_charge_context(
                         plans.append(plan)
         stored_market_bindings = store.load_market_plan_bindings()
         transition_plan_ids = store.load_market_transition_plan_ids()
-        for scope in sorted(scopes):
-            active = store.load_active_daily_main_plan(scope)
-            if active is not None and active.valid_until > snapshot.captured_at:
-                bindings = tuple(b for b in stored_market_bindings if b.plan_id == active.plan_id)
-                if active.plan_id not in {p.plan_id for p in plans}:
-                    if (not bindings
-                            and active.plan_id not in transition_plan_ids):
-                        raise ValueError("active_daily_main_plan_owner_not_restored")
-                    plans.append(active)
-                market_plan_bindings += bindings
-                active_main_plan_ids.append(active.plan_id)
+        for active in active_plans:
+            bindings = tuple(b for b in stored_market_bindings if b.plan_id == active.plan_id)
+            if active.plan_id not in {p.plan_id for p in plans}:
+                if (not bindings
+                        and active.plan_id not in transition_plan_ids):
+                    raise ValueError("active_daily_main_plan_owner_not_restored")
+                plans.append(active)
+            market_plan_bindings += bindings
+            active_main_plan_ids.append(active.plan_id)
         if not scopes:
             raise ValueError("daily_charge_execution_scope_unavailable")
         if any(
@@ -1039,7 +1065,8 @@ def _restore_daily_charge_context(
             a for a in store.load_daily_assignments()
             if a.execution_scope_id in scopes
             and a.assignment_id not in deferred_recovery_ids
-            and (a.ends_at >= earliest_observation or a.assignment_id in latest_completed_ids)
+            and (a.ends_at >= earliest_observation or a.assignment_id in latest_completed_ids
+                 or a.assignment_id in active_owner_ids)
         )
         market_progress = tuple(
             p

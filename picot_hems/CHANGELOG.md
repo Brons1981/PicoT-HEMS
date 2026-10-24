@@ -1,3 +1,10 @@
+# 2.0.0-dev.314
+
+- Herstel de koppeling met een nog geldig vervolgplan wanneer de oorspronkelijke laadopdracht na middernacht is verlopen.
+- Voorkom hierdoor onterechte terugval door active_daily_main_plan_owner_not_restored.
+- Behoud geplande laadeindtijden en dagdoelen: geen automatisch doorladen of onterecht voltooid melden.
+- Het opslagformaat blijft ongewijzigd.
+
 # 2.0.0-dev.313
 
 - Kies een aangeboden PV-route voor één laadopdracht; PicoT controleert de haalbaarheid opnieuw met actuele gegevens.

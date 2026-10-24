@@ -1,3 +1,11 @@
+# 2.0.0-dev.318
+
+- Vereenvoudig het dashboard: ongebruikte panelen en geneste uitklapvelden weg.
+- Plaats Maak een nieuw plan bovenaan en toon concrete fouten direct.
+- Vergelijk aangeboden routes grafisch bij de keuzeknoppen; markeer verschillen en verouderde voorstellen.
+- Geef de specifieke HC-meetfout door. Werk ook Home Climate bij naar dev.24.
+- Plannerbeleid blijft gelijk; een planreset is niet nodig.
+
 # 2.0.0-dev.317
 
 - Vergelijk het huidige plan met eerdere opgeslagen plannen in het dashboard.

@@ -1,3 +1,24 @@
+## Release HEMS dev.318 en HC dev.24 - 24 oktober 2026
+
+Alex heeft de gezamenlijke publicatie goedgekeurd. Dashboardvereenvoudiging en HC-bronrapportage gaan via PR en volledige CI naar main. Installatie volgt apart; beide apps bijwerken, geen planreset nodig. Zie de twee onderstaande ontwikkellogs voor scope en bewijs.
+
+## Aanvulling HC-bronrapportage - lokaal, 24 oktober 2026
+
+Alex heeft de HC-meetfout aan de dashboardreparatie toegevoegd. Lees
+`docs/development_log/2026-10-24-hc-meter-reporting.md`.
+Ook de aircovermogensmeter gebruikt nu de bestaande actuele HA-template-uitlezing;
+geen nulvulling of TTL-verruiming. HEMS ontvangt concrete foutredenen.
+63 gerichte tests geslaagd. Nu zijn HEMS én HC gewijzigd; nog geen release/live-update.
+
+## Dashboard vereenvoudigen - lokaal, 24 oktober 2026
+
+Alex heeft na dev.317 de verwijdering van ongebruikte panelen/uitklapvelden en een
+vergelijking direct bij de routekeuze bevestigd. Lees
+`docs/development_log/2026-10-24-dashboard-attention.md`.
+Reset bovenaan, concrete fouten, grafische vergelijking van canonieke aangeboden
+routes en bestaande historie. Geen planner-/dispatchwijziging of nieuwe release.
+De actuele live invoerfout is nog niet aan ED toegeschreven: nieuwe diagnose ontbreekt.
+
 ## Release HEMS dev.317 - 24 oktober 2026
 
 Alex heeft publicatie van planvergelijking en samenhangende plan/SOC-publicatie aangevraagd.

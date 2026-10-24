@@ -827,6 +827,10 @@ class HomeAssistantStateReader:
             error=(
                 "price_forecast_points_missing"
                 if binding.category == "nordpool" and not unavailable and not price_points
+                else str(typed_attributes["error"])[:240]
+                if binding.semantic_role == "controlled_load_measurement" and unavailable
+                and typed_attributes.get("contract") == "controlled-load-measurement:v1"
+                and isinstance(typed_attributes.get("error"), str)
                 else None
             ),
             price_points=price_points,

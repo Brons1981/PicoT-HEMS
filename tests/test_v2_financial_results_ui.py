@@ -236,8 +236,8 @@ def test_amount_marker_opens_the_day_evidence_with_keyboard_focus():
       flatten(root).find(e=>e.tag==='button' &&
         e.attributes['aria-label']?.startsWith('Batterijvoordeel netto: 26 sep')).onclick();
     """)
-    assert sum(node["open"] for node in nodes if node["tag"] == "details") == 2
-    assert any(node["focused"] for node in nodes if node["tag"] == "summary")
+    assert not any(node["tag"] == "details" for node in nodes)
+    assert any(node["focused"] for node in nodes if node["tag"] == "h3")
     assert any("Batterijvoordeel netto: 26 sep" in node["aria"] for node in nodes)
 
 
@@ -296,7 +296,7 @@ def test_full_calendar_day_accepts_dst_days_and_rejects_wrong_boundaries():
         assert _presentation("financialFullDay(" + json.dumps(record) + ")") is expected
 
 
-def test_deep_disclosures_keep_open_and_closed_states_across_refresh():
+def test_financial_evidence_remains_visible_without_disclosures_across_refresh():
     financial = {"days": [{"day": "2026-09-26", "financial_metrics": {
         "status": "estimated", "values": {},
         "inferences": [{"role": "pv_generation", "kind": "night_zero"}],
@@ -306,14 +306,11 @@ def test_deep_disclosures_keep_open_and_closed_states_across_refresh():
     interaction = """
       const titles=['Onderbouwing van de tijdschatting','Afgeleide meetgegevens',
         'Ontbrekende meetgegevens'];
-      const find=title=>flatten(root).find(e=>e.tag==='details' &&
+      const find=title=>flatten(root).find(e=>e.tag==='section' &&
         e.children[0]?.textContent===title);
-      titles.forEach(title=>find(title).open=true);
       renderFinancialResults(DATA);
-      if(!titles.every(title=>find(title).open)) throw Error('Opened disclosure lost on refresh');
-      titles.forEach(title=>find(title).open=false);
-      renderFinancialResults(DATA);
-      if(titles.some(title=>find(title).open)) throw Error('Closed disclosure reopened');
+      if(!titles.every(title=>find(title))) throw Error('Evidence lost on refresh');
+      if(flatten(root).some(e=>e.tag==='details')) throw Error('Disclosure returned');
     """.replace("DATA", json.dumps(financial))
     _render(financial, interaction)
 

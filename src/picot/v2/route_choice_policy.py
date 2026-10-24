@@ -118,6 +118,26 @@ def _summary(
         raise ValueError("route comparison requires projection evidence inside the delivery day")
     return {
         "label": label,
+        # Presentation evidence only. Keep the candidate's complete schedule,
+        # including non-charging actions, separate from the consent signature.
+        "timeline": {
+            "candidate_id": source.candidate_id,
+            "schedule_id": w.schedule.schedule_id,
+            "snapshot_id": w.schedule.snapshot_id,
+            "starts_at": w.schedule.horizon_start.isoformat(),
+            "ends_at": w.schedule.horizon_end.isoformat(),
+            "segments": [
+                {
+                    "starts_at": interval.starts_at.isoformat(),
+                    "ends_at": interval.ends_at.isoformat(),
+                    "intent": interval.intent.value,
+                    "storage_export_target_wh": interval.storage_export_target_wh,
+                }
+                for interval in w.schedule.intervals[:512]
+            ],
+            "truncated": len(w.schedule.intervals) > 512,
+            "total_segments": len(w.schedule.intervals),
+        },
         "main_signature": main_signature(w),
         "windows": [
             f"{s.starts_at.astimezone(timezone):%d-%m %H:%M}–{s.ends_at.astimezone(timezone):%H:%M}"

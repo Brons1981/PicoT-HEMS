@@ -27,6 +27,7 @@ const status={dataset:{}}; const element=()=>status;
 const shouldDeferRenderForSelection=()=>true;
 const renderView=()=>full++; const finishStartup=()=>{};
 const refreshLiveStatus=view=>live.push(view.zendure_now.active_mode);
+const renderDashboardFaults=()=>{}; const renderStorageModeOverride=()=>{};
 """
         + js("applyView")
         + """

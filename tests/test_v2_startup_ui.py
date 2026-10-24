@@ -23,6 +23,8 @@ const element = id => nodes[id] ??= {
 let updateWatcherStopped = false, pendingView = null, viewRevision = 0;
 const shouldDeferRenderForSelection = () => false;
 const refreshLiveStatus = () => {};
+const renderDashboardFaults = () => {};
+const renderStorageModeOverride = () => {};
 const renderView = () => {element('execution-mode').textContent = 'Live uitvoering';};
 const setTimeout = callback => {updateWatcherStopped = true; callback();};
 '''

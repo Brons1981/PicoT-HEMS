@@ -1,3 +1,18 @@
+## Release HEMS dev.319 - 24 oktober 2026
+
+Alex heeft publicatie van de uitvoeringsmelding- en kleurenreparatie aangevraagd.
+Via PR en CI naar main; Home Climate blijft dev.24. Geen planreset nodig.
+Installatie en livecontrole volgen afzonderlijk. Zie het onderstaande ontwikkellog.
+
+## Dashboardmelding en kleuren - lokaal, 24 oktober 2026
+
+Alex meldt na dev.318 onterecht 0% planningszekerheid en blauw netladen.
+Lees `docs/development_log/2026-10-24-dashboard-execution-confidence.md`.
+De nieuwe diagnose toont planbehoud en already_active Standby zonder blokkades.
+Alleen de UI maakte een fictieve blokkade van ontbrekende kandidaatscores.
+Readiness volgt nu de uitvoeringsrecords; kleuren volgen de bestaande prijsbalk.
+Geen planner-/aansturingswijziging, release of live-update uitgevoerd.
+
 ## Release HEMS dev.318 en HC dev.24 - 24 oktober 2026
 
 Alex heeft de gezamenlijke publicatie goedgekeurd. Dashboardvereenvoudiging en HC-bronrapportage gaan via PR en volledige CI naar main. Installatie volgt apart; beide apps bijwerken, geen planreset nodig. Zie de twee onderstaande ontwikkellogs voor scope en bewijs.

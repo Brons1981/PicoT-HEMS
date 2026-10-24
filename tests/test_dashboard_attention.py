@@ -120,7 +120,7 @@ const before=JSON.stringify(choice);
 renderRouteChoices({choices:[choice]});
 const card=element('route-choices');
 const svg=walk(card).find(n=>n.tagName==='SVG');
-const bars=walk(svg).filter(n=>n.tagName==='RECT'&&n.attrs.fill==='#2878b8');
+const bars=walk(svg).filter(n=>n.tagName==='RECT'&&n.attrs.fill==='#df5c57');
 const valid={text:texts(card),buttons:walk(card).filter(n=>n.type==='button').map(n=>n.textContent),
  widths:bars.map(n=>n.attrs.width),positions:bars.map(n=>n.attrs.x),
  unchanged:before===JSON.stringify(choice)};
@@ -216,3 +216,39 @@ def test_hc_measurement_failure_is_named_without_blame_on_ed_service():
     assert "Home Climate-belastingsmeting" in str(faults)
     assert "ouder dan 60 seconden" in str(faults)
     assert "Energy Devices" not in str(faults)
+
+
+def test_comparison_modes_use_the_same_palette_as_the_price_timeline():
+    groups = {
+        "canonical-charge": ("grid_requirement", "grid_charge", "charge", "charge_at_power"),
+        "canonical-nom": ("nom", "balance_bidirectional", "balance_charge_only"),
+        "canonical-support": ("self_consumption", "household_support_only",
+                              "balance_discharge_only", "discharge_only"),
+        "canonical-trade": ("storage_export", "discharge", "discharge_at_power"),
+        "canonical-standby": ("standby", "stop_all", "hold_storage"),
+    }
+    expected = {"canonical-charge": "#df5c57", "canonical-nom": "#35a862",
+                "canonical-support": "#3994e6", "canonical-trade": "#aab2bd",
+                "canonical-standby": "#e3aa45"}
+    for group, modes in groups.items():
+        color = expected[group]
+        assert f".price-swatch.{group} {{ background: {color}; }}" in DASHBOARD_HTML
+        assert f".planner-window.{group} {{ fill: {color}; }}" in DASHBOARD_HTML
+        assert f'["{group}", "{color}"]' in DASHBOARD_HTML
+        colors = run(["comparisonMode"], json.dumps(modes) + ".map(m=>comparisonMode(m)[1])")
+        assert colors == [color] * len(modes)
+
+
+def test_execution_warning_uses_recorded_block_not_a_missing_confidence():
+    result = dom_run(["dashboardFaults", "renderDashboardFaults"], """
+renderDashboardFaults({plan_explanation:{readiness:{status:'blocked',
+  warning_nl:'Uitvoering geblokkeerd: Zendure verbinding verbroken.'}}});
+const failure=texts(element('central-health'));
+renderDashboardFaults({plan_explanation:{readiness:{status:'already_active',
+  confidence_percent:null,warning_nl:null,blockers:[]}}});
+console.log(JSON.stringify({failure,hidden:element('central-health').hidden,
+  text:texts(element('central-health'))}));
+""")
+    assert "Zendure verbinding verbroken" in result["failure"]
+    assert result["hidden"] is True
+    assert result["text"] == ""

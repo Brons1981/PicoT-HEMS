@@ -1,3 +1,10 @@
+# 2.0.0-dev.319
+
+- Herstel de onterechte 0%-melding bij een behouden plan: de uitvoeringsstatus volgt de echte uitvoeringsrecords.
+- Blijf werkelijke blokkades en Zendure-fouten met hun reden tonen.
+- Gebruik dezelfde kleuren in planvergelijking, historie en prijsbalk; netladen is rood.
+- Geen wijziging aan planning of aansturing; geen planreset nodig. Home Climate blijft dev.24.
+
 # 2.0.0-dev.318
 
 - Vereenvoudig het dashboard: ongebruikte panelen en geneste uitklapvelden weg.

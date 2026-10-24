@@ -277,6 +277,75 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
         self._incident_path = incident_path
         self._read_cache = JSONFileCache(path)
 
+    def load_plan_history(self) -> dict[str, object]:
+        """Return detached, bounded records; never restore or revise historical plans."""
+        payload = self._read_payload()
+        for key in ("active_execution_plan_ids", "execution_plans", "daily_main_history",
+                    "daily_assignments"):
+            if not isinstance(payload.get(key, {}), dict):
+                raise ValueError("invalid plan history collection")
+        active = set(payload.get("active_execution_plan_ids", {}).values())
+        records = dict(payload.get("execution_plans", {}))
+        reasons = {}
+        omitted = 0
+        for record in payload.get("daily_main_history", {}).values():
+            if not isinstance(record, dict):
+                omitted += 1
+                continue
+            plan = record.get("plan", {})
+            owner = record.get("assignment", {})
+            if not isinstance(plan, dict) or not isinstance(owner, dict):
+                omitted += 1
+                continue
+            plan_id = plan.get("plan_id")
+            if isinstance(plan_id, str) and plan_id:
+                records.setdefault(plan_id, plan)
+                if owner.get("route_plan_id") == plan_id:
+                    reasons[plan_id] = owner.get("revision_reason")
+        for owner in payload.get("daily_assignments", {}).values():
+            if isinstance(owner, dict) and isinstance(owner.get("route_plan_id"), str):
+                reasons[owner["route_plan_id"]] = owner.get("revision_reason")
+        ordered = []
+        for plan_id, plan in records.items():
+            try:
+                created = datetime.fromisoformat(plan["created_at"])
+                if created.utcoffset() is None or plan.get("plan_id") != plan_id:
+                    raise ValueError("invalid plan history identity")
+                parts = plan.get("segments")
+                if not isinstance(parts, list) or not parts:
+                    raise ValueError("missing historical segments")
+                for part in parts[:512]:
+                    if not isinstance(part, dict) or any(
+                        isinstance(part.get(key), (list, dict)) for key in (
+                            "starts_at", "ends_at", "primitive", "purpose",
+                            "requested_power_w", "charge_source_policy",
+                        )
+                    ):
+                        raise ValueError("invalid historical segment")
+                    start = datetime.fromisoformat(part["starts_at"])
+                    end = datetime.fromisoformat(part["ends_at"])
+                    if start.utcoffset() is None or end.utcoffset() is None or end <= start:
+                        raise ValueError("invalid historical interval")
+                ordered.append((plan_id in active, created, plan_id, plan))
+            except (KeyError, ValueError, TypeError, AttributeError):
+                omitted += 1
+        ordered.sort(key=lambda row: row[:3], reverse=True)
+        plans = []
+        for is_active, _, plan_id, plan in ordered[:20]:
+            segments = [{key: part.get(key) for key in (
+                "starts_at", "ends_at", "primitive", "purpose", "requested_power_w",
+                "charge_source_policy",
+            )} for part in plan.get("segments", [])[:512]]
+            plans.append({
+                "plan_id": plan_id, "created_at": plan["created_at"],
+                "execution_scope_id": plan.get("execution_scope_id"),
+                "energy_path_id": plan.get("winning_energy_path_id"),
+                "revision_reason": reasons.get(plan_id), "active": is_active,
+                "segments": segments, "segments_truncated": len(plan.get("segments", [])) > 512,
+            })
+        return {"status": "available" if plans else "unavailable", "plans": plans,
+                "truncated": len(ordered) > 20, "omitted_invalid_records": omitted}
+
     def load_ev_exclusion_scopes(self) -> set[str]:
         """Restore physical exclusion independently of replaceable economic plans."""
         raw = self._read_payload().get("ev_exclusion_scopes", [])

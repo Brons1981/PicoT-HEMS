@@ -1,3 +1,12 @@
+## Release HEMS dev.317 - 24 oktober 2026
+
+Alex heeft publicatie van planvergelijking en samenhangende plan/SOC-publicatie aangevraagd.
+Lees `docs/development_log/2026-10-24-plan-history-publication.md`.
+Twintig recente opgeslagen plannen zijn alleen-lezen te vergelijken. De actuele serverweergave
+staat klaar voor de nieuwe-planmelding; financieel rekenwerk volgt via de bestaande overlay.
+Plannerbeleid, kleine stand-bywisselingen en HC dev.23 blijven gelijk.
+Publicatie via PR en CI; installatie volgt afzonderlijk. Geen planreset nodig voor deze update.
+
 ## Release HEMS dev.316 - 24 oktober 2026
 
 Alex heeft publicatie van de gecombineerde nacht-NOM/dashboardreparatie aangevraagd.

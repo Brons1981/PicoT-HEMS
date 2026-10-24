@@ -865,6 +865,14 @@ DASHBOARD_HTML = """<!doctype html>
     }
     .price-swatch.soc-actual { background: #c084fc; height: 3px; }
     .price-swatch.soc-projected { background: #ffd600; height: 3px; }
+    .plan-history-panels {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+      gap: 16px;
+    }
+    .plan-history-panels article { min-width: 0; overflow-x: auto; }
+    .plan-history-panels th, .plan-history-panels td { padding: 6px; text-align: left; }
+    .plan-history-panels table { width: 100%; }
+    .plan-history-panels code { overflow-wrap: anywhere; }
     .planner-window-summary {
       display: flex;
       flex-wrap: wrap;
@@ -1344,6 +1352,16 @@ DASHBOARD_HTML = """<!doctype html>
       Nog geen planuitleg beschikbaar.
     </section>
 
+    <h2>Planwijzigingen vergelijken</h2>
+    <section id="plan-history" class="timeline-panel" aria-label="Planwijzigingen vergelijken">
+      <p class="muted">Alleen terugkijken. Deze vergelijking verandert de huidige planning niet.
+        Historische SOC-prognoses worden hier niet opnieuw berekend.</p>
+      <label for="plan-history-select">Vergelijk met</label>
+      <select id="plan-history-select" aria-label="Plan voor vergelijking"></select>
+      <p id="plan-history-message" class="muted" aria-live="polite">Planhistorie laden.</p>
+      <div id="plan-history-panels" class="plan-history-panels"></div>
+    </section>
+
     <h2>Energieplan batterij</h2>
     <section
       id="storage-energy-source-needs"
@@ -1394,6 +1412,13 @@ DASHBOARD_HTML = """<!doctype html>
     const element = (id) => document.getElementById(id);
     const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
     const PRICE_DISPLAY_HOURS = 48;
+    let planHistoryPlans = [];
+    let planHistoryTruncated = false;
+    let planHistoryOmitted = 0;
+    let planHistoryStale = false;
+    let planHistoryLoading = false;
+    let planHistorySelectionId = "";
+    let planHistoryOptionsKey = "";
     let pendingView = null;
     let latestLiveView = null;
     let latestStorageStatus = null;
@@ -3286,6 +3311,136 @@ DASHBOARD_HTML = """<!doctype html>
       card.append(table);
     }
 
+    function planHistoryTime(value) {
+      const date = new Date(value);
+      if (!value || !Number.isFinite(date.getTime())) return "Onbekend";
+      const parts = new Intl.DateTimeFormat("nl-NL", {
+        timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZoneName: "longOffset",
+      }).formatToParts(date);
+      const valueOf = name => parts.find(part => part.type === name)?.value ?? "";
+      const offset = valueOf("timeZoneName").replace("GMT", "UTC");
+      return `${valueOf("day")}-${valueOf("month")}-${valueOf("year")} ` +
+        `${valueOf("hour")}:${valueOf("minute")} (${offset})`;
+    }
+
+    function planHistorySelection(plans, selectedId) {
+      const current = plans.find(plan => plan.active === true) ?? null;
+      const selected = plans.find(plan => plan.plan_id === selectedId) ??
+        plans.find(plan => plan.active !== true) ?? current;
+      return {current, selected};
+    }
+
+    function planHistoryReason(reason) {
+      return {
+        initial_main_route: "Eerste dagplan",
+        existing_route_cannot_reach_target: "Eerder plan kon het laaddoel niet halen",
+        projected_reserve_shortfall: "Verwacht tekort aan batterijreserve",
+        current_soc_allows_grid_reduction: "Actuele SOC maakt minder netladen mogelijk",
+        explicit_user_recalculation: "Opnieuw berekend op verzoek",
+      }[reason] ?? reason ?? "Reden niet vastgelegd";
+    }
+
+    function renderPlanHistory() {
+      const picker = element("plan-history-select");
+      const {current, selected} = planHistorySelection(planHistoryPlans, planHistorySelectionId);
+      planHistorySelectionId = selected?.plan_id ?? "";
+      const optionsKey = JSON.stringify(planHistoryPlans.map(plan =>
+        [plan.plan_id, plan.created_at, plan.active]));
+      if (optionsKey !== planHistoryOptionsKey) {
+        picker.replaceChildren();
+        for (const plan of planHistoryPlans) {
+          const option = document.createElement("option");
+          option.value = plan.plan_id;
+          option.textContent = `${plan.active ? "Huidig" : "Historisch"} · ` +
+            `${planHistoryTime(plan.created_at)} · ${plan.plan_id}`;
+          picker.append(option);
+        }
+        planHistoryOptionsKey = optionsKey;
+      }
+      picker.value = planHistorySelectionId;
+      picker.disabled = planHistoryPlans.length === 0;
+      const panels = element("plan-history-panels");
+      panels.replaceChildren();
+      const addPlan = (plan, title) => {
+        const panel = document.createElement("article");
+        const heading = document.createElement("h3"); heading.textContent = title;
+        const metadata = document.createElement("p");
+        const identity = document.createElement("code"); identity.textContent = plan.plan_id;
+        metadata.append(identity, document.createElement("br"),
+          `Vastgelegd: ${planHistoryTime(plan.created_at)}`, document.createElement("br"),
+          `Reden: ${planHistoryReason(plan.revision_reason)}`);
+        const table = document.createElement("table");
+        const head = document.createElement("tr");
+        for (const label of ["Van", "Tot", "Batterijmodus"]) {
+          const cell = document.createElement("th"); cell.scope = "col"; cell.textContent = label;
+          head.append(cell);
+        }
+        table.append(head);
+        const labels = {balance_bidirectional: "NOM / PV laden", charge_at_power: "Snel opladen",
+          balance_discharge_only: "Alleen slim ontladen", standby: "Stand-by — woning op netstroom",
+          discharge_at_power: "Ontladen naar het net"};
+        for (const segment of plan.segments ?? []) {
+          const row = document.createElement("tr");
+          for (const text of [planHistoryTime(segment.starts_at), planHistoryTime(segment.ends_at),
+            labels[segment.primitive] ?? segment.primitive ?? "Onbekend"]) {
+            const cell = document.createElement("td"); cell.textContent = text; row.append(cell);
+          }
+          table.append(row);
+        }
+        panel.append(heading, metadata);
+        if (plan.segments_truncated) {
+          const note = document.createElement("p"); note.className = "muted";
+          note.textContent =
+            "Dit plan bevat meer segmenten; alleen het beschikbare deel staat hieronder.";
+          panel.append(note);
+        }
+        panel.append(table); panels.append(panel);
+      };
+      if (current) addPlan(current, "Huidig plan");
+      if (selected && selected !== current) addPlan(selected, "Historisch plan — niet actief");
+      let message = !planHistoryPlans.length
+        ? "Geen opgeslagen planhistorie beschikbaar."
+        : !current ? "Historische vergelijking; geen actief plan in deze gegevens."
+          : selected === current
+            ? "Huidig plan geselecteerd. Kies een eerder plan om te vergelijken."
+            : "Vergelijking met een eerder plan; de actieve tijdlijn en SOC blijven ongewijzigd.";
+      if (planHistoryTruncated) message += " Alleen de meest recente plannen zijn beschikbaar.";
+      if (planHistoryOmitted > 0) {
+        message += ` ${planHistoryOmitted} onvolledige historierecords overgeslagen.`;
+      }
+      if (planHistoryStale) {
+        message = "Niet ververst: deze vergelijking kan verouderd zijn. " + message;
+      }
+      element("plan-history-message").textContent = message;
+    }
+
+    async function loadPlanHistory() {
+      if (planHistoryLoading) return;
+      planHistoryLoading = true;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const response = await fetch("api/plan-history", {
+          cache: "no-store", signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const body = await response.json();
+        if (!Array.isArray(body.plans)) throw new Error("Ongeldige planhistorie");
+        planHistoryPlans = body.plans.filter(plan => typeof plan?.plan_id === "string");
+        planHistoryTruncated = body.truncated === true;
+        planHistoryOmitted = Number(body.omitted_invalid_records) || 0;
+        planHistoryStale = false;
+        renderPlanHistory();
+      } catch (error) {
+        planHistoryStale = true;
+        element("plan-history-message").textContent =
+          "Planhistorie niet ververst; eventuele getoonde vergelijking kan verouderd zijn.";
+      } finally {
+        clearTimeout(timer); planHistoryLoading = false;
+      }
+    }
+
     function renderPlanningStatus(status) {
       const container = element("planning-status");
       if (!status) {
@@ -4153,6 +4308,7 @@ DASHBOARD_HTML = """<!doctype html>
       movePanelContent("pv-forecast-actual-chart", "planning");
       movePanelContent("storage-energy-source-needs", "planning");
       movePanelContent("plan-explanation", "planning");
+      movePanelContent("plan-history", "planning");
       movePanelContent("planning-status", "technical");
       movePanelContent("pv-energy-timeline", "technical");
       movePanelContent("household-load-forecast", "technical");
@@ -5687,6 +5843,7 @@ DASHBOARD_HTML = """<!doctype html>
         view.energy_device_placements ?? {},
       );
       loadPlanningIncidentHistory();
+      loadPlanHistory();
       renderPriceTimeline(
         view.price_timeline ?? {
           available: false,
@@ -5894,6 +6051,11 @@ DASHBOARD_HTML = """<!doctype html>
         element("energy-device-duration").value = String(Math.max(1, Math.round(seconds / 60)));
       }
     });
+    element("plan-history-select").addEventListener("change", (event) => {
+      planHistorySelectionId = event.target.value;
+      renderPlanHistory();
+      loadPlanHistory();
+    });
     initializeTabs();
     pollStartup();
     loadView().finally(watchViewUpdates);
@@ -6085,6 +6247,7 @@ class WebViewStore:
         self._soc_expectation: dict[str, object] | None = None
         self._storage_mode_transitions: list[dict[str, object]] | None = None
         self._storage_status: dict[str, object] | None = None
+        self._plan_history_reader: Callable[[], dict[str, object]] | None = None
         self._revision = 0
         self._reset_storage_mode_override: Callable[[str], dict[str, object]] | None = None
         self._reset_planning: Callable[[str], dict[str, object]] | None = None
@@ -6353,6 +6516,21 @@ class WebViewStore:
             self._storage_mode_transitions = rows
             if self._latest_json is not None:
                 self._replace_latest_locked(json.loads(self._latest_json))
+
+    def set_plan_history_reader(self, reader: Callable[[], dict[str, object]]) -> None:
+        with self._lock:
+            self._plan_history_reader = reader
+
+    def plan_history(self) -> dict[str, object]:
+        with self._lock:
+            reader = self._plan_history_reader
+        # File reading must never hold the current-view publication lock.
+        if reader is None:
+            return {"status": "unavailable", "plans": []}
+        try:
+            return reader()
+        except (OSError, ValueError, TypeError, KeyError):
+            return {"status": "unavailable", "plans": []}
 
     def publish_storage_status(self, status: dict[str, object]) -> None:
         """Keep a small read-only observation; never wake/rebuild the planner view."""
@@ -6758,6 +6936,9 @@ def create_web_server(
         def do_GET(self) -> None:
             parsed_url = urlsplit(self.path)
             path = parsed_url.path
+            if path == "/api/plan-history":
+                self._send_json(HTTPStatus.OK, json.dumps(store.plan_history()))
+                return
             if path == "/api/storage-status":
                 self._send_json(HTTPStatus.OK, json.dumps(store.storage_status()))
                 return

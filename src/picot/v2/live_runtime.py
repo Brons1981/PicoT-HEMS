@@ -2483,25 +2483,6 @@ def _execute_planning_bundle(
                 flush=True,
             )
     _log_runtime_memory("after_incident_history", run_id=run.planning_input.run_id)
-    if planning_fallback_notifier is not None:
-        try:
-            planning_fallback_notifier.update(
-                token,
-                run=run,
-                now=bundle.snapshot.captured_at,
-            )
-        except Exception as exc:
-            print(
-                json.dumps(
-                    {
-                        "event": "picot_v2_planning_notification_error",
-                        "run_id": run.planning_input.run_id,
-                        "error": str(exc) or exc.__class__.__name__,
-                    },
-                    separators=(",", ":"),
-                ),
-                flush=True,
-            )
     planner_cycle_ms = stage_timings.canonical_total_ms
     pipeline_total_ms = round(planning_input_ms + stage_timings.canonical_total_ms, 3)
 
@@ -2570,27 +2551,6 @@ def _execute_planning_bundle(
             else ()
         ),
     )
-    web_view_store.startup_progress.enter("financial", "Financieel overzicht bijwerken", 90)
-    if financial_result_ledger is not None and power_history is not None:
-        try:
-            web_view["financial_results"] = financial_result_ledger.update(
-                bundle.snapshot,
-                power_history,
-                price_points=display_price_points,
-                measurement_history=financial_measurement_history,
-            )
-        except Exception as exc:
-            print(
-                json.dumps(
-                    {
-                        "event": "picot_v2_financial_result_error",
-                        "snapshot_id": bundle.snapshot.snapshot_id,
-                        "error": str(exc) or exc.__class__.__name__,
-                    },
-                    separators=(",", ":"),
-                ),
-                flush=True,
-            )
     web_view_build_ms = round(
         (perf_counter() - web_view_build_started) * 1000.0,
         3,
@@ -2610,6 +2570,50 @@ def _execute_planning_bundle(
         run_id=run.planning_input.run_id,
         web_view_characters=(len(latest_web_view) if latest_web_view is not None else 0),
     )
+
+    # Publish the canonical plan and its SOC together before announcing it.
+    # Optional observers must not hold back the current dashboard or replace
+    # it with a captured older view when their work finishes.
+    if planning_fallback_notifier is not None:
+        try:
+            planning_fallback_notifier.update(
+                token,
+                run=run,
+                now=bundle.snapshot.captured_at,
+            )
+        except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_planning_notification_error",
+                        "run_id": run.planning_input.run_id,
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
+    if financial_result_ledger is not None and power_history is not None:
+        try:
+            financial_results = financial_result_ledger.update(
+                bundle.snapshot,
+                power_history,
+                price_points=display_price_points,
+                measurement_history=financial_measurement_history,
+            )
+            web_view_store.publish_financial_results(financial_results)
+        except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "picot_v2_financial_result_error",
+                        "snapshot_id": bundle.snapshot.snapshot_id,
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
 
     sink = HomeAssistantProjectionSink(token)
     publish_started = perf_counter()
@@ -2776,6 +2780,7 @@ def main() -> None:
         ACTIVE_PLAN_COMMITMENT_PATH,
         incident_path=ACTIVE_PLAN_COMMITMENT_INCIDENT_PATH,
     )
+    web_view_store.set_plan_history_reader(active_plan_commitment_store.load_plan_history)
     execution_mode = str(options.get("execution_mode", "live"))
     if execution_mode not in {"observer", "live"}:
         raise ValueError("execution_mode must be observer or live")

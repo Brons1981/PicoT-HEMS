@@ -1,3 +1,12 @@
+# 2.0.0-dev.317
+
+- Vergelijk het huidige plan met eerdere opgeslagen plannen in het dashboard.
+- Toon tijden, batterijmodi en vastgelegde wijzigingsredenen; onderscheid het teruggezette uur met UTC-offsets.
+- Publiceer het actuele plan en zijn SOC-prognose samen voordat de nieuwe-planmelding wordt verstuurd.
+- Laat financieel rekenwerk de actuele planweergave niet meer ophouden of terugzetten.
+- Behoud geldige planhistorie als een oud record onvolledig is.
+- Plannerbeleid en Home Climate blijven ongewijzigd; opnieuw berekenen is voor deze update niet nodig.
+
 # 2.0.0-dev.316
 
 - Herstel onterecht nachtelijk NOM bij vrijgegeven overbruggingsblokken zonder PV-overschot.

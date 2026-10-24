@@ -32,6 +32,7 @@
     "docs/development_log/2026-10-24-hc-documentation-and-types.md",
     "docs/development_log/2026-10-24-hc-hourly-weather.md",
     "docs/development_log/2026-10-24-hc-integration-dev314.md",
+    "docs/development_log/2026-10-24-hc-linux-ci.md",
     "docs/development_log/2026-10-24-hc-modeled-load-history.md",
     "docs/development_log/2026-10-24-hc-recharge-and-weather.md",
     "docs/development_log/2026-10-24-hc-rejection-feedback.md",
@@ -133,11 +134,11 @@
     "tests/test_portfolio_recharge.py",
     "tests/test_reserve_plan_store.py",
     "tests/test_reserve_recharge.py",
-    "tests/test_reviewed_modeled_history.py"
-  ],
-  "repair_functions_preserved": [
-    "_restore_daily_charge_context"
+    "tests/test_reviewed_modeled_history.py",
+    "tests/test_v2_live_pv_actual_coupling.py",
+    "tests/test_v2_live_web_server_start.py"
   ],
   "published_base_commit": "3b7d410a3d4e89ebe2792390354f576f36ca2a03",
-  "base_tree": "7bbab1b74e2f6e2042a67ea680c0d6e9ccc51c22"
+  "base_tree": "7bbab1b74e2f6e2042a67ea680c0d6e9ccc51c22",
+  "night_repair_preservation": "dev.314 restore logic preserved with four reserve-recognition additions; not byte-identical"
 }

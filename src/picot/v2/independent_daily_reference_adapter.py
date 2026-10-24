@@ -1508,7 +1508,10 @@ class IndependentDailyReferenceAdapter:
                     running = (mode is not None and mode.current_vendor_mode == "Snel opladen"
                                and snapshot.current_storage_states[0].current_soc < 1.0)
                     if not running:
-                        intent = DailyStorageIntent.NOM
+                        # Free bridge slots need the same physical PV surplus
+                        # as released main charging; reserve alternatives are
+                        # still simulated and admitted by the normal pipeline.
+                        intent = released[(grid.starts_at, grid.ends_at)]
             if (recalculate_free_intervals and retained_main is None
                     and intent is not DailyStorageIntent.STORAGE_EXPORT):
                 # An explicit rebuild releases the old free-interval layout.

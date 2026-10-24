@@ -168,6 +168,7 @@ from picot.v2.storage_mode_transition_history import (
     StorageModeTransitionEvent,
     StorageModeTransitionHistoryStore,
 )
+from picot.v2.storage_status_observation import start_storage_status_observer
 from picot.v2.sun_state_history import HomeAssistantSunStateHistoryReader
 from picot.v2.user_rules import UserRuleProfile, UserRuleStore
 from picot.v2.web_ui import (
@@ -175,6 +176,7 @@ from picot.v2.web_ui import (
     build_web_view,
     create_web_server,
 )
+from picot.v2.zendure_mode_capabilities import StorageModeCapabilityConfig
 
 ARCHITECTURE_OWNERSHIP = architecture_ownership(
     "live_runtime_composition", "picot.v2.live_runtime"
@@ -3097,6 +3099,15 @@ def main() -> None:
         )
 
     _start_web_server(web_view_store)
+    mode_bindings = tuple(str(options.get(key) or "").strip() for key in (
+        "zendure_mode_entity", "storage_capability_id", "storage_execution_scope_id",
+    ))
+    if all(mode_bindings):
+        display_mode_config = StorageModeCapabilityConfig(*mode_bindings)
+        start_storage_status_observer(
+            token=token, config=display_mode_config,
+            publish=web_view_store.publish_storage_status,
+        )
     startup.enter("sources", "Actuele gegevens ophalen", 10)
     def publish_energy_device_catalog(catalog: EnergyDeviceCatalog) -> None:
         nonlocal latest_energy_device_catalog

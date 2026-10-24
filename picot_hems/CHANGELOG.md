@@ -1,3 +1,12 @@
+# 2.0.0-dev.316
+
+- Herstel onterecht nachtelijk NOM bij vrijgegeven overbruggingsblokken zonder PV-overschot.
+- Ververs de actuele batterijmodus onafhankelijk van de planner, ook tijdens invoer of tekstselectie.
+- Toon de leeftijd van de modusmeting en voorkom dat oudere metingen nieuwere overschrijven.
+- Geef stand-by een eigen kleur en legenda in de tijdlijn.
+- Gebruik na installatie eenmalig Planning opnieuw berekenen voor een reeds opgeslagen foutief NOM-venster.
+- Home Climate blijft op 0.1.0-dev.23; bestaande laadbescherming en dagdoelen blijven behouden.
+
 # 2.0.0-dev.315
 
 - Beoordeel maximaal vijf HC-energieplannen met prijzen, batterijruimte en bestaande verplichtingen.

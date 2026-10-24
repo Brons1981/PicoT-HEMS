@@ -1,3 +1,13 @@
+## Release HEMS dev.316 - 24 oktober 2026
+
+Alex heeft publicatie van de gecombineerde nacht-NOM/dashboardreparatie aangevraagd.
+Lees `docs/development_log/2026-10-24-night-nom-live-status-repair.md`.
+Vrijgegeven bridge-blokken volgen dezelfde PV-overschotcontrole als hoofdlaadblokken.
+Een uitsluitend lezende modusobserver maakt de actuele dashboardstatus onafhankelijk
+van plannerlooptijd; stand-by heeft een eigen legenda. Geen wijziging van dagdoelen,
+lopende-laadbescherming of HC dev.23. Publicatie via PR en CI; installatie volgt apart.
+Na installatie Planning opnieuw berekenen voor reeds opgeslagen foutief nacht-NOM.
+
 # PicoT HEMS — mandatory session start
 
 ## Aanvullend laden op noodzaak - HEMS dev.308, 19 oktober 2026

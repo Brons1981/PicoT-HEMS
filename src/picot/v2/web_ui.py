@@ -859,6 +859,7 @@ DASHBOARD_HTML = """<!doctype html>
     .price-swatch.canonical-charge { background: #df5c57; }
     .price-swatch.canonical-trade { background: #aab2bd; }
     .price-swatch.canonical-support { background: #3994e6; }
+    .price-swatch.canonical-standby { background: #e3aa45; }
     .price-swatch.optimized {
       background: repeating-linear-gradient(135deg, #b9c3cf 0 2px, #edf1f5 2px 6px);
     }
@@ -893,6 +894,7 @@ DASHBOARD_HTML = """<!doctype html>
       border-color: #3994e6;
       color: #62b8f5;
     }
+    .planner-window-chip.canonical-standby { border-color: #e3aa45; color: #f2c875; }
     .planner-window-chip.energy-device-placement {
       border-color: #b96cff;
       color: #e2c5ff;
@@ -925,6 +927,7 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .price-bar.canonical-charge { stroke: #df5c57; stroke-width: 3; }
     .price-chart .price-bar.canonical-trade { stroke: #aab2bd; stroke-width: 3; }
     .price-chart .price-bar.canonical-support { stroke: #3994e6; stroke-width: 3; }
+    .price-chart .price-bar.canonical-standby { stroke: #e3aa45; stroke-width: 3; }
     .price-chart .price-bar.past { opacity: 0.30; }
     .price-chart .planner-window {
       pointer-events: none;
@@ -933,6 +936,7 @@ DASHBOARD_HTML = """<!doctype html>
     .price-chart .planner-window.canonical-charge { fill: #df5c57; }
     .price-chart .planner-window.canonical-trade { fill: #aab2bd; }
     .price-chart .planner-window.canonical-support { fill: #3994e6; }
+    .price-chart .planner-window.canonical-standby { fill: #e3aa45; }
     .price-chart .planner-window.energy-device-placement { fill: #b96cff; }
     .price-chart .soc-line { fill: none; stroke-width: 3; }
     .price-chart .soc-line.soc-actual { stroke: #c084fc; stroke-width: 3; }
@@ -1391,6 +1395,9 @@ DASHBOARD_HTML = """<!doctype html>
     const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
     const PRICE_DISPLAY_HOURS = 48;
     let pendingView = null;
+    let latestLiveView = null;
+    let latestStorageStatus = null;
+    let storageStatusLoading = false;
     let viewRevision = 0;
     let updateWatcherStopped = false;
     const ACTIVE_TAB_KEY = "picot-active-dashboard-tab";
@@ -1515,6 +1522,7 @@ DASHBOARD_HTML = """<!doctype html>
         ["canonical-charge", "Net import / snel laden"],
         ["canonical-trade", "MEP handel / terugleveren"],
         ["canonical-support", "Slim huishoudelijk ontladen"],
+        ["canonical-standby", "Stand-by — woning op netstroom"],
         ["optimized", "Geoptimaliseerd plandeel"],
         ["soc-actual", "Werkelijke SOC"],
         ["soc-projected", "SOC-prognose (historie + actuele verwachting)"],
@@ -1647,6 +1655,7 @@ DASHBOARD_HTML = """<!doctype html>
         ["canonical-charge", "#df5c57"],
         ["canonical-trade", "#aab2bd"],
         ["canonical-support", "#35a862"],
+        ["canonical-standby", "#e3aa45"],
         ["normal", "#aab2bd"]
       ]) {
         const pattern = createSvgElement("pattern", {
@@ -3076,7 +3085,59 @@ DASHBOARD_HTML = """<!doctype html>
         "De gezondheid van de pipeline is nog niet bekend.";
     }
 
+    function modeFreshness(status, now = Date.now()) {
+      const observed = Date.parse(status?.observed_at);
+      const seconds = Math.floor((now - observed) / 1000);
+      if (!Number.isFinite(seconds) || seconds < 0) {
+        return {stale: true, label: "Meetouderdom onbekend"};
+      }
+      const age = seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min`;
+      const stale = seconds > 120 || status?.availability === "unavailable";
+      return {stale, label: `${stale ? "Verouderd · " : ""}${age} geleden waargenomen`};
+    }
+
+    function currentStorageStatus(status) {
+      const independent = Date.parse(latestStorageStatus?.observed_at);
+      const bundled = Date.parse(status?.observed_at);
+      return Number.isFinite(independent) && (!Number.isFinite(bundled) || independent >= bundled)
+        ? {...status, ...latestStorageStatus} : status;
+    }
+
+    function refreshLiveStatus(view) {
+      if (view) latestLiveView = view;
+      if (!latestLiveView) return;
+      const status = currentStorageStatus(latestLiveView.zendure_now);
+      renderTodaySummary({...latestLiveView, zendure_now: status});
+      renderZendureNow(status);
+    }
+
+    async function loadStorageStatus() {
+      if (storageStatusLoading) return;
+      storageStatusLoading = true;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const response = await fetch("api/storage-status", {
+          cache: "no-store", signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const received = await response.json();
+        const time = Date.parse(received.observed_at);
+        const previous = Date.parse(latestStorageStatus?.observed_at);
+        if (Number.isFinite(time) && (!Number.isFinite(previous) || time >= previous)) {
+          latestStorageStatus = received;
+        }
+      } catch (error) {
+        // Keep the last measured value; its age continues to increase visibly.
+      } finally {
+        clearTimeout(timer);
+        storageStatusLoading = false;
+        refreshLiveStatus(latestLiveView);
+      }
+    }
+
     function renderZendureNow(status) {
+      status = currentStorageStatus(status);
       const container = element("zendure-now");
       const grid = document.createElement("dl");
       grid.className = "zendure-now-grid";
@@ -3086,6 +3147,7 @@ DASHBOARD_HTML = """<!doctype html>
         unknown: "Nog onbekend"
       };
       appendAttribute(grid, "Actieve modus", status?.active_mode);
+      appendAttribute(grid, "Actualiteit", modeFreshness(status).label);
       appendAttribute(
         grid,
         "Ingesteld door",
@@ -3904,7 +3966,7 @@ DASHBOARD_HTML = """<!doctype html>
         charge_at_power: "canonical-charge",
         discharge_at_power: "canonical-trade",
         balance_discharge_only: "canonical-support",
-        standby: "normal",
+        standby: "canonical-standby",
         actual: "normal",
       }[primitive] ?? "normal";
     }
@@ -5539,6 +5601,7 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function renderTodaySummary(view) {
+      view = {...view, zendure_now: currentStorageStatus(view.zendure_now)};
       const target = element("today-summary");
       target.replaceChildren();
       const actual = view.grid_charge_review?.actual_soc ?? {};
@@ -5738,18 +5801,19 @@ DASHBOARD_HTML = """<!doctype html>
 
     function applyView(view) {
       const status = element("status");
+      refreshLiveStatus(view);
       if (shouldDeferRenderForSelection()) {
         pendingView = view;
         status.dataset.state = "ready";
         status.textContent =
-          "Realtime · nieuwe data wacht tot invoer of selectie is afgerond";
+          "Verbonden · status bijgewerkt; overige data wacht op einde invoer of selectie";
         return;
       }
       pendingView = null;
       renderView(view);
       finishStartup();
       status.dataset.state = "ready";
-      status.textContent = "Realtime verbonden";
+      status.textContent = "Verbonden · meetouderdom staat bij de actieve modus";
     }
 
     async function loadView() {
@@ -5833,6 +5897,8 @@ DASHBOARD_HTML = """<!doctype html>
     initializeTabs();
     pollStartup();
     loadView().finally(watchViewUpdates);
+    loadStorageStatus();
+    setInterval(loadStorageStatus, 10000);
     setInterval(loadView, 60000);
     setInterval(loadHouseholdCalendar, 60000);
   
@@ -6018,6 +6084,7 @@ class WebViewStore:
         self._energy_device_placements: dict[str, object] | None = None
         self._soc_expectation: dict[str, object] | None = None
         self._storage_mode_transitions: list[dict[str, object]] | None = None
+        self._storage_status: dict[str, object] | None = None
         self._revision = 0
         self._reset_storage_mode_override: Callable[[str], dict[str, object]] | None = None
         self._reset_planning: Callable[[str], dict[str, object]] | None = None
@@ -6058,6 +6125,22 @@ class WebViewStore:
         view: dict[str, object],
     ) -> None:
         self._overlay_fast_grid_power_source(view)
+        if self._storage_status is not None:
+            old = view.get("zendure_now")
+            previous = old if isinstance(old, dict) else {}
+            previous_at = previous.get("observed_at")
+            try:
+                previous_time = (
+                    datetime.fromisoformat(previous_at)
+                    if isinstance(previous_at, str) else None
+                )
+            except ValueError:
+                previous_time = None
+            status_time = datetime.fromisoformat(str(self._storage_status["observed_at"]))
+            if (previous_time is None or previous_time.utcoffset() is None
+                    or status_time >= previous_time):
+                # An observation is not a planner command or its confirmation.
+                view["zendure_now"] = {**previous, **self._storage_status}
         if self._storage_mode_transitions is not None:
             view["storage_mode_transition_history"] = self._storage_mode_transitions
         if self._retired_comparison_history is not None:
@@ -6270,6 +6353,29 @@ class WebViewStore:
             self._storage_mode_transitions = rows
             if self._latest_json is not None:
                 self._replace_latest_locked(json.loads(self._latest_json))
+
+    def publish_storage_status(self, status: dict[str, object]) -> None:
+        """Keep a small read-only observation; never wake/rebuild the planner view."""
+        at = status.get("observed_at")
+        if not isinstance(at, str):
+            raise ValueError("storage observation requires a timestamp")
+        captured = datetime.fromisoformat(at)
+        if captured.utcoffset() is None:
+            raise ValueError("storage observation must be timezone aware")
+        copied = dict(status, origin="unknown", set_at=None)
+        with self._condition:
+            if self._storage_status is not None:
+                prior = self._storage_status.get("observed_at")
+                if isinstance(prior, str) and datetime.fromisoformat(prior) > captured:
+                    return
+            self._storage_status = copied
+
+    def storage_status(self) -> dict[str, object]:
+        with self._condition:
+            return dict(self._storage_status or {
+                "active_mode": None, "observed_at": None, "availability": "unavailable",
+                "origin": "unknown", "set_at": None, "error": "waiting_for_observation",
+            })
 
     def publish_fast_grid_power_source(
         self,
@@ -6652,6 +6758,9 @@ def create_web_server(
         def do_GET(self) -> None:
             parsed_url = urlsplit(self.path)
             path = parsed_url.path
+            if path == "/api/storage-status":
+                self._send_json(HTTPStatus.OK, json.dumps(store.storage_status()))
+                return
             if path == "/api/startup":
                 self._send_json(HTTPStatus.OK, json.dumps(store.startup_progress.snapshot()))
                 return

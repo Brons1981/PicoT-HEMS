@@ -83,7 +83,9 @@ def test_start_web_server_uses_ingress_binding_and_daemon_thread(
     assert events == ["start", "serve"]
 
 
+@pytest.mark.parametrize("mode_configured", [False, True])
 def test_main_starts_one_web_server_before_pipeline_loop(
+    mode_configured: bool,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -106,6 +108,7 @@ def test_main_starts_one_web_server_before_pipeline_loop(
     events: list[str] = []
     stores: list[WebViewStore] = []
     calendar_sources: list[Path] = []
+    status_observers: list[dict[str, object]] = []
 
     def fake_start(store: WebViewStore) -> tuple[object, object]:
         events.append("start")
@@ -125,9 +128,13 @@ def test_main_starts_one_web_server_before_pipeline_loop(
             "price_high_margin_eur_per_kwh": 0.02,
             "live_poll_interval_seconds": 60.0,
             "pv_power_entity": "sensor.test_pv",
+            **({"zendure_mode_entity": "input_select.mode", "storage_capability_id": "battery",
+                "storage_execution_scope_id": "home"} if mode_configured else {}),
         },
     )
     monkeypatch.setattr(live_runtime, "_start_web_server", fake_start)
+    monkeypatch.setattr(live_runtime, "start_storage_status_observer",
+                        lambda **kwargs: status_observers.append(kwargs))
     monkeypatch.setattr(live_runtime, "start_calendar_observer",
                         lambda options, *, source: calendar_sources.append(source))
     monkeypatch.setattr(
@@ -142,6 +149,10 @@ def test_main_starts_one_web_server_before_pipeline_loop(
 
     assert events == ["start", "poll"]
     assert len(stores) == 1
+    assert len(status_observers) == int(mode_configured)
+    if mode_configured:
+        assert status_observers[0]["token"] == "test-token"
+        assert status_observers[0]["publish"] == stores[0].publish_storage_status
     assert calendar_sources == [live_runtime.HOUSEHOLD_LOAD_HISTORY_PATH]
     assert [path.name for path in stores[0].diagnostic_paths()] == [
         "picot_v2_planning_incident_history.jsonl",

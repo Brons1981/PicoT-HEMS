@@ -190,7 +190,12 @@ def test_main_revision_reassesses_old_bridge_without_unowned_refill(tmp_path):
     first = built.plans[0].segments[0]
     assert first.purpose == f"bridge:{owner.assignment_id}"
     assert first.ends_at == old_bridge.ends_at
-    assert first.primitive is Primitive.BALANCE_BIDIRECTIONAL
+    # This fixture has no PV in any scenario: releasing the bridge must not
+    # reintroduce latent charging through NOM. Keep its ownership and boundary.
+    assert all(i.pv_energy_wh == i.forecast_lower_energy_wh
+               == i.forecast_central_energy_wh == i.forecast_upper_energy_wh == 0
+               for i in snapshot.pv_energy_timeline.intervals)
+    assert first.primitive is Primitive.BALANCE_DISCHARGE_ONLY
 
 
 def test_reset_does_not_reuse_future_commands_from_completed_day(tmp_path):

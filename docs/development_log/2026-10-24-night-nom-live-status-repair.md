@@ -29,3 +29,7 @@ Diagnostiek 2026-10-24T201652.150: plan-ee207ea4b38b3a6c/revisie 13 bevat aaneen
 ## Ingebruikname en grens
 
 Publicatie/installatie is nog niet uitgevoerd. Na installatie: Planning opnieuw berekenen om ook een reeds opgeslagen onjuist NOM-venster te vervangen. Persistente plannen worden niet stilzwijgend herschreven. Controleer vervolgens actuele modus/leeftijd, stand-bylegenda, invoer tijdens moduswisseling en het nachtplan. Geen wijziging aan Home Climate, gebruikersinstellingen of live Home Assistant.
+
+## Releasecontrole dev.316
+
+PR #726: Core en v2 (884 geslaagd, 1 overgeslagen) groen. Eerste volledige CI-run: 2584 geslaagd, 1 overgeslagen, 1 verouderde verwachting in test_small_predicted_recovery. Die fixture bevat nul PV in alle scenario's, maar verwachtte nog NOM in het vrijgegeven bridge-blok. De verwachting is aangescherpt tot slim ontladen met expliciet bewijs van nul PV; eigenaarschap, tijdgrens en afwezigheid van ongepland bijladen blijven getest. Productiecode is hiervoor niet gewijzigd. Volledige CI wordt opnieuw uitgevoerd vóór samenvoegen.

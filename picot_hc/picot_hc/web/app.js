@@ -82,7 +82,7 @@ function renderZones(zones, building) {
       const card = el('article', undefined, 'zone');
       const title = el('h2'), reading = el('div', undefined, 'reading');
       const humidity = el('div', undefined, 'sub'), facts = el('dl');
-      const reason = el('p', undefined, 'reason'), form = z.settings.monitor_only ? el('p', 'Verwarmd via cv · alleen monitoring') : temperatureForm(z);
+      const reason = el('p', undefined, 'reason'), form = z.settings.monitor_only ? el('p', 'Verwarmd via cv · alleen monitoring') : z.id==='beneden' ? el('p', 'Instellen via Comfortschema / thermostaat beneden.') : temperatureForm(z);
       card.append(title, reading, humidity, facts, form, reason);
       $('zones').append(card);
       parts = {title, reading, humidity, facts, reason, form}; zoneCards.set(z.id, parts);
@@ -156,6 +156,8 @@ function renderWeather(weather, stale, outdoor, humidity, dewpoint, battery, vpd
   $('forecast-status').textContent = !f || !f.rows.length ? (f?.error || 'Nog geen dagverwachting beschikbaar.') :
     (f.stale ? 'Verouderde verwachting. ' : '') + (f.error ? f.error + ' ' : '') +
     (f.received ? 'Ontvangen: ' + fmt(f.received) : '');
+  const hourly=weather.hourly;
+  $('forecast-status').textContent+=' '+({ready:'Uurverwachting beschikbaar voor verwarmingsplannen.',unsupported:'Deze weerbron biedt geen uurverwachting; leren gebruikt waargenomen weer.',unavailable:'Uurverwachting onvolledig of niet beschikbaar; nieuwe weerafhankelijke plannen wachten.',stale:'Uurverwachting verouderd; nieuwe weerafhankelijke plannen wachten.'}[hourly?.status]||'Uurverwachting nog niet gecontroleerd.');
 }
 const controlCards = new Map();
 const modeNames = {off:'Uit',heat:'Verwarmen',cool:'Koelen',heat_cool:'Verwarmen/koelen',auto:'Automatisch (apparaat)',dry:'Ontvochtigen',fan_only:'Ventilator'};
@@ -245,10 +247,70 @@ let scheduleForm=null;
 function renderSchedule(data){
   if(!data)return;
   renderHeating(current.heating);
+  let energy=$('energy-outlook-status');
+  if(!energy){energy=el('p',undefined,'sub');energy.id='energy-outlook-status';$('planner-status').after(energy);}
+  let assessment=$('energy-assessment-status');
+  if(!assessment){assessment=el('p',undefined,'sub');assessment.id='energy-assessment-status';energy.after(assessment);}
+  const reviewed=current.energy_assessment;
+  assessment.textContent=reviewed?.status==='selected' ? 'HEMS adviseert voorstel '+reviewed.selected_plan_id+'. Nog geen uitvoeringsopdracht.' : (reviewed?.reason||'Nog geen HC-energievoorstellen ter beoordeling.');
+  let assessmentDetails=$('energy-assessment-details');
+  if(!assessmentDetails){assessmentDetails=el('div');assessmentDetails.id='energy-assessment-details';assessment.after(assessmentDetails);}
+  assessmentDetails.replaceChildren();
+  for(const row of reviewed?.assessments||[]){
+    let detail=row.plan_id+': ';
+    if(row.status==='feasible')detail+='geschatte extra totaalkosten '+row.total_incremental_cost_eur.toLocaleString('nl-NL',{style:'currency',currency:'EUR'})+'.';
+    else if(row.constraint?.kind==='verified_scaled_profile')detail+='past niet binnen de behouden route. Geteste kleinere variant: '+(row.constraint.verified_profile_energy_wh/1000).toFixed(2)+' kWh op dezelfde tijden. HC moet het comfort opnieuw toetsen.';
+    else if(row.constraint?.kind==='end_before')detail+='moet uiterlijk eindigen op '+fmt(Date.parse(row.constraint.ends_at)/1000)+'.';
+    else detail+='nog niet haalbaar binnen de behouden route.';
+    assessmentDetails.append(el('p',detail,'sub'));
+  }
+  const outlook=current.energy_outlook;
+  let loadHistory=$('energy-load-history');
+  if(!loadHistory){loadHistory=el('p',undefined,'sub');loadHistory.id='energy-load-history';energy.after(loadHistory);}
+  loadHistory.textContent=outlook?.replacement_basis ? 'HEMS kan voorstellen voor airco beneden zonder dubbeltelling beoordelen vanaf '+fmt(outlook.replacement_basis.starts_at)+'.' : outlook?.load_history_status==='history_ready' ? 'Afzonderlijke verbruiksraming beschikbaar; nog onvoldoende aansluiting op de actieve huisprognose om verwarmingsvoorstellen zonder dubbeltelling te beoordelen.' : outlook?.load_history_status==='collecting' ? 'HEMS verzamelt gelijktijdige metingen van huisverbruik en airco beneden. Ontbrekende metingen tellen niet als nulverbruik.' : 'Nog geen actuele bevestiging van HEMS over de afzonderlijke verbruikshistorie.';
+  let proposals=$('energy-proposals-status');
+  if(!proposals){proposals=el('p',undefined,'sub');proposals.id='energy-proposals-status';loadHistory.after(proposals);}
+  const offered=current.energy_proposals;
+  let selection=$('energy-selection-status');
+  if(!selection){selection=el('p',undefined,'sub');selection.id='energy-selection-status';proposals.after(selection);}
+  const selected=current.energy_selection;
+  let intentStatus=$('start-intent-status');
+  if(!intentStatus){intentStatus=el('p',undefined,'sub');intentStatus.id='start-intent-status';selection.after(intentStatus);}
+  const intent=current.start_intent;
+  intentStatus.textContent=intent?.heat_starts_at ? 'Startvoornemen beneden ('+(intent.source==='cv'?'CV':'airco')+'): '+fmt(intent.heat_starts_at)+'. '+(intent.reason||'') : 'Nog geen vast startvoornemen voor beneden.';
+  selection.textContent=selected?.status==='confirmed' ? 'HEMS-keuze gecontroleerd: '+(selected.source==='cv'?'CV, ':'airco, ')+selected.target+' °C'+(selected.heat_starts_at?' vanaf '+fmt(selected.heat_starts_at):'')+'. Keuze wordt teruggemeld. Een geplande start vereist afzonderlijke actuele HEMS-starttoestemming.' : 'Nog geen actuele, lokaal bevestigde HEMS-keuze.';
+  let warmup=$('warmup-energy-status');
+  if(!warmup){warmup=el('p',undefined,'sub');warmup.id='warmup-energy-status';proposals.after(warmup);}
+  const warming=current.warmup_energy;
+  let startup=$('startup-energy-status');
+  if(!startup){startup=el('p',undefined,'sub');startup.id='startup-energy-status';warmup.after(startup);}
+  const starting=current.startup_energy;
+  let cvLearning=$('cv-warmup-status');
+  if(!cvLearning){cvLearning=el('p',undefined,'sub');cvLearning.id='cv-warmup-status';startup.after(cvLearning);}
+  const cvEvidence=current.cv_warmup;
+  let cvEstimate=$('cv-energy-estimate');
+  if(!cvEstimate){cvEstimate=el('p',undefined,'sub');cvEstimate.id='cv-energy-estimate';cvLearning.after(cvEstimate);}
+  const cvEnergy=cvEvidence?.energy_estimate;
+  let cvHolding=$('cv-holding-estimate');
+  if(!cvHolding){cvHolding=el('p',undefined,'sub');cvHolding.id='cv-holding-estimate';cvEstimate.after(cvHolding);}
+  const cvHold=current.cv_maintenance;
+  cvHolding.textContent=cvHold?.status==='estimated' ? 'CV handhaven: geraamd '+cvHold.gas_m3_per_hour.toFixed(3)+' m³/uur en '+cvHold.power_w.toFixed(0)+' W hulpverbruik.' : 'CV handhaven leren: '+(cvHold?.samples??0)+' van minimaal 3 passende, gecontroleerde meetperioden.';
+  cvEstimate.textContent=cvEnergy?.status==='estimated'
+    ? 'CV-opwarmraming: '+cvEnergy.gas_m3.toFixed(3)+' m³ gas, '+Math.ceil(cvEnergy.duration_seconds/60)+' minuten en '+cvEnergy.electricity.energy_wh.toFixed(1)+' Wh geschat hulpverbruik. Inclusief 25% marge; naloop apart '+cvEnergy.electricity.postrun_energy_wh.toFixed(1)+' Wh.'+(Number.isFinite(cvEnergy.gas_cost_eur)?' Gaskosten € '+cvEnergy.gas_cost_eur.toFixed(2)+'.':' Gastarief ontbreekt.')+' CV-start vereist een passend handhaafprofiel en HEMS-toestemming.'
+    : 'CV-opwarmraming: '+(cvEnergy?.samples??0)+' van minimaal 3 passende, gecontroleerde opwarmbeurten.';
+  cvLearning.textContent='CV-opwarmmetingen: '+(cvEvidence?.completed_sessions??0)+' afgerond.'+(cvEvidence?.measuring?' Meting loopt.':'')+(cvEvidence?.pending_gas_reviews?' Warmwatercontrole wacht op vertraagde meldingen.':'')+' Warmwatercontrole: '+({dhw_observed:'warmwatergebruik waargenomen; gasmeting vermengd',no_dhw_observed:'niet waargenomen; gas nog niet afgebakend',incomplete:'onbekend of onvolledig'}[cvEvidence?.latest?.gas_screening?.status]??'onbekend')+'. Alleen de temperatuur beneden bepaalt het opwarmresultaat. De gasmeting kan ander gasverbruik bevatten; elektrisch CV-verbruik: '+(cvEvidence?.latest?.electricity_measured?'gemeten met aparte CV-meter':cvEvidence?.latest?.electricity?.status==='estimated'?'geschat '+cvEvidence.latest.electricity.energy_wh.toFixed(1)+' Wh, plus '+cvEvidence.latest.electricity.postrun_energy_wh.toFixed(1)+' Wh verwachte naloop na stoppen':'onbekend of onvolledig')+'. Passende metingen worden gebruikt voor CV-alternatieven aan HEMS.';
+
+  startup.textContent=starting?.status==='ready' ? 'Volledige start geraamd: '+(starting.energy_wh/1000).toFixed(2)+' kWh en '+Math.ceil(starting.duration_seconds/60)+' minuten, inclusief gemeten wachttijd tot bevestiging. Startvoorstellen gebruiken deze raming; uitstel van de gewone voorverwarmstart vereist actuele HEMS-toestemming en voldoende tijdmarge.' : 'Volledige starts leren: '+(starting?.completed_sessions??0)+' afgerond, '+(starting?.samples??0)+' passend.'+(starting?.awaiting_confirmation?' Startmeting loopt; verwarmingsopdracht nog niet bevestigd.':starting?.measuring?' Startmeting loopt tot de doeltemperatuur bereikt is.':'');
+  warmup.textContent=warming?.status==='ready' ? 'Opwarmraming: '+(warming.energy_wh/1000).toFixed(2)+' kWh en '+Math.ceil(warming.duration_seconds/60)+' minuten op basis van '+warming.samples+' vergelijkbare metingen. Inclusief schattingsmarge; gebruikt voor passende energievoorstellen.' : 'Opwarmenergie leren: '+(warming?.completed_sessions??0)+' afgeronde metingen, '+(warming?.samples??0)+' passend bij de huidige omstandigheden. Minimaal drie passende metingen nodig.'+(warming?.measuring?' Opwarmmeting loopt.':'');
+  proposals.textContent=offered?.status==='proposed' ? 'HC-voorstel: '+offered.target+' °C handhaven van '+fmt(offered.starts_at)+' tot '+fmt(offered.ends_at)+', geraamd '+(offered.energy_wh/1000).toFixed(2)+' kWh. Ter beoordeling; de regeling wordt hierdoor niet gewijzigd.' : (offered?.reason||'Nog geen automatisch energievoorstel.')+(offered?.samples?' Passende meetperioden: '+offered.samples+'.':'');
+  energy.textContent=outlook?.status==='ready' ? 'HEMS: kleinste verwachte batterijmarge boven het technische minimum tot '+fmt(outlook.horizon_end)+': '+(outlook.projected_minimum_margin_wh/1000).toFixed(2)+' kWh. Dit is geen vrij te besteden budget; tijdvakken zijn niet optelbaar. Een gekozen verwarmingsplan vereist afzonderlijke HEMS-toestemming.' : 'HEMS: '+(outlook?.reason||'Nog geen energierichtlijn beschikbaar.');
   $('schedule-status').textContent=data.reason+(data.migration?' '+data.migration:'');
+  if(offered?.status==='proposed'&&offered.kind==='delayed_start')proposals.textContent=offered.alternatives+' starttijdvoorstel(len) aan HEMS aangeboden: '+offered.heat_starts_at.map((t,i)=>(offered.sources?.[i]==='cv'?'CV ':'airco ')+fmt(t)).join(' / ')+', doel '+offered.targets[0]+' °C. Inclusief wachten, opwarmen en handhaven. Starten vereist actuele HEMS-starttoestemming.';
+  if(offered?.status==='proposed'&&offered.kind==='warmup')proposals.textContent=offered.alternatives+' opwarmvoorstel(len) aan HEMS aangeboden voor '+offered.targets.join(' / ')+' °C. Beoordelingsperiode '+fmt(offered.starts_at)+' tot '+fmt(offered.ends_at)+'. De regeling wordt hierdoor niet gewijzigd.';
   const active=data.current;
   $('schedule-next').textContent=(active?'Nu: '+active.target+' °C · '+(active.hard?'comforttemperatuur':'band '+active.minimum+'–'+active.maximum+' °C')+'. ':'')+(data.next?'Volgend venster: '+fmt(data.next.starts_at)+' · '+data.next.target+' °C'+(data.next.hard?' moet bij aanvang bereikt zijn.':'.'):'Geen volgend venster ingesteld.');
-  $('planner-status').textContent='De basisregeling volgt het huidige doel. Berekend voorverwarmen, temperatuuroptimalisatie en automatisch bijleren zijn nog niet actief; tijdige opwarming vóór een nieuw venster is nog niet gegarandeerd.';
+  const learned=current.heating?.learning_status;
+  $('planner-status').textContent=learned?.enabled ? 'Lerend voorverwarmen: '+learned.lead_minutes+' minuten voorlooptijd; '+learned.outcomes.length+' beoordeelde opwarmbeurten. '+(current.heating.preheating?'Voorverwarmen gepland; bronbeveiligingen blijven gelden. ':'')+'Afkoelmetingen: '+(learned.cooling_samples??0)+'. '+({coast:'Eerder afbouwen binnen de comfortmarge.',setback:'Voorzichtige verlaging buiten comfort: '+learned.target+' °C.',unsupported_target:'Geleerd doel niet ondersteund; schemadoel blijft gelden.'}[learned.phase]||'')+' '+(learned.weather?'Weer meegenomen: '+learned.weather.wind_m_s.toFixed(1)+' m/s, '+({clear:'helder',mixed:'gedeeltelijk bewolkt',overcast:'bewolkt'}[learned.weather.sky]||learned.weather.sky)+', '+(learned.weather.daylight?'overdag':'nacht')+'; '+learned.weather_samples+' passende opwarmbeurten.':'Geen volledige verse weerwaarneming; alleen metingen zonder weerlabel vergelijkbaar.')+' Tijdig comfort is nog geen garantie.' : 'Lerend voorverwarmen staat uit. De regeling volgt het huidige temperatuurdoel.';
   const holds=$('forced-sources');holds.replaceChildren();
   if(data.legacy_pause)holds.append(el('p','Eerdere handmatige pauze bewaard: '+data.legacy_pause.reason));
   for(const hold of data.overrides){
@@ -264,6 +326,27 @@ function renderSchedule(data){
     const ageLabel=el('label','Maximale meetleeftijd beneden (seconden)');ageLabel.append(age);
     const band=el('input');band.type='number';band.name='optimization_band';band.min=0;band.max=5;band.step='any';band.required=true;
     const bandLabel=el('label','Optimalisatieband (± °C)');bandLabel.append(band);
+    const setback=el('input');setback.type='number';setback.min=5;setback.max=35;setback.step='any';setback.name='setback_temperature';
+    const setbackLabel=el('label','Minimum buiten comfortvensters (°C)');setbackLabel.append(setback);
+    const thermostat=el('input');thermostat.type='number';thermostat.min=5;thermostat.max=35;thermostat.step='any';thermostat.name='thermostat_temperature';
+    const thermostatLabel=el('label','Handmatige thermostaat (°C) — bij uitgeschakeld schema');thermostatLabel.append(thermostat);
+    const modeFields=()=>{thermostat.disabled=enabled.checked;setback.disabled=!enabled.checked;setback.required=enabled.checked;};
+    enabled.addEventListener('change',modeFields);
+    const learning=el('input');learning.type='checkbox';learning.name='learning_enabled';
+    const learningLabel=el('label','Opwarmtijd beneden automatisch bijleren');learningLabel.prepend(learning);
+    const coolingFlags={};
+    const learningFields={};
+    const learningPanel=el('div');learningPanel.append(learningLabel);
+    for(const [key,label,defaultValue] of [['initial_preheat_minutes','Eerste opwarmtijd (minuten)',45],['max_preheat_minutes','Maximale opwarmtijd (minuten)',180],['max_coast_minutes','Maximaal eerder afbouwen (minuten)',60]]){
+      const input=el('input');Object.assign(input,{type:'number',name:key,min:key==='max_coast_minutes'?0:15,max:key==='max_coast_minutes'?60:180,step:1,required:true,value:defaultValue});
+      const wrapper=el('label',label);wrapper.append(input);learningPanel.append(wrapper);learningFields[key]=input;
+    }
+    for(const [key,label] of [['adaptive_setback_enabled','Temperatuurverlaging voorzichtig bijleren'],['coast_enabled','Eerder afbouwen binnen comfortmarge'],['energy_start_enabled','Gekozen start beneden automatisch uitvoeren (proef)']]){
+      const input=el('input');input.type='checkbox';input.name=key;const wrapper=el('label',label);wrapper.prepend(input);learningPanel.append(wrapper);coolingFlags[key]=input;
+    }
+    learningPanel.append(el('p','Een gekozen start wordt alleen met recente HEMS-starttoestemming uitgevoerd. De gewone voorverwarmstart mag alleen worden uitgesteld met actuele HEMS-toestemming en voldoende gemeten opwarmtijd. Bij twijfel krijgt comfort voorrang. HEMS neemt het gekozen profiel vooraf mee zolang HC het bevestigt. Dit garandeert geen batterijdekking voor de volledige verwarmingsperiode.','sub'));
+    learningPanel.append(el('p','Begint maximaal 1 °C onder het volgende comfortdoel. Na drie geslaagde opwarmbeurten en voldoende afkoelmetingen mag dit 0,5 °C verder dalen, nooit onder je minimum. Eerder afbouwen verlaagt het doel maximaal 0,5 °C en schakelt de bron niet uit. Wind en zon zijn nog niet gemodelleerd.','sub'));
+    learningPanel.append(el('p','Alleen met actief comfortschema en automatische verwarming. Te laat: 15 minuten eerder; ruim op tijd: 5 minuten later. Veranderen van comfortinstellingen start een nieuwe leerreeks.','sub'));
     const rows=el('div',undefined,'schedule-rows');
     const add=el('button','Venster toevoegen');add.type='button';
     const door=el('details'), summary=el('summary','Meetleeftijd en deurvertraging');door.append(summary,ageLabel);
@@ -274,7 +357,7 @@ function renderSchedule(data){
     const save=el('button','Comfortschema opslaan');save.type='submit';
     const resume=el('button','HC hervatten');resume.type='button';
     const status=el('p','', 'schedule-save-status');status.setAttribute('role','status');
-    fields.append(enabledLabel,bandLabel,rows,add,door,save,resume);form.append(fields,status);$('schedule-editor').append(form);
+    fields.append(enabledLabel,thermostatLabel,setbackLabel,bandLabel,learningPanel,rows,add,door,save,resume);form.append(fields,status);$('schedule-editor').append(form);
     form.dirty=false;form.busy=false;form.revision=0;
     const mark=()=>{form.dirty=true;status.textContent='Nog niet opgeslagen';};
     form.addEventListener('input',mark);form.addEventListener('change',mark);
@@ -325,12 +408,16 @@ function renderSchedule(data){
         if(!days.length){status.textContent='Selecteer voor ieder venster minstens één dag.';return;}
         for(const day of days)windows.push({day:Number(day.value),start:get('start').value,end:get('end').value,target:Number(get('target').value),hard:get('hard').checked});
       }
-      post('api/schedule',{revision:form.revision,settings:{enabled:enabled.checked,optimization_band:Number(band.value),windows,sensor_max_age_seconds:Number(age.value),door_open_seconds:Number(delays.door_open_seconds.value),door_close_seconds:Number(delays.door_close_seconds.value)}});
+      post('api/schedule',{revision:form.revision,settings:{enabled:enabled.checked,learning_enabled:learning.checked,...Object.fromEntries(Object.entries(coolingFlags).map(([k,v])=>[k,v.checked])),...Object.fromEntries(Object.entries(learningFields).map(([k,v])=>[k,Number(v.value)])),setback_temperature:setback.value===''?null:Number(setback.value),thermostat_temperature:thermostat.value===''?null:Number(thermostat.value),optimization_band:Number(band.value),windows,sensor_max_age_seconds:Number(age.value),door_open_seconds:Number(delays.door_open_seconds.value),door_close_seconds:Number(delays.door_close_seconds.value)}});
     });
     resume.addEventListener('click',()=>post('api/resume',{}));
     form.sync=d=>{
       if(!form.dirty&&!form.busy&&d.revision>=form.revision){
+        learning.checked=d.settings.learning_enabled;
+        for(const [key,input] of Object.entries(coolingFlags))input.checked=d.settings[key];
+        for(const [key,input] of Object.entries(learningFields))input.value=d.settings[key];
         enabled.checked=d.settings.enabled;band.value=d.settings.optimization_band;age.value=d.settings.sensor_max_age_seconds;rows.replaceChildren();
+        setback.value=d.settings.setback_temperature??'';thermostat.value=d.settings.thermostat_temperature??'';modeFields();
         const groups=new Map();
         for(const w of d.settings.windows){
           const key=JSON.stringify([w.start,w.end,w.target,w.hard]);
@@ -347,3 +434,4 @@ function renderSchedule(data){
 }
 async function refresh(){try{const [a,b]=await Promise.all([fetch('api/snapshot'),fetch('api/history')]);if(!a.ok||!b.ok)throw Error();const received=await a.json();if(current&&current.csrf_token!==received.csrf_token)settingsRevision=0;current=received;hist=await b.json();const d=current;document.body.classList.toggle('stale',d.stale||d.connection!=='connected');$('connection').textContent=d.connection==='connected'&&!d.stale?'HA verbonden — handmatige bediening beschikbaar':'HA nog niet verbonden of gegevens verouderd';$('updated').textContent=d.collected?'Laatste ontvangst: '+fmt(d.collected):'Nog geen metingen ontvangen';$('error').textContent=d.error||'';if(d.settings_revision>=settingsRevision){settingsRevision=d.settings_revision;renderZones(d.zones,d.building);}renderWeather(d.weather,d.stale||d.connection!=='connected',d.outdoor,d.outdoor_humidity,d.outdoor_dewpoint,d.outdoor_battery,d.outdoor_vpd);renderBuilding(d);renderControls(d.sources,d.commands);renderSchedule(d.schedule);$('price-description').textContent=(d.price_basis_confirmed?'Bevestigd elektriciteitstarief':'Bronprijzen')+' in €/kWh · Europe/Amsterdam';$('warnings').textContent=d.warnings.join(' ');$('price-table').replaceChildren();for(const p of d.prices){const tr=el('tr');tr.append(el('td',fmt(p.start)),el('td',fmt(p.end)),el('td',p.value.toFixed(4)));$('price-table').append(tr);}$('shared').replaceChildren();for(const [name,s]of [['Aanwezigheid',d.presence],['Cv-thermostaat',d.cv],['Cv-status (betekenis nog controleren)',d.cv_status],['Gas totaal, inclusief tapwater',d.gas],['CO₂ beneden',d.co2]])$('shared').append(el('div',name+': '+value(s)));$('shared').append(el('div','Gastarief: € '+d.gas_price.toLocaleString('nl-NL',{maximumFractionDigits:5})+'/m³ · geldig t/m '+d.gas_valid_until));$('history-note').textContent='Registratie sinds HC draait. Dit is meetgeschiedenis, geen voorspelling.';graphs();}catch(e){$('connection').textContent='Dashboard kan HC niet bereiken';document.body.classList.add('stale');}finally{setTimeout(refresh,15000);}}
 window.addEventListener('resize',graphs);refresh();
+

@@ -381,6 +381,7 @@ def test_main_wires_goodwe_actual_pv_into_executed_planning_input(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(live_runtime, "USER_RULES_PATH", tmp_path / "rules.json")
+    monkeypatch.setattr(live_runtime, "ACCEPTED_LOADS_PATH", tmp_path / "accepted.sqlite")
     bundle = _bundle(captured_at=CAPTURED_AT)
     requested_windows: list[tuple[datetime, datetime]] = []
     executed: list[
@@ -1064,6 +1065,7 @@ def test_main_feeds_visible_sunset_evidence_into_attenuation_ranges(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(live_runtime, "USER_RULES_PATH", tmp_path / "rules.json")
+    monkeypatch.setattr(live_runtime, "ACCEPTED_LOADS_PATH", tmp_path / "accepted.sqlite")
     bundle = _bundle(captured_at=CLOSED_END)
     diagnostics = LivePVActualDiagnostics(
         history_status="unavailable",

@@ -1,3 +1,12 @@
+# 2.0.0-dev.315
+
+- Beoordeel maximaal vijf HC-energieplannen met prijzen, batterijruimte en bestaande verplichtingen.
+- Publiceer een energievooruitblik en afwijzingsvoorwaarden voor nieuwe HC-voorstellen.
+- Verleen bij extra bijladen pas starttoestemming na vastlegging en herbeoordeling.
+- Verwerk herleidbare verwarmingsprofielen zonder apparaatkennis in MEP.
+- Behoud de dev.314-reparatie voor planherstel na middernacht.
+- Gebruik samen met Home Climate 0.1.0-dev.23; werk HEMS eerst bij.
+
 # 2.0.0-dev.314
 
 - Herstel de koppeling met een nog geldig vervolgplan wanneer de oorspronkelijke laadopdracht na middernacht is verlopen.

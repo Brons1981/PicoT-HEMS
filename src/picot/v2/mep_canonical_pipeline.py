@@ -1742,6 +1742,44 @@ def _build_daily_main_run(
         except (ValueError, OSError) as exc:
             planning_blocked = not isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
             reason = str(exc) or exc.__class__.__name__
+    # A promised storage checkpoint can require acquisition even after every
+    # daily goal completed. Bind a shared reserve plan; never reopen a daily owner.
+    if (not planning_blocked and canonical_set is None and len(retained) == 1
+            and commitment_store is not None and snapshot.storage_reserve_checkpoints):
+        try:
+            from picot.v2.reserve_recharge import portfolio as reserve_portfolio
+            from picot.v2.reserve_recharge import requirements
+
+            reserve = reserve_portfolio(snapshot, retained[0], conversion,
+                                        opportunities.opportunity_ids)
+            if reserve is not None:
+                comparable = reserve.comparable
+                result = EvaluationEngine().evaluate(
+                    comparable.candidate_set, comparable.strategy, comparable.outcome_set,
+                    created_at=snapshot.captured_at,
+                )
+                if result.winning_energy_path is None:
+                    planning_blocked = True
+                    reason = "promised_storage_reserve_unreachable"
+                else:
+                    proposed = ExecutionPlanBuilder().build(
+                        result, created_at=snapshot.captured_at, fallback_policy_id="guarded-nom")
+                    proposed = replace(proposed, plans=tuple(
+                        replace(p, solcast_planning_basis=snapshot.solcast_planning_basis)
+                        for p in proposed.plans))
+                    if planning_checkpoint is not None:
+                        planning_checkpoint()
+                    commitment_store.bind_reserve_plan(
+                        plan=proposed.plans[0], previous_plan_id=retained[0].plan_id,
+                        checkpoints=requirements(snapshot, retained[0].execution_scope_id),
+                        evaluation_record=result.record,
+                        projected_states=result.winning_energy_path.projected_states,
+                    )
+                    canonical_set = proposed
+                    reason = "promised_storage_reserve_acquisition"
+        except (ValueError, OSError) as exc:
+            planning_blocked = True
+            reason = "reserve_acquisition_failed:" + str(exc)
     transition = None
     transition_failed = False
     if not planning_blocked and canonical_set is None and len(retained) == 1 and commitment_store:

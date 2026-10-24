@@ -22,7 +22,7 @@ class WeatherTests(unittest.TestCase):
                                     'wind_speed':9.72, 'wind_speed_unit':'km/h', 'precipitation_unit':'mm'}}
         self.rows = [{'datetime':(datetime.now(timezone.utc)+timedelta(days=1)).isoformat(), 'condition':'rainy',
                       'temperature':18, 'templow':11, 'precipitation':0, 'wind_speed':12}]
-        self.calls = []; self.fail = False
+        self.calls = []; self.ha_fail = False
 
     def server(self, cls):
         s = ThreadingHTTPServer(('127.0.0.1',0),cls)
@@ -42,7 +42,7 @@ class WeatherTests(unittest.TestCase):
                     self.rfile.read(int(self.headers['Content-Length']))
                     self.send_response(200); self.end_headers(); self.wfile.write(b'[]'); return
                 outer.calls.append((self.path,json.loads(self.rfile.read(int(self.headers['Content-Length'])))))
-                self.send_response(503 if outer.fail else 200); self.end_headers()
+                self.send_response(503 if outer.ha_fail else 200); self.end_headers()
                 self.wfile.write(json.dumps({'service_response':{ENTITY:{'forecast':outer.rows}}}).encode())
         return self.server(HA) + '/api'
 
@@ -59,13 +59,14 @@ class WeatherTests(unittest.TestCase):
     def test_real_http_cache_restart_failure_isolation(self):
         url=self.ha(); store=Store(Path(self.tmp.name)/'hc.sqlite3')
         rt=Runtime(self.config,store,url,'fake-token'); rt.collect(); rt.collect()
-        self.assertEqual(self.calls,[('/api/services/weather/get_forecasts?return_response',{'entity_id':ENTITY,'type':'daily'})])
+        self.assertEqual([c for c in self.calls if c[0].endswith('weather/get_forecasts?return_response')],
+                         [('/api/services/weather/get_forecasts?return_response',{'entity_id':ENTITY,'type':'daily'})])
         w=rt.current()['weather']['forecast']
         self.assertEqual(w['rows'][0]['precipitation'],0)
         self.assertIsNone(w['rows'][0]['precipitation_probability'])
         self.assertEqual(w['temperature_unit'],'°C')
         self.assertNotIn('fake-token',json.dumps(rt.current()))
-        reopened=Runtime(self.config,Store(store.path),url,'fake-token'); self.fail=True; reopened.collect()
+        reopened=Runtime(self.config,Store(store.path),url,'fake-token'); self.ha_fail=True; reopened.collect()
         self.assertEqual(reopened.connection,'connected')
         f=reopened.current()['weather']['forecast']
         self.assertTrue(f['stale']); self.assertEqual(f['rows'][0]['temperature'],18)

@@ -32,6 +32,8 @@ from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.health_notifications import HealthNotifier
 from picot.planner.market_daily_planner import MarketTradingPolicy
 from picot.runtime.runtime_monitor import RuntimeMonitorSession
+from picot.v2.accepted_loads import DEFAULT_PATH as ACCEPTED_LOADS_PATH
+from picot.v2.accepted_loads import AcceptedLoads
 from picot.v2.canonical_execution_runtime import (
     CanonicalExecutionRuntime,
     HomeAssistantCanonicalModeAdapter,
@@ -52,6 +54,7 @@ from picot.v2.energy_device_cards import (
     EnergyDevicePlacementStore,
     HomeAssistantEnergyDeviceCatalogReader,
 )
+from picot.v2.energy_outlook_runtime import home_assistant_outlook
 from picot.v2.ev_deadline_runtime import home_assistant_advisor
 from picot.v2.fast_grid_power_observation import FastGridPowerObserver
 from picot.v2.financial_measurement_observer import FinancialMeasurementObserver
@@ -780,6 +783,13 @@ def _planning_input_signature(
             else None
         ),
         "facts": facts,
+        "accepted_load_profile": (bundle.controlled_load_summary or {}).get(
+            "accepted_load_profile"
+        ),
+        "storage_reserve_checkpoints": [
+            (scope, at.isoformat(), energy)
+            for scope, at, energy in bundle.snapshot.storage_reserve_checkpoints
+        ],
         "price_points": price_points,
         "pv_energy_intervals": pv_energy_intervals,
         "daily_household_forecast": (
@@ -970,6 +980,7 @@ def _restore_daily_charge_context(
     bridge_states: tuple[DailyBridgeState, ...] = ()
     supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
     market_plan_bindings: tuple[MarketPlanBinding, ...] = ()
+    reserve_plan_ids: tuple[str, ...] = ()
     market_progress: tuple[MarketExecutionProgress, ...] = ()
     plans: list[ExecutionPlan] = []
     active_main_plan_ids: list[str] = []
@@ -1038,11 +1049,13 @@ def _restore_daily_charge_context(
                         plans.append(plan)
         stored_market_bindings = store.load_market_plan_bindings()
         transition_plan_ids = store.load_market_transition_plan_ids()
+        reserve_plan_ids = store.load_reserve_plan_ids()
         for active in active_plans:
             bindings = tuple(b for b in stored_market_bindings if b.plan_id == active.plan_id)
             if active.plan_id not in {p.plan_id for p in plans}:
                 if (not bindings
-                        and active.plan_id not in transition_plan_ids):
+                        and active.plan_id not in transition_plan_ids
+                        and active.plan_id not in reserve_plan_ids):
                     raise ValueError("active_daily_main_plan_owner_not_restored")
                 plans.append(active)
             market_plan_bindings += bindings
@@ -1097,6 +1110,8 @@ def _restore_daily_charge_context(
             pid for pid in transition_plan_ids
             if pid in {p.plan_id for p in plans}
         ),
+        reserve_plan_ids=tuple(pid for pid in reserve_plan_ids
+                               if pid in {p.plan_id for p in plans}),
         market_execution_progress=market_progress,
         pv_comparison_states=tuple(
             store.load_daily_pv_comparison(a.assignment_id)
@@ -2838,6 +2853,11 @@ def main() -> None:
             options.get("plan_switching_margin_eur", 0.05)
         ),
     )
+    accepted_loads = AcceptedLoads(ACCEPTED_LOADS_PATH)
+    energy_outlook_publisher = home_assistant_outlook(
+        token, lambda snapshot: market_daily_planner_runtime.planning_configuration(snapshot)[0],
+        accepted_loads,
+    )
     ev_deadline_advisor = (
         home_assistant_advisor(
             token,
@@ -3122,7 +3142,7 @@ def main() -> None:
             persist_observation=household_load_history.append,
             persist_rejection=household_load_rejections.append,
         )
-        return current
+        return accepted_loads.apply(current)
 
     previous_household_regime: HouseholdPlanningRegime | None = None
     household_regime_started_at: datetime | None = None
@@ -3314,6 +3334,8 @@ def main() -> None:
     @startup.stage("source_publication", "Bronstatus en terugblik voorbereiden", 40)
     def publish_input_sources(bundle: PlanningInputBundle) -> None:
         startup.enter("source_advice", "Energieadvies bijwerken", 40)
+        energy_outlook_publisher.submit(bundle.snapshot, bundle.controlled_load_summary,
+                                        bundle.load_replacement_basis)
         if ev_deadline_advisor is not None:
             ev_deadline_advisor.submit(bundle.snapshot)
         startup.enter("source_status", "Bronstatus publiceren", 40)

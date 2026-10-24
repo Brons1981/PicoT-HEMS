@@ -974,6 +974,37 @@ def _simulate_committed(
     return portfolio.strategy_results[0]
 
 
+def _reserve_invalidity(snapshot: PlanningInputSnapshot, path: DomainEnergyPath) -> tuple[str, ...]:
+    scope = snapshot.current_storage_states[0].execution_scope_id
+    context = snapshot.daily_charge_context
+    retained = tuple(s for p in (context.main_plans if context else ())
+                     if context is not None and p.plan_id in context.active_main_plan_ids
+                     for s in p.segments
+                     if s.purpose.startswith("reserve:") and s.ends_at > snapshot.captured_at)
+    for old in retained:
+        start, end = max(old.starts_at, snapshot.captured_at), old.ends_at
+        parts = sorted((s for s in path.segments if s.starts_at < end and start < s.ends_at),
+                       key=lambda s: s.starts_at)
+        cursor = start
+        for part in parts:
+            if part.starts_at > cursor or any(getattr(part, f) != getattr(old, f) for f in (
+                "primitive", "capability_id", "requested_power_w", "soc_constraint",
+                "charge_source_policy", "energy_profile_id", "purpose",
+            )):
+                return ("committed_reserve_action_changed",)
+            cursor = max(cursor, min(end, part.ends_at))
+        if cursor < end:
+            return ("committed_reserve_action_missing",)
+    if any(
+        not any(state.at == at and state.storage_energy_wh is not None
+                and state.storage_energy_wh + 1e-6 >= energy for state in path.projected_states)
+        for required_scope, at, energy in snapshot.storage_reserve_checkpoints
+        if required_scope == scope and at > snapshot.captured_at
+    ):
+        return ("promised_storage_reserve_not_preserved",)
+    return ()
+
+
 def produce_mep_comparable_portfolio(
     *,
     snapshot: PlanningInputSnapshot,
@@ -1266,6 +1297,7 @@ def produce_mep_comparable_portfolio(
             path.assumptions,
             confidence,
         )
+        reasons.extend(_reserve_invalidity(snapshot, path))
         validity = CandidateValidity.INVALID if reasons else CandidateValidity.VALID
         recoverability = _recoverability(
             schedule=schedule,
@@ -1677,6 +1709,7 @@ def produce_main_charge_portfolio(
             invalid += window.invalidity_reasons
         if isinstance(window, DailyMainIncumbentAssessment):
             invalid = incumbent_invalidity
+        invalid += _reserve_invalidity(snapshot, path)
         intervals = window.projection.intervals
         if supplemental_comparison:
             assert incumbent is not None
@@ -1903,7 +1936,7 @@ def _main_charge_energy_path(
         for p in (context.main_plans if context else ())
         if p.plan_id in (context.active_main_plan_ids if context else ())
         for s in p.segments
-        if s.purpose.startswith("bridge:") and s.main_assignment_id is None)
+        if s.purpose.startswith(("bridge:", "reserve:")) and s.main_assignment_id is None)
     for interval in (() if isinstance(window, DailyMainIncumbentAssessment)
                      else _execution_path_intervals(
         window.schedule,

@@ -686,6 +686,7 @@ class DailyChargePlanningContext:
 
     recalculation_request: DailyPlanRecalculationRequest | None = None
     market_transition_plan_ids: tuple[str, ...] = ()
+    reserve_plan_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in {"ready", "blocked"}:
@@ -722,9 +723,12 @@ class DailyChargePlanningContext:
             plan = plans.get(binding.plan_id)
             if plan is None or plan.execution_scope_id != binding.execution_scope_id:
                 raise ValueError("market binding requires its restored shared plan")
-        if set(plans) - (set(owners) | market_owners):
+        reserve_owners = set(self.reserve_plan_ids)
+        if len(reserve_owners) != len(self.reserve_plan_ids) or reserve_owners - set(plans):
+            raise ValueError("reserve recovery requires unique restored plans")
+        if set(plans) - (set(owners) | market_owners | reserve_owners):
             raise ValueError("recovered plan requires its daily owner")
-        if self.status == "ready" and set(plans) != set(owners) | market_owners:
+        if self.status == "ready" and set(plans) != set(owners) | market_owners | reserve_owners:
             raise ValueError("ready daily charge recovery requires every bound plan")
         for owner in self.assignments:
             plan = plans.get(owner.route_plan_id) if owner.route_plan_id is not None else None
@@ -767,10 +771,16 @@ class PlanningInputSnapshot:
     net_balance_status: str = "not_observed"
     external_load_policy: ExternalLoadPolicy | None = None
     solcast_planning_basis: str = "mean-lower-central"
+    storage_reserve_checkpoints: tuple[tuple[str, datetime, float], ...] = ()
 
     def __post_init__(self) -> None:
         if self.solcast_planning_basis not in {"lower", "mean-lower-central", "central", "upper"}:
             raise ValueError("invalid Solcast planning basis")
+        for scope, at, energy in self.storage_reserve_checkpoints:
+            if (scope not in {s.execution_scope_id for s in self.current_storage_states}
+                    or at.utcoffset() is None or type(energy) not in (int, float)
+                    or not isfinite(energy) or energy < 0):
+                raise ValueError("invalid storage reserve checkpoint")
         if self.daily_charge_context is not None and (
             self.daily_charge_context.snapshot_id != self.snapshot_id
             or self.daily_charge_context.restored_at != self.captured_at

@@ -25,6 +25,8 @@ class HeatingTests(ControlFixture):
             zone.update(minimum=10, target=20, maximum=25)
             self.states[zone['temperature']] = dict(entity_id=zone['temperature'], state='18', attributes={'unit_of_measurement':'°C'},
                 last_updated=datetime.fromtimestamp(NOW, timezone.utc).isoformat())
+        self.runtime.schedule.data['settings'].update(setback_temperature=20, thermostat_temperature=20)
+        self.runtime.schedule.save()
         self.states[DOOR] = dict(entity_id=DOOR, state='off', attributes={})
         self.price(.25)
 
@@ -79,15 +81,19 @@ class HeatingTests(ControlFixture):
         self.assertEqual(self.calls[-1][1]['entity_id'],self.config['cv'])
         self.temperature('beneden',20)
         self.poll(); self.poll(); self.poll()
-        self.assertEqual(self.calls[-1][1]['entity_id'],self.config['zones'][1]['device'])
-        self.assertEqual(self.calls[-1][1]['temperature'],18)
+        self.assertEqual(self.heat.view(self.config,self.at)['desired'], {'cv':20})
+        # A fresh situation with demand upstairs alone must never select CV.
+        self.heat.data['owned'].clear()
+        self.states[self.config['cv']]['state']='off'
+        self.ctl.states[self.config['cv']]['state']='off'
+        self.assertNotIn('cv',self.heat.plan(self.config,self.at)['desired'])
 
-    def test_cv_does_not_overheat_satisfied_upstairs(self):
+    def test_cv_choice_accepts_satisfied_upstairs(self):
         self.temperature('boven',22); self.temperature('badkamer',22)
         self.price(.90); self.enable(); self.poll(NOW+121)
-        self.assertEqual(self.calls[-1][1]['entity_id'],self.config['zones'][0]['device'])
+        self.assertEqual(self.calls[-1][1]['entity_id'],self.config['cv'])
 
-    def test_deadband_and_minimum_off_time(self):
+    def test_deadband_then_maintaining_and_minimum_off_time(self):
         self.temperature('boven',22); self.temperature('badkamer',22)
         self.temperature('beneden',19.8); self.enable(); self.poll(NOW+121)
         self.assertEqual(self.calls,[])
@@ -96,10 +102,13 @@ class HeatingTests(ControlFixture):
         self.temperature('beneden',19.9); self.poll()
         self.assertEqual(len(self.calls),1)
         self.temperature('beneden',20); self.poll()
+        self.assertEqual(len(self.calls),1)
+        # Protective stop still enforces minimum off time before restarting.
+        self.temperature('beneden','unavailable'); self.poll()
         self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
         self.temperature('beneden',19); self.poll()
         self.assertEqual(len(self.calls),2)
-        self.poll(NOW+450)
+        self.poll(NOW+600)
         self.assertEqual(len(self.calls),3)
 
     def test_door_preempts_pending_heat_despite_missing_temperature(self):
@@ -113,6 +122,7 @@ class HeatingTests(ControlFixture):
 
     def test_unknown_door_blocks_start_then_closed_recovery_delay(self):
         self.temperature('boven',22); self.temperature('badkamer',22)
+        self.config['gas_valid_until']='2020-01-01'  # Isolate the airco door guard; upstairs no longer blocks CV.
         self.states[DOOR]['state']='unknown'; self.enable(); self.poll(NOW+121)
         self.assertEqual(self.calls,[])
         self.states[DOOR]['state']='off'; self.poll()
@@ -171,7 +181,7 @@ class HeatingTests(ControlFixture):
         self.price(-.1); view=self.poll()
         self.assertNotIn('cv',view['desired'])
         self.temperature('beneden',22); self.temperature('boven',22); self.temperature('badkamer',22)
-        self.assertEqual(self.poll()['desired'],{})
+        self.assertEqual(self.poll()['desired'],{'beneden':20})
 
     def test_timeout_stop_once_and_no_automatic_retry(self):
         self.temperature('boven',22); self.temperature('badkamer',22)
@@ -239,7 +249,7 @@ class HeatingTests(ControlFixture):
     def test_failed_stop_requires_explicit_release(self):
         self.temperature('boven',22);self.temperature('badkamer',22)
         self.enable();self.poll(NOW+121);self.poll()
-        self.temperature('beneden',20)
+        self.temperature('beneden','unavailable')
         self.status=400;self.apply=False
         self.poll();self.poll();self.poll()
         self.assertEqual(len(self.calls),2)

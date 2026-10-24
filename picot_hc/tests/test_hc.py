@@ -1,3 +1,4 @@
+from test_control import TELEMETRY_PATHS
 import copy
 import gzip
 import json
@@ -140,7 +141,7 @@ class HC(unittest.TestCase):
         runtime = Runtime(self.config, store, '', '')
         return runtime, self.server(handler(runtime, False))
 
-    def post_settings(self, url, runtime, values, zone='beneden', token=True):
+    def post_settings(self, url, runtime, values, zone='badkamer', token=True):
         headers = {'Content-Type': 'application/json'}
         if token:
             headers['X-HC-CSRF'] = runtime.csrf_token
@@ -153,13 +154,13 @@ class HC(unittest.TestCase):
         result = json.load(self.post_settings(url, rt, values))
         self.assertEqual(result['settings']['target'], 19.5)
         current = json.load(urlopen(url + '/api/snapshot'))
-        self.assertEqual(current['zones'][0]['settings']['target'], 19.5)
+        self.assertEqual(current['zones'][2]['settings']['target'], 19.5)
         self.assertEqual(current['collected'], NOW)
         self.assertEqual(current['settings_revision'], 1)
         reopened = Runtime(self.config, Store(rt.store.path), '', '')
-        self.assertEqual(reopened.current()['zones'][0]['settings']['target'], 19.5)
+        self.assertEqual(reopened.current()['zones'][2]['settings']['target'], 19.5)
         self.assertEqual(reopened.config['zones'][1], self.config['zones'][1])
-        self.assertNotEqual(self.config['zones'][0].get('target'), 19.5)
+        self.assertNotEqual(self.config['zones'][2].get('target'), 19.5)
 
     def test_settings_invalid_requests_do_not_change_saved_values(self):
         rt, url = self.settings_runtime()
@@ -176,7 +177,7 @@ class HC(unittest.TestCase):
         with self.assertRaises(HTTPError) as cm:
             self.post_settings(url, rt, valid, zone='unknown')
         self.assertEqual(cm.exception.code, 400)
-        self.assertEqual(rt.store.settings()['beneden'], valid)
+        self.assertEqual(rt.store.settings()['badkamer'], valid)
 
     def test_settings_clear_values_and_preserve_other_zones(self):
         rt, url = self.settings_runtime()
@@ -184,7 +185,7 @@ class HC(unittest.TestCase):
         empty = dict(minimum=None, target=None, maximum=None)
         self.post_settings(url, rt, empty).close()
         reopened = Runtime(self.config, Store(rt.store.path), '', '')
-        self.assertIsNone(reopened.config['zones'][0]['target'])
+        self.assertIsNone(reopened.config['zones'][2]['target'])
         self.assertEqual(reopened.config['zones'][1]['target'], 18)
 
     def test_settings_require_csrf_and_ingress(self):
@@ -282,7 +283,8 @@ class HC(unittest.TestCase):
         self.assertEqual(data['zones'][1]['samples']['battery']['battery_status'],'normal')
         self.assertEqual(data['zones'][2]['samples']['energy']['value'],4.25)
         self.assertEqual(data['zones'][0]['settings']['target'],20)
-        self.assertEqual(calls,['/api/states','/api/template'])
+        self.assertEqual([path for path in calls if path not in TELEMETRY_PATHS],
+                         ['/api/states','/api/template'])
         self.assertTrue(data['zones'][0]['samples']['temperature']['report_error'])
         self.assertEqual(store.latest()['outdoor_humidity']['value'],81)
         again = Runtime(self.config,store,url+'/api','test-secret')
@@ -366,7 +368,8 @@ class HC(unittest.TestCase):
             rt.collect()
         self.assertEqual(calls.count(('GET','/api/states')),3)
         self.assertTrue(all((method=='GET' and path in ('/api/states','/api/config'))
-                            or (method,path)==('POST','/api/template') for method,path in calls))
+                            or (method == 'POST' and path in TELEMETRY_PATHS | {'/api/template'})
+                            for method,path in calls))
         self.assertEqual(rt.current()['building']['zones'][0]['delta_t_k'], 11)
         self.assertIsNone(rt.current()['building']['back_door']['value'])
         again = Runtime(self.config,store,url+'/api','secret-never-export')

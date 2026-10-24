@@ -27,7 +27,8 @@ class ScheduleTests(ControlFixture):
         self.config['zones'][1].update(minimum=16, target=18, maximum=20)
         self.config['zones'][2].update(minimum=16, target=21, maximum=24)
         self.settings = dict(enabled=True, optimization_band=1, windows=[window()], door_open_seconds=60,
-                             door_close_seconds=120, sensor_max_age_seconds=900)
+                             door_close_seconds=120, sensor_max_age_seconds=900,
+                             setback_temperature=18, thermostat_temperature=18)
         self.apply = True
 
     def observe(self, at=NOW):
@@ -114,7 +115,8 @@ class ScheduleTests(ControlFixture):
     def test_gap_uses_configured_fallback_without_inventing_temperature(self):
         self.enable()
         self.assertEqual(self.scheduler.view(NOW)['comfort']['zones']['beneden']['request']['target'], 18)
-        self.config['zones'][0]['target'] = None
+        self.scheduler.update(dict(revision=self.scheduler.data['revision'],
+            settings=dict(self.settings, enabled=False, thermostat_temperature=None)), NOW)
         self.assertIsNone(self.scheduler.view(NOW)['comfort']['zones']['beneden']['request'])
 
     def test_weekend_full_day_and_end_exclusive(self):
@@ -219,7 +221,7 @@ class ScheduleTests(ControlFixture):
         with self.store.connect() as db:
             self.assertEqual(json.loads(db.execute('SELECT payload FROM hc_schedule_archive').fetchone()[0]),legacy)
         again=Runtime(self.config,self.store,self.url,'fake-secret')
-        self.assertEqual(again.schedule.data['revision'],4)
+        self.assertEqual(again.schedule.data['revision'],5)
         self.assertEqual(self.calls,[])
 
     def test_overlap_week_wrap_invalid_ranges_and_stale_revision(self):

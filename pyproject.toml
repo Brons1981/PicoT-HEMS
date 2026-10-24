@@ -27,7 +27,7 @@ packages = ["src/picot", "src/picot_energy_devices"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "picot_hc", "picot_hc/tests"]
 
 [tool.ruff]
 line-length = 100

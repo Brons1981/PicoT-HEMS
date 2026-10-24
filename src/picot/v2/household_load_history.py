@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 
+from picot.v2.modeled_load_history import apply_reviews, read_reviews
 from picot.v2.planning_input import HouseholdLoadObservation
 
 
@@ -14,13 +17,27 @@ class HouseholdLoadHistoryStore:
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self._review_keys: dict[tuple[str | None, str, float, float], None] = {}
+        self._append_lock = Lock()
 
     def append(self, observation: HouseholdLoadObservation) -> None:
+        with self._append_lock:
+            self._append(observation)
+
+    def _append(self, observation: HouseholdLoadObservation) -> None:
+        fresh = [r for r in observation.modeled_reviews
+                 if (observation.modeled_source_id, *r) not in self._review_keys]
         payload = {
             "schema_version": 1,
             "power_w": observation.power_w,
             "identified_external_power_w": observation.identified_external_power_w,
             "external_power_observed": observation.external_power_observed,
+            "controlled_power_w": observation.controlled_power_w,
+            "controlled_source_id": observation.controlled_source_id,
+            "modeled_power_w": observation.modeled_power_w,
+            "modeled_source_id": observation.modeled_source_id,
+            "modeled_reviews": [dict(sampled_at=t, power_w=p, replaceable_power_w=r)
+                                for t, p, r in fresh],
             "sampled_at": observation.sampled_at.isoformat(),
             "evidence_ids": list(observation.evidence_ids),
             "method_version": observation.method_version,
@@ -35,6 +52,10 @@ class HouseholdLoadHistoryStore:
                 )
             )
             handle.write("\n")
+        for review in fresh:
+            self._review_keys[(observation.modeled_source_id, *review)] = None
+        while len(self._review_keys) > 4096:
+            self._review_keys.pop(next(iter(self._review_keys)))
 
     def load(self) -> tuple[HouseholdLoadObservation, ...]:
         if not self.path.exists():
@@ -50,7 +71,7 @@ class HouseholdLoadHistoryStore:
             observation = _decode_observation(line)
             if observation is not None:
                 observations.append(observation)
-        return tuple(observations)
+        return apply_reviews(observations)
 
 
 def _decode_observation(
@@ -91,7 +112,7 @@ def _decode_observation(
 
     try:
         parsed_at = datetime.fromisoformat(sampled_at.replace("Z", "+00:00"))
-        return HouseholdLoadObservation(
+        observation = HouseholdLoadObservation(
             power_w=float(power_w),
             identified_external_power_w=float(external),
             external_power_observed=external_observed,
@@ -99,5 +120,16 @@ def _decode_observation(
             evidence_ids=tuple(evidence_ids),
             method_version=method_version,
         )
+        try:
+            observation = replace(observation, controlled_power_w=payload.get('controlled_power_w'),
+                           controlled_source_id=payload.get('controlled_source_id'))
+        except (ValueError, TypeError):
+            return observation  # Bad optional attribution must not erase physical history.
+        try:
+            return replace(observation, modeled_power_w=payload.get("modeled_power_w"),
+                           modeled_source_id=payload.get("modeled_source_id"),
+                           modeled_reviews=read_reviews(payload.get("modeled_reviews"), parsed_at))
+        except (ValueError, TypeError):
+            return observation
     except ValueError:
         return None

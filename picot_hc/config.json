@@ -102,7 +102,16 @@
     "outdoor_battery": "binary_sensor.0_energie_gw1200a_wh26_battery",
     "outdoor_vpd": "sensor.0_energie_gw1200a_vapour_pressure_deficit",
     "health_notifications_enabled": true,
-    "health_notifications_recovery_enabled": true
+    "health_notifications_recovery_enabled": true,
+    "cv_power": "",
+    "cv_energy": "",
+    "cv_meter_scope_confirmed": false,
+    "cv_dhw_active": "binary_sensor.dhw_status",
+    "cv_dhw_diagnostic": "sensor.dhw_status",
+    "cv_auxiliary_mode": "estimated",
+    "cv_auxiliary_running_w": 100,
+    "cv_auxiliary_postrun_w": 50,
+    "cv_auxiliary_postrun_seconds": 300
   },
   "schema": {
     "outdoor": "str",
@@ -149,7 +158,16 @@
     "outdoor_battery": "str?",
     "outdoor_vpd": "str?",
     "health_notifications_enabled": "bool?",
-    "health_notifications_recovery_enabled": "bool?"
+    "health_notifications_recovery_enabled": "bool?",
+    "cv_power": "str?",
+    "cv_energy": "str?",
+    "cv_meter_scope_confirmed": "bool?",
+    "cv_dhw_active": "str?",
+    "cv_dhw_diagnostic": "str?",
+    "cv_auxiliary_mode": "list(measured|estimated)?",
+    "cv_auxiliary_running_w": "float(1,2000)?",
+    "cv_auxiliary_postrun_w": "float(0,2000)?",
+    "cv_auxiliary_postrun_seconds": "int(0,3600)?"
   },
   "url": "https://github.com/Brons1981/PicoT-HEMS/tree/main/picot_hc"
 }

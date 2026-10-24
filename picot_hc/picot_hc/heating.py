@@ -6,9 +6,10 @@ import time
 import uuid
 from datetime import datetime
 
-from .control import PENDING, numeric
+from .control import numeric
 from .core import observation, prices, tariff_confirmed, timestamp
 from .schedule import TZ
+from .learning import Learning
 
 DEFAULTS = dict(enabled=False, cv_efficiency=.90, gas_kwh_m3=35.17/3.6,
                 cop_beneden=3.72, cop_boven=3.0)
@@ -40,6 +41,8 @@ class Heating:
         self.data.setdefault('manual', [])
         self.data.setdefault('timer_revision', 0)
         self.data.setdefault('timer', None)
+        self.learning = Learning(store)
+        self.energy_start = None
         self.armed = False
         if self.data['timer'] and self.data['timer']['status'] == 'running':
             self.data['timer']['status'] = 'restart'
@@ -150,6 +153,37 @@ class Heating:
                 'badkamer' not in self.data['owned'] or self.armed and self.data['settings']['enabled']):
             timer['cleanup'] = False
 
+    def learning_context(self, config, view, now, blocked):
+        from .thermal_weather import observed
+        zone = next(z for z in config['zones'] if z['id'] == 'beneden')
+        def temperature(entity):
+            sample = observation(entity, self.control.states, now, True, '°C')
+            try:
+                age = now-timestamp(sample.get('source_reported') or sample.get('source_updated'))
+            except (TypeError, ValueError, OverflowError):
+                return None
+            return sample['value'] if (sample['quality'] == 'available' and not sample.get('report_error')
+                and 0 <= age <= view['settings']['sensor_max_age_seconds']) else None
+        indoor, outdoor = temperature(zone['temperature']), temperature(config['outdoor'])
+        door = view['door'] or {}
+        valid = (self.control.connected and self.control.received is not None
+                 and 0 <= now-self.control.received <= config['stale_seconds']
+                 and indoor is not None and outdoor is not None and 'beneden' not in blocked
+                 and door.get('value') == 'off'
+                 and now-door.get('since', now) >= view['settings']['door_close_seconds']
+                 and not any(source in self.data['faults'] for source in ('beneden', 'cv')))
+        idle = True
+        identities = [zone['temperature'], config['outdoor']]
+        for source in ('beneden', 'cv'):
+            entity = self.control.bindings[source]['entity_id']
+            state = self.control.states.get(entity, {})
+            attrs = state.get('attributes') or {}
+            idle = idle and (state.get('state') == 'off' or
+                             state.get('state') == 'heat' and attrs.get('hvac_action') == 'idle')
+            identities.extend([entity, attrs.get('fan_mode'), attrs.get('preset_mode')])
+        return dict(valid=bool(valid), indoor=indoor, outdoor=outdoor, idle=bool(idle),
+                    identity=json.dumps(identities), weather=observed(config, self.control.states, now))
+
     def plan(self, config, now):
         settings = self.data['settings']
         view = self.schedule.view(now)
@@ -164,6 +198,8 @@ class Heating:
                 blocked.update(COVERAGE[source])
         if view['legacy_pause']:
             blocked.update(('beneden', 'boven'))
+        context = self.learning_context(config, view, now, blocked)
+        learning = self.learning.recommendation(view, now, settings['enabled'] and self.armed, context)
         zones, demand = {}, {}
         fresh = (self.control.connected and self.control.received is not None
                  and 0 <= now-self.control.received <= config['stale_seconds'])
@@ -173,6 +209,23 @@ class Heating:
             zid = zone['id']
             req = view['comfort']['zones'][zid]
             goal = req['request']
+            if zid == 'beneden' and learning['target'] is not None:
+                target = learning['target']
+                if learning['phase'] != 'coast':
+                    target = max(target, (goal or {}).get('target') or 5)
+                # A learned fractional target must not make the incumbent ineligible
+                # and consequently send it off. Fall back to the schedule goal.
+                incumbents = [s for s in ('beneden', 'cv') if s in owned and not owned[s].get('released')]
+                def supports(source):
+                    item = sources[source]
+                    return (item['temperature_supported'] and item['minimum'] <= target <= item['maximum']
+                            and math.isclose((target-item['minimum'])/item['step'],
+                                             round((target-item['minimum'])/item['step']), abs_tol=.00001))
+                supported = all(supports(s) for s in incumbents) if incumbents else any(supports(s) for s in ('beneden', 'cv'))
+                if supported:
+                    goal = dict(goal or {}, target=target)
+                else:
+                    learning.update(phase='unsupported_target', target=None, preheating=False)
             if zid == 'badkamer' and self.timer_active(now):
                 goal = {'target': self.data['timer']['temperature']}
             sample = observation(zone['temperature'], self.control.states, now, True, '°C')
@@ -198,11 +251,18 @@ class Heating:
                 reason = 'Handmatige bronkeuze heeft voorrang.'
             target = goal['target'] if goal else None
             on = False
+            maintaining = False
             if reason is None:
                 on = temp < target if self.data['demand'].get(zid) else temp <= target-.3
+                if zid == 'beneden':
+                    maintaining = any(source in owned and not owned[source].get('released')
+                                      and records.get(owned[source]['command'], {}).get('value') != 'off'
+                                      for source in ('beneden', 'cv'))
+                    on = on or maintaining
             demand[zid] = on
             zones[zid] = dict(temperature=temp, target=target, demand=on, reason=reason or
-                              ('Warmtevraag.' if on else 'Temperatuur bereikt; geen warmtevraag.'))
+                              ('Temperatuur handhaven.' if maintaining and temp >= target else
+                               'Warmtevraag.' if on else 'Temperatuur bereikt; geen warmtevraag.'))
         rows, warnings = prices(self.control.states.get(config['price_entity']), config, now)
         price = next((p['value'] for p in rows if p['start'] <= now < p['end']), None)
         if not tariff_confirmed(config) or warnings:
@@ -233,6 +293,7 @@ class Heating:
             return s['minimum'] <= target <= s['maximum'] and math.isclose(steps, round(steps), abs_tol=.00001)
 
         desired = {}
+        direct_desired = {}
         enabled = settings['enabled'] and self.armed
         if enabled and price is not None:
             for zid in ('beneden', 'boven', 'badkamer'):
@@ -242,12 +303,12 @@ class Heating:
                         zones[zid]['reason'] = 'Airco wacht op gesloten achterdeur en herstelvertraging.'
                     else:
                         desired[zid] = target
-            down, up = zones['beneden'], zones['boven']
+            direct_desired = dict(desired)
+            down = zones['beneden']
             # The room thermostat is downstairs: it cannot independently heat upstairs.
-            cv_ok = (demand['beneden'] and up['reason'] in ('Warmtevraag.', 'Temperatuur bereikt; geen warmtevraag.')
-                     and up['temperature'] < up['target'] and eligible('cv', down['target'])
+            cv_ok = (demand['beneden'] and eligible('cv', down['target'])
                      and costs['cv'] is not None)
-            if cv_ok and all(z not in desired or costs['cv'] < costs[z] for z in ('beneden', 'boven') if demand[z]):
+            if cv_ok and ('beneden' not in desired or costs['cv'] < costs['beneden']):
                 desired.pop('beneden', None)
                 desired.pop('boven', None)
                 desired['cv'] = down['target']
@@ -274,9 +335,14 @@ class Heating:
                 zone['reason'] = 'Geen bevestigd huidig stroomtarief; bronkeuze geblokkeerd.'
             elif zone['demand'] and not any(zid in COVERAGE[s] for s in desired) and zone['reason'] == 'Warmtevraag.':
                 zone['reason'] = 'Warmtevraag; bron geblokkeerd door mogelijkheden, storing of gedeelde cv-grens.'
-        return dict(desired=desired, zones=zones, demand=demand, costs=costs, price=price,
+        result = dict(desired=desired, zones=zones, demand=demand, costs=costs, price=price,
                     door_stop=door_stop, sources=sources, enabled=enabled,
-                    estimate=True, strategy='current_heat_cost', preheating=False, learning=False)
+                    estimate=True, strategy='current_heat_cost', preheating=learning['preheating'], learning=learning['enabled'], learning_status=learning, learning_context=context)
+        if hasattr(self, 'hourly_weather'):
+            result['hourly_weather'] = self.hourly_weather(now)
+        if self.energy_start is not None:
+            result = self.energy_start.apply(result, config, now, direct_desired)
+        return result
 
     def action(self, plan, now):
         records = {c['id']: c for c in self.control.records()}
@@ -292,7 +358,10 @@ class Heating:
                 continue  # Includes failed/uncertain stops: never replay automatically.
             if source not in plan['desired'] and plan['sources'][source]['available']:
                 return source, 'state' if source == 'badkamer' else 'mode', 'off'
-        for source, target in plan['desired'].items():
+        desired = list(plan['desired'].items())
+        if plan.get('energy_start'):
+            desired.sort(key=lambda item: item[0] != plan['energy_start'].get('source', 'beneden'))
+        for source, target in desired:
             s = plan['sources'][source]
             if s['pending'] or source in self.data['faults']:
                 continue
@@ -315,6 +384,7 @@ class Heating:
             return
         self.reconcile(now)
         plan = self.plan(config, now)
+        self.learning.observe(self.schedule.view(now), plan, now, max(180, 3*config.get('poll_seconds', 30)), plan['learning_context'])
         self.data['demand'] = plan['demand']
         self.save()  # Storage failure must precede all device writes.
         # One write per poll, prioritising stops; remaining independent sources follow.
@@ -333,6 +403,9 @@ class Heating:
             previous = copy.deepcopy(self.data)
             self.data['owned'][source] = dict(command=request_id,
                 since=self.data['owned'].get(source, {}).get('since', moment))
+            if (field == 'heating' and current.get('energy_start')
+                    and source == current['energy_start'].get('source', 'beneden')):
+                self.data['owned'][source]['energy_start'] = copy.deepcopy(current['energy_start'])
             self.data['changed'][source] = moment
             try:
                 self.save()

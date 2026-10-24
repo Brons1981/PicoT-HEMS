@@ -15,6 +15,25 @@ from urllib.error import HTTPError
 from .control import Control
 from .schedule import Schedule, DOOR
 from .heating import Heating
+from .energy_outlook import read_outlook
+from .energy_portfolio import read_assessment
+from .energy_measurement import measurement, MeasurementPublisher
+from .energy_model import context as energy_context
+from .energy_model import meter_context
+from .energy_proposals import Proposals, ProposalPublisher
+from .warmup_energy import WarmupEnergy
+from .startup_energy import StartupEnergy
+from .cv_gas_screening import gas_screening
+from .cv_auxiliary_history import AuxiliaryHistory
+from .cv_auxiliary import assumptions as cv_assumptions
+from .cv_warmup import CvWarmupEvidence, cv_sample
+from .cv_maintenance import CvMaintenance
+from .delayed_start import idle_context
+from .energy_selection import Selection, ENTITY as SELECTION_ENTITY
+from .start_intent import StartIntent
+from .energy_start import EnergyStart
+from .energy_execution import (execution_receipt, ENTITY as EXECUTION_ENTITY,
+                               reservation_receipt, RESERVATION_ENTITY)
 from .building import building_observation
 from .weather import DEFAULT_ENTITY, WeatherReader, forecast_view
 from .core import Store, fetch_states, snapshot, validate, number, observation
@@ -76,8 +95,27 @@ class Runtime:
         self.control = Control(self.config, store, url, token, notifications=self.notifications)
         self.schedule = Schedule(self.control, store, self.config)
         self.heating = Heating(self.control, self.schedule, store)
+        self.energy_publisher = MeasurementPublisher(url, token)
+        self.auxiliary_history = AuxiliaryHistory()
+        self.energy_proposals = Proposals(store, ProposalPublisher(url, token))
+        self.start_intent = StartIntent(store)
+        self.energy_selection = Selection(store, ProposalPublisher(url, token, SELECTION_ENTITY))
+        self.energy_execution_publisher = ProposalPublisher(url, token, EXECUTION_ENTITY)
+        self.energy_reservation_publisher = ProposalPublisher(url, token, RESERVATION_ENTITY)
+        self.warmup_energy = WarmupEnergy(store)
+        self.warmup_sample = None
+        self.startup_energy = StartupEnergy(store)
+        self.cv_warmup = CvWarmupEvidence(store)
+        self.cv_maintenance = CvMaintenance(store)
+        self.heating.energy_start = EnergyStart(self.heating, self.start_intent,
+                                               self.startup_energy, self.energy_proposals.model)
+        self.heating.energy_start.cv_warmup = self.cv_warmup
+        self.heating.energy_start.cv_maintenance = self.cv_maintenance
+        self.startup_sample = None
         previous = store.latest() or {}
         self.weather = WeatherReader(self.config.get('weather_entity', DEFAULT_ENTITY), previous.get('weather'))
+        self.heating.hourly_weather = self.weather.hourly.view
+        self.energy_proposals.cooling = self.heating.learning.cooling
         self.connection = 'starting'
         self.error = None
         self.stop = threading.Event()
@@ -102,6 +140,8 @@ class Runtime:
                 raise ValueError('Onbekende zone.')
             if zone.get('monitor_only'):
                 raise ValueError('Deze ruimte wordt alleen gemonitord.')
+            if zone['id'] == 'beneden':
+                raise ValueError('Stel beneden in via het comfortschema of de handmatige thermostaat.')
             zone.update(values)
             try:
                 validate(config)
@@ -125,11 +165,17 @@ class Runtime:
             self.control.observe(states, started, now)
             data = snapshot(self.config, states, now)
             data['building'] = building_observation(self.config, states, now, data, DOOR)
+            data['energy_measurement'] = measurement(self.config, states, now)
+            data['energy_measurement']['estimated_component'] = self.auxiliary_history.sample(
+                self.config, states, now)
             data['weather'] = self.weather.collect(states, now, self.url, self.token)
             self.store.save(data, self.config['retention_days'])
             self.connection, self.error = 'connected', None
             self.schedule.tick(self.config)
+            self._prepare_startup()
+            self._cv_evidence(prepare=True)
             self.heating.tick(self.config)
+            self.energy_publisher.submit(data['energy_measurement'])
         except HTTPError as exc:
             self.control.connected = False
             self.connection, self.error = 'disconnected', 'HA antwoordt met HTTP ' + str(exc.code)
@@ -137,7 +183,117 @@ class Runtime:
             self.control.connected = False
             # No URLs, tokens or remote exception bodies in logs or responses.
             self.connection, self.error = 'disconnected', 'Ophalen of opslaan mislukt (' + type(exc).__name__ + ')'
+        self._energy_advice()
+        self._cv_evidence()
+        try:
+            self.energy_execution_publisher.submit(execution_receipt(
+                self.start_intent, self.control, self.config, time.time()))
+        except Exception:
+            self.energy_execution_publisher.submit(dict(state='unavailable', attributes={}))
+        try:
+            self.energy_reservation_publisher.submit(reservation_receipt(
+                self.start_intent, self.control, self.heating, self.config, time.time()))
+        except Exception:
+            self.energy_reservation_publisher.submit(dict(state='unavailable', attributes={}))
         self._notify_health()
+
+    def _cv_evidence(self, prepare=False):
+        # Passive collection must not interrupt heating or authorize a new source.
+        try:
+            now = time.time()
+            plan, view = self.heating.view(self.config, now), self.schedule.view(now)
+            if not prepare:
+                point = gas_screening(self.config, self.control.states, now) if self.control.connected else {}
+                self.cv_warmup.screen(point, now)
+                self.cv_maintenance.evidence.screen(point, now)
+            sample = cv_sample(self.config, self.control, plan, now)
+            if prepare:
+                self.cv_warmup.prepare(sample, view, plan, self.heating.action(plan, now), now)
+            else:
+                self.cv_warmup.observe(sample, view, plan, self.control.records(), now)
+                self.cv_maintenance.observe(sample, view, plan, self.control.records(), now)
+        except Exception:
+            self.cv_warmup.reset()
+            self.cv_maintenance.session = None
+
+    def _prepare_startup(self):
+        # Observe immediately before the existing controller acts; never issue a command here.
+        try:
+            now = time.time()
+            plan, view = self.heating.view(self.config, now), self.schedule.view(now)
+            states = self.control.states
+            sample = meter_context(self.config, states, plan,
+                                   measurement(self.config, states, now), now)
+            self.startup_energy.prepare(sample, view, plan, self.heating.action(plan, now), now)
+        except Exception:
+            self.startup_energy.reset()
+
+    def _energy_advice(self):
+        # Advice failure must not interrupt the thermostat or device protection.
+        try:
+            now = time.time()
+            states = self.control.states
+            plan = self.heating.view(self.config, now)
+            view = self.schedule.view(now)
+            self.startup_sample = meter_context(self.config, states, plan,
+                                    measurement(self.config, states, now), now)
+            self.startup_energy.observe(self.startup_sample, view, plan,
+                                       self.control.records(), now)
+            self.warmup_sample = energy_context(self.config, states, plan,
+                                    measurement(self.config, states, now), now, steady=False)
+            self.warmup_energy.observe(self.warmup_sample, view, plan, now)
+            sample = energy_context(self.config, states, plan,
+                                    measurement(self.config, states, now), now)
+            outlook = read_outlook(states, now, self.control.connected and self.connection == 'connected')
+            idle_sample = idle_context(self.config, states, plan,
+                                      measurement(self.config, states, now), view, now)
+            if not self.control.connected or self.connection != 'connected':
+                idle_sample = None
+            selected_source = (self.start_intent.current or {}).get('source', 'beneden')
+            own = self.heating.data['owned'].get(selected_source, {})
+            active = own.get('energy_start')
+            if active and self.start_intent.current and active['created_at'] == self.start_intent.current['created_at']:
+                record = next((c for c in self.control.records() if c['id'] == own['command']), {})
+                if record.get('status') in ('awaiting_feedback', 'confirmed'):
+                    self.start_intent.started(own['command'])
+                else:
+                    self.start_intent.cancel('Startopdracht niet bevestigd; geen automatische herhaling.')
+            self.energy_proposals.fixed_start = self.start_intent.check(idle_sample, view, plan, now)
+            self.energy_proposals.fixed_source = (selected_source
+                if self.energy_proposals.fixed_start is not None else None)
+            window = view.get('current') or view.get('next') or {}
+            cv_query = cv_sample(self.config, self.control, plan, now, target=window.get('target'))
+            auxiliary = self.auxiliary_history
+            parameters = cv_assumptions(self.config)
+            modeled_id = (auxiliary.identity if auxiliary.current.get('status') == 'estimated'
+                          and auxiliary.last is not None and 0 <= now-auxiliary.last <= 60 else None)
+            tail_until, tail_power = now, 0
+            if (parameters and modeled_id and auxiliary.current.get('phase') == 'postrun'
+                    and not auxiliary.review.tail_is_dhw and auxiliary.off_since is not None):
+                tail_power = parameters['postrun_power_w']
+                tail_until = auxiliary.off_since + parameters['postrun_seconds']
+            cv_context = dict(sample=cv_query, warmup=self.cv_warmup, maintenance=self.cv_maintenance,
+                              gas_price=self.config.get('gas_price'), modeled_source_id=modeled_id,
+                              prior_tail_until=tail_until, prior_tail_power_w=tail_power,
+                              unsettled_space_load=(auxiliary.current.get('phase') == 'active'
+                                and gas_screening(self.config, states, now).get('active') is not True))
+            self.energy_proposals.tick(sample, view, plan, outlook, now,
+                warmup=self.warmup_energy, warmup_sample=self.warmup_sample,
+                startup=self.startup_energy, idle_sample=idle_sample, states=states, cv_context=cv_context)
+            self.energy_selection.tick(states, self.energy_proposals, now,
+                self.control.connected and self.connection == 'connected')
+            self.start_intent.capture(self.energy_selection, self.energy_proposals,
+                                      idle_sample, view, plan, now)
+        except Exception:
+            self.startup_sample = None
+            self.start_intent.cancel('Energieadvies tijdelijk niet beschikbaar.')
+            self.energy_selection.withdraw('Energieadvies tijdelijk niet beschikbaar.')
+            self.startup_energy.reset()
+            self.warmup_sample = None
+            self.warmup_energy.session = None
+            self.energy_proposals.model.session = None
+            self.energy_proposals.standby.observe(None, time.time())
+            self.energy_proposals.withdraw('Verbruiksadvies tijdelijk niet beschikbaar.')
 
     def _notify_health(self):
         # Reporting must never change heating or command handling.
@@ -175,6 +331,7 @@ class Runtime:
             from .weather import weather_now
             data['weather'] = weather_now(self.weather.entity, {}, time.time())
         weather = data['weather']
+        weather['hourly'] = self.weather.hourly.view(time.time())
         weather['forecast'] = forecast_view(weather.get('forecast'), time.time(),
             'HA-verbinding niet actueel.' if self.connection != 'connected' or age is None or age > self.config['stale_seconds'] else None)
         data['sources'] = self.control.sources(time.time(), self.config['stale_seconds'])
@@ -182,6 +339,26 @@ class Runtime:
         with self.control.lock:
             data['schedule'] = self.schedule.view(time.time())
             data['heating'] = self.heating.view(self.config, time.time())
+            data['energy_outlook'] = read_outlook(self.control.states, time.time(),
+                self.control.connected and self.connection == 'connected' and age is not None
+                and 0 <= age <= self.config['stale_seconds'])
+            data['energy_assessment'] = read_assessment(self.control.states, time.time(),
+                self.control.connected and self.connection == 'connected' and age is not None
+                and 0 <= age <= self.config['stale_seconds'])
+            data['energy_proposals'] = self.energy_proposals.view(time.time())
+            data['warmup_energy'] = self.warmup_energy.view(self.warmup_sample, time.time())
+            data['startup_energy'] = self.startup_energy.view(self.startup_sample, time.time())
+            cv_now = time.time()
+            cv_window = data['schedule'].get('current') or data['schedule'].get('next') or {}
+            cv_query = cv_sample(self.config, self.control, data['heating'], cv_now,
+                                 target=cv_window.get('target'))
+            data['cv_warmup'] = self.cv_warmup.view(
+                cv_now, cv_query,
+                gas_price=self.config.get('gas_price'))
+            data['cv_maintenance'] = self.cv_maintenance.view(
+                cv_query, cv_now)
+            data['energy_selection'] = self.energy_selection.view(time.time())
+            data['start_intent'] = self.start_intent.view(time.time())
         data['control_mode'] = ('automatic_heating' if data['heating']['enabled']
                                 else 'bathroom_timer' if data['heating']['timer']['active'] else 'comfort_input')
         for zone in data['zones']:

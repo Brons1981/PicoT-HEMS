@@ -191,6 +191,17 @@ def prices(item, config, now):
     return ordered, errors
 
 
+def dhw_observations(config, states, now):
+    # Preserve source timestamps, not a guessed physical tap-open time.
+    values = {}
+    for label, key in (('active', 'cv_dhw_active'), ('diagnostic', 'cv_dhw_diagnostic')):
+        entity = config.get(key, '')
+        point = observation(entity, states, now)
+        point['source_changed'] = (states.get(entity) or {}).get('last_changed')
+        values[label] = point
+    return values
+
+
 def snapshot(config, states, now):
     zones = []
     for z in config['zones']:
@@ -213,6 +224,7 @@ def snapshot(config, states, now):
                 presence=observation(config['presence'], states, now),
                 cv=observation(config['cv'], states, now),
                 cv_status=observation(config['cv_status'], states, now),
+                dhw_observations=dhw_observations(config, states, now),
                 gas=observation(config['gas'], states, now, True, 'm³'),
                 co2=observation(config['co2'], states, now, True, 'ppm'),
                 gas_price=config['gas_price'], gas_valid_until=config['gas_valid_until'],
@@ -261,7 +273,7 @@ class Store:
         """Bounded memory, release SQLite read locks between export pages."""
         after = -1e300
         keys = ('collected', 'zones', 'outdoor', 'outdoor_humidity', 'outdoor_dewpoint',
-                'outdoor_battery', 'outdoor_vpd', 'presence', 'cv', 'cv_status', 'gas', 'weather', 'building')
+                'outdoor_battery', 'outdoor_vpd', 'presence', 'cv', 'cv_status', 'gas', 'weather', 'building', 'dhw_observations')
         while True:
             with self.connect() as db:
                 rows = db.execute('SELECT time, payload FROM samples WHERE time > ? AND time <= ? ORDER BY time LIMIT ?',

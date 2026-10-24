@@ -28,6 +28,7 @@ from picot.v2.contracts import (
     StoragePhysicalLimits,
     StorageRoundTripEfficiencyEvidence,
 )
+from picot.v2.controlled_load_history import attribute, paired_forecasts
 from picot.v2.external_load_policy import (
     apply_external_load_policy,
     read_external_load_policy,
@@ -42,6 +43,8 @@ from picot.v2.household_load_guard import (
     apply_household_load_guard,
     assess_household_load_guard,
 )
+from picot.v2.load_replacement import LoadReplacementBasis, build_basis
+from picot.v2.modeled_load_history import attribute_model, joint_forecasts, modeled_forecasts
 from picot.v2.storage_capability_snapshot import (
     build_storage_capability_snapshot_set,
 )
@@ -136,8 +139,45 @@ class HouseholdLoadObservation:
     method_version: str
     identified_external_power_w: float = 0.0
     external_power_observed: bool = False
+    controlled_power_w: float | None = None
+    controlled_source_id: str | None = None
+    modeled_power_w: float | None = None
+    modeled_source_id: str | None = None
+    modeled_reviews: tuple[tuple[str, float, float], ...] = ()
+    replaceable_modeled_power_w: float | None = None
 
     def __post_init__(self) -> None:
+        if self.replaceable_modeled_power_w is not None and (
+            self.modeled_power_w is None
+            or type(self.replaceable_modeled_power_w) not in (int, float)
+            or not isfinite(self.replaceable_modeled_power_w)
+            or not 0 <= self.replaceable_modeled_power_w <= self.modeled_power_w
+        ):
+            raise ValueError("invalid replaceable modeled subset")
+        if self.modeled_power_w is not None:
+            if (type(self.modeled_power_w) not in (int, float)
+                    or not isfinite(self.modeled_power_w) or self.controlled_power_w is None
+                    or not 0 <= self.modeled_power_w <= (
+                        self.power_w - self.identified_external_power_w - self.controlled_power_w
+                    )
+                    or not isinstance(self.modeled_source_id, str)
+                    or len(self.modeled_source_id) != 64
+                    or any(c not in "0123456789abcdef" for c in self.modeled_source_id)
+                    or self.modeled_source_id == self.controlled_source_id):
+                raise ValueError("invalid modeled contribution")
+        elif self.modeled_source_id is not None:
+            raise ValueError("modeled identity requires an estimate")
+        if self.controlled_power_w is not None:
+            if (type(self.controlled_power_w) not in (int, float)
+                    or not isfinite(self.controlled_power_w)
+                    or not 0 <= self.controlled_power_w <= (
+                        self.power_w-self.identified_external_power_w)
+                    or not isinstance(self.controlled_source_id, str)
+                    or len(self.controlled_source_id) != 64
+                    or any(c not in '0123456789abcdef' for c in self.controlled_source_id)):
+                raise ValueError('controlled power requires a valid measured subset and source')
+        elif self.controlled_source_id is not None:
+            raise ValueError('controlled source requires a measurement')
         if not 0 <= self.identified_external_power_w <= self.power_w:
             raise ValueError("identified external power must be a physical subset")
         if not isfinite(self.power_w) or self.power_w < 0.0:
@@ -159,6 +199,8 @@ class PlanningInputBundle:
     assembly_finished_at: datetime
     household_load_observation: HouseholdLoadObservation | None = None
     household_load_rejection_reason: str | None = None
+    controlled_load_summary: dict[str, object] | None = None
+    load_replacement_basis: LoadReplacementBasis | None = None
 
 
 DEFAULT_BINDINGS = (
@@ -196,6 +238,7 @@ DEFAULT_BINDINGS = (
     ("nordpool", "energy_price", "nordpool_price_entity"),
     ("energy_devices", "external_load_policy", "energy_device_policy_entity"),
     ("energy_devices", "ev_session_demand", "energy_device_session_entity"),
+    ("energy_devices", "controlled_load_measurement", "hc_load_measurement_entity"),
 )
 
 LEGACY_SOC_ENTITY_MIGRATIONS = {
@@ -666,7 +709,8 @@ def load_bindings(options_path: str = "/data/options.json") -> tuple[SourceBindi
     options = load_options(options_path)
     result: list[SourceBinding] = []
     for category, semantic_role, option_key in DEFAULT_BINDINGS:
-        raw = options.get(option_key)
+        raw = options.get(option_key, 'sensor.picot_hc_load_measurement'
+                          if semantic_role == 'controlled_load_measurement' else None)
         entity_id = raw.strip() if isinstance(raw, str) and raw.strip() else None
         result.append(SourceBinding(category, semantic_role, entity_id))
     return tuple(result)
@@ -789,7 +833,9 @@ class HomeAssistantStateReader:
             pv_energy_intervals=pv_energy_intervals,
             external_load_payload=(
                 typed_attributes
-                if binding.semantic_role in {"external_load_policy", "ev_session_demand"}
+                if binding.semantic_role in {
+                    "external_load_policy", "ev_session_demand", "controlled_load_measurement"
+                }
                 and not unavailable else None
             ),
         )
@@ -880,6 +926,21 @@ def assemble_planning_input(
                 identified_external_power_w=min(external_load_policy.power_w,
                                                 household_load_observation.power_w),
                 external_power_observed=external_load_policy.physical_evidence_available)
+
+    controlled_sources = [e for e in evidence
+                          if e.semantic_role == 'controlled_load_measurement'
+                          and e.availability == 'available']
+    controlled_source = controlled_sources[0] if len(controlled_sources) == 1 else None
+    household_load_observation = attribute(
+        household_load_observation,
+        controlled_source.external_load_payload if controlled_source else None, capture,
+        [e.state_read_at or e.observed_at for e in evidence if e.semantic_role in {
+            'grid_power', 'pv_power', 'storage_power_signed',
+            'storage_power_to_house', 'storage_power_from_house'}])
+
+    household_load_observation = attribute_model(
+        household_load_observation,
+        controlled_source.external_load_payload if controlled_source else None, capture)
 
     evidence_seed = "|".join(
         f"{item.mapping_version}:{item.raw_state}:{item.observed_at}" for item in evidence
@@ -1075,6 +1136,24 @@ def assemble_planning_input(
         and (not require_external_coverage or observation.external_power_observed
              or observation.identified_external_power_w > 0)
     )
+    controlled_summary: dict[str, object] = dict(
+        status='unavailable', active_forecast_corrected=False,
+        reason='matching_current_measurement_required')
+    if household_load_observation is not None and household_load_observation.controlled_source_id:
+        controlled_summary.update(status='collecting', reason='matching_meter_history_required')
+        paired = paired_forecasts(
+            eligible_household_load_observations,
+            source_id=household_load_observation.controlled_source_id,
+            run_id=run_id, snapshot_id=snapshot_id, starts_at=capture,
+            horizon_end=household_load_horizon_end)
+        if paired is not None:
+            controlled_summary = dict(
+                status='history_ready', active_forecast_corrected=False,
+                reason='parallel_paired_history_not_active_forecast',
+                horizon_start=capture.isoformat(),
+                horizon_end=household_load_horizon_end.isoformat(),
+                **{kind+'_energy_wh': sum(i.expected_energy_wh for i in forecast.intervals)
+                   for kind, forecast in paired.items()})
     household_load_forecast = (
         build_historical_household_load_forecast(
             run_id=run_id,
@@ -1100,6 +1179,39 @@ def assemble_planning_input(
                 fallback_confidence=household_load_fallback_confidence,
             )
         )
+
+    historical_forecast = household_load_forecast
+    exact_attribution = None
+    if (household_load_observation is not None
+            and household_load_observation.controlled_source_id
+            and historical_forecast is not None and not historical_forecast.fallback_active):
+        exact_attribution = paired_forecasts(
+            eligible_household_load_observations,
+            source_id=household_load_observation.controlled_source_id,
+            run_id=run_id, snapshot_id=snapshot_id, starts_at=capture,
+            horizon_end=household_load_horizon_end, require_complete=True)
+
+    modeled_summary = dict(status="collecting", active_forecast_corrected=False,
+                           reason="complete_matching_modeled_history_required")
+    joint_attribution = None
+    if household_load_observation is not None and household_load_observation.modeled_source_id:
+        if household_load_observation.controlled_source_id is not None:
+            joint_attribution = joint_forecasts(eligible_household_load_observations,
+                source_id=household_load_observation.controlled_source_id,
+                modeled_source_id=household_load_observation.modeled_source_id,
+                run_id=run_id, snapshot_id=snapshot_id, starts_at=capture,
+                horizon_end=household_load_horizon_end)
+        modeled = modeled_forecasts(eligible_household_load_observations,
+            source_id=household_load_observation.modeled_source_id,
+            run_id=run_id, snapshot_id=snapshot_id, starts_at=capture,
+            horizon_end=household_load_horizon_end)
+        if modeled is not None:
+            modeled_summary.update(status="history_ready", method="estimated",
+                modeled_energy_wh=sum(
+                    i.expected_energy_wh for i in modeled["controlled"].intervals
+                ),
+                reason="parallel_modeled_history_not_active_forecast")
+    controlled_summary["modeled_component"] = modeled_summary
 
     # A separate recent baseline identifies ongoing demand; historical weights
     # and the future clock-quarter forecast remain unchanged.
@@ -1205,6 +1317,10 @@ def assemble_planning_input(
             household_unexpected_reserve_fraction
         ),
     )
+    replacement_basis = build_basis(
+        snapshot, historical_forecast, joint_attribution or exact_attribution,
+        modeled_source_id=household_load_observation.modeled_source_id
+        if joint_attribution and household_load_observation is not None else None)
     return PlanningInputBundle(
         snapshot,
         evidence,
@@ -1213,4 +1329,6 @@ def assemble_planning_input(
         finished,
         household_load_observation,
         household_load_rejection_reason,
+        controlled_summary,
+        replacement_basis,
     )

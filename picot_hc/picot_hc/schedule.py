@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .control import PENDING, numeric
+from .learning import DEFAULTS as LEARNING_DEFAULTS
 
 TZ = ZoneInfo('Europe/Amsterdam')
 DOOR = 'binary_sensor.1_3_woonkamer_deur_raam_sensor_achterdeur_contact'
@@ -24,10 +25,29 @@ def minutes(value, *, end=False):
 
 
 def validate_settings(value):
-    keys = {'enabled', 'windows', 'optimization_band', 'door_open_seconds', 'door_close_seconds', 'sensor_max_age_seconds'}
+    if isinstance(value, dict):
+        value = {'energy_start_enabled': False, **LEARNING_DEFAULTS, **value}
+    keys = {'enabled', 'windows', 'optimization_band', 'door_open_seconds', 'door_close_seconds', 'sensor_max_age_seconds',
+            'setback_temperature', 'thermostat_temperature', 'energy_start_enabled', *LEARNING_DEFAULTS}
     if not isinstance(value, dict) or set(value) != keys or type(value['enabled']) is not bool:
         raise ValueError('Ongeldige comfortinstellingen; het schema heeft geen bronkeuze.')
+    if any(type(value[key]) is not bool for key in ('learning_enabled', 'adaptive_setback_enabled', 'coast_enabled', 'energy_start_enabled')):
+        raise ValueError('Ongeldige keuze voor lerend voorverwarmen.')
+    for key in ('initial_preheat_minutes', 'max_preheat_minutes'):
+        if type(value[key]) is not int or not 15 <= value[key] <= 180:
+            raise ValueError('Voorverwarmen moet tussen 15 en 180 hele minuten liggen.')
+    if value['initial_preheat_minutes'] > value['max_preheat_minutes']:
+        raise ValueError('Beginopwarmtijd mag niet langer zijn dan de maximale opwarmtijd.')
+    if type(value['max_coast_minutes']) is not int or not 0 <= value['max_coast_minutes'] <= 60:
+        raise ValueError('Eerder afbouwen moet tussen 0 en 60 hele minuten liggen.')
     band = value['optimization_band']
+    for key in ('setback_temperature', 'thermostat_temperature'):
+        temperature = value[key]
+        if temperature is not None and (type(temperature) not in (int, float)
+                or not math.isfinite(temperature) or not 5 <= temperature <= 35):
+            raise ValueError('Temperatuur moet tussen 5 en 35 °C liggen, of niet ingesteld zijn.')
+    if value['enabled'] and value['setback_temperature'] is None:
+        raise ValueError('Stel een minimumtemperatuur buiten de comfortvensters in.')
     if type(band) not in (int, float) or not math.isfinite(band) or not 0 <= band <= 5:
         raise ValueError('Optimalisatieband moet tussen 0 en 5 °C liggen (±).')
     for key in ('door_open_seconds', 'door_close_seconds'):
@@ -104,7 +124,8 @@ def next_boundary(settings, now):
 
 def migrate_settings(old):
     """Preserve dev.9's weekly temperatures, archive source choice, require review."""
-    result = dict(enabled=False, windows=[], optimization_band=1, door_open_seconds=old.get('door_open_seconds', 60),
+    result = dict(enabled=False, windows=[], optimization_band=1, setback_temperature=None, thermostat_temperature=None,
+                  door_open_seconds=old.get('door_open_seconds', 60),
                   door_close_seconds=old.get('door_close_seconds', 120),
                   sensor_max_age_seconds=old.get('sensor_max_age_seconds', 900))
     entries = sorted(old.get('entries', []), key=lambda e: (e['day'], e['time']))
@@ -132,7 +153,7 @@ class Schedule:
             db.execute('CREATE TABLE IF NOT EXISTS hc_schedule (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
             row = db.execute('SELECT payload FROM hc_schedule WHERE id=1').fetchone()
         old = json.loads(row[0]) if row else None
-        if old and old.get('format') not in (2, 3):
+        if old and old.get('format') not in (2, 3, 4):
             self.data = dict(format=3, settings=migrate_settings(old['settings']), revision=old['revision']+1,
                 baseline=old.get('baseline', {}), overrides={}, door=old.get('door'), legacy_pause=old.get('override'),
                 migration='Bestaande schakelmomenten zijn omgezet naar comfortvensters. Controleer grenzen en schakel het comfortschema opnieuw in.')
@@ -154,7 +175,6 @@ class Schedule:
                 settings['enabled'] = False
                 self.data['migration'] = 'Controleer de centrale optimalisatieband (±1 °C) en comfortkeuzes; oude grenzen zijn veranderd. Schakel daarna het schema opnieuw in.'
             self.data.update(format=3, revision=old['revision']+1)
-            validate_settings(settings)
             with store.connect() as db:
                 db.execute('CREATE TABLE IF NOT EXISTS hc_schedule_archive (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
                 db.execute('INSERT OR IGNORE INTO hc_schedule_archive VALUES (2, ?)', (json.dumps(old),))
@@ -162,6 +182,29 @@ class Schedule:
         else:
             self.data = old or dict(format=3, settings=migrate_settings({}), revision=0,
                                    baseline={}, overrides={}, door=None, legacy_pause=None, migration=None)
+        if self.data['format'] != 4:
+            # One-time import. Zone fields no longer control downstairs afterwards.
+            if old and old.get('format') == 3:
+                with store.connect() as db:
+                    db.execute('CREATE TABLE IF NOT EXISTS hc_schedule_archive (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
+                    db.execute('INSERT OR IGNORE INTO hc_schedule_archive VALUES (3, ?)', (row[0],))
+            zone = next(z for z in config['zones'] if z['id'] == 'beneden')
+            target = numeric(zone.get('target'))
+            target = target if target is not None and 5 <= target <= 35 else None
+            self.data['settings'].update(setback_temperature=target, thermostat_temperature=target)
+            if self.data['settings']['enabled'] and target is None:
+                self.data['settings']['enabled'] = False
+            self.data['format'] = 4
+            if old:
+                self.data['revision'] += 1
+                self.data['migration'] = 'Instellingen beneden overgenomen naar comfortschema en handmatige thermostaat. Controleer het minimum buiten de vensters.'
+            validate_settings(self.data['settings'])
+            self.save()
+        normalized = validate_settings(self.data['settings'])
+        if normalized != self.data['settings']:
+            self.data['settings'] = normalized
+            self.data['revision'] += 1
+            self.save()
         self.ready = False
         self.control.observer = self.observe
         self.control.intent_observer = self.intent
@@ -179,6 +222,11 @@ class Schedule:
         settings = validate_settings(payload['settings'])
         previous = copy.deepcopy(self.data)
         self.data.update(settings=settings, revision=self.data['revision']+1, migration=None)
+        if not settings['enabled']:
+            # Manual thermostat mode must not expire a manual choice on an old schedule boundary.
+            for hold in self.data['overrides'].values():
+                if 'beneden' in hold.get('zones', []):
+                    hold['until'] = None
         try:
             self.save()
         except Exception:
@@ -283,24 +331,30 @@ class Schedule:
                          target=zone.get('target'), minimum=zone.get('minimum') if zone.get('minimum') is not None else zone.get('target'),
                          maximum=zone.get('maximum') if zone.get('maximum') is not None else zone.get('target'),
                          hard=False, required_at=None)
+            if zone['id'] == 'beneden':
+                target = settings['setback_temperature'] if settings['enabled'] else settings['thermostat_temperature']
+                fixed = dict(zone='beneden', kind='setback' if settings['enabled'] else 'thermostat',
+                             target=target, minimum=target, maximum=target, hard=False, required_at=None)
             request = active if zone['id'] == 'beneden' and active else fixed if fixed['target'] is not None else None
             errors = []
-            if request:
+            if request and zone['id'] != 'beneden':
                 if zone.get('minimum') is not None and request['minimum'] is not None and request['minimum'] < zone['minimum']:
                     errors.append('Vensterminimum ligt onder de algemene comfortgrens.')
                 if zone.get('maximum') is not None and request['maximum'] is not None and request['maximum'] > zone['maximum']:
                     errors.append('Venstermaximum ligt boven de algemene comfortgrens.')
-            zones[zone['id']] = dict(request=request, bounds={k:zone.get(k) for k in ('minimum','maximum')}, errors=errors,
+            bounds = ({k: request.get(k) if request else None for k in ('minimum', 'maximum')}
+                      if zone['id'] == 'beneden' else {k:zone.get(k) for k in ('minimum','maximum')})
+            zones[zone['id']] = dict(request=request, bounds=bounds, errors=errors,
                 source_constraints=[v for v in overrides if zone['id'] in v['zones']],
                 humidity={k:zone.get('humidity_'+k) for k in ('min','target','max')} if zone['id']=='boven' else None)
         return dict(settings=copy.deepcopy(settings), revision=self.data['revision'], current=active, next=following,
             next_boundary=next_boundary(settings, now), overrides=overrides, legacy_pause=copy.deepcopy(self.data.get('legacy_pause')),
             migration=self.data.get('migration'), door=copy.deepcopy(self.data['door']),
-            reason='Comfortschema als plannerinvoer beschikbaar.' if settings['enabled'] else 'Tijdvensters staan uit; vaste basiswaarden blijven beschikbaar.',
+            reason='Comfortschema beneden actief.' if settings['enabled'] else 'Handmatige thermostaat beneden: geen tijdschakelingen.',
             comfort=dict(zones=zones, horizon=horizon,
                          deadlines=[w for w in horizon if w['hard'] and w['starts_at'] > now],
                          source_policy='lowest_total_cost_within_comfort', selected_sources=None,
                          priority=['manual_source_constraints', 'comfort_constraints', 'total_cost'],
                          cost_factors=['energy_prices', 'efficiency', 'heat_loss', 'reheat_energy'],
                          planner_status='not_implemented',
-                         planner_reason='Financiële bronkeuze en voorverwarmen volgen met het woningmodel; het comfortschema stuurt geen apparaten aan.'))
+                         planner_reason='Prijsoptimalisatie over meerdere tijdvensters volgt met het woningmodel en HEMS; de verwarmingsregeling kan de opwarmtijd al bijleren.'))

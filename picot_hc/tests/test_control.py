@@ -14,11 +14,23 @@ from picot_hc.__main__ import Runtime, handler
 from picot_hc.core import Store
 
 
+# HA state publication does not dispatch a device service. Keep an explicit
+# allowlist so an unexpected write still reaches the command assertions.
+TELEMETRY_PATHS = frozenset('/api/states/' + entity for entity in (
+    'sensor.picot_hc_load_measurement',
+    'sensor.picot_hc_energy_proposals',
+    'sensor.picot_hc_energy_selection',
+    'sensor.picot_hc_energy_execution',
+    'sensor.picot_hc_energy_reservation',
+))
+
+
 class ControlFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.config = json.loads((Path(__file__).parents[1] / 'options.example.json').read_text())
         self.calls, self.status, self.apply, self.drop, self.read_fail = [], 200, False, False, False
+        self.telemetry_calls = []
         self.unit = '°C'
         self.template_status, self.template_reports, self.template_calls = 200, None, []
         self.states = {}
@@ -44,6 +56,10 @@ class ControlFixture(unittest.TestCase):
                             last_updated=outer.states[e].get('last_updated') or outer.states[e].get('last_reported')) for e in ids if e in outer.states]
                     self.send_response(outer.template_status); self.end_headers()
                     self.wfile.write(json.dumps(reports).encode()); return
+                if self.path in TELEMETRY_PATHS:
+                    outer.telemetry_calls.append((self.path, data))
+                    self.send_response(200); self.end_headers()
+                    self.wfile.write(json.dumps(data).encode()); return
                 outer.calls.append((self.path, data))
                 if outer.apply:
                     state = outer.states[data['entity_id']]

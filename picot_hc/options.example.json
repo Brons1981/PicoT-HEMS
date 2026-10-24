@@ -90,5 +90,14 @@
   "outdoor_humidity": "sensor.0_energie_gw1200a_humidity",
   "outdoor_dewpoint": "sensor.0_energie_gw1200a_dewpoint",
   "outdoor_battery": "binary_sensor.0_energie_gw1200a_wh26_battery",
-  "outdoor_vpd": "sensor.0_energie_gw1200a_vapour_pressure_deficit"
+  "outdoor_vpd": "sensor.0_energie_gw1200a_vapour_pressure_deficit",
+  "cv_power": "",
+  "cv_energy": "",
+  "cv_meter_scope_confirmed": false,
+  "cv_dhw_active": "binary_sensor.dhw_status",
+  "cv_dhw_diagnostic": "sensor.dhw_status",
+  "cv_auxiliary_mode": "estimated",
+  "cv_auxiliary_running_w": 100,
+  "cv_auxiliary_postrun_w": 50,
+  "cv_auxiliary_postrun_seconds": 300
 }

@@ -1,179 +1,197 @@
 # PicoT Home Climate
 
-Versie **0.1.0-dev.19** — metingen, comfortvensters, handmatige bediening en opt-in automatische verwarming voor Home Assistant.
+Handleiding voor de lokale HC/HEMS-ontwikkelversie van 24 oktober 2026.
+Deze wijzigingen zijn nog niet gepubliceerd. Het bestaande versienummer in de
+appconfiguratie is geen bewijs dat deze functies al live beschikbaar zijn.
 
-Temperatuurontvangst: HC leest voor de drie zones en buiten de actuele waarde,
-eenheid en `last_reported` samen via HA `/api/template`. Zo blijft een constante
-temperatuur bruikbaar bij nieuwe meldingen, ook als de `/api/states`-weergave
-een oude ontvangsttijd bevat. De ingestelde maximale meetleeftijd blijft gelden.
-Mislukt de extra controle, dan blijft de oude waarde zichtbaar met een blokkadereden
-bij de regeling. HC start daarop geen verwarming en stopt zijn eigen betrokken bron
-zodra bereikbaar. Ook de controle direct vóór een opdracht gebruikt deze uitlezing.
+## Beneden instellen
 
-Badkamertimer: kies 1–180 minuten en een temperatuur binnen de badkamergrenzen,
-en klik **Start timer**. Resterende minuten en **Stop timer** staan bij de timer.
-Dit tijdelijke doel werkt ook zonder algemene automatische regeling of stroomprijs.
-Na afloop of stoppen geldt weer het vaste doel als de regeling actief is;
-anders stopt HC zijn badkamerverwarming. **Automatische verwarming uit** beëindigt
-ook de timer. Handmatige bronbediening beëindigt de timer en blijft leidend.
-Na herstart vervalt de timer; HC stopt uitsluitend zijn eigen timerverwarming zodra
-bereikbaar. Onbevestigde opdrachten worden niet automatisch herhaald.
+Alle comfortinstellingen voor beneden staan centraal bij **Comfortschema**.
+Met een actief schema kies je dagen, begin/einde en doeltemperatuur per venster.
+Buiten de vensters geldt **Minimum buiten comfortvensters**. Met het schema uit,
+of zonder vensters, gebruikt HC **Handmatige thermostaat** zonder aanvullende
+tijdschakelingen. Opslaan wijzigt de instellingen; automatische verwarming moet
+apart zijn ingeschakeld voordat HC apparaten aanstuurt.
 
-De vaste temperatuur boven staat bij **Boven / slaapkamer → Vaste temperatuur
-instellen → Gewenst → Opslaan**. Bronbediening is handmatige apparaatbediening.
+Het vinkje **Comforttemperatuur** maakt het venster strikt: geen economische
+verlaging van het doel. Zonder vinkje geldt de ingestelde optimalisatieband.
+Vensters mogen niet overlappen, ook niet over middernacht. Boven en badkamer
+houden hun eigen vaste instellingen. Garage is uitsluitend een meetzone.
 
-## Automatische verwarming
+Wanneer HC beneden verwarmt, blijft de eigen bron bij het bereiken van het doel
+op temperatuur handhaven. Het bereiken van bijvoorbeeld 20 graden veroorzaakt
+geen korte uit/aan-cyclus. HC kan het setpoint aanpassen; de airco of thermostaat
+regelt vervolgens zelf de warmtelevering. Een beschermende stop, handmatige
+keuze, uitschakelen van de regeling of toegelaten bronwissel blijft mogelijk.
+Na uitschakelen geldt minimaal drie minuten rust voordat HC opnieuw start.
+Een economische bronwissel wacht op de bestaande minimumlooptijd van vijf minuten
+en op bevestigde uitschakeling van de vorige bron.
 
-Activeer de regeling afzonderlijk op het dashboard. Alle vier bronnen doen mee:
-cv (beneden én boven), airco beneden, airco boven en elektrische badkamerverwarming.
-Na installatie en herstart staat de regeling uit; een herstart zet apparaten niet
-uit. Uitschakelen via het dashboard stopt alleen eigen bronnen, met terugmelding.
+De CV-keuze wordt bepaald door beneden. De temperatuur boven blokkeert die keuze
+niet en kan de CV ook niet zelfstandig aanvragen. Als de CV boven meeverwarmt,
+is dat een gevolg van de installatie. Bij alleen warmtevraag boven gebruikt HC
+de airco boven. Boven, garage en badkamer vallen buiten de economische optimalisatie
+voor beneden.
 
-De basisregeling volgt het huidige vensterdoel beneden of de vaste basis buiten
-vensters, en de vaste doelen boven/badkamer. Start bij 0,3 °C onder het doel, stop
-bij het doel. Geen berekend voorverwarmen: een hogere temperatuur bij vensterstart
-is nog niet gegarandeerd. Automatisch ontvochtigen en bijleren volgen later.
+## Leren en eerder afbouwen
 
-Bronkosten zijn expliciete startschattingen: COP beneden 3,72, COP boven 3,0
-(aanname, geen SCOP), cv 90% op gasbovenwaarde 9,76944 kWh/m³. Alle waarden zijn
-instelbaar. De actuele bevestigde stroomprijs en geldige gasprijs zijn leidend;
-ontbrekende prijzen blokkeren nieuwe bronkeuze. Geen berekening van warmteverlies,
-cv-hulpstroom of bufferoptimalisatie in deze eerste versie.
+**Opwarmtijd beneden automatisch bijleren** is een afzonderlijke optie in het
+comfortschema. HC begint met de ingestelde beginopwarmtijd (standaard 45 minuten)
+en past deze begrensd aan op basis van volledige opwarmpogingen. De maximale
+opwarmtijd is instelbaar. Dit is geen garantie dat elk venster vanaf de eerste
+dag op temperatuur is: passende metingen moeten eerst worden opgebouwd.
 
-Cv kan boven niet onafhankelijk verwarmen. HC kiest cv bij warmtevraag beneden,
-ruimte onder het doel boven en lagere geschatte kosten dan iedere beschikbare
-gevraagde airco. Bij alleen boven-vraag gebruikt HC de airco. Een bronwissel wacht
-op bevestigde uitschakeling van de oude bron. Economische wissels pas na 5 minuten;
-na uitschakelen minimaal 3 minuten rust. Meetfouten, handmatige keuzes en deur gaan
-voor. Achterdeurinstellingen en maximale meetleeftijd staan bij het comfortschema.
+**Temperatuurverlaging voorzichtig bijleren** laat HC binnen de ingestelde
+minimumtemperatuur voorzichtig onderzoeken hoe ver het huis mag afkoelen.
+**Eerder afbouwen binnen comfortmarge** kan het doel aan het einde van een niet-strikt
+comfortvenster een halve graad verlagen. Dat gebeurt alleen bij voldoende passende
+afkoelmetingen en behoud van de ondergrens. Een strikt comfortvenster wordt niet
+economisch afgezwakt. Ontbrekende of onderbroken metingen worden niet ingeleerd als
+succesvolle pogingen. Handmatige overname en schemawijzigingen begrenzen het leren.
 
-Een storing blijft zichtbaar tot **Storingen vrijgeven na controle**. Geen
-automatische herhaling. Controleer echte apparaatstanden vóór vrijgeven.
-Een handmatig actieve bron van vóór activeren wordt niet automatisch overgenomen:
-zet die zelf uit, of hervat een door HC geregistreerde handmatige pauze.
+## Samenwerking met HEMS
 
-## Wat deze versie doet
+De basisregeling kan zelfstandig werken. Economische planbeoordeling en uitvoering
+van een gekozen energieplan vragen de bijbehorende HEMS-koppeling en actuele,
+geldige gegevens. **Gekozen start beneden automatisch uitvoeren (proef)** is een
+aparte optie en staat standaard uit.
 
-- Leest HA-statussen iedere 30 seconden. De dagverwachting wordt afzonderlijk opgevraagd via de vaste uitleesactie weather.get_forecasts.
-- Registreert drie zones, aanwezigheid, buitenmeting, cv, gas en CO₂ in een eigen SQLite-database.
-- Toont een lokaal dashboard, expliciete prijsintervallen en 24 uur temperatuurgeschiedenis.
-- Laat ontbrekende entiteiten en eenheidsproblemen zien. Houdt laatst ontvangen gegevens zichtbaar bij verbindingsverlies, gemarkeerd als verouderd.
-- Biedt temperatuurinstellingen per zone op het dashboard; entiteiten en vochtgrenzen blijven in de HA-appconfiguratie.
+HC stelt maximaal vijf onderbouwde alternatieven tegelijk voor, met een
+verwacht energieprofiel en eventuele gaskosten. HEMS beoordeelt deze samen met
+huisverbruik, prijzen, PV, batterij en bestaande verplichtingen. HEMS kiest hooguit
+een plan of geeft een afwijzing met voorwaarden terug. Een energievooruitblik is
+een richtlijn, geen gegarandeerde beschikbaarheid. MEP ontvangt generieke
+energieprofielen en reservevoorwaarden, geen kennis van airco's of comfortschema's.
 
-Er is geen afhankelijkheid van PicoT HEMS. Het comfortschema blijft bronvrije invoer; de afzonderlijke regelaar verzorgt automatische uitvoering. Tijdelijk badkamervenster, woningmodel en prijsoptimalisatie over meerdere tijdvensters volgen later.
+Extra bijladen kan deel uitmaken van de beoordeling, ook wanneer alleen de
+beloofde eindreserve tekortschiet en een dagdoel al behaald is. Een voorwaardelijke
+keuze geeft nog geen starttoestemming: eerst moet de echte route zijn vastgelegd
+en opnieuw beoordeeld. Voor starten controleert HC opnieuw bron, meetkwaliteit,
+prijzen, voorspellingen en toestemming. Herstarten hervat een oude startintentie
+niet automatisch. De zoektocht naar extra laden is begrensd; dit is geen garantie
+van het wereldwijde kostenminimum over alle mogelijke laadblokken.
 
-## Installeren vanuit de PicoT HEMS-repository
+## CV, gas en hulpstroom
 
-Deze installatievorm is voorbereid; Docker-build, Supervisor-installatie en live HA-verbinding zijn nog niet getest in deze ontwikkelomgeving.
+De basisbronkeuze gebruikt de ingestelde COP-/rendementsschattingen en geldige
+stroom- en gasprijzen. Voor volledige CV-planvergelijking zijn passende metingen
+van opwarmen en handhaven nodig. Onbekende waarden worden niet als nul behandeld.
 
-1. Gebruik de bestaande repository `https://github.com/Brons1981/PicoT-HEMS` in de HA-app/add-onwinkel, dezelfde als voor Energy Devices. Er is geen extra repository nodig.
-2. Nadat deze toevoeging op `main` staat: vernieuw de winkel en zoek **PicoT Home Climate** onder PicoT HEMS Add-ons.
-3. Installeer de app. De eerste installatie bouwt de container en heeft toegang tot het Python-basisimage nodig.
-4. Controleer de configuratie. De door Alex aangeleverde entiteiten staan vooraf ingevuld. De bevestigde Ecowitt-entiteiten en badkamer-energiemeter zijn vooraf ingevuld.
-5. Start de app en open de webinterface via HA. De interface gebruikt Ingress; er is geen externe poort gepubliceerd. De HA-verbinding gebruikt het Supervisor-token intern.
+Er is geen afzonderlijke CV-elektriciteitsmeter in deze installatie. De opties
+`cv_auxiliary_mode: estimated`, `cv_auxiliary_running_w: 100`,
+`cv_auxiliary_postrun_w: 50` en `cv_auxiliary_postrun_seconds: 300` zijn expliciete,
+voorlopige modelaannames. Ze zijn geen gemeten verbruik of bewezen besparing.
+Een ingestelde maar defecte echte CV-meter wordt niet stilzwijgend vervangen door
+het model. De bevestigde aircometer meet uitsluitend de airco beneden.
 
-Gegevens staan in `/data/hc.sqlite3` binnen de app. Ze blijven behouden bij herstart/update. Verwijderen van de app kan de gegevens verwijderen. Gebruik een HA-back-up inclusief deze app; back-upmodus is cold.
+Gas bevat ook tapwater. HC gebruikt `binary_sensor.dhw_status` en de diagnostische
+`sensor.dhw_status`. Omdat die signalen 30-60 seconden kunnen achterlopen, wordt
+de toewijzing gedurende 90 seconden opnieuw beoordeeld. Onbekend of actief
+tapwater kan een CV-energievoorstel blokkeren. Verwarming en tapwater worden niet
+zonder onderbouwing als dezelfde vervangbare belasting behandeld.
 
-## Weer en verwachting
+## Weer en meetkwaliteit
 
-De weerkaart gebruikt standaard `weather.buienradar`, ook bij een update van bestaande HC-opties. Je ziet actuele toestand, temperatuur, gevoelstemperatuur, luchtvochtigheid, wind, windstoten en luchtdruk voor zover beschikbaar. De dagverwachting toont weertype, maximum/minimum, wind en beschikbare neerslagkans. De neerslaghoeveelheid in mm wordt niet getoond. Ontbrekende waarden worden geen nul.
+De eigen Ecowitt-temperatuurmeting blijft de ruimtemeting. HC controleert waarde,
+eenheid en `last_reported` samen via HA. Een constante temperatuur met een nieuwe
+melding kan dus geldig blijven, ook als `last_updated` oud is. Bij ontbrekende of
+te oude metingen blokkeert HC nieuwe verwarming en stopt het zo nodig zijn eigen
+betrokken bron. Laatst bekende waarden blijven zichtbaar als verouderd.
 
-HC vraagt de dagelijkse verwachting elke 30 minuten via HA op; na een fout volgt na 5 minuten een nieuwe poging. De laatste verwachting blijft bewaard, met een foutmelding/verouderd-markering. Na twee uur zonder succesvolle ontvangst is deze eveneens verouderd. De bronpublicatietijd van een forecast is niet beschikbaar: ontvangsttijd bewijst geen recente modelupdate. Dagen in het verleden worden niet getoond.
+De ingestelde `weather_entity` levert actuele weersomstandigheden en een aparte
+dagverwachting. Alleen wanneer die HA-bron uurverwachtingen ondersteunt, vraagt HC
+ook uurgegevens op voor temperatuur, wind en bewolking. De werkelijke ondersteuning
+van de huidige bron moet nog live worden vastgesteld.
 
-`weather_entity` is aanpasbaar in de appopties; leeg schakelt het ophalen uit. De eigen buitentemperatuursensor blijft apart. Weermetingen en verwachtingen worden opgeslagen, maar sturen nog geen apparaten aan en vervangen geen ontbrekende buitensensor. De latere planner moet dagverwachtingen expliciet onderscheiden van uurgegevens.
+Passende waargenomen weersomstandigheden helpen HC vergelijkbare leerperioden
+selecteren. Uurverwachtingen begrenzen toekomstige plannen; voorspellingen worden
+nooit als gemeten leergegevens opgeslagen. Bij een bron zonder uurondersteuning
+blijft de route op waargenomen omstandigheden beschikbaar. Een ondersteunde maar
+ontbrekende, onvolledige of verouderde uurverwachting blokkeert de betreffende
+optimalisatie; de gewone comfortregeling blijft beschikbaar.
 
-Technische bron: [Home Assistant REST API](https://developers.home-assistant.io/docs/api/rest/), `weather.get_forecasts` met `type: daily` en `return_response`. Dit is een POST om gegevens op te vragen, geen opdracht aan een klimaatapparaat.
+Dagverwachting en uurverwachting worden afzonderlijk vernieuwd, normaal iedere
+30 minuten, na fouten met een nieuwe poging na vijf minuten. Uurdata zijn na een
+uur verouderd; dagdata na twee uur. Ontvangsttijd bewijst geen recente modelupdate
+bij de weerleverancier. Ontbrekende waarden worden nooit nul.
 
-## Handmatige bronbediening
+## Handmatige bediening en badkamer
 
-Onder Bronbediening staan cv, beide airco’s en badkamerverwarming. Kies een
-apparaatmodus en klik Modus toepassen, of stel afzonderlijk de apparaattemperatuur
-in. Uit blijft beschikbaar terwijl een eerdere opdracht wacht. Auto is de eigen
-apparaatmodus, niet de HC-planner. Comfortvensters staan los van apparaatinstellingen. Badkamer Aan is gewone handmatige bediening: zelf weer uitschakelen;
-het tijdelijke verwarmvenster is nog niet gebouwd.
+Onder **Bronbediening** kun je modus en apparaattemperatuur handmatig instellen.
+De apparaatmodus Auto is niet de HC-planner. Handmatige keuzes blijven leidend;
+een schemabewerking neemt de bron niet automatisch over. Een HTTP-antwoord van HA
+betekent alleen ontvangst: HC wacht op nieuwe status die de opdracht bevestigt.
+Een bevestigde heat-modus bewijst nog geen actieve warmtelevering.
 
-HC haalt vlak vóór een opdracht de actuele HA-status op en toetst mogelijkheden.
-Temperatuurbediening vereist Celsius, een enkel setpoint, gemelde grenzen en
-stapgrootte; ontbrekende gegevens blokkeren die knop. Beschikbare modi komen uit HA.
-Een HTTP-antwoord betekent alleen dat HA de opdracht heeft aangenomen. HC wacht
-op een nieuwe uitlezing die de gevraagde instelling toont. Activiteit en gemeten
-vermogen blijven apart; een bevestigde instelling bewijst niet dat er warmte is.
+Een handmatig actieve bron wordt bij inschakelen van HC niet automatisch
+geclaimd. Storingen blijven zichtbaar tot **Storingen vrijgeven na controle**.
+Controleer de apparaatstanden voordat je vrijgeeft. Opdrachten worden bij fout,
+timeout of herstart niet automatisch herhaald.
 
-Opdrachten blijven bewaard, ook na herstart. Geen automatische herhaling bij fout,
-timeout of herstart. Het dashboard toont de laatste twintig opdrachten.
-`command_timeout_seconds` bepaalt de wachttijd (30–900, standaard 300 seconden).
-Na een herstart krijgt een lopende opdracht de status onderbroken; controleer de
-werkelijke apparaatstand voordat je een nieuwe opdracht geeft.
+De badkamertimer kiest 1-180 minuten met een doel binnen de badkamergrenzen.
+Deze werkt ook zonder algemene automatische regeling. Na afloop geldt weer het
+vaste doel als de regeling actief is; anders stopt HC zijn timerverwarming.
+**Stop timer**, handmatige bronovername of uitschakelen van de automatische
+regeling stopt de timer. Na herstart wordt een timer niet hervat; HC ruimt zijn
+eigen timerverwarming op zodra de bron bereikbaar is.
 
-## Comfortschema beneden
+## Configuratie, opslag en installatie
 
-Kies per venster meerdere dagen (ma–vr, weekend, alle dagen of losse vinkjes),
-begin/einde, één temperatuur en **Comforttemperatuur**. Voeg meerdere vensters
-per dag toe of dupliceer een venster en pas dagen/tijden aan. Identieke vensters
-worden bij herladen samen getoond; overlap wordt geweigerd, ook over middernacht.
+Beneden gebruikt de instellingen in het comfortschema. Boven en badkamer hebben
+vaste zone-instellingen op het dashboard. Entiteiten, vochtgrenzen, prijzen en
+CV-modelaannames staan in de HA-appopties. Herstart na wijzigingen aan appopties.
+Vochtgrenzen starten geen automatische ontvochtiging.
 
-Comfort aangevinkt betekent de temperatuur bij aanvang bereiken en aanhouden:
-de planner krijgt daarvoor geen economische afwijkingsruimte. Zonder vinkje geldt
-één centrale **Optimalisatieband (± °C)**, standaard 1 °C, instelbaar 0–5 °C.
-17 °C met ±1 °C geeft 16–18 °C. De absolute grenzen blijven 5–35 °C;
-algemene zonegrenzen blijven afzonderlijk bewaakt. Er zijn geen min/max-invoervelden
-per venster. Boven en badkamer behouden hun vaste zone-instellingen.
+Stroomprijzen moeten expliciete intervallen met tijdzones bevatten. HC gebruikt
+de bevestigde prijsbron zonder extra belastingen toe te voegen. Controleer bij
+een andere bron de prijsbasis opnieuw. Gasprijs en geldigheidsdatum komen uit de
+configuratie. Ontbrekende of conflicterende prijstijdvakken worden niet ingevuld.
 
-De financiële planner over meerdere tijdvensters en automatisch voorverwarmen zijn nog niet geïmplementeerd.
-Schema-opslag verstuurt zelf geen apparaatopdracht. Bij actieve regeling wordt het
-nieuwe doel bij de volgende cyclus gebruikt; hervatten geeft handmatige keuzes vrij.
-Handmatige brontemperaturen blijven gedwongen bronkeuzes; cv raakt beneden en boven.
-Bestaande handmatige keuzes worden door een schemabewerking niet verlengd.
+HC is een eigen app naast HEMS en Energy Devices, met eigen container, configuratie,
+Ingress-paneel en database. De bestaande PicoT HEMS-repository levert de app via
+de HA-appwinkel. Deze ontwikkelwijzigingen zijn pas beschikbaar na afzonderlijke
+publicatie en installatie. De nieuwe container en woningwerking zijn nog niet volledig geverifieerd.
+De lokale browserproef slaagt met een nagebootste HA-omgeving; ook de
+typecontrole van de HEMS-uitbreiding slaagt na herstel van de contracttypen.
 
-Dev.10 wordt atomair gearchiveerd en omgezet met behoud van dagen, tijden,
-temperaturen, comfortvinkjes en handmatige keuzes. Wijzigen de afgeleide grenzen,
-dan staat het schema uit met een controlemelding. Controleer de band en schakel
-het daarna opnieuw in. Voor teruggaan naar dev.10 is herstel van de HC-back-up
-nodig: die versie begrijpt het nieuwe opslagformaat niet.
+Gegevens staan in `/data/hc.sqlite3` en blijven bij gewone herstart/update behouden.
+Maak voor installatie en teruggaan een HA-back-up inclusief HC; oudere versies
+begrijpen niet noodzakelijk alle nieuwe instellingen en opgeslagen plannen.
+Na herstart staat automatische verwarming uit. Controleer doelen, apparaatstanden
+en meldingen voordat je de regeling weer inschakelt.
 
-## Configuratie
-
-Minimum, gewenste temperatuur en maximum staan per zone op het dashboard. Klik op Opslaan; herstarten is niet nodig. HC bewaart deze waarden in zijn eigen database. Per zone gelden de appopties als beginwaarden totdat je op het dashboard opslaat. Daarna hebben de dashboardwaarden voorrang, ook na herstart of update. Een leeg veld wordt opgeslagen als niet ingesteld.
-
-Entiteiten en overige configuratie staan in de HA-appopties. Herstart HC na wijzigingen daaraan. `options.example.json` is een zelfstandig voorbeeld voor lokaal testen.
-
-- `zones`: drie zones met apparaat, temperatuur, vocht, vermogen en energie-entiteiten. Een lege sensornaam betekent nog niet gekoppeld.
-- `minimum`, `target`, `maximum`: optionele temperatuurgrenzen per zone; geen verzonnen doelen. Minimum ≤ doel ≤ maximum. De opt-in regeling gebruikt deze doelen en blokkeert conflicten met vensters.
-- `humidity_min`, `humidity_target`, `humidity_max`: aanvankelijk 40, 50 en 60. Deze grenzen activeren geen automatische ontvochtiging; de apparaatmodus dry kan handmatig worden beproefd. Automatische vochtregeling is eerst voorzien voor boven.
-- `presence`: voorlopig iPhone-tracker, later te vervangen door het juiste `person`-ID. UniFi is niet toegevoegd.
-- `price_entity` en `price_attributes`: standaard de aangeleverde Nordpool-entiteit en `raw_today`, `raw_tomorrow`. Elke rij moet `start`, `end` met tijdzone en numerieke `value` hebben. Numerieke lijsten zonder tijdstippen worden niet geïnterpreteerd.
-- Prijzen ondersteunen EUR/kWh en EUR/MWh (ook met €-symbool). Negatieve prijzen zijn toegestaan. Geen invulling van ontbrekende tijdvakken, geen eigen belastingen toegevoegd.
-- `confirmed_price_entity`: de door Alex bevestigde werkelijke prijsbron is `sensor.nordpool_kwh_nl_eur_3_095_0`. Deze bevestiging geldt ook bij bestaande opties zonder dit veld. De bedragen worden ongewijzigd gebruikt, zonder extra belasting of opslag. Bij een andere prijsentiteit geldt deze bevestiging niet.
-- `price_basis_confirmed`: handmatige bevestiging voor een andere gecontroleerde prijsbron. Om een bevestiging in te trekken: maak `confirmed_price_entity` leeg en zet deze vlag op false.
-- `gas_price`: 1.41197 €/m³; `gas_valid_until`: 2027-06-14, volgens gebruiker. De basisregeling gebruikt dit tarief zolang het geldig is.
-- `poll_seconds`: 10–300, standaard 30. `stale_seconds`: standaard 120 en minstens tweemaal pollinterval. `retention_days`: 1–365, standaard 90.
-
-## Meetkwaliteit en grenzen
-
-Een geslaagde HA-uitlezing bewijst alleen dat HA bereikbaar is. Bron-`last_updated` en ontvangsttijd worden afzonderlijk opgeslagen. Een ongewijzigde sensor kan een oude `last_updated` hebben zonder defect te zijn; deze versie stelt nog geen sensor-specifieke rapportagekwaliteit vast. De maximale meetleeftijd is vastgelegd als voorwaarde voor de toekomstige planner; deze moet passen bij de echte sensorrapportage. Handmatige bronbediening gebruikt een verse HA-uitlezing, die geen onafhankelijke fysieke meting garandeert.
-
-Statussen unknown/unavailable blijven onbekend, ook voor aanwezigheid. Verkeerde numerieke eenheden worden geweigerd. De cv-status wordt zonder interpretatie getoond. Gas omvat ook tapwater. Midea-energieattributen worden nog niet gebruikt als betrouwbare energiemeter. Geen COP, gas-toewijzing of besparing wordt afgeleid.
-
-Prijsdata worden bij ongeldige, conflicterende of overlappende intervallen niet getekend. In tijdgrafieken blijven gaten zichtbaar. De browser toont tijden in Europe/Amsterdam; opslag gebruikt UTC-tijdstippen. Grafieken vernieuwen iedere 15 seconden.
+**Meetgegevens downloaden** levert de opgeslagen woningmetingen als gzip-JSONL.
+Downloaden stuurt geen apparaten aan en verlengt de ingestelde bewaartermijn niet.
+Bewaar exports zelf als je langere historie nodig hebt. Grafieken tonen ontbrekende
+gegevens als gaten, met tijden in Europe/Amsterdam.
 
 ## Lokaal draaien en testen
 
-Python 3.12, uitsluitend standaardbibliotheek; geen pip-installatie nodig.
+Gebruik vanuit deze map Python 3.12 en beschikbare systeemtijdzones. De app gebruikt
+de standaardbibliotheek. Alleen voor testen zijn pytest en pytest-subtests nodig;
+pytest voert ook de bestaande unittest-tests uit.
 
 ```bash
-python3 -m unittest discover -s tests -v
+python3 -m pip install "pytest>=8.0" pytest-subtests
+PYTHONPATH=. python3 -m pytest tests -q
 python3 -m picot_hc --config options.example.json --data ./data
 ```
 
-Open lokaal `http://127.0.0.1:8099`. Zonder HA-token toont de app ontbrekende gegevens en een verbindingsmelding, geen demonstratiemetingen. Voor een echte lokale HA-verbinding gebruik je `HC_HA_API` (eindigt op `/api`) en `HC_HA_TOKEN` via je eigen beveiligde omgeving. Tokens staan nooit in browsercode of voorbeelden. Zet deze ontwikkelserver niet rechtstreeks op internet.
+Open lokaal `http://127.0.0.1:8099`. Zonder HA-token verschijnen ontbrekende gegevens
+en een verbindingsmelding. Een echte lokale verbinding gebruikt `HC_HA_API`
+(eindigend op `/api`) en `HC_HA_TOKEN` via de beveiligde omgeving. Zet de lokale
+ontwikkelserver niet rechtstreeks op internet.
 
-## Vervolg
+De volledige lokale HC-testreeks leverde op 24 oktober 2026 428 geslaagde tests en
+30 subtests op. Dit is geen bewijs van een geslaagde containerbuild, volledige
+typecontrole, browserproef of live woningproef. Zie
+[releasecontroles](../docs/development_log/2026-10-24-hc-release-checks.md) en
+[reserve en uurweer](../docs/development_log/2026-10-24-hc-reserve-completion.md).
 
-Bronbediening is door de gebruiker live bevestigd. Volgende controles: comfortvensters invullen, vaste doelen controleren, Ecowitt koppelen en gedwongen bronkeuzes live beproeven; daarna woningmodel, aanwezigheid en financiële planning/uitvoering. De oorspronkelijke ADR’s zijn opgenomen onder `docs/`.
+## Historische installatiegegevens
 
-Gebruikte interfaces: [HA REST API](https://developers.home-assistant.io/docs/api/rest/), [appconfiguratie](https://developers.home-assistant.io/docs/apps/configuration/), [appcommunicatie](https://developers.home-assistant.io/docs/apps/communication/).
-
-HC staat als eigen map `picot_hc/` naast `picot_hems/` en `picot_energy_devices/`. Alleen de distributierepository wordt gedeeld. HC heeft een eigen container, versie, configuratie, Ingress-paneel en database; HEMS hoeft niet te draaien.
+Onderstaande notities beschrijven eerdere uitbreidingen en migraties. Uitspraken
+zoals "volgt later" horen bij die oudere versie; de actuele werking staat hierboven.
 
 ### Airco boven: Shelly-meter
 
@@ -290,3 +308,5 @@ blijft ongewijzigd; metingen onder het oude buitenlabel worden niet achteraf
 hernoemd. De bewaartermijn blijft zoals ingesteld.
 
 De buitenbatterijmelding gebruikt `binary_sensor.0_energie_gw1200a_wh26_battery`.
+
+Actuele verificatie: [typeherstel en browserproef](../docs/development_log/2026-10-24-hc-type-repair.md).

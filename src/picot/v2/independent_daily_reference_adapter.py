@@ -434,6 +434,9 @@ class IndependentDailyReferenceAdapter:
                      if i.ends_at <= trigger.next_starts_at and not any(
                          r.segment.starts_at < i.ends_at and i.starts_at < r.segment.ends_at
                          for r in retained)
+                     and not any(s.purpose.startswith("reserve:")
+                                 and s.starts_at < i.ends_at and i.starts_at < s.ends_at
+                                 for s in active.segments)
                      and (revision_schedule is None
                           or i.intent is not DailyStorageIntent.STORAGE_EXPORT))
         if trigger.historical_completion_id is not None and not any(
@@ -2017,6 +2020,7 @@ class IndependentDailyReferenceAdapter:
         maximum_duration: timedelta = DAILY_REFERENCE_DURATION,
         extra_boundaries: tuple[datetime, ...] = (),
     ) -> _DailyReferenceInputs:
+        extra_boundaries += tuple(at for _, at, _ in snapshot.storage_reserve_checkpoints)
         if snapshot.horizon_end is None:
             raise DailyReferenceInputError("daily_reference_horizon_missing")
         if snapshot.household_load_forecast is None:

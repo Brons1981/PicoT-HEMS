@@ -15,7 +15,7 @@ from typing import Any, cast
 from picot.architecture_ownership import architecture_ownership
 from picot.domain.charge_source_policy import ChargeSourcePolicy
 from picot.domain.daily_reference_charge_window import DailyMainChargeWindow
-from picot.domain.energy_path import RetainedExecutionOrigin, SocConstraint
+from picot.domain.energy_path import ProjectedEnergyState, RetainedExecutionOrigin, SocConstraint
 from picot.domain.evaluation import EvaluationRecord
 from picot.domain.execution_plan import ExecutionPlan, ExecutionPlanLifecycle, ExecutionPlanSegment
 from picot.domain.execution_primitive import ExecutionPrimitive
@@ -559,6 +559,9 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                 raise ValueError("bridge must cover now to the unchanged next main start")
         elif bridge_deficits:
             raise ValueError("bridge evidence requires an explicit reserve trigger")
+        active_reserve_origin = self.load_active_daily_main_plan(plan.execution_scope_id)
+        if active_reserve_origin is not None:
+            self._retains_reserve_instructions(active_reserve_origin, plan)
         if not same_binding:
             self._validate_retained_main_segments(plan, window)
         bound = assignment if same_binding else assignment.bind_main_route(
@@ -1100,7 +1103,8 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                     raise ValueError("active daily main plan scope or binding invalid")
             else:
                 if (not any(b.plan_id == plan_id for b in self.load_market_plan_bindings())
-                        and plan_id not in self.load_market_transition_plan_ids()):
+                        and plan_id not in self.load_market_transition_plan_ids()
+                        and plan_id not in self.load_reserve_plan_ids()):
                     raise ValueError("active shared execution plan has no market owner")
                 seen = {plan_id}
                 shared = plan
@@ -1117,6 +1121,8 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                                        if r["plan_id"] == shared.plan_id), None)
                     if transition is not None:
                         self.load_market_transition_plan_ids()
+                    elif shared.plan_id in payload.get("reserve_plan_bindings", {}):
+                        self.load_reserve_plan_ids()
                     else:
                         self._retains_shared_charge_plan(origin, shared)
                     shared = origin
@@ -1490,6 +1496,7 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
             "daily_main_revision_triggers", "market_daily_assignments",
             "market_execution_progress", "market_plan_bindings", "market_plan_revisions",
             "market_window_transitions", "shared_plan_origins", "supplemental_assignments",
+            "reserve_plan_bindings",
         ):
             payload[key] = {}
         payload["daily_assignments"] = {
@@ -1863,7 +1870,7 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                 raise ValueError("shared segment must preserve existing interval boundaries")
             market = part.primitive is ExecutionPrimitive.DISCHARGE_AT_POWER
             protected = old.main_assignment_id is not None or old.purpose.startswith(
-                "supplemental:"
+                ("supplemental:", "reserve:")
             ) or old.primitive in {
                 ExecutionPrimitive.CHARGE_AT_POWER, ExecutionPrimitive.DISCHARGE_AT_POWER,
             }
@@ -1996,6 +2003,9 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
         self, payload: dict[str, Any], plan: ExecutionPlan,
         *, revised_ids: frozenset[str] = frozenset(),
     ) -> None:
+        previous = self.load_active_daily_main_plan(plan.execution_scope_id)
+        if previous is not None:
+            self._retains_reserve_instructions(previous, plan)
         assignments = {a.assignment_id: a for a in self.load_market_daily_assignments()}
         for old in self.load_market_plan_bindings():
             if (old.execution_scope_id != plan.execution_scope_id
@@ -2092,6 +2102,206 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                 if old.main_assignment_id else None)
             if new.retained_execution_origin != expected_origin:
                 raise ValueError("market transition must retain completion lineage")
+
+
+    @staticmethod
+    def _retains_reserve_instructions(previous: ExecutionPlan, proposed: ExecutionPlan) -> None:
+        """A forecast reservation expiring never cancels a committed reserve action."""
+        fields = ("primitive", "capability_id", "requested_power_w", "soc_constraint",
+                  "charge_source_policy", "energy_profile_id", "main_assignment_id", "purpose",
+                  "retained_execution_origin")
+        for old in previous.segments:
+            if not old.purpose.startswith("reserve:") or old.ends_at <= proposed.created_at:
+                continue
+            start = max(old.starts_at, proposed.created_at)
+            cursor = start
+            parts = tuple(p for p in proposed.segments
+                          if p.starts_at < old.ends_at and start < p.ends_at)
+            for part in parts:
+                if (part.starts_at > cursor
+                        or any(getattr(part, f) != getattr(old, f) for f in fields)):
+                    raise ValueError("committed reserve instructions must remain unchanged")
+                cursor = min(old.ends_at, part.ends_at)
+            if cursor != old.ends_at:
+                raise ValueError(
+                    "committed reserve instructions require complete retained coverage"
+                )
+
+    @staticmethod
+    def _retains_reserve_plan(previous: ExecutionPlan, proposed: ExecutionPlan) -> None:
+        """Reserve additions never rewrite daily, export or existing charge ownership."""
+        if (previous.execution_scope_id != proposed.execution_scope_id
+                or previous.valid_from != proposed.valid_from
+                or previous.valid_until != proposed.valid_until):
+            raise ValueError("reserve publication must retain the existing horizon")
+        fields = ("primitive", "capability_id", "requested_power_w", "soc_constraint",
+                  "charge_source_policy", "energy_profile_id", "main_assignment_id", "purpose")
+        cursor = proposed.valid_from
+        additions = 0
+        for part in proposed.segments:
+            if part.starts_at != cursor:
+                raise ValueError("reserve plan must have continuous coverage")
+            cursor = part.ends_at
+            old = next((s for s in previous.segments
+                        if s.starts_at <= part.starts_at < part.ends_at <= s.ends_at), None)
+            if old is None:
+                raise ValueError("reserve plan must preserve original segment boundaries")
+            unchanged = all(getattr(part, f) == getattr(old, f) for f in fields)
+            origin = old.retained_execution_origin or (
+                RetainedExecutionOrigin(previous.plan_id, old.segment_id)
+                if old.main_assignment_id is not None else None)
+            if unchanged:
+                if part.retained_execution_origin != origin:
+                    raise ValueError("reserve plan must retain completion lineage")
+                continue
+            if (old.main_assignment_id is not None
+                    or old.purpose.startswith(("supplemental:", "reserve:"))
+                    or old.primitive not in {
+                        ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                        ExecutionPrimitive.BALANCE_DISCHARGE_ONLY, ExecutionPrimitive.STANDBY,
+                    }):
+                raise ValueError("reserve plan cannot change protected instructions")
+            if (part.starts_at < proposed.created_at
+                    or part.primitive not in {
+                        ExecutionPrimitive.CHARGE_AT_POWER,
+                        ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                    }
+                    or part.primitive is old.primitive
+                    or not part.purpose.startswith("reserve:")
+                    or not part.purpose.removeprefix("reserve:").strip()
+                    or part.main_assignment_id is not None
+                    or part.retained_execution_origin is not None
+                    or part.capability_id != old.capability_id
+                    or part.soc_constraint != old.soc_constraint
+                    or part.energy_profile_id != old.energy_profile_id
+                    or (part.primitive is ExecutionPrimitive.CHARGE_AT_POWER and (
+                        part.charge_source_policy
+                        is not ChargeSourcePolicy.PV_PREFERRED_GRID_ALLOWED
+                        or part.requested_power_w is None
+                        or not isfinite(part.requested_power_w) or part.requested_power_w <= 0))
+                    or (part.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL and (
+                        part.charge_source_policy is not ChargeSourcePolicy.PV_ONLY
+                        or part.requested_power_w is not None))):
+                raise ValueError("reserve addition requires a future unowned charging instruction")
+            additions += 1
+        if cursor != proposed.valid_until or additions == 0:
+            raise ValueError("reserve plan must add charging and retain complete coverage")
+
+    def load_reserve_plan_ids(self) -> tuple[str, ...]:
+        """Validate durable reserve ownership without reopening a completed daily goal."""
+        return self._validate_reserve_bindings(self._read_payload())
+
+    @staticmethod
+    def _validate_reserve_bindings(payload: dict[str, Any]) -> tuple[str, ...]:
+        try:
+            records = payload.get("reserve_plan_bindings", {})
+            if not isinstance(records, dict):
+                raise ValueError("reserve bindings must be an object")
+            for plan_id, record in records.items():
+                plan = _registered_execution_plan(payload, plan_id)
+                previous = _registered_execution_plan(payload, record["previous_plan_id"])
+                if (record["plan_id"] != plan_id
+                        or record["evaluation_id"] != plan.evaluation_id
+                        or record["winning_candidate_id"] != plan.winning_candidate_id
+                        or record["snapshot_id"] != plan.snapshot_id
+                        or record["created_at"] != plan.created_at.isoformat()
+                        or payload.get("shared_plan_origins", {}).get(plan_id) != previous.plan_id):
+                    raise ValueError("reserve binding lineage mismatch")
+                ActivePlanCommitmentStore._retains_reserve_plan(previous, plan)
+                checkpoints = record["checkpoints"]
+                if not isinstance(checkpoints, list) or not checkpoints:
+                    raise ValueError("reserve binding requires checkpoint evidence")
+                seen = set()
+                for item in checkpoints:
+                    at = datetime.fromisoformat(item["at"])
+                    target, projected = item["minimum_energy_wh"], item["projected_energy_wh"]
+                    if (item["scope"] != plan.execution_scope_id
+                            or at.utcoffset() is None
+                            or not plan.created_at < at <= plan.valid_until
+                            or at in seen or type(target) not in (float, int)
+                            or type(projected) not in (float, int)
+                            or not isfinite(target) or target < 0
+                            or not isfinite(projected) or projected + 1e-6 < target):
+                        raise ValueError("reserve checkpoint evidence is invalid")
+                    seen.add(at)
+                latest = max(seen)
+                if any(s.purpose.startswith("reserve:") and s.ends_at > latest
+                       and not any(old.purpose == s.purpose
+                                   and old.starts_at <= s.starts_at < s.ends_at <= old.ends_at
+                                   for old in previous.segments)
+                       for s in plan.segments):
+                    raise ValueError("new reserve charging must precede its checkpoint")
+            return tuple(records)
+        except (KeyError, TypeError, AttributeError) as exc:
+            raise ValueError("invalid stored reserve plan binding") from exc
+
+    def bind_reserve_plan(
+        self, *, plan: ExecutionPlan, previous_plan_id: str,
+        checkpoints: tuple[tuple[str, datetime, float], ...],
+        evaluation_record: EvaluationRecord,
+        projected_states: tuple[ProjectedEnergyState, ...],
+    ) -> None:
+        """Atomically publish an evaluated reserve addition; daily identities stay unchanged."""
+        if (evaluation_record.winning_candidate_id != plan.winning_candidate_id
+                or evaluation_record.evaluation_id != plan.evaluation_id
+                or evaluation_record.snapshot_id != plan.snapshot_id
+                or evaluation_record.created_at != plan.created_at
+                or plan.winning_candidate_id not in evaluation_record.evaluated_candidate_ids
+                or any(i.candidate_id == plan.winning_candidate_id
+                       for i in evaluation_record.invalid_candidates)):
+            raise ValueError("reserve plan requires canonical selected evidence")
+        states = {state.at: state for state in projected_states}
+        if len(states) != len(projected_states):
+            raise ValueError("reserve projection must not duplicate checkpoints")
+        evidence = []
+        for scope, at, target in checkpoints:
+            state = states.get(at)
+            if state is None or state.storage_energy_wh is None:
+                raise ValueError("reserve checkpoint lacks projected storage evidence")
+            evidence.append(dict(scope=scope, at=at.isoformat(), minimum_energy_wh=target,
+                                 projected_energy_wh=state.storage_energy_wh))
+        record = dict(plan_id=plan.plan_id, previous_plan_id=previous_plan_id,
+                      evaluation_id=plan.evaluation_id,
+                      winning_candidate_id=plan.winning_candidate_id,
+                      snapshot_id=plan.snapshot_id, created_at=plan.created_at.isoformat(),
+                      checkpoints=evidence)
+        payload = self._load_payload()
+        previous = self.load_active_daily_main_plan(plan.execution_scope_id)
+        existing = payload.get("reserve_plan_bindings", {}).get(plan.plan_id)
+        if existing is not None and existing == record and previous == plan:
+            self.load_reserve_plan_ids()
+            return
+        if previous is None or previous.plan_id != previous_plan_id:
+            raise ValueError("reserve publication requires the current active plan")
+        if plan.plan_id == previous_plan_id or plan.plan_id in payload.get("execution_plans", {}):
+            raise ValueError("reserve publication requires a new immutable plan")
+        self._retains_reserve_plan(previous, plan)
+        # Build all data in memory. Validation and the final write cannot partially
+        # update daily goals, supplemental ownership or the active plan pointer.
+        self._preserve_market_bindings(payload, plan)
+        for goal in self.load_supplemental_assignments():
+            if goal.execution_scope_id != plan.execution_scope_id or goal.completed_at is not None:
+                continue
+            parts = tuple(s for s in plan.segments if s.purpose == goal.assignment_id)
+            if not parts or (parts[0].starts_at, parts[-1].ends_at) != (
+                goal.starts_at, goal.ends_at,
+            ):
+                raise ValueError("reserve plan cannot discard supplemental charge ownership")
+            updated = replace(goal, plan_id=plan.plan_id,
+                              segment_ids=tuple(s.segment_id for s in parts))
+            payload.setdefault("supplemental_history", {}).setdefault(
+                goal.assignment_id, []).append(self._supplemental_record(goal))
+            payload["supplemental_assignments"][goal.assignment_id] = (
+                self._supplemental_record(updated))
+        payload.setdefault("execution_plans", {})[previous.plan_id] = (
+            _serialize_execution_plan(previous))
+        payload["execution_plans"][plan.plan_id] = _serialize_execution_plan(plan)
+        payload.setdefault("shared_plan_origins", {})[plan.plan_id] = previous.plan_id
+        payload.setdefault("reserve_plan_bindings", {})[plan.plan_id] = record
+        payload.setdefault("active_execution_plan_ids", {})[plan.execution_scope_id] = plan.plan_id
+        # Use the same validation for prospective publication and restart loading.
+        self._validate_reserve_bindings(payload)
+        self._write(payload)
 
     def load_market_transition_plan_ids(self) -> tuple[str, ...]:
         payload = self._read_payload()

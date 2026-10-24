@@ -7,6 +7,7 @@ from urllib.request import Request, build_opener
 from zoneinfo import ZoneInfo
 
 from .core import NoRedirect, number, observation, timestamp
+from .hourly_weather import HourlyWeather
 
 DEFAULT_ENTITY = 'weather.buienradar'
 
@@ -66,6 +67,7 @@ def fetch_forecast(base_url, token, entity):
 class WeatherReader:
     def __init__(self, entity, previous=None):
         self.entity = entity
+        self.hourly = HourlyWeather(entity)
         self.next_attempt = 0
         self.cache = None
         if previous and previous.get('entity_id') == entity:
@@ -73,6 +75,7 @@ class WeatherReader:
 
     def collect(self, states, now, url, token):
         data = weather_now(self.entity, states, now)
+        data['hourly'] = self.hourly.collect(states, now, url, token)
         if not self.entity:
             data['forecast'] = None
             return data

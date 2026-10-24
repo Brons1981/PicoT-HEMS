@@ -98,6 +98,8 @@ def test_main_starts_one_web_server_before_pipeline_loop(
         tmp_path / "picot_v2_energy_device_placements.json",
     )
 
+    monkeypatch.setattr(live_runtime, "ACCEPTED_LOADS_PATH", tmp_path / "accepted.sqlite")
+
     class StopLoop(Exception):
         pass
 

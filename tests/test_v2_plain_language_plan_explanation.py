@@ -129,7 +129,7 @@ def test_day_planning_details_are_not_rendered_as_a_separate_panel() -> None:
     assert 'id="central-health"' in html
 
 
-def test_zero_confidence_is_a_visible_readiness_blocker() -> None:
+def test_zero_confidence_does_not_invent_an_execution_blocker() -> None:
     source = _snapshot()
     low_confidence = replace(
         source,
@@ -143,11 +143,9 @@ def test_zero_confidence_is_a_visible_readiness_blocker() -> None:
     readiness = build_web_view(run, project(run))["plan_explanation"]["readiness"]
 
     assert readiness["confidence_percent"] == 0
-    assert readiness["status"] == "blocked"
-    assert readiness["warning_nl"] == (
-        "De planningszekerheid is 0%; PicoT voert dit plan niet uit."
-    )
-    assert "planning_confidence_below_minimum" in readiness["blockers"]
+    assert readiness["status"] == run.primitive_boundary.status == "not_emitted"
+    assert readiness["warning_nl"] is None
+    assert readiness["blockers"] == list(run.primitive_boundary.blockers) == []
     assert run.primitive_boundary.request_id is None
 
 

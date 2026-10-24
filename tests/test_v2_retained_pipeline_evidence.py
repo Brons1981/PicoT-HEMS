@@ -104,3 +104,58 @@ def test_grid_duration_decision_is_explained_as_grid_charging_only():
         stage=4, state="winner_selected",
         attributes={"decisive_step": "tie_break:grid_charge_duration"},
     ) == "Bij gelijke kosten is het haalbare plan met de kortste netlaadduur gekozen."
+
+
+@pytest.mark.parametrize(
+    "vendor_status", ("already_active", "dispatched", "awaiting_mode_feedback"),
+)
+def test_retained_plan_without_new_scores_has_no_invented_execution_block(
+    tmp_path, monkeypatch, vendor_status,
+):
+    _, pipeline, recover = setup(tmp_path, monkeypatch)
+    first = pipeline.run(planning_input=recover())
+    retained = pipeline.run(planning_input=recover())
+    retained = replace(
+        retained,
+        primitive_boundary=replace(retained.primitive_boundary,
+                                   status=vendor_status, blockers=()),
+        vendor_result=replace(retained.vendor_result, status=vendor_status),
+    )
+    before = asdict(retained)
+    view = build_web_view(retained, project(retained))
+    readiness = view["plan_explanation"]["readiness"]
+    assert readiness["confidence_percent"] is None
+    assert readiness["status"] == vendor_status
+    assert readiness["warning_nl"] is None
+    assert readiness["blockers"] == []
+    assert view["plan_explanation"]["decision"]["summary_nl"] == (
+        "Het bestaande uitvoeringsplan is behouden."
+    )
+    assert retained.execution_plan_set.plans == first.execution_plan_set.plans
+    assert asdict(retained) == before
+
+
+@pytest.mark.parametrize("reason", ("manual_override_active", "storage_soc_unavailable"))
+def test_actual_execution_block_stays_visible_without_new_scores(tmp_path, monkeypatch, reason):
+    _, pipeline, recover = setup(tmp_path, monkeypatch)
+    pipeline.run(planning_input=recover())
+    retained = pipeline.run(planning_input=recover())
+    blocked = replace(retained, primitive_boundary=replace(
+        retained.primitive_boundary, status="blocked", blockers=(reason,),
+    ))
+    readiness = build_web_view(blocked, project(blocked))["plan_explanation"]["readiness"]
+    assert readiness["status"] == "blocked"
+    assert reason in readiness["warning_nl"]
+    assert readiness["blockers"] == [reason]
+    assert "0%" not in readiness["warning_nl"]
+
+
+def test_vendor_failure_is_reported_with_its_actual_reason(tmp_path, monkeypatch):
+    _, pipeline, recover = setup(tmp_path, monkeypatch)
+    run = pipeline.run(planning_input=recover())
+    failed = replace(run, vendor_result=replace(
+        run.vendor_result, status="dispatch_failed", failure_reason="Zendure verbinding verbroken",
+    ))
+    readiness = build_web_view(failed, project(failed))["plan_explanation"]["readiness"]
+    assert readiness["status"] == "blocked"
+    assert "Zendure verbinding verbroken" in readiness["warning_nl"]

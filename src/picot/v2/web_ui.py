@@ -1610,7 +1610,7 @@ DASHBOARD_HTML = """<!doctype html>
         ["canonical-nom", "#35a862"],
         ["canonical-charge", "#df5c57"],
         ["canonical-trade", "#aab2bd"],
-        ["canonical-support", "#35a862"],
+        ["canonical-support", "#3994e6"],
         ["canonical-standby", "#e3aa45"],
         ["normal", "#aab2bd"]
       ]) {
@@ -2995,16 +2995,16 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function comparisonMode(mode) {
-      return ({balance_bidirectional:["Nul op de meter","#2b9663"],
-        balance_charge_only:["Alleen slim opladen","#2b9663"],
-        balance_discharge_only:["Slim ontladen","#df8e20"],
-        charge_at_power:["Laden","#2878b8"],discharge_at_power:["Terugleveren","#9a5cc6"],
-        stop_all:["Stand-by","#94a3b8"],grid_requirement:["Netladen","#2878b8"],grid_charge:["Netladen","#2878b8"],
-        charge:["Laden","#2878b8"],nom:["Nul op de meter","#2b9663"],
-        household_support_only:["Slim ontladen","#df8e20"],
-        discharge_only:["Slim ontladen","#df8e20"],self_consumption:["Slim ontladen","#df8e20"],
-        standby:["Stand-by","#94a3b8"],hold_storage:["Stand-by","#94a3b8"],
-        storage_export:["Terugleveren","#9a5cc6"],discharge:["Terugleveren","#9a5cc6"],
+      return ({balance_bidirectional:["Nul op de meter","#35a862"],
+        balance_charge_only:["Alleen slim opladen","#35a862"],
+        balance_discharge_only:["Slim ontladen","#3994e6"],
+        charge_at_power:["Laden","#df5c57"],discharge_at_power:["Terugleveren","#aab2bd"],
+        stop_all:["Stand-by","#e3aa45"],grid_requirement:["Netladen","#df5c57"],grid_charge:["Netladen","#df5c57"],
+        charge:["Laden","#df5c57"],nom:["Nul op de meter","#35a862"],
+        household_support_only:["Slim ontladen","#3994e6"],
+        discharge_only:["Slim ontladen","#3994e6"],self_consumption:["Slim ontladen","#3994e6"],
+        standby:["Stand-by","#e3aa45"],hold_storage:["Stand-by","#e3aa45"],
+        storage_export:["Terugleveren","#aab2bd"],discharge:["Terugleveren","#aab2bd"],
         unknown:["Geen gegevens","#e2e8f0"]})[mode] ?? [mode ?? "Geen gegevens","#64748b"];
     }
 
@@ -7545,7 +7545,7 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
         ZoneInfo("Europe/Amsterdam")
     ).date()
     plans: list[dict[str, object]] = []
-    winning_confidence = 0.0
+    winning_confidence: float | None = None
     for candidate in run.candidate_set.candidates:
         selected = candidate.candidate_id == run.evaluation.winning_candidate_id
         outcome = outcomes_by_candidate.get(candidate.candidate_id)
@@ -7664,10 +7664,10 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
                 if selected
                 else "Niet gekozen omdat dit het geplande batterijdoel niet haalt."
             )
-            if selected:
+            if selected and candidate.family == "reserve_first":
                 winning_confidence = min(
                     (state.confidence for state in run.planning_input.current_storage_states),
-                    default=0.0,
+                    default=None,
                 )
         plans.append(
             {
@@ -7714,10 +7714,29 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
         decision_summary = "PicoT heeft nog geen uitvoerbaar plan gekozen."
         decision_reason = "De benodigde gegevens of mogelijkheden ontbreken nog."
 
-    blockers = list(run.primitive_boundary.blockers)
-    confidence_percent = round(winning_confidence * 100)
-    if confidence_percent == 0:
-        blockers.append("planning_confidence_below_minimum")
+    if run.evaluation.status == "plan_retained" and run.execution_plan_set.plans:
+        decision_summary = "Het bestaande uitvoeringsplan is behouden."
+        decision_reason = "De uitvoeringsstatus volgt het bestaande plan."
+
+    # Projection reports execution authority; a missing/rounded score is not a veto.
+    boundary = run.primitive_boundary
+    vendor = run.vendor_result
+    blockers = list(boundary.blockers)
+    if vendor.failure_reason:
+        blockers.append(vendor.failure_reason)
+    blocked = bool(blockers) or boundary.status in {"blocked", "dry_run_blocked"} or (
+        vendor.status in {"dispatch_failed", "mode_feedback_timeout", "rejected"}
+    )
+    readiness_status = "blocked" if blocked else boundary.status
+    warning = None
+    if blocked:
+        reason = "; ".join(dict.fromkeys(blockers)) or (
+            boundary.execution_reason or vendor.status
+        )
+        warning = f"Uitvoering geblokkeerd: {reason}."
+    confidence_percent = (
+        round(winning_confidence * 100) if winning_confidence is not None else None
+    )
     return {
         "title": "Wat PicoT overweegt",
         "opportunity_count": len(run.opportunities.opportunities),
@@ -7729,12 +7748,10 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
         },
         "readiness": {
             "confidence_percent": confidence_percent,
-            "status": "blocked" if confidence_percent == 0 else "observer_only",
-            "warning_nl": (
-                "De planningszekerheid is 0%; PicoT voert dit plan niet uit."
-                if confidence_percent == 0
-                else None
-            ),
+            "status": readiness_status,
+            "primitive_status": boundary.status,
+            "vendor_status": vendor.status,
+            "warning_nl": warning,
             "blockers": list(dict.fromkeys(blockers)),
         },
     }

@@ -21,7 +21,9 @@ def test_late_final_sample_closes_previous_supplement_before_dispatch(
     plan = store.load_active_daily_main_plan(goal.execution_scope_id)
     old = next(s for s in plan.segments if s.segment_id == goal.segment_ids[-1])
     runtime = CanonicalExecutionRuntime(
-        lambda *a: CanonicalDispatchOutcome("dispatched", "test-only"), commitment_store=store
+        lambda *a: CanonicalDispatchOutcome("dispatched", "test-only"), commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     observations = [(-1, goal.target_soc / 2, -1), (1, goal.target_soc, 0)]
     if arrival == "later_poll":
@@ -88,7 +90,9 @@ def test_changed_mode_requires_transition_proof(tmp_path, monkeypatch, proof):
     plan = store.load_active_daily_main_plan(goal.execution_scope_id)
     old = next(s for s in plan.segments if s.segment_id == goal.segment_ids[-1])
     runtime = CanonicalExecutionRuntime(
-        lambda *a: CanonicalDispatchOutcome("dispatched", "test-only"), commitment_store=store
+        lambda *a: CanonicalDispatchOutcome("dispatched", "test-only"), commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     for delta, soc in [(-1, goal.target_soc / 2), (1, goal.target_soc)]:
         at = old.ends_at + timedelta(seconds=delta)
@@ -145,7 +149,9 @@ def test_late_main_sample_completes_only_original_main(tmp_path, monkeypatch):
     owner = store.load_daily_assignments()[0]
     old = next(s for s in plan.segments if s.segment_id == owner.main_segments[-1].segment_id)
     runtime = CanonicalExecutionRuntime(
-        lambda *a: CanonicalDispatchOutcome("dispatched", "test-only"), commitment_store=store
+        lambda *a: CanonicalDispatchOutcome("dispatched", "test-only"), commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     for delta, soc in [(-1, 0.9), (1, 1.0)]:
         at = old.ends_at + timedelta(seconds=delta)

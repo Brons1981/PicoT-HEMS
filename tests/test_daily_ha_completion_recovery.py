@@ -46,7 +46,9 @@ def test_unchanged_full_state_at_main_start_completes_without_new_measurement(
     if restart:
         store = ActivePlanCommitmentStore(tmp_path / "plans.json")
     runtime = CanonicalExecutionRuntime(
-        lambda *a: (_ for _ in ()).throw(AssertionError("already active")), commitment_store=store
+        lambda *a: (_ for _ in ()).throw(AssertionError("already active")), commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     result = runtime.advance_committed_boundary(recover(source), execution_enabled=True)
     assert result.status == "already_active"
@@ -95,7 +97,9 @@ def test_unproven_old_full_state_cannot_complete(tmp_path, monkeypatch, proof):
     )
     source = with_mode(source, segment.primitive, current_mode="Test active")
     runtime = CanonicalExecutionRuntime(
-        lambda *a: (_ for _ in ()).throw(AssertionError("already active")), commitment_store=store
+        lambda *a: (_ for _ in ()).throw(AssertionError("already active")), commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     runtime.advance_committed_boundary(recover(source), execution_enabled=True)
     assert store.load_daily_assignments()[0].completed_at is None
@@ -189,7 +193,9 @@ def test_new_state_proof_does_not_override_manual_execution_block(tmp_path, monk
         ),
     )
     runtime = CanonicalExecutionRuntime(
-        lambda *a: (_ for _ in ()).throw(AssertionError("manual block")), commitment_store=store
+        lambda *a: (_ for _ in ()).throw(AssertionError("manual block")), commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     runtime.advance_committed_boundary(recover(source), execution_enabled=True)
     assert store.load_daily_assignments()[0].completed_at is None

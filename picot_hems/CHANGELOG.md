@@ -1,3 +1,11 @@
+# 2.0.0-dev.322
+
+- Behoud de huidige NOM-/uitvoeringsactie bij een onopgeloste toekomstige planning alleen zolang actueel fysiek bewijs dit toestaat; doelen en foutredenen blijven zichtbaar.
+- Leg nachtelijke routekeuzes eenmaal vast in Planning Input, zodat een planningsronde overal dezelfde toestemming gebruikt.
+- Laat uitvoering na herstart wachten op verse plantoestemming en begrens tijdelijk bewijs ook bij de start van een nieuw dagdoel.
+- Breng vergelijkbare herstelbeslissingen samen en gebruik een meldingsroute met exacte oorzaken, zonder dubbele meldingen tijdens normaal wachten.
+- Voeg regressies toe voor opeenvolgende storingen, herstart, daggrens en bevestigde 100% SOC. Geen planreset nodig; Home Climate blijft dev.24.
+
 # 2.0.0-dev.321
 
 - Behoud de aaneengesloten NOM-blokken uit de oorspronkelijke dagroute bij herstel na een voltooid laadhoofddoel.

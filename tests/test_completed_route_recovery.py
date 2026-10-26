@@ -187,6 +187,7 @@ def test_repaired_plan_passes_actual_execution_boundary(tmp_path, monkeypatch, r
         raise AssertionError("confirmed mode must not be sent again")
 
     runtime = CanonicalExecutionRuntime(no_dispatch, commitment_store=store)
+    runtime.apply(result)  # Admit the freshly recovered plan before its clock boundary.
     boundary = runtime.advance_committed_boundary(recover(source), execution_enabled=True)
     assert boundary.status == "already_active", boundary
 

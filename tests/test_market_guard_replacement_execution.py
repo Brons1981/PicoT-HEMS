@@ -118,6 +118,8 @@ def test_selected_replacement_survives_old_settlement_and_restart(
             calls.append(request) or CanonicalDispatchOutcome("dispatched", "ok")
         ),
         commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     result = runtime.advance_committed_boundary(
         observation(snapshot, store, snapshot.captured_at, current_mode), execution_enabled=True,
@@ -137,6 +139,8 @@ def test_selected_replacement_survives_old_settlement_and_restart(
     runtime = CanonicalExecutionRuntime(
         lambda request, mapping: pytest.fail("confirmed replacement needs no repeated command"),
         commitment_store=restarted,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     result = runtime.advance_committed_boundary(
         observation(snapshot, restarted, snapshot.captured_at + timedelta(minutes=10), mode),

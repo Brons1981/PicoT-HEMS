@@ -97,6 +97,7 @@ def test_future_unreachable_goal_preserves_only_current_proven_execution(tmp_pat
         ),
         commitment_store=restarted,
     )
+    runtime.apply(repeated)
     outcome = runtime.advance_committed_boundary(observed, execution_enabled=True)
     assert outcome.status == "dispatched"
     assert calls[0].primitive is due.primitive

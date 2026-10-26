@@ -322,9 +322,24 @@ class IndependentDailyReferenceAdapter:
         ) for a in context.assignments if a.completed_at is None and a.main_segments
                    and a.ends_at > snapshot.captured_at)
 
+    def current_execution_invalidity_reasons(
+        self, *, snapshot: PlanningInputSnapshot, plan: ExecutionPlan,
+        conversion_model: StorageConversionModel, until: datetime,
+    ) -> tuple[str, ...]:
+        """Prove only the current stored action; never approve future obligations."""
+        due = next((s for s in plan.segments
+                    if s.starts_at <= snapshot.captured_at < s.ends_at), None)
+        if (due is None or not snapshot.captured_at < until
+                <= min(due.ends_at, snapshot.captured_at + RECOVERY_RECHECK_DELAY)):
+            return ("current_execution_proof_interval_invalid",)
+        return self.committed_execution_invalidity_reasons(
+            snapshot=snapshot, plan=plan, conversion_model=conversion_model,
+            current_until=until,
+        )
+
     def committed_execution_invalidity_reasons(
         self, *, snapshot: PlanningInputSnapshot, plan: ExecutionPlan,
-        conversion_model: StorageConversionModel,
+        conversion_model: StorageConversionModel, current_until: datetime | None = None,
     ) -> tuple[str, ...]:
         """Prove the existing execution independently of unbound future discovery.
 
@@ -354,12 +369,24 @@ class IndependentDailyReferenceAdapter:
         limits = next(i for i in snapshot.storage_physical_limits
                       if i.capability_id == storage.capability_id
                       and i.execution_scope_id == storage.execution_scope_id)
+        if current_until is not None:
+            invalid = [r for r in invalid if not r.startswith((
+                "daily_main_goal_unreachable:", "supplemental_goal_unreachable:",
+            )) and r not in {
+                "daily_main_remaining_segments_missing", "household_reserve_unreachable",
+            }]
+            if any(min(i.storage_energy_at_start_wh, i.storage_energy_at_end_wh) + 1e-6
+                   < limits.minimum_soc
+                   * storage.usable_capacity_wh
+                   for i in assessment.projection.intervals if i.starts_at < current_until):
+                invalid.append("household_reserve_unreachable")
         assert snapshot.capability_snapshot_set is not None
         capability = next(i for i in snapshot.capability_snapshot_set.capabilities
                           if i.capability_id == storage.capability_id
                           and i.execution_scope_id == storage.execution_scope_id)
         for segment in plan.segments:
-            if segment.ends_at <= snapshot.captured_at:
+            if (segment.ends_at <= snapshot.captured_at
+                    or (current_until is not None and segment.starts_at >= current_until)):
                 continue
             if segment.primitive not in capability.supported_primitives:
                 invalid.append(f"unsupported_primitive:{segment.primitive.value}")
@@ -375,15 +402,16 @@ class IndependentDailyReferenceAdapter:
                     or segment.soc_constraint.minimum < limits.minimum_soc
                     or segment.soc_constraint.maximum > limits.maximum_soc):
                 invalid.append("incumbent_soc_constraints_require_revision")
-        current_until = min((a.starts_at for a in context.assignments
+        proof_until = current_until or min((a.starts_at for a in context.assignments
                              if a.route_plan_id is None and a.starts_at > snapshot.captured_at),
                             default=plan.valid_until)
-        if any(i.starts_at < current_until and i.deficit_wh > 1e-6 for i in energy_deficits(
+        if any(i.starts_at < proof_until and i.deficit_wh > 1e-6 for i in energy_deficits(
             assessment.projection, assessment.schedule, until=plan.valid_until,
             maximum_discharge_output_power_w=limits.maximum_discharge_output_power_w,
         )):
             invalid.append("household_bridge_unreachable")
-        if any(i.storage_to_grid_output_wh + 1e-6 < intent.storage_export_target_wh
+        if any((current_until is None or i.starts_at < current_until)
+               and i.storage_to_grid_output_wh + 1e-6 < intent.storage_export_target_wh
                for i, intent in zip(assessment.projection.intervals,
                                     assessment.schedule.intervals, strict=True)):
             invalid.append("market_export_target_unreachable")

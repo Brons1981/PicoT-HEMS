@@ -79,6 +79,10 @@ from picot.v2.plan_commitment_store import (
     CommittedStorageEnergyCheckpoint,
     active_pv_preservation_dates,
 )
+from picot.v2.planning_recovery import (
+    assess_current_execution,
+    failed_plan_change_blocks_execution,
+)
 from picot.v2.route_choice_policy import (
     constrain,
     locked_candidates,
@@ -1318,6 +1322,7 @@ def _build_daily_main_run(
     canonical_set = None
     planning_blocked = False
     future_goal_unresolved = False
+    execution_continuity = None
     optional_pv_review = False
     retain_grid_continuity = False
     manual_request = context.recalculation_request
@@ -1523,9 +1528,12 @@ def _build_daily_main_run(
                         "configured_maximum_conflicts_with_daily_100_percent",
                         "supplemental_goal_unreachable",
                     }
-                    and not adapter.committed_execution_invalidity_reasons(
-                        snapshot=snapshot, plan=retained[0], conversion_model=conversion,
-                    )
+                    and (execution_continuity := assess_current_execution(
+                        snapshot, retained[0], conversion,
+                        (f"future_daily_goal_unresolved:{pending[0].assignment_id}:{windows.reason}",),
+                        require_complete_route=True,
+                    )) is not None
+                    and not execution_continuity.blocking_reasons
                 ):
                     # Only the new future obligation failed. The fresh retained
                     # route is executable; no future goal, winner or completion
@@ -1564,10 +1572,13 @@ def _build_daily_main_run(
     except MarketRevisionCoverageUnavailable as exc:
         # Missing valuation coverage is not evidence that current execution is
         # invalid. Monitoring above has checked its goals on the full physical plan.
-        planning_blocked = bool(input_shortfalls) or not retained
+        planning_blocked = failed_plan_change_blocks_execution(
+            has_retained_plan=bool(retained), optional_change=True,
+            current_shortfall=bool(input_shortfalls))
         reason = str(exc)
     except (ValueError, OSError) as exc:
-        planning_blocked = not optional_pv_review
+        planning_blocked = failed_plan_change_blocks_execution(
+            has_retained_plan=bool(retained), optional_change=optional_pv_review)
         reason = str(exc) or exc.__class__.__name__
         if completed_owner is not None:
             reason = "completed_day_recovery_failed:" + reason
@@ -1577,12 +1588,17 @@ def _build_daily_main_run(
         # User consent is admission, not a modified financial score. Physical
         assert commitment_store is not None
         # invalidity is never overridden and Evaluation remains the selector.
-        requested_choice = (commitment_store.pending_route_choice(manual_owner.assignment_id)
-                            if manual_owner is not None and manual_request is not None
-                            and manual_request.route_choice_token else None)
-        if requested_choice is not None:
+        choice_requested = (manual_owner is not None and manual_request is not None
+                            and manual_request.route_choice_token)
+        requested_choice = next((c.policy_record() for c in context.route_choices
+                                 if manual_owner is not None and manual_request is not None
+                                 and c.assignment_id == manual_owner.assignment_id
+                                 and c.token == manual_request.route_choice_token
+                                 and c.status == "pending"), None)
+        if choice_requested:
             allowed = (requested_candidates(comparable, requested_choice, snapshot.captured_at)
-                       if snapshot.captured_at < datetime.fromisoformat(
+                       if requested_choice is not None
+                       and snapshot.captured_at < datetime.fromisoformat(
                            requested_choice["expires_at"]) else set())
             comparable = constrain(comparable, allowed, "user_route_choice_no_longer_available")
         else:
@@ -1590,10 +1606,8 @@ def _build_daily_main_run(
                             if isinstance(optimisation_trigger,
                                           (DailyMainShortfallTrigger, DailyBridgeTrigger))
                             else None)
-            locks = [record for a in context.assignments
-                     if a.assignment_id != repair_owner
-                     and (record := commitment_store.active_route_choice(
-                         a.assignment_id, snapshot.captured_at)) is not None]
+            locks = [c.policy_record() for c in context.route_choices
+                     if c.status == "selected" and c.assignment_id != repair_owner]
             if locks:
                 unrestricted = EvaluationEngine().evaluate(
                     comparable.candidate_set, comparable.strategy, comparable.outcome_set,
@@ -1672,14 +1686,14 @@ def _build_daily_main_run(
             )
             reason = result.record.decisive_step or "daily_main_winner_selected"
         else:
-            planning_blocked = not retain_grid_continuity and not isinstance(
-                optimisation_trigger, DailyMainPVSurplusTrigger,
+            planning_blocked = failed_plan_change_blocks_execution(
+                has_retained_plan=bool(retained), continuing_charge=retain_grid_continuity,
+                optional_change=(isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
+                                 or continuity_repair),
             )
             reason = ("ongoing_load_requires_committed_grid_continuity"
                       if retain_grid_continuity else "daily_main_evaluation_has_no_winner")
             if completed_owner is not None:
-                if continuity_repair:
-                    planning_blocked = False  # A failed optional repair retains current execution.
                 reason = "completed_day_recovery_failed:" + ";".join(
                     issue for invalid in result.record.invalid_candidates
                     for issue in invalid.reasons
@@ -1716,7 +1730,8 @@ def _build_daily_main_run(
                     snapshot, completed_owner, retained[0] if retained else None)) else None))
             canonical_set = proposed
         except (ValueError, OSError) as exc:
-            planning_blocked = not continuity_repair
+            planning_blocked = failed_plan_change_blocks_execution(
+                has_retained_plan=bool(retained), optional_change=continuity_repair)
             reason = "completed_day_recovery_failed:" + str(exc)
     if selected_window is not None and result is not None:
         assert commitment_store is not None
@@ -1788,7 +1803,9 @@ def _build_daily_main_run(
             except (ValueError, OSError):
                 pass  # Notification availability never grants planning authority.
         except (ValueError, OSError) as exc:
-            planning_blocked = not isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
+            planning_blocked = failed_plan_change_blocks_execution(
+                has_retained_plan=bool(retained),
+                optional_change=isinstance(optimisation_trigger, DailyMainPVSurplusTrigger))
             reason = str(exc) or exc.__class__.__name__
     # A promised storage checkpoint can require acquisition even after every
     # daily goal completed. Bind a shared reserve plan; never reopen a daily owner.
@@ -1908,9 +1925,8 @@ def _build_daily_main_run(
                     if not market.comparable.candidate_set.candidates:
                         reason = "market_not_admitted:" + ",".join(market.reasons)
                         continue
-                    locks = [record for a in context.assignments
-                             if (record := commitment_store.active_route_choice(
-                                 a.assignment_id, snapshot.captured_at)) is not None]
+                    locks = [c.policy_record() for c in context.route_choices
+                             if c.status == "selected"]
                     if locks:
                         unrestricted_market = EvaluationEngine().evaluate(
                             market.comparable.candidate_set, market.comparable.strategy,
@@ -2013,12 +2029,12 @@ def _build_daily_main_run(
             # unsafe. Reuse the existing physical proof, never bypass execution guards.
             try:
                 manual_conversion, _ = planner_runtime.planning_configuration(snapshot)
-                planning_blocked = bool(
-                    IndependentDailyReferenceAdapter().committed_execution_invalidity_reasons(
-                        snapshot=snapshot, plan=retained_manual_plan,
-                        conversion_model=manual_conversion,
-                    )
+                execution_continuity = assess_current_execution(
+                    snapshot, retained_manual_plan, manual_conversion, (reason,),
+                    require_complete_route=True,
                 )
+                planning_blocked = (execution_continuity is None
+                                    or bool(execution_continuity.blocking_reasons))
             except (ValueError, OSError):
                 planning_blocked = True
         try:
@@ -2039,6 +2055,24 @@ def _build_daily_main_run(
                     )
         except (ValueError, OSError) as exc:
             reason = "manual_recalculation_result_not_saved:" + str(exc)
+    # A failed complete-route search is not an execution verdict. Assess the
+    # current stored action once, preserving the no-winner record and all goals.
+    if (planning_blocked and reason == "daily_main_evaluation_has_no_winner"
+            and canonical_set is None and len(retained) == 1 and result is not None):
+        unresolved = tuple(dict.fromkeys(
+            issue for candidate in result.record.invalid_candidates for issue in candidate.reasons
+        )) or (reason,)
+        execution_continuity = assess_current_execution(
+            snapshot, retained[0], conversion, unresolved,
+        )
+        if execution_continuity is not None and not execution_continuity.blocking_reasons:
+            planning_blocked = False
+            reason = "planning_unresolved_current_execution_retained:" + ";".join(unresolved)
+        else:
+            reason += ":" + ";".join(unresolved)
+            if execution_continuity is not None:
+                reason += ";current_execution_blocked:" + ";".join(
+                    execution_continuity.blocking_reasons)
     candidate_set_id = (comparable.outcome_set.candidate_set_reference
                         if comparable is not None
                         else _id("daily-main-candidates", snapshot.snapshot_id))
@@ -2072,6 +2106,7 @@ def _build_daily_main_run(
         else _id("daily-main-observation", snapshot.snapshot_id)
     )
     if canonical_set is not None:
+        execution_continuity = None  # A selected replacement has its own canonical authority.
         plan_set = project_execution_plan_set(
             canonical_set,
             run_id=snapshot.run_id,
@@ -2158,6 +2193,7 @@ def _build_daily_main_run(
         if retained
         else "fallback_active",
         canonical_record=result.record if result is not None else None,
+        execution_continuity=execution_continuity,
         evaluated_candidate_ids=result.record.evaluated_candidate_ids if result is not None else (),
         decisive_step=result.record.decisive_step if result is not None else None,
         incumbent_candidate_id=(

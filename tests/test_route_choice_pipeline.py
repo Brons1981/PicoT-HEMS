@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+import pytest
 from test_daily_main_active_pipeline import setup
 from test_daily_main_route_optimisation import fresh
 
@@ -122,3 +123,105 @@ def test_economic_recheck_does_not_add_grid_outside_choice(tmp_path, monkeypatch
     plan = store.load_active_daily_main_plan(owner.execution_scope_id)
     assert respects_choice(plan, chosen, changed.captured_at)
     assert store.active_route_choice(owner.assignment_id, changed.captured_at) is not None
+
+
+def test_planning_uses_captured_choice_without_rereading_store(tmp_path, monkeypatch):
+    store, pipeline, recover, first, owner, offer = offer_future_route(tmp_path, monkeypatch)
+    source = fresh(first.planning_input, tag="captured-choice")
+    store.request_route_choice(token=offer["token"], action="pv", requested_at=source.captured_at)
+    captured = recover(source)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("planning reread mutable route consent")
+
+    monkeypatch.setattr(store, "pending_route_choice", forbidden)
+    monkeypatch.setattr(store, "active_route_choice", forbidden)
+    run = pipeline.run(planning_input=captured)
+    record = store.route_choice_status(source.captured_at)["choices"][-1]
+    assert record["status"] == "selected", run.evaluation.reason
+    assert (store.load_active_daily_main_plan(owner.execution_scope_id).plan_id
+            == record["accepted_plan_id"])
+
+
+def test_capture_is_immutable_and_release_requires_new_snapshot(tmp_path, monkeypatch):
+    from dataclasses import FrozenInstanceError, asdict
+    from types import SimpleNamespace
+
+    from picot.v2.live_runtime import _planning_input_signature
+
+    store, pipeline, recover, first, owner, offer = offer_future_route(tmp_path, monkeypatch)
+    source = fresh(first.planning_input, tag="capture-release")
+    store.request_route_choice(token=offer["token"], action="pv", requested_at=source.captured_at)
+    pipeline.run(planning_input=recover(source))
+    captured = recover(source)
+    choice = captured.daily_charge_context.route_choices[0]
+    before = asdict(captured.daily_charge_context)
+    with pytest.raises(FrozenInstanceError):
+        choice.status = "released"
+    detached = choice.policy_record()
+    detached["offer"]["alternative"]["main_signature"].clear()
+    assert choice.main_signature
+    store.release_route_choice(assignment_id=owner.assignment_id,
+        requested_at=source.captured_at, request_id="release-after-capture")
+    assert asdict(captured.daily_charge_context) == before
+    newer = recover(source)
+    assert newer.daily_charge_context.route_choices == ()
+    def signature(snapshot):
+        return _planning_input_signature(SimpleNamespace(
+            snapshot=snapshot, facts=(), controlled_load_summary=None))
+    assert signature(captured) != signature(newer)
+
+
+def test_missing_captured_request_cannot_choose_an_unrequested_route(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    store, pipeline, recover, first, owner, offer = offer_future_route(tmp_path, monkeypatch)
+    source = fresh(first.planning_input, tag="missing-consent")
+    store.request_route_choice(token=offer["token"], action="pv", requested_at=source.captured_at)
+    captured = recover(source)
+    old_plan = store.load_active_daily_main_plan(owner.execution_scope_id)
+    incomplete = replace(captured, daily_charge_context=replace(
+        captured.daily_charge_context, route_choices=()))
+    run = pipeline.run(planning_input=incomplete)
+    assert run.evaluation.winning_candidate_id is None
+    assert store.load_active_daily_main_plan(owner.execution_scope_id) == old_plan
+    assert store.route_choice_status(source.captured_at)["choices"][-1]["status"] == "rejected"
+
+
+def test_captured_selected_choice_survives_restart_and_ends_with_owner(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from zoneinfo import ZoneInfo
+
+    from picot.v2.live_runtime import _restore_daily_charge_context
+    from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
+
+    store, pipeline, recover, first, owner, offer = offer_future_route(tmp_path, monkeypatch)
+    source = fresh(first.planning_input, tag="restart-consent")
+    store.request_route_choice(token=offer["token"], action="pv", requested_at=source.captured_at)
+    pipeline.run(planning_input=recover(source))
+    captured = recover(source)
+    restarted = ActivePlanCommitmentStore(store._path)
+    again = _restore_daily_charge_context(replace(source, daily_charge_context=None), restarted,
+                                          local_timezone=ZoneInfo("UTC"))
+    assert again.daily_charge_context.route_choices == captured.daily_charge_context.route_choices
+    assignments = again.daily_charge_context.assignments
+    assert restarted.planning_route_choices(assignments, owner.ends_at) == ()
+
+
+@pytest.mark.parametrize("corruption", ["missing_signature", "mutable_intent"])
+def test_invalid_stored_consent_blocks_capture_instead_of_dropping_choice(
+    tmp_path, monkeypatch, corruption,
+):
+    store, pipeline, recover, first, owner, offer = offer_future_route(tmp_path, monkeypatch)
+    source = fresh(first.planning_input, tag="invalid-consent")
+    store.request_route_choice(token=offer["token"], action="pv", requested_at=source.captured_at)
+    payload = store._load_payload()
+    alternative = payload["route_choices"][offer["token"]]["offer"]["alternative"]
+    if corruption == "missing_signature":
+        del alternative["main_signature"]
+    else:
+        alternative["main_signature"][0][2] = ["grid_requirement"]
+    store._write(payload)
+    captured = recover(source)
+    assert captured.daily_charge_context.status == "blocked"
+    assert captured.daily_charge_context.reason == "stored route choice input is invalid"

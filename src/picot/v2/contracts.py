@@ -687,6 +687,7 @@ class DailyChargePlanningContext:
     recalculation_request: DailyPlanRecalculationRequest | None = None
     market_transition_plan_ids: tuple[str, ...] = ()
     reserve_plan_ids: tuple[str, ...] = ()
+    completed_route_plan_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in {"ready", "blocked"}:
@@ -723,6 +724,11 @@ class DailyChargePlanningContext:
             plan = plans.get(binding.plan_id)
             if plan is None or plan.execution_scope_id != binding.execution_scope_id:
                 raise ValueError("market binding requires its restored shared plan")
+        completed_owners = set(self.completed_route_plan_ids)
+        if (len(completed_owners) != len(self.completed_route_plan_ids)
+                or completed_owners - set(plans)):
+            raise ValueError("completed recovery requires unique restored plans")
+        market_owners.update(completed_owners)
         reserve_owners = set(self.reserve_plan_ids)
         if len(reserve_owners) != len(self.reserve_plan_ids) or reserve_owners - set(plans):
             raise ValueError("reserve recovery requires unique restored plans")

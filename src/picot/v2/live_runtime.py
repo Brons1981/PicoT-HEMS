@@ -983,6 +983,7 @@ def _restore_daily_charge_context(
     supplemental_assignments: tuple[SupplementalChargeAssignment, ...] = ()
     market_plan_bindings: tuple[MarketPlanBinding, ...] = ()
     reserve_plan_ids: tuple[str, ...] = ()
+    completed_route_plan_ids: tuple[str, ...] = ()
     market_progress: tuple[MarketExecutionProgress, ...] = ()
     plans: list[ExecutionPlan] = []
     active_main_plan_ids: list[str] = []
@@ -1052,12 +1053,14 @@ def _restore_daily_charge_context(
         stored_market_bindings = store.load_market_plan_bindings()
         transition_plan_ids = store.load_market_transition_plan_ids()
         reserve_plan_ids = store.load_reserve_plan_ids()
+        completed_route_plan_ids = store.load_completed_route_plan_ids()
         for active in active_plans:
             bindings = tuple(b for b in stored_market_bindings if b.plan_id == active.plan_id)
             if active.plan_id not in {p.plan_id for p in plans}:
                 if (not bindings
                         and active.plan_id not in transition_plan_ids
-                        and active.plan_id not in reserve_plan_ids):
+                        and active.plan_id not in reserve_plan_ids
+                        and active.plan_id not in completed_route_plan_ids):
                     raise ValueError("active_daily_main_plan_owner_not_restored")
                 plans.append(active)
             market_plan_bindings += bindings
@@ -1112,6 +1115,8 @@ def _restore_daily_charge_context(
             pid for pid in transition_plan_ids
             if pid in {p.plan_id for p in plans}
         ),
+        completed_route_plan_ids=tuple(pid for pid in completed_route_plan_ids
+                                       if pid in {p.plan_id for p in plans}),
         reserve_plan_ids=tuple(pid for pid in reserve_plan_ids
                                if pid in {p.plan_id for p in plans}),
         market_execution_progress=market_progress,

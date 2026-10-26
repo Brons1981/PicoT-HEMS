@@ -1302,6 +1302,7 @@ def _build_daily_main_run(
     context = snapshot.daily_charge_context
     assert context is not None
     started = perf_counter()
+    completed_owner = None
     comparable = None
     result = None
     reason = "daily_main_route_retained_without_optimisation_trigger"
@@ -1343,12 +1344,14 @@ def _build_daily_main_run(
                     snapshot_id=snapshot.snapshot_id,
                 )
                 manual_owner = None
-        if (
-            not snapshot.price_points
-            or snapshot.pv_energy_timeline is None
-            or (snapshot.household_load_forecast is None or not snapshot.current_storage_states)
-        ):
-            raise ValueError("daily_main_planning_data_unavailable")
+        missing_inputs = [name for name, missing in (
+            ("price_points", not snapshot.price_points),
+            ("pv_energy_timeline", snapshot.pv_energy_timeline is None),
+            ("household_load_forecast", snapshot.household_load_forecast is None),
+            ("current_storage_states", not snapshot.current_storage_states),
+        ) if missing]
+        if missing_inputs:
+            raise ValueError("daily_main_planning_data_unavailable:" + ",".join(missing_inputs))
         pending = sorted(
             (
                 a
@@ -1429,7 +1432,16 @@ def _build_daily_main_run(
                 optimisation_trigger = bridge_assessment.trigger
                 pending = [next(a for a in context.assignments
                                 if a.assignment_id == optimisation_trigger.assignment_id)]
-        if pending:
+        from picot.v2.completed_route_recovery import portfolio as completed_portfolio
+        from picot.v2.completed_route_recovery import recovery_owner
+
+        if not pending and optimisation_trigger is None and len(retained) <= 1:
+            completed_owner = recovery_owner(snapshot, retained[0] if retained else None)
+        if completed_owner is not None:
+            comparable = completed_portfolio(snapshot, completed_owner,
+                retained[0] if retained else None, conversion, opportunities.opportunity_ids)
+            optional_pv_review = False
+        elif pending:
             optional_pv_review = isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
             if isinstance(optimisation_trigger, DailyMainRecalculationTrigger):
                 # An explicit rebuild uses normal daily Candidate discovery.
@@ -1553,6 +1565,8 @@ def _build_daily_main_run(
     except (ValueError, OSError) as exc:
         planning_blocked = not optional_pv_review
         reason = str(exc) or exc.__class__.__name__
+        if completed_owner is not None:
+            reason = "completed_day_recovery_failed:" + reason
     candidate_ms = round((perf_counter() - started) * 1000, 3)
     started = perf_counter()
     if comparable is not None:
@@ -1644,6 +1658,8 @@ def _build_daily_main_run(
                     )
                 except (ValueError, OSError) as exc:
                     reason = str(exc) or exc.__class__.__name__
+        elif result.winning_energy_path is not None and completed_owner is not None:
+            reason = "completed_day_execution_recovered"
         elif result.winning_energy_path is not None:
             selected_window = next(
                 s.window
@@ -1657,6 +1673,11 @@ def _build_daily_main_run(
             )
             reason = ("ongoing_load_requires_committed_grid_continuity"
                       if retain_grid_continuity else "daily_main_evaluation_has_no_winner")
+            if completed_owner is not None:
+                reason = "completed_day_recovery_failed:" + ";".join(
+                    issue for invalid in result.record.invalid_candidates
+                    for issue in invalid.reasons
+                )
             if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger):
                 assert commitment_store is not None
                 try:
@@ -1670,6 +1691,25 @@ def _build_daily_main_run(
                     reason = str(exc) or exc.__class__.__name__
     evaluation_ms = round((perf_counter() - started) * 1000, 3)
     started = perf_counter()
+    if (completed_owner is not None and result is not None
+            and result.winning_energy_path is not None):
+        assert commitment_store is not None
+        try:
+            proposed = ExecutionPlanBuilder().build(
+                result, created_at=snapshot.captured_at, fallback_policy_id="guarded-nom")
+            proposed = replace(proposed, plans=tuple(
+                replace(p, solcast_planning_basis=snapshot.solcast_planning_basis)
+                for p in proposed.plans))
+            if planning_checkpoint is not None:
+                planning_checkpoint()
+            commitment_store.bind_completed_route(
+                plan=proposed.plans[0], assignment_id=completed_owner.assignment_id,
+                previous_plan_id=retained[0].plan_id if retained else None,
+                evaluation_record=result.record)
+            canonical_set = proposed
+        except (ValueError, OSError) as exc:
+            planning_blocked = True
+            reason = "completed_day_recovery_failed:" + str(exc)
     if selected_window is not None and result is not None:
         assert commitment_store is not None
         try:

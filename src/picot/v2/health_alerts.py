@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from picot.v2.contracts import CanonicalPipelineRun
+from picot.v2.recovery_messages import recovery_message
 
 
 class HealthObserver(Protocol):
@@ -32,7 +33,8 @@ def observe_execution(
     if success or failed:
         notifier.observe(
             "execution_failure", failed,
-            f"Batterijaansturing geblokkeerd of mislukt: {failure_reason or reason or status}"
+            (recovery_message(failure_reason or reason or status)
+             or f"Batterijaansturing geblokkeerd of mislukt: {failure_reason or reason or status}")
             if failed else "Batterijaansturing hersteld.",
             severity="error",
         )
@@ -49,7 +51,8 @@ def observe_planning_run(notifier: HealthObserver, run: CanonicalPipelineRun) ->
     fallback = run.evaluation.status == "fallback_active"
     notifier.observe(
         "planning_fallback", fallback,
-        f"Planning in terugvalmodus: {run.evaluation.reason}"
+        (recovery_message(run.evaluation.reason)
+         or f"Planning in terugvalmodus: {run.evaluation.reason}")
         if fallback else "Planning hersteld: een berekend plan is beschikbaar.",
     )
     observe_execution(

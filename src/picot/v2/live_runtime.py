@@ -106,7 +106,6 @@ from picot.v2.plan_commitment_store import (
     ActivePlanCommitmentStore,
 )
 from picot.v2.planning_execution_service import PlanningExecutionService
-from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.planning_incident_history import PlanningIncidentHistory
 from picot.v2.planning_input import (
     HomeAssistantStateReader,
@@ -161,6 +160,7 @@ from picot.v2.pv_sunset_source import (
     SunsetReadResult,
 )
 from picot.v2.review_measurements import measurement_archive_paths
+from picot.v2.route_choice_input import RouteChoiceInput
 from picot.v2.soc_expectation import committed_soc_expectation
 from picot.v2.soc_history_recovery import HistoricalSOCRecovery
 from picot.v2.soc_projection_cache import SOCProjectionCache
@@ -900,6 +900,7 @@ def _planning_input_signature(
                     )
                     for s in daily_context.bridge_states
                 ],
+                "route_choices": [c.policy_record() for c in daily_context.route_choices],
                 "pv_comparison_states": [
                     (
                         state.assignment_id,
@@ -989,6 +990,7 @@ def _restore_daily_charge_context(
     active_main_plan_ids: list[str] = []
     status, reason = "ready", None
     recalculation_request = None
+    route_choices: tuple[RouteChoiceInput, ...] = ()
     scopes = {
         state.execution_scope_id for state in snapshot.current_storage_states
     } | {limits.execution_scope_id for limits in snapshot.storage_physical_limits}
@@ -1097,6 +1099,7 @@ def _restore_daily_charge_context(
             if (state := store.load_daily_bridge_state(a.assignment_id)) is not None
         )
         recalculation_request = store.load_daily_recalculation_request()
+        route_choices = store.planning_route_choices(assignments, snapshot.captured_at)
     except (ValueError, OSError) as exc:
         status, reason = "blocked", str(exc) or exc.__class__.__name__
     context = DailyChargePlanningContext(
@@ -1127,6 +1130,7 @@ def _restore_daily_charge_context(
         ),
         duration_ms=round((perf_counter() - started) * 1000, 3),
         recalculation_request=recalculation_request,
+        route_choices=route_choices,
     )
     return replace(snapshot, daily_charge_context=context)
 
@@ -2304,7 +2308,7 @@ def _observe_execution_status(
     outcome = {
         "failed": "failed", "dispatch_failed": "failed", "rejected": "rejected",
         "mode_feedback_timeout": "timed_out", "dispatched": "accepted",
-        "already_active": "succeeded",
+        "already_active": "succeeded", "replan_required": "replan_required",
     }.get(status)
     if outcome is not None:
         monitor.observe((RuntimeObservation(
@@ -2338,7 +2342,6 @@ def _execute_planning_bundle(
     storage_mode_transition_history: (StorageModeTransitionHistoryStore | None) = None,
     canonical_execution_runtime: CanonicalExecutionRuntime | None = None,
     execution_enabled: bool = False,
-    planning_fallback_notifier: PlanningFallbackNotifier | None = None,
     health_notifier: HealthNotifier | None = None,
     planning_incident_history: PlanningIncidentHistory | None = None,
     daily_pv_basis_decision: DailyPVBasisDecision | None = None,
@@ -2445,8 +2448,6 @@ def _execute_planning_bundle(
                 observed_at=execution_result_at,
                 observation_id=f"execution-result:{run.planning_input.run_id}",
             )
-    if health_notifier is not None:
-        observe_planning_run(health_notifier, run)
     if planning_incident_history is not None:
         try:
             planning_incident_history.record(
@@ -2579,18 +2580,14 @@ def _execute_planning_bundle(
     # Publish the canonical plan and its SOC together before announcing it.
     # Optional observers must not hold back the current dashboard or replace
     # it with a captured older view when their work finishes.
-    if planning_fallback_notifier is not None:
+    if health_notifier is not None:
         try:
-            planning_fallback_notifier.update(
-                token,
-                run=run,
-                now=bundle.snapshot.captured_at,
-            )
+            observe_planning_run(health_notifier, run)
         except Exception as exc:
             print(
                 json.dumps(
                     {
-                        "event": "picot_v2_planning_notification_error",
+                        "event": "picot_v2_health_observer_error",
                         "run_id": run.planning_input.run_id,
                         "error": str(exc) or exc.__class__.__name__,
                     },
@@ -2797,7 +2794,6 @@ def main() -> None:
         ),
         commitment_store=active_plan_commitment_store,
     )
-    planning_fallback_notifier = PlanningFallbackNotifier()
     history_capture_trial = HistoryCaptureTrial(options)
     planning_incident_history = PlanningIncidentHistory(
         PLANNING_INCIDENT_HISTORY_PATH,
@@ -3523,7 +3519,6 @@ def main() -> None:
             storage_mode_transition_history=(storage_mode_transition_history),
             canonical_execution_runtime=canonical_execution_runtime,
             execution_enabled=execution_enabled,
-            planning_fallback_notifier=planning_fallback_notifier,
             health_notifier=health_notifier,
             planning_incident_history=planning_incident_history,
             monitor_diagnostics={
@@ -3556,7 +3551,10 @@ def main() -> None:
             failure_reason=outcome.failure_reason,
         )
         _observe_execution_status(
-            runtime_monitor, status=outcome.status,
+            runtime_monitor,
+            status=("replan_required"
+                    if outcome.failure_reason == "current_execution_proof_expired_or_replaced"
+                    else outcome.status),
             source_reference=outcome.plan_id or "committed-boundary",
             observed_at=bundle.snapshot.captured_at,
             observation_id=f"boundary-result:{bundle.snapshot.snapshot_id}",

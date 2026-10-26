@@ -26,6 +26,33 @@ def recovery_message(reason: str) -> str | None:
             "Het resterende uitvoeringsplan is automatisch hersteld."
         ),
     }
+    continuity_prefix = "planning_unresolved_current_execution_retained:"
+    if reason.startswith(continuity_prefix):
+        labels = {
+            "supplemental_goal_unreachable": "aanvullend laaddoel niet haalbaar",
+            "daily_main_goal_unreachable": "daglaaddoel niet haalbaar",
+            "supplemental_retirement_bridge_deficit":
+                ("aanvullend laadblok blijft nodig voor de energievoorziening "
+                 "tot het volgende laadblok"),
+            "market_recovery_not_proven": "energieherstel na handel niet aangetoond",
+            "household_bridge_unreachable": "energietekort tot het volgende laadblok",
+            "household_reserve_unreachable": "huishoudelijke energiereserve niet haalbaar",
+        }
+        issues = reason[len(continuity_prefix):].split(";")
+        descriptions = "; ".join(dict.fromkeys(
+            labels.get(issue.split(":", 1)[0], issue) for issue in issues))
+        return (
+            "Herplanning heeft nog geen geldige route: " + descriptions
+            + " (" + reason[len(continuity_prefix):] + ")"
+            + ". De huidige planactie is afzonderlijk gecontroleerd en blijft tijdelijk gelden. "
+            "De laadopdrachten blijven open; uiterlijk bij de volgende plangrens of na "
+            "15 minuten is een nieuwe beoordeling vereist."
+        )
+    if reason == "current_execution_proof_expired_or_replaced":
+        return (
+            "De tijdelijke uitvoeringscontrole is verlopen of hoort bij een andere planactie. "
+            "Een nieuwe beoordeling is nodig voordat het behouden plan verder mag."
+        )
     missing_prefix = "daily_main_planning_data_unavailable:"
     if reason.startswith(missing_prefix):
         labels = {

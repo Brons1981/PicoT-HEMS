@@ -30,12 +30,6 @@ def test_current_plan_and_soc_are_published_before_optional_observers(
             json.loads(cache_path.read_text()) if cache_path.exists() else None,
         )
 
-    class Notifier:
-        def update(self, *args, **kwargs):
-            capture("notification")
-            if failed_observer == "notification":
-                raise OSError("notification unavailable")
-
     class Ledger:
         def update(self, *args, **kwargs):
             capture("financial")
@@ -49,8 +43,12 @@ def test_current_plan_and_soc_are_published_before_optional_observers(
             return {"observer_only": True, "selection_permitted": False,
                     "commitment_permitted": False, "test_result": "settled"}
 
-    monkeypatch.setattr(live_runtime, "observe_planning_run",
-                        lambda *args: capture("health"))
+    def observe_health(*args):
+        capture("health")
+        if failed_observer == "notification":
+            raise OSError("notification unavailable")
+
+    monkeypatch.setattr(live_runtime, "observe_planning_run", observe_health)
     monkeypatch.setattr(live_runtime.HomeAssistantProjectionSink, "publish",
                         lambda *args: None)
     live_runtime._execute_planning_bundle(
@@ -58,16 +56,15 @@ def test_current_plan_and_soc_are_published_before_optional_observers(
         price_config=PriceOpportunityConfig(0.02, 0.02, "test"),
         bundle=PlanningInputBundle(snapshot, (), (), snapshot.captured_at, snapshot.captured_at),
         web_view_store=web, health_notifier=object(),
-        planning_fallback_notifier=Notifier(), financial_result_ledger=Ledger(),
+        financial_result_ledger=Ledger(),
         power_history=PowerHistorySnapshot(
             starts_at=snapshot.captured_at, ends_at=snapshot.captured_at,
             status="available", error=None, series=(),
         ),
     )
-    assert events == ["health", "notification", "financial"]
-    assert observed["health"] == (None, None)  # Health alerts keep their early ordering.
+    assert events == ["health", "financial"]
     active = commitments.load_active_daily_main_plan("battery")
-    for name in ("notification", "financial"):
+    for name in ("health", "financial"):
         view, cached = observed[name]
         assert view is not None, f"{name} ran before dashboard publication"
         status = view["planning_status"]

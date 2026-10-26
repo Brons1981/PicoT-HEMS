@@ -157,6 +157,8 @@ def test_runtime_confirms_supplemental_target_with_main_goal_still_open(
     runtime = CanonicalExecutionRuntime(
         lambda *args: (_ for _ in ()).throw(AssertionError("already active")),
         commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     result = runtime.advance_committed_boundary(recover(observation), execution_enabled=True)
     if manual_block:

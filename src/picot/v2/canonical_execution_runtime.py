@@ -21,7 +21,11 @@ from picot.domain.home_assistant import (
     HomeAssistantCommandMapping,
     HomeAssistantDispatchMode,
 )
-from picot.v2.contracts import CanonicalPipelineRun, PlanningInputSnapshot
+from picot.v2.contracts import (
+    CanonicalPipelineRun,
+    ExecutionContinuityEvidence,
+    PlanningInputSnapshot,
+)
 from picot.v2.market_execution_guard import guarded_market_primitive
 from picot.v2.plan_commitment_store import ActivePlanCommitmentStore, CommittedPlanSegment
 
@@ -81,7 +85,9 @@ class CanonicalExecutionRuntime:
     _pending_since: datetime | None = None
     mode_feedback_timeout: timedelta = timedelta(seconds=60)
     _confirmed_daily_segment: tuple[str, str, datetime] | None = None
-    _daily_execution_suspended: bool = False
+    # Stored plans do not carry fresh execution admission across a restart.
+    _daily_execution_suspended: bool = True
+    _execution_continuity: ExecutionContinuityEvidence | None = None
     _confirmed_daily_observation: _ChargeConfirmation | None = None
     _pending_daily_closure: _ChargeConfirmation | None = None
     completion_generation: int = 0
@@ -596,6 +602,17 @@ class CanonicalExecutionRuntime:
             fixed_value=matches[0].vendor_mode,
         )
 
+    def _continuity_blocker(
+        self, at: datetime, plan_id: str, segment_id: str,
+    ) -> str | None:
+        proof = self._execution_continuity
+        if proof is not None and (
+            proof.blocking_reasons or proof.plan_id != plan_id or proof.segment_id != segment_id
+            or not proof.assessed_at <= at < proof.valid_until
+        ):
+            return "current_execution_proof_expired_or_replaced"
+        return None
+
     def advance_committed_boundary(
         self,
         snapshot: PlanningInputSnapshot,
@@ -681,6 +698,14 @@ class CanonicalExecutionRuntime:
                 status="blocked",
                 plan_id=plan_id,
                 failure_reason="committed_segment_not_due",
+            )
+        continuity_blocker = self._continuity_blocker(
+            snapshot.captured_at, plan_id,
+            segment.segment_id if isinstance(segment, ExecutionPlanSegment) else "",
+        )
+        if continuity_blocker is not None:
+            return CommittedBoundaryDispatchOutcome(
+                status="blocked", plan_id=plan_id, failure_reason=continuity_blocker,
             )
         try:
             primitive = ExecutionPrimitive(segment.primitive)
@@ -912,6 +937,7 @@ class CanonicalExecutionRuntime:
         if run.execution_record.status != "live_plan_ready":
             raise ValueError("fresh committed execution requires live plan authority")
         self._daily_execution_suspended = False
+        self._execution_continuity = run.evaluation.execution_continuity
         outcome = self.advance_committed_boundary(observed, execution_enabled=True)
         request_id = (
             f"commitment-boundary-request:{outcome.application_id}"
@@ -989,10 +1015,10 @@ class CanonicalExecutionRuntime:
         prior_confirmation = self._confirmed_daily_segment
         self._confirmed_daily_segment = None
         boundary = run.primitive_boundary
+        self._execution_continuity = run.evaluation.execution_continuity
         if run.planning_input.daily_charge_context is not None:
-            self._daily_execution_suspended = run.execution_record.status in {
-                "live_fallback_ready",
-                "observer_fallback_ready",
+            self._daily_execution_suspended = run.execution_record.status not in {
+                "live_plan_ready", "observer_only_plan_ready",
             }
         due = next(
             (
@@ -1035,6 +1061,14 @@ class CanonicalExecutionRuntime:
             plan, segment = due
             scope_id, capability_id = plan.execution_scope_id, segment.capability_id
             plan_id, segment_id = plan.plan_id, segment.segment_id
+            continuity_blocker = self._continuity_blocker(
+                run.planning_input.captured_at, plan_id, segment_id,
+            )
+            if continuity_blocker is not None:
+                return replace(run, primitive_boundary=replace(
+                    boundary, request_id=None, status="dry_run_blocked",
+                    blockers=(*boundary.blockers, continuity_blocker),
+                ))
             requested_power_w = segment.requested_power_w
         if not fallback and run.execution_record.status == "live_plan_ready":
             try:

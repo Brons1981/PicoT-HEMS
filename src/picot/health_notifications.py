@@ -16,15 +16,18 @@ class HealthNotifier:
         self._condition = Condition()
         self._stopped = False
         self._active: dict[str, bool] = {}
+        self._fingerprints: dict[str, str] = {}
         self._pending: list[dict[str, object]] = []
         try:
             saved = json.loads(path.read_text(encoding="utf-8"))
             self._active = saved["active"]
             self._pending = saved["pending"]
-            if not isinstance(self._active, dict) or not isinstance(self._pending, list):
+            self._fingerprints = saved.get("fingerprints", {})
+            if (not isinstance(self._active, dict) or not isinstance(self._pending, list)
+                    or not isinstance(self._fingerprints, dict)):
                 raise ValueError("Invalid notification state")
         except (OSError, ValueError, KeyError, TypeError):
-            self._active, self._pending = {}, []
+            self._active, self._pending, self._fingerprints = {}, [], {}
         self._thread = Thread(target=self._run, name=f"{app}-health-events", daemon=True)
         if self.enabled:
             self._thread.start()
@@ -33,19 +36,27 @@ class HealthNotifier:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.path.with_suffix(".tmp")
-            temporary.write_text(json.dumps({"active": self._active, "pending": self._pending}),
+            temporary.write_text(json.dumps({"active": self._active, "pending": self._pending,
+                                             "fingerprints": self._fingerprints}),
                                  encoding="utf-8")
             temporary.replace(self.path)
         except OSError:
             pass  # Notification storage must never interrupt control.
 
-    def observe(self, key: str, active: bool, message: str, *, severity: str = "warning") -> None:
+    def observe(self, key: str, active: bool, message: str, *, severity: str = "warning",
+                fingerprint: str | None = None) -> None:
         if not self.enabled:
             return
         with self._condition:
-            if self._active.get(key, False) == active:
+            if self._active.get(key, False) == active and (
+                not active or fingerprint is None or self._fingerprints.get(key) == fingerprint
+            ):
                 return
             self._active[key] = active
+            if active and fingerprint is not None:
+                self._fingerprints[key] = fingerprint
+            elif not active:
+                self._fingerprints.pop(key, None)
             if active or self.recovery_enabled:
                 self._pending.append({
                     "app": self.app, "key": key, "active": active, "message": message,

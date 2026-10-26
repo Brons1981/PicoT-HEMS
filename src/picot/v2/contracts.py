@@ -39,6 +39,7 @@ from picot.v2.household_planning_regime import (
 )
 from picot.v2.plan_commitment_store import ActivePlanCommitment
 from picot.v2.power_history import PowerHistorySnapshot
+from picot.v2.route_choice_input import RouteChoiceInput
 
 if TYPE_CHECKING:
     from picot.v2.household_load_guard import HouseholdLoadGuardAssessment
@@ -688,6 +689,7 @@ class DailyChargePlanningContext:
     market_transition_plan_ids: tuple[str, ...] = ()
     reserve_plan_ids: tuple[str, ...] = ()
     completed_route_plan_ids: tuple[str, ...] = ()
+    route_choices: tuple[RouteChoiceInput, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in {"ready", "blocked"}:
@@ -701,6 +703,10 @@ class DailyChargePlanningContext:
         ids = tuple(a.assignment_id for a in self.assignments)
         if len(ids) != len(set(ids)):
             raise ValueError("daily charge recovery must not duplicate assignments")
+        choices = tuple((c.assignment_id, c.status) for c in self.route_choices)
+        if (not isinstance(self.route_choices, tuple) or len(choices) != len(set(choices))
+                or any(c.assignment_id not in ids for c in self.route_choices)):
+            raise ValueError("route choices require unique captured daily owners")
         bridge_ids = tuple(s.assignment_id for s in self.bridge_states)
         if len(bridge_ids) != len(set(bridge_ids)) or set(bridge_ids) - set(ids):
             raise ValueError("bridge state requires unique restored daily owners")
@@ -1397,6 +1403,26 @@ class CandidateOutcomeSet:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionContinuityEvidence:
+    """A bounded current-action proof, never a replacement or completed goal."""
+
+    snapshot_id: str
+    plan_id: str
+    segment_id: str
+    assessed_at: datetime
+    valid_until: datetime
+    unresolved_reasons: tuple[str, ...]
+    blocking_reasons: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (not self.snapshot_id or not self.plan_id or not self.segment_id
+                or self.assessed_at.utcoffset() is None or self.valid_until.utcoffset() is None
+                or not 0 < (self.valid_until - self.assessed_at).total_seconds() <= 900
+                or not self.unresolved_reasons):
+            raise ValueError("continuity requires identified, bounded execution evidence")
+
+
+@dataclass(frozen=True, slots=True)
 class EvaluationRecord:
     run_id: str
     snapshot_id: str
@@ -1417,8 +1443,12 @@ class EvaluationRecord:
     daily_pv_comparison: DailyPVComparison | None = None
     daily_pv_surplus_trigger: DailyMainPVSurplusTrigger | None = None
     canonical_record: CanonicalEvaluationRecord | None = None
+    execution_continuity: ExecutionContinuityEvidence | None = None
 
     def __post_init__(self) -> None:
+        if (self.execution_continuity is not None
+                and self.execution_continuity.snapshot_id != self.snapshot_id):
+            raise ValueError("Continuity evidence must preserve snapshot identity")
         record = self.canonical_record
         if record is not None and (
             record.evaluation_id != self.evaluation_id

@@ -1,3 +1,51 @@
+## Release HEMS dev.322 - 26 oktober 2026
+
+Alex heeft publicatie van de cumulatieve herstel-, routekeuze- en meldingsverbeteringen aangevraagd.
+Versie dev.322 gaat via PR en volledige CI naar main. Zie de vier ontwikkellogs hieronder.
+Lokale geintegreerde suite: 369 geslaagd; Ruff/mypy groen. Release-CI wordt op de PR vastgelegd.
+Geen planreset nodig. Home Climate blijft dev.24. Installatie en livecontrole volgen afzonderlijk.
+Onderstaande lokale statusblokken beschrijven de voorafgaande implementatiefasen.
+
+## Vier verbeterpunten herstel en meldingen - lokaal, 26 oktober 2026
+
+Alex gaf akkoord op herstelbeslissingen samenbrengen, herstartveiligheid,
+incidentreeksen en een meldingsroute. Lees
+`docs/development_log/2026-10-26-recovery-consolidation.md` en
+`docs/development_log/2026-10-26-single-health-notification-route.md`.
+Een nieuwe runtime wacht op verse plantoestemming. Tijdelijk uitvoeringsbewijs
+verloopt ook bij de start van een ongebonden nieuw dagdoel. Vijf vergelijkbare
+failurepaden gebruiken dezelfde behoud/blokkeerbeslissing; legitieme fysieke
+verschillen blijven bestaan. PlanningFallbackNotifier is verwijderd; HealthNotifier
+is de enige meldingseigenaar na publicatie, met oorzaakdeduplicatie over herstart.
+Opstartwachten en bewijsverloop zijn geen actuatorstoringen of herstelbewijs.
+De eerdere lokale routekeuze-input en uitvoeringscontinuiteit zijn behouden.
+Geintegreerde eindsuite: 369 geslaagd; Ruff en mypy groen. Web/volledige release-CI
+en livewerking zijn nog niet aangetoond.
+Geen release, versieophoging, Home Assistant-opdracht of externe melding uitgevoerd.
+
+## Vervolg: routekeuze in Planning Input - lokaal, 26 oktober 2026
+
+Op verzoek van Alex is routekeuze uit de tussentijdse planner-Store-reads gehaald.
+Lees `docs/development_log/2026-10-26-route-choice-planning-input.md`.
+Pending en selected consent worden onveranderlijk vastgelegd bij inputopbouw;
+hoofdroute en handel gebruiken dezelfde gegevens. Definitieve opslagcontroles blijven.
+De eerdere lokale herstelwijziging is behouden. Geen release of livewijziging.
+Webtestverificatie is lokaal beperkt door geblokkeerde loopback sockets (WinError 10013),
+ook gereproduceerd op de ongewijzigde dev.321-basis. Overige brede suite: 180 geslaagd;
+finale routekeuze-integratie: 10 geslaagd, samen 181 unieke tests. Ruff/mypy groen.
+
+## Lokale vereenvoudiging van herstel - 26 oktober 2026
+
+Alex heeft de vereenvoudiging goedgekeurd na de stabiliteits-/ADR-audit.
+Werkbasis is dev.321 / main e2206992c8ef86bce2c26aec31d7972b4d71795f.
+Lees `docs/development_log/2026-10-26-current-execution-continuity.md`.
+Een onopgeloste volledige herplanning kan de huidige actie alleen met expliciet,
+begrensd fysiek bewijs behouden. Geen nieuwe winnaar, doelvoltooiing of storewijziging.
+De volledige diagnose-replay behoudt NOM tot 14:15 en alle open laadopdrachten.
+Routekeuze via immutable Planning Input is in de vervolgstap hierboven uitgevoerd;
+overige herstelpaden blijven afzonderlijk vervolgwerk.
+Geen release aangevraagd voor deze wijziging; versie en liveinstallatie ongewijzigd.
+
 ## Release HEMS dev.321 - NOM-continuiteit na reset, 26 oktober 2026
 
 Alex heeft dev.320 live bevestigd; het herstel slaagt, maar het middag-NOM wordt opgeknipt.

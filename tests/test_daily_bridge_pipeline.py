@@ -385,7 +385,10 @@ def test_bridge_dispatch_uses_existing_clock_and_explicit_power(tmp_path, monkey
         requests.append(request)
         return CanonicalDispatchOutcome("dispatched", "test-only-command")
 
-    runtime = CanonicalExecutionRuntime(dispatch, commitment_store=store)
+    runtime = CanonicalExecutionRuntime(dispatch, commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
+    )
     result = runtime.advance_committed_boundary(recover(observation), execution_enabled=True)
     assert result.status == "dispatched"
     assert requests[0].plan_id == plan.plan_id

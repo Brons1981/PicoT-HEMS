@@ -2,21 +2,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import timedelta
 
 import pytest
 from legacy_cp_pipeline import CanonicalPipeline
 from test_v2_delegated_storage_pipeline_integration import _snapshot
 
 from picot.domain.execution_primitive import ExecutionPrimitive
-from picot.v2.planning_fallback_notifications import PlanningFallbackNotifier
 from picot.v2.projection import project
 from picot.v2.web_ui import build_web_view
-
-
-class _Response:
-    status = 200
 
 
 def _full_storage_run() -> object:
@@ -282,55 +276,24 @@ def test_full_storage_builds_future_pv_plan_after_delayed_evening_support() -> N
     assert outcome.requirement_satisfied is True
 
 
-def test_planning_fallback_notification_is_deduplicated_and_recovers() -> None:
+def test_planning_fallback_and_recovery_use_durable_health_notifications(tmp_path, monkeypatch):
+    from picot.health_notifications import HealthNotifier
+    from picot.v2.health_alerts import observe_planning_run
+
+    monkeypatch.setattr(HealthNotifier, "_run", lambda self: None)
     fallback = _missing_forecast_fallback_run()
     normal = CanonicalPipeline().run(planning_input=_snapshot())
-    calls: list[dict[str, Any]] = []
-
-    def opener(request: Any, timeout: float) -> _Response:
-        assert timeout > 0
-        calls.append(json.loads(request.data.decode("utf-8")))
-        return _Response()
-
-    notifier = PlanningFallbackNotifier()
-    now = datetime(2026, 8, 17, 20, 0, tzinfo=UTC)
-    notifier.update("token", run=fallback, now=now, opener=opener)
-    notifier.update("token", run=fallback, now=now, opener=opener)
-    notifier.update("token", run=normal, now=now, opener=opener)
-
-    assert len(calls) == 2
-    assert calls[0]["notification_id"] == "picot_planning_fallback"
-    assert "aandacht vereist" in calls[0]["title"]
-    assert "terugvalmodus" in calls[0]["message"]
-    assert "2026-08-17T22:00:00+02:00" in calls[0]["message"]
-    assert "UTC 2026-08-17T20:00:00+00:00" in calls[0]["message"]
-    assert "hersteld" in calls[1]["title"]
-
-
-@pytest.mark.parametrize("failure", (ConnectionError("HA restarting"), None))
-def test_unpublished_fallback_does_not_create_recovery_notice(failure) -> None:
-    notifier = PlanningFallbackNotifier()
-    fallback = _missing_forecast_fallback_run()
-    normal = CanonicalPipeline().run(planning_input=_snapshot())
-    now = datetime(2026, 8, 17, 20, 0, tzinfo=UTC)
-    calls = []
-
-    def unavailable(request, timeout):
-        if failure is not None:
-            raise failure
-        return type("Unavailable", (), {"status": 503})()
-
-    def available(request, timeout):
-        calls.append(json.loads(request.data.decode("utf-8")))
-        return _Response()
-
-    with pytest.raises((ConnectionError, RuntimeError)):
-        notifier.update("token", run=fallback, now=now, opener=unavailable)
-    notifier.update("token", run=normal, now=now, opener=available)
-    assert calls == []
-    # A subsequent real fault still gets its warning and recovery notice.
-    notifier.update("token", run=fallback, now=now, opener=available)
-    notifier.update("token", run=normal, now=now, opener=available)
-    assert len(calls) == 2
-    assert "aandacht vereist" in calls[0]["title"]
-    assert "hersteld" in calls[1]["title"]
+    path = tmp_path / "health.json"
+    notifier = HealthNotifier("token", "HEMS", path)
+    try:
+        observe_planning_run(notifier, fallback)
+        observe_planning_run(notifier, fallback)
+        observe_planning_run(notifier, normal)
+    finally:
+        notifier.close()
+    notices = [e for e in json.loads(path.read_text())["pending"]
+               if e["key"] == "planning_fallback"]
+    assert [e["active"] for e in notices] == [True, False]
+    assert fallback.evaluation.reason in notices[0]["message"]
+    assert "hersteld" in notices[1]["message"]
+    assert notices[0]["tag"] == notices[1]["tag"] == "picot_HEMS_planning_fallback"

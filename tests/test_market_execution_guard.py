@@ -204,6 +204,8 @@ def test_stop_at_minimum_uses_existing_dispatch_and_waits_for_actual_mode(tmp_pa
             calls.append(request) or CanonicalDispatchOutcome("dispatched", "stop")
         ),
         commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     at = start + timedelta(minutes=1)
     result = runtime.advance_committed_boundary(observed(at, soc=0.1), execution_enabled=True)

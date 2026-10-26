@@ -255,6 +255,8 @@ def test_clock_confirmation_completes_only_fresh_owned_soc_and_survives_restart(
     runtime = CanonicalExecutionRuntime(
         lambda *args: (_ for _ in ()).throw(AssertionError("already active")),
         commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     outcome = runtime.advance_committed_boundary(recover(source), execution_enabled=True)
     assert outcome.status == "already_active"
@@ -312,7 +314,10 @@ def test_clock_dispatch_keeps_exact_segment_identity_and_power(tmp_path, monkeyp
         requests.append(request)
         return CanonicalDispatchOutcome("dispatched", "test-command")
 
-    runtime = CanonicalExecutionRuntime(dispatch, commitment_store=store)
+    runtime = CanonicalExecutionRuntime(dispatch, commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
+    )
     outcome = runtime.advance_committed_boundary(recover(source), execution_enabled=True)
     assert outcome.status == "dispatched"
     assert requests[0].segment_id == segment.segment_id

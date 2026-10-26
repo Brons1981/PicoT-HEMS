@@ -68,7 +68,10 @@ def test_poll_dispatch_feedback_and_completion(tmp_path, monkeypatch, kind, cond
         dispatched.append(request)
         return CanonicalDispatchOutcome("dispatched", "test-command")
 
-    runtime = CanonicalExecutionRuntime(dispatch, commitment_store=store)
+    runtime = CanonicalExecutionRuntime(dispatch, commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
+    )
     outcomes = []
     inputs = []
     loads = []

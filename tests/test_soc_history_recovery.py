@@ -290,7 +290,10 @@ def test_recovered_goal_cannot_dispatch_stale_charge_before_reconciliation(tmp_p
     )
     source = with_mode(recover(source), main.primitive, current_mode="Test active")
     commands = []
-    runtime = CanonicalExecutionRuntime(lambda *a: commands.append(a), commitment_store=store)
+    runtime = CanonicalExecutionRuntime(lambda *a: commands.append(a), commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
+    )
     outcome = runtime.advance_committed_boundary(source, execution_enabled=True)
     assert outcome.failure_reason == "historical_main_completed_waiting_for_reconciliation"
     assert commands == []

@@ -14,6 +14,7 @@ from typing import Any, cast
 from picot.domain.execution_plan import ExecutionPlan
 from picot.v2.daily_charge_assignment import DailyChargeAssignment
 from picot.v2.daily_recalculation import DailyMainRecalculationTrigger
+from picot.v2.route_choice_input import RouteChoiceInput
 
 
 def _aware(at: datetime) -> None:
@@ -109,6 +110,20 @@ class RouteChoiceStoreMixin:
         records[token] = record
         self._write(payload)
         return deepcopy(record)
+
+    def planning_route_choices(
+        self, assignments: tuple[DailyChargeAssignment, ...], at: datetime,
+    ) -> tuple[RouteChoiceInput, ...]:
+        """Capture all relevant consent from one payload read, without mutations."""
+        _aware(at)
+        owners = {a.assignment_id for a in assignments
+                  if a.completed_at is None and a.ends_at > at and a.route_plan_id}
+        latest: dict[tuple[str, str], RouteChoiceInput] = {}
+        for record in self._read_payload().get("route_choices", {}).values():
+            if record["assignment_id"] in owners and record["status"] in {"pending", "selected"}:
+                choice = RouteChoiceInput.from_record(record)
+                latest[(choice.assignment_id, choice.status)] = choice
+        return tuple(latest[key] for key in sorted(latest))
 
     def pending_route_choice(self, assignment_id: str) -> dict[str, Any] | None:
         records = self._read_payload().get("route_choices", {})

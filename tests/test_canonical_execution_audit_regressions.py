@@ -45,6 +45,8 @@ def test_persisted_daily_segment_constraints_reach_request(tmp_path, monkeypatch
             calls.append(request) or CanonicalDispatchOutcome("dispatched", "ok")
         ),
         commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     outcome = runtime.advance_committed_boundary(observed, execution_enabled=True)
     assert outcome.status == "dispatched"
@@ -67,6 +69,8 @@ def test_persisted_constraint_rejects_out_of_bounds_live_soc(tmp_path, monkeypat
     runtime = CanonicalExecutionRuntime(
         lambda *args: calls.append(args) or CanonicalDispatchOutcome("dispatched", "bad"),
         commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     outcome = runtime.advance_committed_boundary(observed, execution_enabled=True)
     assert outcome.status == "blocked"
@@ -100,6 +104,8 @@ def test_selector_feedback_has_bounded_wait_without_reassertion(tmp_path, monkey
     runtime = CanonicalExecutionRuntime(
         lambda *args: calls.append(args) or CanonicalDispatchOutcome("dispatched", "ok"),
         commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     assert (
         runtime.advance_committed_boundary(observed, execution_enabled=True).status == "dispatched"
@@ -159,7 +165,9 @@ def test_market_stop_reason_preserves_budget_decision(tmp_path, monkeypatch):
 
     store, binding, start, observed = bound(tmp_path, monkeypatch)
     runtime = CanonicalExecutionRuntime(
-        lambda *args: CanonicalDispatchOutcome("dispatched", "stop"), commitment_store=store
+        lambda *args: CanonicalDispatchOutcome("dispatched", "stop"), commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     runtime.advance_committed_boundary(observed(start), execution_enabled=True)
     at = start + timedelta(seconds=binding.expected_export_wh * 3600 / 1200)
@@ -184,6 +192,8 @@ def test_lower_soc_constraint_does_not_block_recovery_charge(tmp_path, monkeypat
             calls.append(request) or CanonicalDispatchOutcome("dispatched", "ok")
         ),
         commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     result = runtime.advance_committed_boundary(observed, execution_enabled=True)
     assert result.status == "dispatched"
@@ -196,6 +206,8 @@ def test_late_selector_observation_resolves_pending_without_another_command(tmp_
     runtime = CanonicalExecutionRuntime(
         lambda *args: calls.append(args) or CanonicalDispatchOutcome("dispatched", "ok"),
         commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     runtime.advance_committed_boundary(observed, execution_enabled=True)
     confirmed = replace(
@@ -223,6 +235,8 @@ def test_full_battery_does_not_start_another_fast_charge(tmp_path, monkeypatch):
     runtime = CanonicalExecutionRuntime(
         lambda *args: calls.append(args) or CanonicalDispatchOutcome("dispatched", "bad"),
         commitment_store=store,
+        # Boundary fixture after plan admission; startup is tested separately.
+        _daily_execution_suspended=False,
     )
     result = runtime.advance_committed_boundary(observed, execution_enabled=True)
     assert result.status == "blocked"

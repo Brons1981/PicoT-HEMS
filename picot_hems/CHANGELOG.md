@@ -1,3 +1,11 @@
+# 2.0.0-dev.320
+
+- Herstel het resterende uitvoeringsplan automatisch nadat 100% SOC historisch is bevestigd, ook zonder bekende volgende laadsessie.
+- Herstel een ontbrekende actieve route na gebruik van de herstelknop zonder het voltooide dagdoel opnieuw te openen.
+- Behoud voltooiingsbewijs, historie, onafhankelijke plandelen en uitvoeringsbeveiligingen.
+- Benoem de oorzaak, ontbrekende invoer en automatische vervolgstap in foutmeldingen.
+- Geen nieuwe planreset nodig; het herstel volgt automatisch na opstart zodra de benodigde gegevens beschikbaar zijn. Home Climate blijft dev.24.
+
 # 2.0.0-dev.319
 
 - Herstel de onterechte 0%-melding bij een behouden plan: de uitvoeringsstatus volgt de echte uitvoeringsrecords.

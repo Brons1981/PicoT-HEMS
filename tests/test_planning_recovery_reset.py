@@ -124,7 +124,7 @@ def test_recovery_does_not_waive_goal_when_inputs_are_missing(tmp_path, monkeypa
     store.request_planning_recovery(request_id='missing-prices', requested_at=source.captured_at)
     result = pipeline.run(planning_input=recover(replace(source, price_points=())))
     assert result.evaluation.status == 'fallback_active'
-    assert result.evaluation.reason == 'daily_main_planning_data_unavailable'
+    assert result.evaluation.reason == 'daily_main_planning_data_unavailable:price_points'
     assert not store.deferred_recovery_assignment_ids()
     assert all(a.completed_at is None for a in store.load_daily_assignments())
     assert store.daily_recalculation_status()['status'] == 'pending'

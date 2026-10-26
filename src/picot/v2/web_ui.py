@@ -30,6 +30,7 @@ from picot.v2.household_calendar_history import CALENDAR_REPORT_PATH, calendar_d
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.price_plan_reference import PricePlanReference
 from picot.v2.projection import Projection, project_market_revision_comparison
+from picot.v2.recovery_messages import recovery_details, recovery_message
 from picot.v2.soc_projection_cache import SOCDisplayHistory, SOCProjectionCache
 from picot.v2.startup_progress import StartupProgress
 from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
@@ -2923,6 +2924,10 @@ DASHBOARD_HTML = """<!doctype html>
             (source.entity_id ? ` (${source.entity_id})` : ""));
         }
         if (item.health !== "fault") continue;
+        if (item.fault_explanation_nl) {
+          faults.push(item.fault_explanation_nl);
+          continue;
+        }
         if (sources.length && !attrs.error) continue;
         const reasons = [attrs.error, ...(Array.isArray(attrs.blockers) ? attrs.blockers : [])]
           .filter(value => typeof value === "string" && value && value !== "-");
@@ -7318,6 +7323,9 @@ def pipeline_result_nl(
     attributes: Mapping[str, object],
 ) -> str:
     """Translate one technical stage outcome into deterministic Dutch."""
+    recovery = recovery_details(attributes)
+    if recovery:
+        return recovery
     if state == "mode_feedback_timeout":
         return "De HA-keuzestand bevestigde de aangevraagde modus niet binnen de wachttijd."
     if stage == 1:
@@ -7733,7 +7741,10 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
         reason = "; ".join(dict.fromkeys(blockers)) or (
             boundary.execution_reason or vendor.status
         )
-        warning = f"Uitvoering geblokkeerd: {reason}."
+        warning = "; ".join(
+            recovery_message(item) or f"Uitvoering geblokkeerd: {item}."
+            for item in dict.fromkeys(blockers or [reason])
+        )
     confidence_percent = (
         round(winning_confidence * 100) if winning_confidence is not None else None
     )
@@ -8426,12 +8437,13 @@ def build_web_view(
     price_opportunities = run.opportunities.opportunities
     intervals = timeline.intervals if timeline is not None else ()
 
-    pipeline = [
+    pipeline: list[dict[str, object]] = [
         {
             "stage": stage,
             "entity_id": card.entity_id,
             "state": card.state,
             "attributes": dict(card.attributes),
+            "fault_explanation_nl": recovery_details(card.attributes),
             "result_nl": pipeline_result_nl(
                 stage=stage,
                 state=card.state,

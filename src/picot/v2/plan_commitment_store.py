@@ -1162,6 +1162,8 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
             plan = _registered_execution_plan(payload, plan_id)
             if plan.plan_id != plan_id or plan.execution_scope_id != execution_scope_id:
                 raise ValueError("active execution plan identity or scope invalid")
+            if plan_id in self.load_completed_route_plan_ids():
+                return plan
             owners = self.load_daily_assignments()
             owner = next((a for a in owners if a.route_plan_id == plan_id), None)
             if owner is not None:
@@ -1195,6 +1197,8 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                     else:
                         self._retains_shared_charge_plan(origin, shared)
                     shared = origin
+                if shared.plan_id in self.load_completed_route_plan_ids():
+                    return plan
                 owner = next((a for a in owners if a.route_plan_id == shared.plan_id), None)
                 if owner is None or self.load_daily_main_plan(owner.assignment_id) != shared:
                     raise ValueError("shared plan must resolve to its original charge plan")
@@ -2255,6 +2259,204 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
             additions += 1
         if cursor != proposed.valid_until or additions == 0:
             raise ValueError("reserve plan must add charging and retain complete coverage")
+
+    def load_completed_route_plan_ids(self) -> tuple[str, ...]:
+        return self._validate_completed_routes(self._read_payload())
+
+    @staticmethod
+    def _validate_completed_routes(payload: dict[str, Any]) -> tuple[str, ...]:
+        try:
+            return ActivePlanCommitmentStore._validate_completed_route_records(payload)
+        except (KeyError, TypeError, AttributeError, StopIteration) as exc:
+            raise ValueError("completed route binding is malformed") from exc
+
+    @staticmethod
+    def _validate_completed_route_records(payload: dict[str, Any]) -> tuple[str, ...]:
+        records = payload.get("completed_route_bindings", {})
+        if not isinstance(records, dict):
+            raise ValueError("completed route bindings must be an object")
+        for plan_id, record in records.items():
+            plan = _registered_execution_plan(payload, plan_id)
+            owner = _deserialize_daily(payload["daily_assignments"][record["assignment_id"]])
+            if (
+                owner.completed_at is None
+                or owner.completion_evidence_id != record["completion_evidence_id"]
+                or owner.execution_scope_id != plan.execution_scope_id
+                or record["evaluation_id"] != plan.evaluation_id
+                or record["snapshot_id"] != plan.snapshot_id
+                or record["winning_candidate_id"] != plan.winning_candidate_id
+                or record["winning_energy_path_id"] != plan.winning_energy_path_id
+                or record["created_at"] != plan.created_at.isoformat()
+                or not owner.starts_at <= plan.created_at < owner.ends_at
+                or plan.valid_from != plan.created_at
+            ):
+                raise ValueError("completed route ownership or canonical lineage mismatch")
+            old = (
+                _registered_execution_plan(payload, record["previous_plan_id"])
+                if record["previous_plan_id"] is not None
+                else None
+            )
+            if old is not None and (
+                old.execution_scope_id != plan.execution_scope_id
+                or old.valid_until != plan.valid_until
+            ):
+                raise ValueError("completed route cannot change the remaining horizon")
+            if old is None and plan.valid_until != owner.ends_at:
+                raise ValueError("completed reset must use the existing delivery day")
+            cursor = plan.valid_from
+            for part in plan.segments:
+                if part.starts_at != cursor:
+                    raise ValueError("completed route must have continuous coverage")
+                cursor = part.ends_at
+                source = (
+                    next(
+                        (
+                            s
+                            for s in old.segments
+                            if s.starts_at <= part.starts_at < part.ends_at <= s.ends_at
+                        ),
+                        None,
+                    )
+                    if old
+                    else None
+                )
+                if old is not None and source is None:
+                    raise ValueError("completed route must retain original boundaries")
+                released = source is None or source.main_assignment_id == owner.assignment_id
+                if released:
+                    if source is not None and (
+                        part.capability_id != source.capability_id
+                        or part.soc_constraint != source.soc_constraint
+                    ):
+                        raise ValueError("completed route must preserve physical limits")
+                    if (
+                        part.main_assignment_id is not None
+                        or part.requested_power_w is not None
+                        or part.retained_execution_origin is not None
+                        or part.primitive
+                        not in {
+                            ExecutionPrimitive.BALANCE_DISCHARGE_ONLY,
+                            ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                        }
+                        or part.purpose != "completed-day-household"
+                        or part.charge_source_policy
+                        != (
+                            ChargeSourcePolicy.PV_ONLY
+                            if part.primitive is ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                            else None
+                        )
+                    ):
+                        raise ValueError("completed route cannot reopen charging or export")
+                elif any(
+                    getattr(part, f) != getattr(source, f)
+                    for f in (
+                        "primitive",
+                        "requested_power_w",
+                        "capability_id",
+                        "purpose",
+                        "soc_constraint",
+                        "energy_profile_id",
+                        "charge_source_policy",
+                        "main_assignment_id",
+                        "retained_execution_origin",
+                    )
+                ):
+                    raise ValueError("completed route cannot alter independent instructions")
+            if cursor != plan.valid_until:
+                raise ValueError("completed route has incomplete coverage")
+        return tuple(records)
+
+    def bind_completed_route(
+        self,
+        *,
+        plan: ExecutionPlan,
+        assignment_id: str,
+        previous_plan_id: str | None,
+        evaluation_record: EvaluationRecord,
+    ) -> None:
+        if (
+            (
+                evaluation_record.evaluation_id,
+                evaluation_record.snapshot_id,
+                evaluation_record.winning_candidate_id,
+                evaluation_record.created_at,
+            )
+            != (plan.evaluation_id, plan.snapshot_id, plan.winning_candidate_id, plan.created_at)
+            or plan.winning_candidate_id not in evaluation_record.evaluated_candidate_ids
+            or any(
+                i.candidate_id == plan.winning_candidate_id
+                for i in evaluation_record.invalid_candidates
+            )
+        ):
+            raise ValueError("completed route requires canonical selected evidence")
+        payload = self._load_payload()
+        owner = next(a for a in self.load_daily_assignments() if a.assignment_id == assignment_id)
+        record = dict(
+            assignment_id=assignment_id,
+            previous_plan_id=previous_plan_id,
+            completion_evidence_id=owner.completion_evidence_id,
+            evaluation_id=plan.evaluation_id,
+            snapshot_id=plan.snapshot_id,
+            winning_candidate_id=plan.winning_candidate_id,
+            winning_energy_path_id=plan.winning_energy_path_id,
+            created_at=plan.created_at.isoformat(),
+        )
+        previous = self.load_active_daily_main_plan(plan.execution_scope_id)
+        if (
+            payload.get("completed_route_bindings", {}).get(plan.plan_id) == record
+            and previous == plan
+        ):
+            self.load_completed_route_plan_ids()
+            return
+        if (previous.plan_id if previous else None) != previous_plan_id:
+            raise ValueError("completed recovery requires unchanged active plan")
+        if plan.plan_id in payload.get("execution_plans", {}) and (
+            _registered_execution_plan(payload, plan.plan_id) != plan
+            or payload.get("completed_route_bindings", {}).get(plan.plan_id) != record
+        ):
+            raise ValueError("completed recovery requires a new immutable plan")
+        if previous is not None:
+            self._preserve_market_bindings(payload, plan)
+            payload.setdefault("execution_plans", {})[previous.plan_id] = _serialize_execution_plan(
+                previous
+            )
+        for goal in self.load_supplemental_assignments():
+            if goal.execution_scope_id != plan.execution_scope_id or goal.completed_at is not None:
+                continue
+            parts = tuple(s for s in plan.segments if s.purpose == goal.assignment_id)
+            if not parts or (parts[0].starts_at, parts[-1].ends_at) != (
+                goal.starts_at,
+                goal.ends_at,
+            ):
+                raise ValueError("completed recovery cannot discard supplemental ownership")
+            updated = replace(
+                goal, plan_id=plan.plan_id, segment_ids=tuple(s.segment_id for s in parts)
+            )
+            payload.setdefault("supplemental_history", {}).setdefault(
+                goal.assignment_id, []
+            ).append(self._supplemental_record(goal))
+            payload["supplemental_assignments"][goal.assignment_id] = self._supplemental_record(
+                updated
+            )
+        payload.setdefault("execution_plans", {})[plan.plan_id] = _serialize_execution_plan(plan)
+        payload.setdefault("completed_route_bindings", {})[plan.plan_id] = record
+        payload.setdefault("active_execution_plan_ids", {})[plan.execution_scope_id] = plan.plan_id
+        recovery = payload.get("daily_recalculation", {})
+        if recovery.get("mode") == "recovery_reset" and recovery.get("status") == "pending":
+            recovery.update(
+                status="completed",
+                pending_assignment_ids=[],
+                results={
+                    assignment_id: dict(
+                        status="replanned",
+                        reason="completed_day_execution_recovered",
+                        plan_id=plan.plan_id,
+                        snapshot_id=plan.snapshot_id,
+                    )
+                },
+            )
+        self._validate_completed_routes(payload)
+        self._write(payload)
 
     def load_reserve_plan_ids(self) -> tuple[str, ...]:
         """Validate durable reserve ownership without reopening a completed daily goal."""

@@ -1,3 +1,19 @@
+## Release HEMS dev.320 - 26 oktober 2026
+
+Alex heeft publicatie van het automatische herstel na historische dagvoltooiing aangevraagd.
+Via PR en CI naar main. Geen planreset nodig; herstel volgt na opstart met geldige invoer.
+Home Climate blijft dev.24. Installatie en livecontrole volgen afzonderlijk.
+Zie `docs/development_log/2026-10-26-completed-day-recovery.md`.
+
+## Automatisch herstel voltooid dagdoel - lokaal, 26 oktober 2026
+
+Alex vraagt reparatie na HA Core-update en herstelreset. Lees
+`docs/development_log/2026-10-26-completed-day-recovery.md`.
+Een voltooid dagdoel zonder volgende sessie krijgt nu via de canonieke pipeline
+weer een uitvoerbare resterende route, ook na reset. Voltooiing/historie blijven intact.
+Meldingen verklaren de oorzaak en automatische vervolgstap; ontbrekende invoer wordt benoemd.
+Echte diagnose voor en na reset offline succesvol herhaald. Nog geen release/live-update.
+
 ## Release HEMS dev.319 - 24 oktober 2026
 
 Alex heeft publicatie van de uitvoeringsmelding- en kleurenreparatie aangevraagd.

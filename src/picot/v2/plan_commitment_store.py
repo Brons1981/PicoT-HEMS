@@ -26,6 +26,7 @@ from picot.domain.market_plan_revision import MarketPlanRevision
 from picot.domain.market_user_rule import MarketUserRule
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.planner.market_route_admission import MarketAdmission
+from picot.v2.completed_route_history import is_reset_household_route, passive_remainder_available
 from picot.v2.daily_bridge import BridgeEnergyInterval, DailyBridgeState, DailyBridgeTrigger
 from picot.v2.daily_charge_assignment import (
     DailyChargeAssignment,
@@ -2296,7 +2297,24 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                 if record["previous_plan_id"] is not None
                 else None
             )
-            if old is not None and (
+            reference_id = record.get("reference_plan_id")
+            if reference_id is not None:
+                if old is not None and (
+                    old.plan_id not in records or not is_reset_household_route(old)
+                ):
+                    raise ValueError(
+                        "historical remainder cannot replace an independent active plan")
+                reference = _registered_execution_plan(payload, reference_id)
+                if reference != _deserialize_execution_plan(
+                    payload["daily_execution_plans"][owner.assignment_id]
+                ):
+                    raise ValueError("historical remainder differs from its original daily plan")
+                if not passive_remainder_available(reference, owner, plan.created_at):
+                    raise ValueError("historical remainder has no passive completed owner proof")
+                if plan.valid_until != min(reference.valid_until, owner.ends_at):
+                    raise ValueError("historical remainder must retain its bounded horizon")
+                old = reference
+            elif old is not None and (
                 old.execution_scope_id != plan.execution_scope_id
                 or old.valid_until != plan.valid_until
             ):
@@ -2373,6 +2391,7 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
         assignment_id: str,
         previous_plan_id: str | None,
         evaluation_record: EvaluationRecord,
+        reference_plan_id: str | None = None,
     ) -> None:
         if (
             (
@@ -2401,6 +2420,11 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
             winning_energy_path_id=plan.winning_energy_path_id,
             created_at=plan.created_at.isoformat(),
         )
+        if reference_plan_id is not None:
+            reference = self.load_daily_main_plan(assignment_id)
+            if reference is None or reference.plan_id != reference_plan_id:
+                raise ValueError("historical remainder requires its validated original daily plan")
+            record["reference_plan_id"] = reference_plan_id
         previous = self.load_active_daily_main_plan(plan.execution_scope_id)
         if (
             payload.get("completed_route_bindings", {}).get(plan.plan_id) == record

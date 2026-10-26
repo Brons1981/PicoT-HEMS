@@ -1,3 +1,13 @@
+## Release HEMS dev.321 - NOM-continuiteit na reset, 26 oktober 2026
+
+Alex heeft dev.320 live bevestigd; het herstel slaagt, maar het middag-NOM wordt opgeknipt.
+Op akkoord is een gerichte vervolgcorrectie gemaakt. Lees
+`docs/development_log/2026-10-26-recovery-nom-continuity.md`.
+Valideer en behoud de passieve resterende oorspronkelijke route, ook voor een reeds
+opgeslagen dev.320-resetroute. Geen herleving van geannuleerde laad-/handelsopdrachten.
+Echte diagnose: NOM 09:00-15:00 hersteld en na restart behouden. Alex heeft release dev.321 aangevraagd; publicatie via PR en groene CI.
+Installatie en livecontrole volgen afzonderlijk; Home Climate blijft dev.24.
+
 ## Release HEMS dev.320 - 26 oktober 2026
 
 Alex heeft publicatie van het automatische herstel na historische dagvoltooiing aangevraagd.

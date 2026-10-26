@@ -1,3 +1,10 @@
+# 2.0.0-dev.321
+
+- Behoud de aaneengesloten NOM-blokken uit de oorspronkelijke dagroute bij herstel na een voltooid laadhoofddoel.
+- Corrigeer een al opgeslagen dev.320-herstelroute automatisch zodra de oorspronkelijke route veilig kan worden gevalideerd; geen nieuwe planreset nodig.
+- Activeer geen geannuleerde laad-, export-, reserve- of handelsopdrachten opnieuw. Voltooiingsbewijs en uitvoeringsbeveiligingen blijven behouden.
+- Behoud het huidige uitvoerbare plan als de optionele correctie niet kan worden toegepast. Home Climate blijft dev.24.
+
 # 2.0.0-dev.320
 
 - Herstel het resterende uitvoeringsplan automatisch nadat 100% SOC historisch is bevestigd, ook zonder bekende volgende laadsessie.

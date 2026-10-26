@@ -1303,6 +1303,7 @@ def _build_daily_main_run(
     assert context is not None
     started = perf_counter()
     completed_owner = None
+    continuity_repair = False
     comparable = None
     result = None
     reason = "daily_main_route_retained_without_optimisation_trigger"
@@ -1424,7 +1425,13 @@ def _build_daily_main_run(
                     assignment_id=owner.assignment_id, basis_id=state.basis.basis_id,
                     evidence_id=pv_comparison.evidence_id, outcome="no_route_change",
                 )
-        if not pending and optimisation_trigger is None and retained:
+        from picot.v2.completed_route_recovery import historical_reference, recovery_owner
+        from picot.v2.completed_route_recovery import portfolio as completed_portfolio
+
+        if not pending and optimisation_trigger is None and len(retained) <= 1:
+            completed_owner = recovery_owner(snapshot, retained[0] if retained else None)
+        if (not pending and optimisation_trigger is None and retained
+                and completed_owner is None):
             bridge_assessment = adapter.bridge_assessment(
                 snapshot=snapshot, conversion_model=conversion,
             )
@@ -1432,12 +1439,9 @@ def _build_daily_main_run(
                 optimisation_trigger = bridge_assessment.trigger
                 pending = [next(a for a in context.assignments
                                 if a.assignment_id == optimisation_trigger.assignment_id)]
-        from picot.v2.completed_route_recovery import portfolio as completed_portfolio
-        from picot.v2.completed_route_recovery import recovery_owner
-
-        if not pending and optimisation_trigger is None and len(retained) <= 1:
-            completed_owner = recovery_owner(snapshot, retained[0] if retained else None)
         if completed_owner is not None:
+            continuity_repair = bool(retained) and historical_reference(
+                snapshot, completed_owner, retained[0] if retained else None) is not None
             comparable = completed_portfolio(snapshot, completed_owner,
                 retained[0] if retained else None, conversion, opportunities.opportunity_ids)
             optional_pv_review = False
@@ -1674,6 +1678,8 @@ def _build_daily_main_run(
             reason = ("ongoing_load_requires_committed_grid_continuity"
                       if retain_grid_continuity else "daily_main_evaluation_has_no_winner")
             if completed_owner is not None:
+                if continuity_repair:
+                    planning_blocked = False  # A failed optional repair retains current execution.
                 reason = "completed_day_recovery_failed:" + ";".join(
                     issue for invalid in result.record.invalid_candidates
                     for issue in invalid.reasons
@@ -1705,10 +1711,12 @@ def _build_daily_main_run(
             commitment_store.bind_completed_route(
                 plan=proposed.plans[0], assignment_id=completed_owner.assignment_id,
                 previous_plan_id=retained[0].plan_id if retained else None,
-                evaluation_record=result.record)
+                evaluation_record=result.record,
+                reference_plan_id=(reference.plan_id if (reference := historical_reference(
+                    snapshot, completed_owner, retained[0] if retained else None)) else None))
             canonical_set = proposed
         except (ValueError, OSError) as exc:
-            planning_blocked = True
+            planning_blocked = not continuity_repair
             reason = "completed_day_recovery_failed:" + str(exc)
     if selected_window is not None and result is not None:
         assert commitment_store is not None

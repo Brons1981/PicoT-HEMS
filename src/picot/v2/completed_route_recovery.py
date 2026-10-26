@@ -20,11 +20,30 @@ from picot.planner.mep_candidate_outcomes import (
     _main_charge_segment_invalidity,
     _strategy,
 )
+from picot.v2.completed_route_history import is_reset_household_route, passive_remainder_available
 from picot.v2.contracts import PlanningInputSnapshot
 from picot.v2.daily_charge_assignment import DailyChargeAssignment
 from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
 from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
 from picot.v2.market_rule_planning import identity
+
+
+def historical_reference(
+    snapshot: PlanningInputSnapshot,
+    owner: DailyChargeAssignment,
+    plan: ExecutionPlan | None,
+) -> ExecutionPlan | None:
+    context = snapshot.daily_charge_context
+    if context is None:
+        return None
+    if plan is not None and (
+        plan.plan_id not in context.completed_route_plan_ids or not is_reset_household_route(plan)
+    ):
+        return None
+    archived = next((p for p in context.main_plans if p.plan_id == owner.route_plan_id), None)
+    if archived is not None and passive_remainder_available(archived, owner, snapshot.captured_at):
+        return archived
+    return None
 
 
 def recovery_owner(
@@ -45,9 +64,13 @@ def recovery_owner(
     if not completed:
         return None
     owner = max(completed, key=lambda a: a.delivery_date)
-    if plan is not None and not any(
-        s.main_assignment_id == owner.assignment_id and s.ends_at > snapshot.captured_at
-        for s in plan.segments
+    if (
+        plan is not None
+        and historical_reference(snapshot, owner, plan) is None
+        and not any(
+            s.main_assignment_id == owner.assignment_id and s.ends_at > snapshot.captured_at
+            for s in plan.segments
+        )
     ):
         return None
     return owner
@@ -66,8 +89,17 @@ def portfolio(
         raise ValueError("completed_route_capabilities_unavailable")
     if recovery_owner(snapshot, plan) != owner:
         raise ValueError("completed_route_requires_current_completed_owner")
+    reference = historical_reference(snapshot, owner, plan)
+    if reference is not None:
+        plan = reference
     adapter = IndependentDailyReferenceAdapter()
-    end = plan.valid_until if plan is not None else owner.ends_at
+    end = (
+        min(reference.valid_until, owner.ends_at)
+        if reference is not None
+        else plan.valid_until
+        if plan is not None
+        else owner.ends_at
+    )
     tariffs = IndependentDailyTariffAdapter()
     tariffs.build(snapshot, horizon_end=end)  # Missing prices never become invented coverage.
     data = adapter._inputs(
@@ -79,7 +111,8 @@ def portfolio(
         else (),
     )
     released = adapter._released_grid_intents(data)
-    cid = identity("completed-route", snapshot.snapshot_id + owner.assignment_id)
+    cid = identity("completed-route-continuity" if reference else "completed-route",
+                   snapshot.snapshot_id + owner.assignment_id)
     limits = next(
         limit
         for limit in snapshot.storage_physical_limits

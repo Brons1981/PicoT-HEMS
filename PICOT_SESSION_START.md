@@ -1,3 +1,17 @@
+## Release HC dev.26 - 31 oktober 2026
+
+Alex vraagt release van de nachtelijke PV-reparatie. Basis main ec64f5e74983eb3971c90684b4c2a2f088130b24.
+Publicatie via PR na groene CI; HC dev.26, HEMS ongewijzigd. Geen live installatie.
+Zie docs/development_log/2026-10-31-tablet-night-pv.md voor scope en verificatie.
+
+## Reparatie tablet nachtelijke PV - 31 oktober 2026
+
+HC dev.25 gepubliceerd via PR #735, merge ec64f5e74983eb3971c90684b4c2a2f088130b24.
+Alex meldt wisselend ontbrekend huisvermogen bij slapende PV en vraagt reparatie.
+Lokale wijziging: tablet.py neemt alleen bij sun.sun below_horizon 0 W aan voor
+ontbrekende/verouderde PV; verse PV en controles op net/batterij blijven leidend.
+Zie docs/development_log/2026-10-31-tablet-night-pv.md. Nog niet gepubliceerd.
+
 ## Release HC dev.25 - 31 oktober 2026
 
 Alex heeft publicatie van het lokale tablet-dashboard en de tijdelijke

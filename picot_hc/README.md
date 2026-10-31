@@ -1,6 +1,6 @@
 # PicoT Home Climate
 
-Handleiding voor Home Climate **0.1.0-dev.25** met HEMS **2.0.0-dev.324**
+Handleiding voor Home Climate **0.1.0-dev.26** met HEMS **2.0.0-dev.324**
 (31 oktober 2026). HEMS hoeft voor deze tablet-update niet opnieuw te worden
 bijgewerkt. Installatie schakelt de automatische regeling niet in.
 
@@ -39,7 +39,11 @@ De zes `tablet_*_entity` opties bepalen P1-netvermogen, PV, werkelijk gemeten
 laden/ontladen, SOC en modus. Controleer deze bij afwijkende HEMS-mappings.
 Gebruik voor laden/ontladen de gemeten vermogenskanalen, niet het gevraagde
 regelvermogen. Net is positief bij afname; batterij positief bij ontladen.
-Huisvermogen wordt uit de gemeten balans afgeleid. Er worden geen opdrachten
+Huisvermogen wordt uit de gemeten balans afgeleid. Als `sun.sun` in de actuele
+HA-snapshot `below_horizon` meldt, telt ontbrekende of verouderde PV als 0 W
+voor het tablet-dashboard. Een verse PV-meting blijft leidend. Overdag of bij
+onbekende zonnestatus blijft ontbrekende PV onbekend. Net en batterij moeten
+ook in de nacht verse metingen leveren. Er worden geen opdrachten
 naar HEMS of Zendure gestuurd. Een aparte lezer vraagt iedere vijf seconden de
 HA-metingen op; de werkelijke meetfrequentie blijft die van de bron.
 

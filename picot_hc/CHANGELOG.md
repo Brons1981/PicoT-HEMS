@@ -1,3 +1,9 @@
+# 0.1.0-dev.26
+
+- Behoud huisvermogen op het tablet wanneer de PV-omvormer in de nacht geen verse meting levert: neem alleen bij sun.sun below_horizon 0 W PV aan.
+- Behoud verse PV-metingen en de controles op net- en batterijvermogen. Overdag of bij onbekende zonnestatus blijft ontbrekende PV onbekend.
+- HEMS hoeft niet bijgewerkt te worden. Schakel na herstart de automatische HC-regeling weer in.
+
 # 0.1.0-dev.25
 
 - Werk de meegeleverde meldingsmodule bij naar de bestaande gedeelde versie; bestaande HC-meldingsaanroepen blijven gelijk.

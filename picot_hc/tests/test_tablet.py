@@ -107,6 +107,43 @@ class Tablet(unittest.TestCase):
         states = self.energy(1000, 500, 700, 200)
         self.assertIsNone(energy_view(self.config, states, NOW)["battery_w"])
 
+    def test_night_missing_or_stale_pv_keeps_home_visible(self):
+        for pv in (None, self.point("unavailable"), self.point("unknown"),
+                   self.point(0, when=NOW - 31), self.point(500, when=NOW - 3600)):
+            with self.subTest(pv=pv):
+                states = self.energy(100, 0, 0, 400)
+                states["sun.sun"] = {"state": "below_horizon"}
+                if pv is None:
+                    del states[ENERGY_ENTITIES["pv"]]
+                else:
+                    states[ENERGY_ENTITIES["pv"]] = pv
+                view = energy_view(self.config, states, NOW)
+                self.assertEqual(view["pv_w"], 0)
+                self.assertEqual(view["home_w"], 500)
+
+    def test_day_or_unknown_sun_does_not_assume_zero_pv(self):
+        for sun in (None, "above_horizon", "unknown", "unavailable"):
+            with self.subTest(sun=sun):
+                states = self.energy(100, "unavailable", 0, 400)
+                if sun is not None:
+                    states["sun.sun"] = {"state": sun}
+                self.assertIsNone(energy_view(self.config, states, NOW)["home_w"])
+
+    def test_night_preserves_measurements_and_other_missing_inputs(self):
+        states = self.energy(100, 25, 0, 400)
+        states["sun.sun"] = {"state": "below_horizon"}
+        self.assertEqual(energy_view(self.config, states, NOW)["home_w"], 525)
+        states[ENERGY_ENTITIES["pv"]] = self.point("unavailable")
+        for key in ("grid", "charge", "discharge"):
+            with self.subTest(key=key):
+                missing = copy.deepcopy(states)
+                missing[ENERGY_ENTITIES[key]] = self.point(0, when=NOW - 31)
+                self.assertIsNone(energy_view(self.config, missing, NOW)["home_w"])
+        self.runtime.tablet_energy.states = states
+        self.runtime.tablet_energy.received = NOW - 21
+        self.assertIsNone(self.runtime.tablet_energy.view(NOW)["pv_w"])
+        self.assertIsNone(self.runtime.tablet_energy.view(NOW)["home_w"])
+
     def test_separate_password_and_restricted_routes(self):
         for header in ("", "Basic invalid!", "Bearer secret-ha-token"):
             self.assertFalse(authorized(header, PASSWORD))

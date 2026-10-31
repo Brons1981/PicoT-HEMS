@@ -8,7 +8,7 @@ bijgewerkt. Installatie schakelt de automatische regeling niet in.
 
 De pagina gebruikt het goedgekeurde zwarte tabletontwerp met live metingen,
 weersymbool, accupercentage en actuele Zendure-modus. Beneden wijzigen gaat met
-stappen van 0,5 �C. Het doel verschijnt vijf seconden; daarna staat de werkelijke
+stappen van 0,5 °C. Het doel verschijnt vijf seconden; daarna staat de werkelijke
 temperatuur weer in beeld. Een hand geeft handmatige temperatuur aan, een klok
 het actieve schema. De vlam betekent HC-warmtevraag, geen compressorbewijs.
 
@@ -27,7 +27,7 @@ Na installatie van een release met deze wijziging:
    hostpoort 8100, en herstart HC. Standaard staat deze poort niet gepubliceerd.
 3. Open op de iPad Safari: `http://<adres-van-Home-Assistant>:8100/`.
    Gebruikersnaam: `tablet`; wachtwoord: de gekozen tabletcode.
-4. Kies Delen  Zet op beginscherm. Gebruik de iPad liggend.
+4. Kies Delen → Zet op beginscherm. Gebruik de iPad liggend.
 
 Deze rechtstreekse HTTP-toegang is bedoeld voor het vertrouwde thuisnetwerk;
 gebruik geen portforward naar internet. Het aparte tabletwachtwoord wordt via
@@ -266,15 +266,15 @@ Zelf ingevulde entiteiten blijven behouden. Lege velden gebruiken hier dus de
 bevestigde standaardmeters. Op het dashboard verschijnen vermogen en cumulatieve
 energie; verkeerde eenheden of ontbrekende sensoren blijven herkenbaar.
 
-Voor `climate.huiskamer` is een stap van 0,5 �C door de gebruiker bevestigd.
+Voor `climate.huiskamer` is een stap van 0,5 °C door de gebruiker bevestigd.
 HC gebruikt deze alleen wanneer HA geen `target_temp_step` doorgeeft en de
-eenheid �C is. Een expliciete HA-stap heeft voorrang; andere entiteiten krijgen
+eenheid °C is. Een expliciete HA-stap heeft voorrang; andere entiteiten krijgen
 geen impliciete stap. Temperatuur instellen blijft beschikbaar in heat/auto;
 Uit schakelt de cv uit en activeert geen verwarming via een temperatuurwijziging.
 
 ## Ecowitt en badkamer-energiemeter (vanaf dev.12)
 
-Bron: Alex' PicoT_HC_entiteiten.xlsx, 2026-09-15. Beneden gebruikt de gateway-
+Bron: Alex’ PicoT_HC_entiteiten.xlsx, 2026-09-15. Beneden gebruikt de gateway-
 binnenmeting, buiten kanaal 1, boven kanaal 2 en badkamer kanaal 3. Temperatuur en
 luchtvochtigheid worden uitgelezen; buitenluchtvochtigheid staat bovenaan bij de weerkaart en wordt met de snapshots opgeslagen. De badkamer gebruikt nu ook de
 cumulatieve kWh-entiteit naast vermogen.
@@ -295,7 +295,7 @@ De dagverwachting blijft afzonderlijk als voorspelling benoemd.
 
 ## Dauwpunt en sensorbatterijen (vanaf dev.14)
 
-De ingevulde entiteitenlijst levert vier dauwpunten in �C: beneden
+De ingevulde entiteitenlijst levert vier dauwpunten in °C: beneden
 `sensor.gw1200a_indoor_dewpoint`, boven `sensor.gw1200a_dewpoint_2`, badkamer
 `sensor.gw1200a_dewpoint_3` en buiten `sensor.gw1200a_dewpoint_1`.
 Batterijmeldingen zijn `binary_sensor.gw1200a_battery_2`, `_3` en `_1` voor
@@ -342,15 +342,15 @@ retentie blijft van toepassing en een download wijzigt deze niet.
 
 Dit is de registratiebasis voor een toekomstig woningmodel. Geschikte perioden,
 na-ijlen van warmte, zon en interne warmte moeten nog worden beoordeeld; er wordt
-nog geen afkoelco�ffici�nt, COP of verwarmingstijd voorspeld. Terugval naar dev.14
+nog geen afkoelcoëfficiënt, COP of verwarmingstijd voorspeld. Terugval naar dev.14
 vereist geen databasemigratie en laat de oude meetreeks intact.
 
 ## Klimaatgrafieken per zone (vanaf dev.16)
 
 Naast het bestaande temperatuuroverzicht staat per zone een klimaatgrafiek over
 de afgelopen 24 uur. Temperatuur (paars, doorgetrokken) en dauwpunt (oranje,
-gestippeld) gebruiken samen de linker �C-as. Luchtvochtigheid (blauw, gestreept)
-gebruikt rechts altijd 0-100%. De �C-as schaalt op de beschikbare temperatuur- en
+gestippeld) gebruiken samen de linker °C-as. Luchtvochtigheid (blauw, gestreept)
+gebruikt rechts altijd 0–100%. De °C-as schaalt op de beschikbare temperatuur- en
 dauwpuntwaarden. De grafieken tonen opgeslagen metingen, geen voorspelling.
 
 Aanwijzen of aantikken toont de drie waarden en het tijdstip van het dichtstbijzijnde

@@ -89,3 +89,14 @@ wijzigingsbestanden zijn tegen de actuele main-tree gecontroleerd (na normalisat
 van lokale CRLF); alle basishashes komen overeen. Basis is
 58bf87278ae88cee0a5dab6a720da9ac1a75ded6. HEMS blijft dev.324.
 Linux-CI moet voor merge slagen. Installatie en iPad-controle volgen afzonderlijk.
+
+## Linux-CI bevinding en correctie
+
+De eerste PR-run toont 454 geslaagde HC-tests en één fout: de vendored
+meldingsmodule loopt achter bij de gedeelde main-versie. De lokale regeleinden
+verborgen eerder ook dit inhoudelijke verschil; de oorspronkelijke conclusie
+"alleen LF/CRLF" was dus onvolledig. De actuele gedeelde module ondersteunt
+optionele oorzaak-fingerprints; HC gaf en geeft die parameter niet mee.
+Voor deze release is de HC-kopie exact gelijkgetrokken met de bestaande
+src/picot/health_notifications.py uit main. De gedeelde bron zelf wordt niet
+gewijzigd of teruggezet. Bestaande HC-meldingsaanroepen behouden hun gedrag.

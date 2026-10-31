@@ -38,6 +38,7 @@ from .building import building_observation
 from .weather import DEFAULT_ENTITY, WeatherReader, forecast_view
 from .core import Store, fetch_states, snapshot, validate, number, observation
 from .health_notifications import HealthNotifier
+from .tablet import EnergyReader, authorized, tablet_view
 
 
 class Runtime:
@@ -120,6 +121,7 @@ class Runtime:
         self.error = None
         self.stop = threading.Event()
         self.poll_now = threading.Event()
+        self.tablet_energy = EnergyReader(self)
 
     def update_settings(self, payload):
         keys = {'minimum', 'target', 'maximum'}
@@ -372,19 +374,36 @@ class Runtime:
         return data
 
 
-def handler(runtime, ingress):
+def handler(runtime, ingress, tablet_only=False):
     web = Path(__file__).parent / 'web'
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
 
-        def do_POST(self):
+        def permitted(self):
             if ingress and self.client_address[0] != '172.30.32.2':
                 self.send_error(403)
+                return False
+            if tablet_only and not authorized(self.headers.get('Authorization', ''),
+                                              runtime.config.get('tablet_password', '')):
+                self.send_response(401)
+                self.send_header('WWW-Authenticate', 'Basic realm="PicoT tablet", charset="UTF-8"')
+                self.send_header('Content-Length', '0')
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                return False
+            return True
+
+        def do_POST(self):
+            if not self.permitted():
                 return
             path = urlsplit(self.path).path
-            if path not in ('/api/settings', '/api/commands', '/api/schedule', '/api/resume', '/api/heating', '/api/heating/reset', '/api/heating/timer'):
+            tablet_paths = ('/api/tablet/temperature', '/api/tablet/resume')
+            if tablet_only and path not in tablet_paths:
+                self.send_error(404)
+                return
+            if path not in ('/api/settings', '/api/commands', '/api/schedule', '/api/resume', '/api/heating', '/api/heating/reset', '/api/heating/timer', *tablet_paths):
                 self.send_error(404)
                 return
             if not secrets.compare_digest(self.headers.get('X-HC-CSRF', ''), runtime.csrf_token):
@@ -398,7 +417,18 @@ def handler(runtime, ingress):
                     raise ValueError('Ongeldige verzoekgrootte.')
                 payload = json.loads(self.rfile.read(length))
                 with runtime.control.lock:
-                    if path == '/api/settings':
+                    if path in tablet_paths:
+                        view = tablet_view(runtime)
+                        if not view['controllable']:
+                            raise ValueError(view['error'])
+                        if path.endswith('/temperature'):
+                            runtime.schedule.set_temperature(payload, time.time())
+                        else:
+                            if payload != {}:
+                                raise ValueError('Ongeldig hervatverzoek.')
+                            runtime.schedule.resume_temperature(time.time())
+                        result = tablet_view(runtime)
+                    elif path == '/api/settings':
                         result = runtime.update_settings(payload)
                     elif path == '/api/commands':
                         result = {'command': runtime.control.submit(payload, runtime.config['stale_seconds'])}
@@ -441,10 +471,18 @@ def handler(runtime, ingress):
             self.wfile.write(body)
 
         def do_GET(self):
-            if ingress and self.client_address[0] != '172.30.32.2':
-                self.send_error(403)
+            if not self.permitted():
                 return
             path = urlsplit(self.path).path
+            if tablet_only:
+                if path == '/':
+                    path = '/tablet.html'
+                if path not in ('/tablet.html', '/tablet.css', '/tablet.js', '/api/tablet'):
+                    self.send_error(404)
+                    return
+            if path == '/api/tablet':
+                self.send_json(200, tablet_view(runtime))
+                return
             if path == '/api/building-export':
                 self.export_building()
                 return
@@ -454,7 +492,7 @@ def handler(runtime, ingress):
             elif path == '/api/history':
                 body = json.dumps(runtime.store.history(time.time() - 86400), allow_nan=False).encode()
                 mime = 'application/json'
-            elif path in ('/', '/index.html', '/app.js', '/heating.js', '/climate-charts.js', '/style.css'):
+            elif path in ('/', '/index.html', '/app.js', '/heating.js', '/climate-charts.js', '/style.css', '/tablet.html', '/tablet.css', '/tablet.js'):
                 name = 'index.html' if path == '/' else path[1:]
                 body = (web / name).read_bytes()
                 mime = {'html':'text/html', 'js':'text/javascript', 'css':'text/css'}[name.split('.')[-1]]
@@ -501,6 +539,10 @@ def main():
     args = p.parse_args()
     config = json.loads(Path(args.config).read_text())
     validate(config)
+    tablet_enabled = config.get('tablet_enabled', False)
+    password = config.get('tablet_password', '')
+    if tablet_enabled and (not isinstance(password, str) or len(password) < 12):
+        raise ValueError('Stel voor het tablet-dashboard een wachtwoord van minimaal 12 tekens in.')
     directory = Path(args.data)
     directory.mkdir(parents=True, exist_ok=True)
     supervisor = os.environ.get('SUPERVISOR_TOKEN', '')
@@ -508,7 +550,14 @@ def main():
                  'http://supervisor/core/api' if supervisor else os.environ.get('HC_HA_API', 'http://127.0.0.1:8123/api'),
                  supervisor or os.environ.get('HC_HA_TOKEN', ''))
     threading.Thread(target=rt.run, daemon=True).start()
+    if tablet_enabled:
+        threading.Thread(target=rt.tablet_energy.run, daemon=True).start()
     server = ThreadingHTTPServer(('0.0.0.0' if supervisor else '127.0.0.1', args.port), handler(rt, bool(supervisor)))
+    tablet_server = None
+    if tablet_enabled:
+        tablet_server = ThreadingHTTPServer(('0.0.0.0' if supervisor else '127.0.0.1', 8100),
+                                           handler(rt, False, tablet_only=True))
+        threading.Thread(target=tablet_server.serve_forever, daemon=True).start()
     try:
         server.serve_forever()
     finally:
@@ -516,6 +565,9 @@ def main():
         rt.poll_now.set()
         rt.notifications.close()
         server.server_close()
+        if tablet_server is not None:
+            tablet_server.shutdown()
+            tablet_server.server_close()
 
 
 if __name__ == '__main__':

@@ -205,6 +205,7 @@ class Schedule:
             self.data['settings'] = normalized
             self.data['revision'] += 1
             self.save()
+        self.data.setdefault('temporary_temperature', None)
         self.ready = False
         self.control.observer = self.observe
         self.control.intent_observer = self.intent
@@ -221,7 +222,9 @@ class Schedule:
             raise ValueError('Het schema is elders gewijzigd. Herlaad het dashboard.')
         settings = validate_settings(payload['settings'])
         previous = copy.deepcopy(self.data)
-        self.data.update(settings=settings, revision=self.data['revision']+1, migration=None)
+        # A settings edit ends the temporary choice; never move its deadline forward.
+        self.data.update(settings=settings, revision=self.data['revision']+1, migration=None,
+                         temporary_temperature=None)
         if not settings['enabled']:
             # Manual thermostat mode must not expire a manual choice on an old schedule boundary.
             for hold in self.data['overrides'].values():
@@ -234,9 +237,47 @@ class Schedule:
             raise
         return self.view(now)
 
+    def set_temperature(self, payload, now):
+        """Set the room goal without selecting or commanding a heat source."""
+        if not isinstance(payload, dict) or set(payload) != {'revision', 'temperature'}:
+            raise ValueError('Ongeldig temperatuurverzoek.')
+        if type(payload['revision']) is not int or payload['revision'] != self.data['revision']:
+            raise ValueError('Het schema is elders gewijzigd. Herlaad het dashboard.')
+        target = payload['temperature']
+        if (type(target) not in (int, float) or not 5 <= target <= 35
+                or not math.isfinite(target) or target * 2 != int(target * 2)):
+            raise ValueError('Kies 5 tot en met 35 graden in stappen van 0,5.')
+        previous = copy.deepcopy(self.data)
+        if self.data['settings']['enabled']:
+            until = next_boundary(self.data['settings'], now)
+            if until is None:
+                raise ValueError('Geen volgend schemamoment beschikbaar.')
+            self.data['temporary_temperature'] = dict(temperature=target, since=now, until=until)
+        else:
+            self.data['settings']['thermostat_temperature'] = target
+            self.data['temporary_temperature'] = None
+        self.data['revision'] += 1
+        try:
+            self.save()
+        except Exception:
+            self.data = previous
+            raise
+        return self.view(now)
+
+    def resume_temperature(self, now):
+        """Resume the room schedule while preserving all manual source choices."""
+        previous = copy.deepcopy(self.data)
+        self.data.update(temporary_temperature=None, revision=self.data['revision']+1)
+        try:
+            self.save()
+        except Exception:
+            self.data = previous
+            raise
+        return self.view(now)
+
     def resume(self, now):
         previous = copy.deepcopy(self.data)
-        self.data.update(overrides={}, legacy_pause=None)
+        self.data.update(overrides={}, legacy_pause=None, temporary_temperature=None)
         try:
             self.save()
         except Exception:
@@ -304,12 +345,18 @@ class Schedule:
         self.config = config
         now = time.time() if now is None else now
         self.data['overrides'] = {k:v for k,v in self.data['overrides'].items() if v['until'] is None or now < v['until']}
+        temporary = self.data.get('temporary_temperature')
+        if temporary and (not self.data['settings']['enabled'] or now >= temporary['until']):
+            self.data['temporary_temperature'] = None
         if self.data.get('legacy_pause') and self.data['legacy_pause'].get('until') is not None and now >= self.data['legacy_pause']['until']:
             self.data['legacy_pause'] = None
         self.save()
 
     def view(self, now):
         settings = self.data['settings']
+        temporary = self.data.get('temporary_temperature')
+        temporary = (copy.deepcopy(temporary) if temporary and settings['enabled']
+                     and now < temporary['until'] else None)
         windows = occurrences(settings, now) if settings['enabled'] else []
         active = next((w for w in windows if w['starts_at'] <= now < w['ends_at']), None)
         following = next((w for w in windows if w['starts_at'] > now), None)
@@ -336,6 +383,10 @@ class Schedule:
                 fixed = dict(zone='beneden', kind='setback' if settings['enabled'] else 'thermostat',
                              target=target, minimum=target, maximum=target, hard=False, required_at=None)
             request = active if zone['id'] == 'beneden' and active else fixed if fixed['target'] is not None else None
+            if zone['id'] == 'beneden' and temporary:
+                target = temporary['temperature']
+                request = dict(zone='beneden', kind='temporary', target=target, minimum=target,
+                               maximum=target, hard=True, required_at=None)
             errors = []
             if request and zone['id'] != 'beneden':
                 if zone.get('minimum') is not None and request['minimum'] is not None and request['minimum'] < zone['minimum']:
@@ -348,7 +399,8 @@ class Schedule:
                 source_constraints=[v for v in overrides if zone['id'] in v['zones']],
                 humidity={k:zone.get('humidity_'+k) for k in ('min','target','max')} if zone['id']=='boven' else None)
         return dict(settings=copy.deepcopy(settings), revision=self.data['revision'], current=active, next=following,
-            next_boundary=next_boundary(settings, now), overrides=overrides, legacy_pause=copy.deepcopy(self.data.get('legacy_pause')),
+            next_boundary=next_boundary(settings, now), temporary_temperature=temporary,
+            overrides=overrides, legacy_pause=copy.deepcopy(self.data.get('legacy_pause')),
             migration=self.data.get('migration'), door=copy.deepcopy(self.data['door']),
             reason='Comfortschema beneden actief.' if settings['enabled'] else 'Handmatige thermostaat beneden: geen tijdschakelingen.',
             comfort=dict(zones=zones, horizon=horizon,

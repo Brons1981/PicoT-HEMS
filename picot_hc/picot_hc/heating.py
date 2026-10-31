@@ -200,6 +200,8 @@ class Heating:
             blocked.update(('beneden', 'boven'))
         context = self.learning_context(config, view, now, blocked)
         learning = self.learning.recommendation(view, now, settings['enabled'] and self.armed, context)
+        if view.get('temporary_temperature'):
+            learning.update(phase='temporary', target=None, preheating=False)
         zones, demand = {}, {}
         fresh = (self.control.connected and self.control.received is not None
                  and 0 <= now-self.control.received <= config['stale_seconds'])
@@ -341,7 +343,8 @@ class Heating:
         result['cv_handover_seconds'] = max(60, 2 * config.get('poll_seconds', 30))
         if hasattr(self, 'hourly_weather'):
             result['hourly_weather'] = self.hourly_weather(now)
-        if self.energy_start is not None:
+        # A scheduled energy recipe must not replace an explicit room goal.
+        if self.energy_start is not None and not view.get('temporary_temperature'):
             result = self.energy_start.apply(result, config, now, direct_desired)
         return result
 

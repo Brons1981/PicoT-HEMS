@@ -83,13 +83,14 @@ def test_surplus_reduces_grid_once_and_keeps_frozen_reference_after_restart(tmp_
     winning = canonical[result.evaluation.winning_candidate_id]
     incumbent = canonical[result.evaluation.incumbent_candidate_id]
     assert winning.commitment_improvement_eur >= 0.01
-    winning_rate = next(o.value for o in winning.objective_outcomes
-                        if o.objective.value == "financial_result")
-    incumbent_rate = next(o.value for o in incumbent.objective_outcomes
+    winning_result = next(o for o in winning.objective_outcomes
                           if o.objective.value == "financial_result")
-    # Both rates are valued on the same fresh remaining daily goal, not stock.
+    incumbent_result = next(o for o in incumbent.objective_outcomes
+                            if o.objective.value == "financial_result")
+    assert winning_result.unit == incumbent_result.unit == "EUR"
+    # Complete same-horizon costs, not a rate scaled by the remaining goal.
     assert winning.commitment_improvement_eur == pytest.approx(
-        (incumbent_rate - winning_rate) * 8.16 * (1 - 0.76))
+        winning_result.value - incumbent_result.value)
     new_plan = result.execution_plan_set.plans[0]
     assert grid_wh(new_plan, observation.captured_at) < grid_wh(old_plan, observation.captured_at)
     revised = store.load_daily_assignments()[0]

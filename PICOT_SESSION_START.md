@@ -1,3 +1,21 @@
+## Release HEMS dev.323 - 31 oktober 2026
+
+Alex heeft release van de totale-routekostenreparatie en dashboarduitleg aangevraagd.
+Basis main 967c3b38ff9f297a40fcb2b7721396a0f99d1b40; gewijzigde basisbestanden
+zijn met GitHub-blobhashes gecontroleerd. Publicatie via PR en volledige CI.
+Home Climate blijft dev.24. Geen planreset nodig. Installatie en livecontrole
+volgen afzonderlijk. Zie het ontwikkellog van 31 oktober en V2ADR-067.
+
+## Totale routekosten en planuitleg - lokaal, 31 oktober 2026
+
+Alex vraagt reparatie van de inconsistente optionele laadherziening en uitleg op
+het dashboard. Werkmap `plan-explanation-fix`, basis de lokale dev.322-bronkopie
+`recovery-continuity-refactor`. Lees V2ADR-067 en het ontwikkellog
+`docs/development_log/2026-10-31-complete-route-decision.md`.
+Optionele revisies van een geldige route vergelijken totale EUR bij gelijke
+eindvoorraad; de bestaande 1-centdrempel blijft. UI toont echte beslisgegevens.
+Geen release, versieophoging, commit, push of livewijziging uitgevoerd.
+
 ## Release HEMS dev.322 - 26 oktober 2026
 
 Alex heeft publicatie van de cumulatieve herstel-, routekeuze- en meldingsverbeteringen aangevraagd.

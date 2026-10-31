@@ -1487,6 +1487,7 @@ def produce_main_charge_portfolio(
     opportunity_ids: tuple[str, ...],
     incumbent: DailyMainIncumbentAssessment | None = None,
     future_state_trigger: DailyMainPVSurplusTrigger | None = None,
+    compare_complete_revision: bool = False,
 ) -> MainChargeComparablePortfolio:
     """Project feasible main windows into the existing Candidate/Evaluation contract."""
     if windows.snapshot_id != snapshot.snapshot_id or tariffs.snapshot_id != snapshot.snapshot_id:
@@ -1844,6 +1845,38 @@ def produce_main_charge_portfolio(
     if incumbent is not None:
         incumbent_id = _id("main-charge-candidate", incumbent.schedule.schedule_id)
         reference = next(o for o in outcomes if o.candidate_id == incumbent_id)
+        complete_revision = (
+            compare_complete_revision and windows.purpose != "bridge"
+            and market_basis is None and reference.validity is CandidateValidity.VALID
+        )
+        if complete_revision:
+            # An optional refill revision may also change the preceding bridge.
+            # Its acquisition rate is not the cost of that whole change. Use
+            # fresh horizon cash only where equal remaining inventory is proven;
+            # no invented stock value and no financial gate on necessary repair.
+            for index, (outcome, source, window) in enumerate(
+                zip(outcomes, sources, compared, strict=True)
+            ):
+                invalid = outcome.invalidity_reasons
+                if (window.schedule.horizon_start != incumbent.schedule.horizon_start
+                        or window.schedule.horizon_end != incumbent.schedule.horizon_end):
+                    invalid += ("main_revision_comparison_horizon_not_equal",)
+                if abs(window.projection.intervals[-1].storage_energy_at_end_wh
+                       - incumbent.projection.intervals[-1].storage_energy_at_end_wh) > 1e-6:
+                    invalid += ("main_revision_terminal_inventory_not_equal",)
+                outcomes[index] = replace(
+                    outcome,
+                    objective_outcomes=(ObjectiveOutcome(
+                        ObjectiveKind.FINANCIAL_RESULT,
+                        round(source.financial.cash_result_eur, 12),
+                        ComparisonDirection.HIGHER_IS_BETTER, "EUR",
+                        outcome.confidence, outcome.evidence_ids,
+                    ), *(o for o in outcome.objective_outcomes
+                         if o.objective is not ObjectiveKind.FINANCIAL_RESULT)),
+                    validity=CandidateValidity.INVALID if invalid else CandidateValidity.VALID,
+                    invalidity_reasons=invalid,
+                )
+            reference = next(o for o in outcomes if o.candidate_id == incumbent_id)
         reference_financial = next((o for o in reference.objective_outcomes
             if o.objective is ObjectiveKind.FINANCIAL_RESULT), None)
         remaining_goal_kwh = max(
@@ -1857,18 +1890,23 @@ def produce_main_charge_portfolio(
                     or incumbent.assignment_id != owner.assignment_id):
                 raise ValueError("future acquisition comparison requires its retained owner proof")
             future_state_trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
-            first_grid = min((s.starts_at for s in incumbent.main_segments
-                              if s.intent is DailyStorageIntent.GRID_REQUIREMENT), default=None)
-            interval = next((i for i in incumbent.projection.intervals
-                             if i.starts_at == first_grid), None)
-            if interval is None or first_grid is None or first_grid <= snapshot.captured_at:
-                raise ValueError(
-                    "future acquisition comparison requires the retained refill boundary")
-            # One shared future deficit from the unchanged physical route. Full
-            # storage now does not imply zero need after tonight's household use.
-            remaining_goal_kwh = max(0.0, incumbent.target_storage_energy_wh
-                                    - interval.storage_energy_at_start_wh) / 1000
+            if not complete_revision:
+                first_grid = min((s.starts_at for s in incumbent.main_segments
+                                  if s.intent is DailyStorageIntent.GRID_REQUIREMENT), default=None)
+                interval = next((i for i in incumbent.projection.intervals
+                                 if i.starts_at == first_grid), None)
+                if interval is None or first_grid is None or first_grid <= snapshot.captured_at:
+                    raise ValueError(
+                        "future acquisition comparison requires the retained refill boundary")
+                # One shared future deficit from the unchanged physical route. Full
+                # storage now does not imply zero need after tonight's household use.
+                remaining_goal_kwh = max(0.0, incumbent.target_storage_energy_wh
+                                        - interval.storage_energy_at_start_wh) / 1000
         for index, outcome in enumerate(outcomes):
+            if complete_revision and outcome.validity is CandidateValidity.INVALID:
+                # Unmatched inventory/horizon or physical rejection does not
+                # establish a comparable saving, even as diagnostic evidence.
+                continue
             financial_objective = next((o for o in outcome.objective_outcomes
                 if o.objective is ObjectiveKind.FINANCIAL_RESULT), None)
             if (reference.validity is CandidateValidity.VALID

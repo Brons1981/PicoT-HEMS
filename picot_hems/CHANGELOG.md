@@ -1,3 +1,11 @@
+# 2.0.0-dev.323
+
+- Beoordeel optionele laadherzieningen op totale routekosten bij gelijke eindvoorraad; een lagere laadprijs alleen mag geen duurder totaalplan laten winnen.
+- Behoud het geldige bestaande plan bij minder dan 1 cent voordeel; noodzakelijk herstel en lopend laden blijven beschermd.
+- Toon direct waarom een plan is gekozen of behouden, met vergelijkbare kosten, beoordelingstijd en SOC-/PV-/verbruiks-/EV-uitgangspunten.
+- Bewaar de uitleg over herstarts heen, uitsluitend bij dezelfde planidentiteit. Geen verzonnen besparing bij ontbrekend of onvergelijkbaar bewijs.
+- Geen planreset nodig. Uitleg voor bestaande plannen zonder opgeslagen bewijs volgt bij een nieuwe beoordeling. Home Climate blijft dev.24.
+
 # 2.0.0-dev.322
 
 - Behoud de huidige NOM-/uitvoeringsactie bij een onopgeloste toekomstige planning alleen zolang actueel fysiek bewijs dit toestaat; doelen en foutredenen blijven zichtbaar.

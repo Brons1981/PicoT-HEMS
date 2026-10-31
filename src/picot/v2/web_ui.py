@@ -27,6 +27,8 @@ from picot.v2.contracts import (
 )
 from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
 from picot.v2.household_calendar_history import CALENDAR_REPORT_PATH, calendar_dashboard_view
+from picot.v2.plan_decision_cache import PlanDecisionCache, retain_plan_decision
+from picot.v2.plan_decision_explanation import build_plan_decision
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.price_plan_reference import PricePlanReference
 from picot.v2.projection import Projection, project_market_revision_comparison
@@ -1095,6 +1097,9 @@ DASHBOARD_HTML = """<!doctype html>
     </div>
     <section id="central-health" class="status" role="status">Status nog onbekend</section>
     <div id="today-summary" class="today-summary" aria-live="polite"></div>
+    <section id="plan-decision" class="timeline-panel" aria-live="polite">
+      Nog geen planbeslissing vastgelegd.
+    </section>
     <section id="route-choice-panel" class="timeline-panel" hidden>
       <h2>Keuze voor deze laadopdracht</h2>
       <div id="route-choices"></div>
@@ -4395,7 +4400,7 @@ DASHBOARD_HTML = """<!doctype html>
     function initializeTabs() {
       const technical = element("tab-technical");
       technical.append(document.querySelector(".metadata"), element("status"));
-      element("tab-planning").prepend(element("today-summary"));
+      element("tab-planning").prepend(element("today-summary"), element("plan-decision"));
       movePanelContent("price-timeline", "planning");
       movePanelContent("pv-forecast-actual-chart", "planning");
       movePanelContent("plan-history", "history");
@@ -5846,6 +5851,56 @@ DASHBOARD_HTML = """<!doctype html>
       notice.textContent = status?.message_nl ?? "";
     }
 
+    function renderPlanDecision(decision) {
+      const target = element("plan-decision");
+      target.replaceChildren();
+      const paragraph = (text, tag = "p") => {
+        const node = document.createElement(tag);
+        node.textContent = text;
+        target.append(node);
+      };
+      const labels = {retained: "Bestaand plan behouden", replaced: "Plan aangepast",
+        selected: "Plan gekozen", publication_failed: "Bestaand plan blijft actief",
+        failed: "Bestaand plan blijft actief", fallback: "Veilige terugval actief"};
+      paragraph(labels[decision?.status] ?? "Waarom dit plan?", "h2");
+      paragraph(decision?.reason || "Nog geen onderbouwde planuitleg beschikbaar.");
+      if (!decision) return;
+      if (decision.assessed_at) {
+        paragraph(`Laatste beoordeling: ${formatTimestamp(decision.assessed_at)}.` +
+          (decision.evidence_retained
+            ? " Laatste vergelijking voor dit plan; niet opnieuw berekend." : ""));
+      }
+      const finite = value => typeof value === "number" && Number.isFinite(value);
+      const money = value => new Intl.NumberFormat("nl-NL", {
+        style: "currency", currency: "EUR", minimumFractionDigits: 3, maximumFractionDigits: 3,
+      }).format(value);
+      const comparable = decision.horizon_start && decision.horizon_end &&
+        [decision.incumbent_cost_eur, decision.alternative_cost_eur, decision.improvement_eur]
+          .every(finite);
+      if (comparable) {
+        paragraph(`Vergelijking: ${formatTimestamp(decision.horizon_start)} tot ` +
+          `${formatTimestamp(decision.horizon_end)}. Vergelijkbare verwachte nettokosten.`);
+        paragraph(`Bestaande route: ${money(decision.incumbent_cost_eur)}. ` +
+          `Alternatief: ${money(decision.alternative_cost_eur)}. ` +
+          `Voordeel alternatief: ${money(decision.improvement_eur)}.`);
+        if (finite(decision.minimum_improvement_eur)) {
+          paragraph(`Minimaal voordeel voor een optionele wijziging: ` +
+            `${money(decision.minimum_improvement_eur)}.`);
+        }
+      } else {
+        paragraph("Geen vergelijkbare totale kosten vastgelegd.");
+      }
+      const assumptions = [];
+      if (finite(decision.initial_soc) && decision.initial_soc >= 0 && decision.initial_soc <= 1) {
+        assumptions.push("Acculading bij beoordeling: " +
+          `${formatDutchNumber(decision.initial_soc * 100)}%`);
+      }
+      if (decision.solcast_basis) assumptions.push(`Zonneprognose: ${decision.solcast_basis}`);
+      if (decision.household_assumption) assumptions.push(decision.household_assumption);
+      if (decision.ev_assumption) assumptions.push(decision.ev_assumption);
+      if (assumptions.length) paragraph(`Uitgangspunten: ${assumptions.join(". ")}.`);
+    }
+
     function renderTodaySummary(view) {
       view = {...view, zendure_now: currentStorageStatus(view.zendure_now)};
       const target = element("today-summary");
@@ -5878,6 +5933,7 @@ DASHBOARD_HTML = """<!doctype html>
     function renderView(view) {
       const dashboardState = captureDashboardState();
       renderTodaySummary(view);
+      renderPlanDecision(view.planning_status?.plan_decision);
       renderDashboardFaults(view);
       renderDashboardStatus(view.dashboard_status);
       renderPlanningRecalculation(view.planning_recalculation);
@@ -6308,6 +6364,10 @@ class WebViewStore:
     ) -> None:
         self.startup_progress = StartupProgress()
         self._soc_cache = soc_cache
+        self._plan_decision_cache = (
+            PlanDecisionCache(soc_cache.path.with_suffix(".plan-decision.json"))
+            if soc_cache is not None else None
+        )
         self._soc_display = SOCDisplayHistory()
         self._price_reference = price_reference
         self._lock = Lock()
@@ -6462,7 +6522,14 @@ class WebViewStore:
                 if carried is not current_status:
                     current_status = carried
                     view = {**view, "planning_status": current_status}
+                carried = self._retain_plan_decision(current_status, previous_status)
+                if carried is not current_status:
+                    current_status = carried
+                    view = {**view, "planning_status": current_status}
             status = view.get("planning_status")
+            if isinstance(status, dict) and self._plan_decision_cache is not None:
+                status = self._plan_decision_cache.apply(status)
+                view = {**view, "planning_status": status}
             if self._soc_cache is not None and isinstance(status, dict):
                 decision = status.get("decision") or {}
                 if (decision.get("status") == "plan_retained" and not status.get("soc_timeline")
@@ -6486,6 +6553,13 @@ class WebViewStore:
             if self._price_reference is not None:
                 view = {**view, "original_price_plan": self._price_reference.read()}
             self._replace_latest_locked(view)
+
+    @staticmethod
+    def _retain_plan_decision(
+        current: dict[str, object], previous: dict[str, object],
+    ) -> dict[str, object]:
+        """Keep dated comparison evidence only for the same admitted plans."""
+        return retain_plan_decision(current, previous)
 
     @staticmethod
     def _retain_market_comparison(
@@ -7966,6 +8040,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "confidence": (winning_outcome.confidence if winning_outcome is not None else None),
         },
         "market_revision_comparison": project_market_revision_comparison(run),
+        "plan_decision": build_plan_decision(run),
         "storage_target": {
             "required_energy_wh": (
                 requirement.required_energy_wh if requirement is not None else None

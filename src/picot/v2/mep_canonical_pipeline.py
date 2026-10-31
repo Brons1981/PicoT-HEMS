@@ -1566,6 +1566,8 @@ def _build_daily_main_run(
                     future_state_trigger=(optimisation_trigger if isinstance(
                         optimisation_trigger, DailyMainPVSurplusTrigger)
                         and optimisation_trigger.future_state_evidence_id is not None else None),
+                    compare_complete_revision=isinstance(
+                        optimisation_trigger, DailyMainPVSurplusTrigger),
                 )
         elif not retained:
             raise ValueError("daily_main_active_plan_unavailable")

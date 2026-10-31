@@ -1,3 +1,23 @@
+## Release HC dev.25 - 31 oktober 2026
+
+Alex heeft publicatie van het lokale tablet-dashboard en de tijdelijke
+kamertemperatuur aangevraagd. Basis main 58bf87278ae88cee0a5dab6a720da9ac1a75ded6.
+HC wordt 0.1.0-dev.25; HEMS blijft dev.324. Publicatie via PR na groene CI.
+Geen planreset. Installatie, tabletactivering en fysieke iPad-controle volgen
+apart. Zie docs/development_log/2026-10-31-tablet-dashboard.md.
+
+## Lokaal tablet-dashboard - 31 oktober 2026
+
+Alex heeft opdracht gegeven het goedgekeurde tabletontwerp lokaal met HC te
+koppelen. Werkmap tablet-dashboard-work, basis dev.324/HC dev.24. Lees
+`docs/development_log/2026-10-31-tablet-dashboard.md`. Nieuwe opt-in lokale
+tablettoegang, actuele energiemetingen en tijdelijke kamerdoeltemperatuur tot
+de volgende schemagrens. HEMS-planner en andere zones ongewijzigd.
+29 gerichte Python-tests, 17 JS-tests en HTTP/browsercontrole geslaagd.
+Brede HC-suite: 451 geslaagd, bestaande LF/CRLF-testfout en een eenmalige
+netwerkfout (afzonderlijk groen). Linux-CI en fysieke iPad/livecontrole volgen.
+Geen versieophoging, release, push of installatie uitgevoerd.
+
 ## Release HEMS dev.324 - 31 oktober 2026
 
 Alex heeft release van de praktische planbeschrijving aangevraagd. Basis main:

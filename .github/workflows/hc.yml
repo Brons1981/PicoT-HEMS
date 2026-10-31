@@ -2,10 +2,10 @@ name: PicoT HC
 
 on:
   pull_request:
-    paths: ["picot_hc/**", ".github/workflows/hc.yml"]
+    paths: ["picot_hc/**", "tests/tablet-ui.cjs", ".github/workflows/hc.yml"]
   push:
     branches: [main]
-    paths: ["picot_hc/**", ".github/workflows/hc.yml"]
+    paths: ["picot_hc/**", "tests/tablet-ui.cjs", ".github/workflows/hc.yml"]
   workflow_dispatch:
 
 permissions:
@@ -35,13 +35,15 @@ jobs:
           node --check picot_hc/picot_hc/web/app.js
           node --check picot_hc/picot_hc/web/heating.js
           node --check picot_hc/picot_hc/web/climate-charts.js
+          node --check picot_hc/picot_hc/web/tablet.js
+          node tests/tablet-ui.cjs
           node picot_hc/tests/climate-charts.cjs
       - name: Build independent app container
         run: docker build --tag picot-hc:test picot_hc
       - name: Verify container package and assets
         run: >-
           docker run --rm --entrypoint python picot-hc:test -c
-          "import picot_hc.__main__; from pathlib import Path; assert Path('/app/picot_hc/web/index.html').is_file()"
+          "import picot_hc.__main__; from pathlib import Path; assert all(Path('/app/picot_hc/web', name).is_file() for name in ('index.html', 'tablet.html', 'tablet.css', 'tablet.js'))"
       - name: Install browser test tools
         run: |
           npm install --prefix "$RUNNER_TEMP/hc-browser" playwright@1.62.1

@@ -1,0 +1,100 @@
+
+*{box-sizing:border-box}
+html,body{margin:0;background:#050608;color:#f4f3ef;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-weight:300}
+button{font:inherit}
+button{cursor:pointer}
+button:focus-visible{outline:2px solid #b985ff;outline-offset:4px}
+.screen{height:100vh;min-height:560px;padding:5vh 4vw 2vh;display:flex;flex-direction:column}
+.main{flex:1;min-height:0;display:flex}
+.climate{width:32%;border-right:1px solid #293039;display:flex;flex-direction:column;padding-right:3vw}
+.inside{flex:1}
+.outside{flex:1;padding-top:4vh}
+.label{font-size:3.2vw;font-weight:400;display:flex;align-items:center;}
+.icons{display:flex;align-items:center;}
+.icon{width:2.8vw;height:2.8vw;min-width:22px;min-height:22px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.heat{color:#ffa34f}
+.purple{color:#b77cf2}
+.temperature{display:flex;align-items:center;margin-top:4vh;justify-content:space-between}
+.temp{font-size:10vw;letter-spacing:-.6vw;line-height:1.15;font-weight:200;white-space:nowrap;font-variant-numeric:tabular-nums}
+.chevrons{display:flex;flex-direction:column;margin-left:1vw}
+.chevrons button{height:7vh;min-height:44px;min-width:44px;width:4.5vw;border:0;color:#b77cf2;background:transparent}
+.chevrons svg{width:30px;height:30px}
+.outside .temp{font-size:8vw;margin-top:3vh}
+.energy{width:68%;display:flex;flex-wrap:wrap;padding-left:4vw}
+.metric{width:50%;height:50%;padding-right:1vw}
+.metric:nth-child(n+3){padding-top:4vh}
+.reading{display:flex;align-items:baseline;white-space:nowrap;margin-top:4vh;font-size:8vw;line-height:1.15;letter-spacing:-.3vw;font-weight:200;font-variant-numeric:tabular-nums}
+.reading .unit{font-size:3vw;letter-spacing:0;margin-left:.7vw}
+.arrow{font-size:5vw;letter-spacing:0;margin-right:.6vw;align-self:center}
+.detail{font-size:2.1vw;color:#b9bdc9;margin-top:1vh}
+.footer{height:16vh;min-height:90px;display:flex;align-items:center;border-top:1px solid #293039;margin-top:3vh}
+.soc{width:57%;display:flex;align-items:center;}
+.soc-label{font-size:2.5vw}
+.soc-value{font-size:7.8vw;letter-spacing:-.3vw;font-weight:200}
+.track{height:.7vw;width:17vw;background:#222130;border-radius:10px;overflow:hidden}
+.fill{height:100%;width:0%;background:#a567eb}
+.mode{padding-left:5vw;border-left:1px solid #293039;font-size:5.4vw;line-height:1.1;flex:1;font-weight:200}
+.yellow{color:#f5cc39}
+.green{color:#35ce83}
+.red{color:#ff626d}
+.blue{color:#45b9ed}
+.muted{color:#b5bdc9}
+.heat.off{visibility:hidden}
+button svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#modeIcon{background:none;border:0;padding:0;color:#b77cf2;min-width:40px;min-height:40px}
+#targetHint{height:18px;font-size:12px;color:#b77cf2;margin-top:6px}
+.mixed{color:#b5bdc9}
+@media(max-width:600px) and (orientation:portrait){.screen{height:auto;min-height:100vh;padding:24px 20px}
+.main{display:block}
+.climate{width:100%;border:0;border-bottom:1px solid #293039;flex-direction:row;padding:0 0 20px}
+.inside{flex:1.4}
+.outside{padding:0 0 0 20px}
+.label{font-size:22px}
+.temp{font-size:66px}
+.outside .temp{font-size:52px}
+.temperature{margin-top:12px}
+.energy{width:100%;padding:24px 0 0}
+.metric{height:auto;min-height:150px}
+.metric:nth-child(n+3){padding-top:12px}
+.reading{font-size:52px;margin-top:18px}
+.reading .unit{font-size:20px}
+.arrow{font-size:32px}
+.detail{font-size:15px}
+.footer{height:100px}
+.soc-value{font-size:44px}
+.soc-label{font-size:18px}
+.track{display:none}
+.mode{font-size:30px}
+.icon{width:24px;height:24px}
+.soc{width:50%}
+}
+
+.outside-reading{display:flex;align-items:center;margin-top:3vh}
+.outside .outside-reading .temp{margin-top:0}
+.weather-icon{width:6.5vw;height:5vw;flex-shrink:0}
+@media(max-width:600px) and (orientation:portrait){.outside-reading{flex-wrap:wrap;margin-top:3vh}
+.weather-icon{width:48px;height:38px}
+}
+
+/* Spacing uses margins for older WebKit, which has no flex gap. */
+.label>.icon{margin-right:1vw}
+.icons{margin-left:1vw}
+.icons>*+*{margin-left:.7vw}
+.soc>*+*{margin-left:2vw}
+.weather-icon{margin-left:2vw}
+.symbols{position:absolute;width:0;height:0;overflow:hidden}
+.weather-icon{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:#c5ccd6}
+.hidden{visibility:hidden}
+button:disabled{opacity:.35;cursor:default}
+#modeIcon:disabled{opacity:1}
+button:focus{outline:2px solid #b985ff;outline-offset:2px}
+.status{height:22px;min-height:22px;color:#b9bdc9;font-size:12px;padding-top:5px}
+.status.error{color:#ff9299}
+.temp.desired{color:#c695ff}
+.mode{overflow-wrap:break-word}
+.reading.long{font-size:5.8vw}
+.screen{min-height:560px}
+#modeIcon{vertical-align:middle}
+#targetHint{white-space:nowrap}
+.fill{transition:width .3s}
+

@@ -1,8 +1,60 @@
 # PicoT Home Climate
 
-Handleiding voor Home Climate **0.1.0-dev.23** met HEMS **2.0.0-dev.315**
-(24 oktober 2026). Werk eerst HEMS bij en daarna HC. De nieuwe planuitwisseling
-vereist beide versies; installatie schakelt de automatische regeling niet in.
+Handleiding voor Home Climate **0.1.0-dev.25** met HEMS **2.0.0-dev.324**
+(31 oktober 2026). HEMS hoeft voor deze tablet-update niet opnieuw te worden
+bijgewerkt. Installatie schakelt de automatische regeling niet in.
+
+## Lokaal tablet-dashboard
+
+De pagina gebruikt het goedgekeurde zwarte tabletontwerp met live metingen,
+weersymbool, accupercentage en actuele Zendure-modus. Beneden wijzigen gaat met
+stappen van 0,5 °C. Het doel verschijnt vijf seconden; daarna staat de werkelijke
+temperatuur weer in beeld. Een hand geeft handmatige temperatuur aan, een klok
+het actieve schema. De vlam betekent HC-warmtevraag, geen compressorbewijs.
+
+De tijdelijke kamertemperatuur vervalt bij de eerstvolgende begin- of eindgrens
+van het actieve comfortschema, ook na een herstart en bij twee opeenvolgende
+vensters met dezelfde temperatuur. Zonder actief schema wordt het vaste
+thermostaatdoel gewijzigd. Bronkeuzes blijven bij de bestaande HC-regeling.
+De klok/hand wist uitsluitend de tijdelijke kamertemperatuur. Een handmatige
+bronstand moet via het volledige HC-dashboard worden vrijgegeven.
+
+Na installatie van een release met deze wijziging:
+
+1. Zet in de HC-appopties `tablet_enabled` aan en kies een eigen
+   `tablet_password` van minimaal 12 tekens.
+2. Maak bij Netwerk de containerpoort `8100/tcp` beschikbaar, bijvoorbeeld op
+   hostpoort 8100, en herstart HC. Standaard staat deze poort niet gepubliceerd.
+3. Open op de iPad Safari: `http://<adres-van-Home-Assistant>:8100/`.
+   Gebruikersnaam: `tablet`; wachtwoord: de gekozen tabletcode.
+4. Kies Delen → Zet op beginscherm. Gebruik de iPad liggend.
+
+Deze rechtstreekse HTTP-toegang is bedoeld voor het vertrouwde thuisnetwerk;
+gebruik geen portforward naar internet. Het aparte tabletwachtwoord wordt via
+HTTP niet versleuteld. De HA/Supervisor-token blijft uitsluitend op de server.
+De bestaande HC-ingress blijft beschermd en geeft de tablet ook weer via
+`tablet.html` wanneer het tablet is ingeschakeld.
+
+De zes `tablet_*_entity` opties bepalen P1-netvermogen, PV, werkelijk gemeten
+laden/ontladen, SOC en modus. Controleer deze bij afwijkende HEMS-mappings.
+Gebruik voor laden/ontladen de gemeten vermogenskanalen, niet het gevraagde
+regelvermogen. Net is positief bij afname; batterij positief bij ontladen.
+Huisvermogen wordt uit de gemeten balans afgeleid. Er worden geen opdrachten
+naar HEMS of Zendure gestuurd. Een aparte lezer vraagt iedere vijf seconden de
+HA-metingen op; de werkelijke meetfrequentie blijft die van de bron.
+
+Import is rood, uitsluitend PV-export geel en uitsluitend batterij-export groen.
+Gelijktijdige PV- en batterij-export krijgt een neutrale pijl omdat de precieze
+bronverdeling uit deze metingen niet vaststaat. Bij batterijladen is ieder
+netbijdrage-signaal rood, ook met PV erbij; PV zonder netafname is geel.
+Deze kleuren beschrijven gelijktijdig beschikbare bronnen, geen exacte toedeling.
+Ontbrekende, te oude of tegenstrijdige waarden worden geen nulmeting.
+
+Bediening wacht op actuele HC-metingen en ingeschakelde automatische verwarming.
+Deurbeveiliging, bronblokkades, minimale looptijden en HEMS-starttoestemming
+blijven gelden. Na een HC-herstart moet de bestaande automatische regeling
+zoals gebruikelijk opnieuw worden ingeschakeld. Oude iPad Safari moet nog op
+het fysieke apparaat worden getest; de pagina gebruikt ES5, XHR en SVG.
 
 ## Beneden instellen
 

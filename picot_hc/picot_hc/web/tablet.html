@@ -1,0 +1,36 @@
+<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="theme-color" content="#050608"><title>PicoT</title><link rel="stylesheet" href="tablet.css"><script src="tablet.js" defer></script></head><body><svg class="symbols" aria-hidden="true" xmlns:xlink="http://www.w3.org/1999/xlink"><defs>
+<symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></symbol>
+<symbol id="hand" viewBox="0 0 24 24"><path d="M8 12V5a2 2 0 014 0v6-7a2 2 0 014 0v7-5a2 2 0 014 0v9c0 5-3 7-7 7-3 0-5-2-7-5l-3-4a2 2 0 013-2l2 2"/></symbol>
+<symbol id="flame" viewBox="0 0 24 24"><path d="M13 2c1 6-5 6-4 11-2-1-2-3-2-3-6 8 0 13 5 12 7 0 11-8 5-14 0 4-3 5-3 5 2-6-1-11-1-11Z" fill="currentColor" stroke="none"/></symbol>
+<symbol id="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 1v3m0 16v3M1 12h3m16 0h3M4 4l2 2m12 12 2 2M20 4l-2 2M6 18l-2 2"/></symbol>
+<symbol id="grid" viewBox="0 0 24 24"><path d="m12 2-7 20m7-20 7 20M8 6h8M6 11h12M4 16h16M8 11l8 5m0-5-8 5M10 6l4 5m0-5-4 5"/></symbol>
+<symbol id="battery" viewBox="0 0 24 24"><path d="M9 4V2h6v2"/><rect x="6" y="4" width="12" height="18" rx="2"/></symbol>
+<symbol id="house" viewBox="0 0 24 24"><path d="m2 11 10-9 10 9v11h-7v-8H9v8H2Z"/></symbol>
+</defs></svg>
+<svg class="symbols" aria-hidden="true"><defs>
+<symbol id="cloud" viewBox="0 0 24 24"><path d="M6 19a5 5 0 010-10 7 7 0 0113 0 5 5 0 010 10Z"/></symbol>
+<symbol id="partlycloudy" viewBox="0 0 24 24"><circle cx="16" cy="7" r="4"/><path d="M16 1V0m6 7h2M21 2l2-2M5 21a4 4 0 010-8 6 6 0 0111-1 4.5 4.5 0 012 9Z"/></symbol>
+<symbol id="moon" viewBox="0 0 24 24"><path d="M20 16A9 9 0 018 3a9 9 0 1012 13Z"/></symbol>
+<symbol id="rain" viewBox="0 0 24 24"><path d="M5 14a4 4 0 010-8 6 6 0 0111-1 4.5 4.5 0 012 9M7 17l-2 4m8-4-2 4m8-4-2 4"/></symbol>
+<symbol id="pouring" viewBox="0 0 24 24"><path d="M5 12a4 4 0 010-8 6 6 0 0111-1 4.5 4.5 0 012 9M5 15l-3 7m9-7-3 7m9-7-3 7m9-7-3 7"/></symbol>
+<symbol id="snow" viewBox="0 0 24 24"><path d="M12 2v20M3 7l18 10M3 17 21 7M9 4l3 3 3-3M9 20l3-3 3 3M3 10l4-1-1-4M18 19l-1-4 4-1M3 14l4 1-1 4M18 5l-1 4 4 1"/></symbol>
+<symbol id="sleet" viewBox="0 0 24 24"><path d="M5 12a4 4 0 010-8 6 6 0 0111-1 4.5 4.5 0 012 9M5 16l-2 5m9-6v7m-3-5 6 3m0-3-6 3m12-4-2 5"/></symbol>
+<symbol id="hail" viewBox="0 0 24 24"><path d="M5 12a4 4 0 010-8 6 6 0 0111-1 4.5 4.5 0 012 9"/><circle cx="5" cy="18" r="1"/><circle cx="12" cy="21" r="1"/><circle cx="19" cy="18" r="1"/></symbol>
+<symbol id="lightning" viewBox="0 0 24 24"><path d="M5 12a4 4 0 010-8 6 6 0 0111-1 4.5 4.5 0 012 9M13 12l-5 6h5l-3 6"/></symbol>
+<symbol id="storm" viewBox="0 0 24 24"><path d="M5 12a4 4 0 010-8 6 6 0 0111-1 4.5 4.5 0 012 9M13 12l-5 6h5l-3 6M4 16l-2 5m19-5-2 5"/></symbol>
+<symbol id="fog" viewBox="0 0 24 24"><path d="M3 5h18M1 10h17M6 15h17M2 20h18"/></symbol>
+<symbol id="wind" viewBox="0 0 24 24"><path d="M2 8h14c6 0 6-7 1-6M1 12h20M3 16h12c6 0 6 7 1 6"/></symbol>
+<symbol id="wind-cloud" viewBox="0 0 24 24"><path d="M5 12a4 4 0 010-8 6 6 0 0111-1 4.5 4.5 0 012 9M1 16h20M3 20h12c4 0 4 4 1 3"/></symbol>
+<symbol id="exceptional" viewBox="0 0 24 24"><path d="m12 2 11 20H1ZM12 8v6m0 3v1"/></symbol>
+</defs></svg>
+<main class="screen"><div class="main">
+<section class="climate" aria-label="Klimaat beneden"><div class="inside">
+<div class="label"><span id="tempLabel">Binnen</span><span class="icons"><svg class="icon heat hidden" id="heat" role="img" aria-label="Warmtevraag"><use xlink:href="#flame" xmlns:xlink="http://www.w3.org/1999/xlink"/></svg><button id="modeIcon" class="hidden" disabled aria-label="Kamerschema hervatten"><svg class="icon"><use id="modeUse" xlink:href="#clock" xmlns:xlink="http://www.w3.org/1999/xlink"/></svg></button></span></div>
+<div class="temperature"><span class="temp" id="temperature" aria-live="polite">—</span><div class="chevrons"><button id="up" disabled aria-label="Gewenste temperatuur 0,5 graad verhogen"><svg viewBox="0 0 24 24"><path d="m5 15 7-7 7 7"/></svg></button><button id="down" disabled aria-label="Gewenste temperatuur 0,5 graad verlagen"><svg viewBox="0 0 24 24"><path d="m5 9 7 7 7-7"/></svg></button></div></div><div id="targetHint"></div></div>
+<div class="outside"><div class="label">Buiten</div><div class="outside-reading"><div class="temp" id="outsideValue">—</div><svg class="weather-icon hidden" id="weather" viewBox="0 0 24 24" role="img" aria-label=""><use id="weatherUse" xmlns:xlink="http://www.w3.org/1999/xlink"/></svg></div></div></section>
+<section class="energy" aria-label="Energiestromen">
+<div class="metric"><div class="label"><svg class="icon muted" aria-hidden="true"><use xlink:href="#grid" xmlns:xlink="http://www.w3.org/1999/xlink"/></svg>Net</div><div class="reading"><span id="netArrow" class="arrow muted"></span><span id="netValue">—</span><span class="unit">W</span></div><div class="detail" id="netDetail"></div></div>
+<div class="metric"><div class="label"><svg class="icon yellow" aria-hidden="true"><use xlink:href="#sun" xmlns:xlink="http://www.w3.org/1999/xlink"/></svg>PV</div><div class="reading"><span id="pvValue">—</span><span class="unit">W</span></div></div>
+<div class="metric"><div class="label"><svg class="icon muted" aria-hidden="true"><use xlink:href="#battery" xmlns:xlink="http://www.w3.org/1999/xlink"/></svg>Batterij</div><div class="reading"><span id="batArrow" class="arrow muted"></span><span id="batValue">—</span><span class="unit">W</span></div><div class="detail" id="batDetail"></div></div>
+<div class="metric"><div class="label"><svg class="icon blue" aria-hidden="true"><use xlink:href="#house" xmlns:xlink="http://www.w3.org/1999/xlink"/></svg>Huis</div><div class="reading"><span id="homeValue">—</span><span class="unit">W</span></div></div>
+</section></div><footer class="footer"><div class="soc"><span class="soc-label">Accu</span><span class="soc-value" id="socValue">—</span><div class="track" aria-hidden="true"><div class="fill" id="socFill"></div></div></div><div class="mode" id="zendureMode">—</div></footer><div id="status" class="status" role="status" aria-live="polite">Verbinding maken…</div></main></body></html>

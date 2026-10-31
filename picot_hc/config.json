@@ -1,6 +1,6 @@
 {
   "name": "PicoT Home Climate",
-  "version": "0.1.0-dev.24",
+  "version": "0.1.0-dev.25",
   "slug": "picot_hc",
   "description": "Comfortvensters, vaste zonetemperaturen en handmatige bronbediening",
   "arch": [
@@ -111,7 +111,15 @@
     "cv_auxiliary_mode": "estimated",
     "cv_auxiliary_running_w": 100,
     "cv_auxiliary_postrun_w": 50,
-    "cv_auxiliary_postrun_seconds": 300
+    "cv_auxiliary_postrun_seconds": 300,
+    "tablet_enabled": false,
+    "tablet_password": "",
+    "tablet_grid_entity": "sensor.ct_shelly_pro_3em_api",
+    "tablet_pv_entity": "sensor.inverter_54200dsn211r0265_vermogen",
+    "tablet_charge_entity": "sensor.zendure_2400_ac_vermogen_van_huis",
+    "tablet_discharge_entity": "sensor.zendure_2400_ac_vermogen_naar_huis",
+    "tablet_soc_entity": "sensor.zendure_2400_ac_laadpercentage",
+    "tablet_mode_entity": "input_select.zendure_2400_ac_modus_selecteren"
   },
   "schema": {
     "outdoor": "str",
@@ -167,7 +175,21 @@
     "cv_auxiliary_mode": "list(measured|estimated)?",
     "cv_auxiliary_running_w": "float(1,2000)?",
     "cv_auxiliary_postrun_w": "float(0,2000)?",
-    "cv_auxiliary_postrun_seconds": "int(0,3600)?"
+    "cv_auxiliary_postrun_seconds": "int(0,3600)?",
+    "tablet_enabled": "bool?",
+    "tablet_password": "password?",
+    "tablet_grid_entity": "str?",
+    "tablet_pv_entity": "str?",
+    "tablet_charge_entity": "str?",
+    "tablet_discharge_entity": "str?",
+    "tablet_soc_entity": "str?",
+    "tablet_mode_entity": "str?"
   },
-  "url": "https://github.com/Brons1981/PicoT-HEMS/tree/main/picot_hc"
+  "url": "https://github.com/Brons1981/PicoT-HEMS/tree/main/picot_hc",
+  "ports": {
+    "8100/tcp": null
+  },
+  "ports_description": {
+    "8100/tcp": "Lokaal tablet-dashboard (alleen eigen netwerk)"
+  }
 }

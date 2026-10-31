@@ -1,3 +1,14 @@
+# 0.1.0-dev.25
+
+- Werk de meegeleverde meldingsmodule bij naar de bestaande gedeelde versie; bestaande HC-meldingsaanroepen blijven gelijk.
+
+- Voeg het zwarte lokale tablet-dashboard toe voor Safari: binnen/buiten, weer, P1, PV, batterijrichting, huisvermogen, SOC en actuele modus.
+- Wijzig de kamertemperatuur beneden in stappen van 0,5 graden; toon het doel vijf seconden en daarna weer de meting.
+- Bewaar de tijdelijke temperatuur tot de eerstvolgende schemaperiode, ook na herstart; toon klok/hand en HC-warmtevraag.
+- Laat de bestaande HC-regeling de bron kiezen; respecteer bronoverrides, deurbeveiliging en meetkwaliteit.
+- Optioneel via lokale poort 8100 met eigen tabletwachtwoord, standaard uit. Zie README voor activering en sensorinstellingen.
+- HEMS blijft dev.324; geen planreset nodig. Schakel na herstart de automatische HC-regeling zoals gebruikelijk weer in.
+
 # 0.1.0-dev.24
 
 - Lees de actuele HA-bronrapportage ook voor de beneden-aircovermogensmeter, zodat een gecachte tijdstempel ongewijzigd vermogen niet onterecht afkeurt.

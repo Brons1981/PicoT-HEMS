@@ -1,3 +1,21 @@
+## Release HEMS dev.324 - 31 oktober 2026
+
+Alex heeft release van de praktische planbeschrijving aangevraagd. Basis main:
+79c442b523ec39750918b0b7e91a85c7a5a2c8d5 (dev.323). Publicatie via PR na groene CI.
+Lokale geintegreerde verificatie: 162 tests groen, Ruff en gerichte Mypy groen.
+Home Climate blijft dev.24; geen planreset. Installatie volgt afzonderlijk.
+
+## Praktische planbeschrijving - vervolg op dev.323, 31 oktober 2026
+
+Alex wil de verwachte zonne- en netlaadhoeveelheden, overblijvende zonne-energie
+voor huis/teruglevering, laadvensters, verwachte 100%-tijd en onderbouwd voordeel
+van stand-by tegenover batterijondersteuning zichtbaar op het dashboard.
+Geimplementeerd in `plan-explanation-fix`; zie
+`docs/development_log/2026-10-31-practical-plan-explanation.md`.
+Read-only weergave van bestaande simulatiegegevens; geen nieuwe plankeuze.
+Nog geen nieuwe release of installatie. Dev.323 zelf is gepubliceerd via PR #733,
+merge 79c442b523ec39750918b0b7e91a85c7a5a2c8d5.
+
 ## Release HEMS dev.323 - 31 oktober 2026
 
 Alex heeft release van de totale-routekostenreparatie en dashboarduitleg aangevraagd.

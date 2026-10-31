@@ -63,6 +63,12 @@ def energy_view(config, states, now):
         values[k] for k in ("grid", "pv", "charge", "discharge", "soc")
     )
     pv = pv if pv is not None and pv >= 0 else None
+    # The current HA snapshot supplies sun.sun, including when the inverter sleeps.
+    # EnergyReader discards the entire snapshot on connection loss/expiry.
+    # Never replace a fresh PV measurement, or assume darkness from the clock.
+    sun = observation("sun.sun", states, now)
+    if pv is None and sun["quality"] == "available" and sun["value"] == "below_horizon":
+        pv = 0.0
     if charge is None or discharge is None or min(charge, discharge) < 0:
         battery = None
     elif charge > 10 and discharge > 10:

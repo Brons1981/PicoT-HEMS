@@ -1,3 +1,17 @@
+## Release HC dev.26 - 31 oktober 2026
+
+Alex vraagt release van de nachtelijke PV-reparatie. Basis main ec64f5e74983eb3971c90684b4c2a2f088130b24.
+Publicatie via PR na groene CI; HC dev.26, HEMS ongewijzigd. Geen live installatie.
+Zie docs/development_log/2026-10-31-tablet-night-pv.md voor scope en verificatie.
+
+## Reparatie tablet nachtelijke PV - 31 oktober 2026
+
+HC dev.25 gepubliceerd via PR #735, merge ec64f5e74983eb3971c90684b4c2a2f088130b24.
+Alex meldt wisselend ontbrekend huisvermogen bij slapende PV en vraagt reparatie.
+Lokale wijziging: tablet.py neemt alleen bij sun.sun below_horizon 0 W aan voor
+ontbrekende/verouderde PV; verse PV en controles op net/batterij blijven leidend.
+Zie docs/development_log/2026-10-31-tablet-night-pv.md. Nog niet gepubliceerd.
+
 ## Release HC dev.25 - 31 oktober 2026
 
 Alex heeft publicatie van het lokale tablet-dashboard en de tijdelijke
@@ -153,7 +167,7 @@ Alex heeft de HC-meetfout aan de dashboardreparatie toegevoegd. Lees
 `docs/development_log/2026-10-24-hc-meter-reporting.md`.
 Ook de aircovermogensmeter gebruikt nu de bestaande actuele HA-template-uitlezing;
 geen nulvulling of TTL-verruiming. HEMS ontvangt concrete foutredenen.
-63 gerichte tests geslaagd. Nu zijn HEMS én HC gewijzigd; nog geen release/live-update.
+63 gerichte tests geslaagd. Nu zijn HEMS �n HC gewijzigd; nog geen release/live-update.
 
 ## Dashboard vereenvoudigen - lokaal, 24 oktober 2026
 
@@ -183,7 +197,7 @@ van plannerlooptijd; stand-by heeft een eigen legenda. Geen wijziging van dagdoe
 lopende-laadbescherming of HC dev.23. Publicatie via PR en CI; installatie volgt apart.
 Na installatie Planning opnieuw berekenen voor reeds opgeslagen foutief nacht-NOM.
 
-# PicoT HEMS — mandatory session start
+# PicoT HEMS - mandatory session start
 
 ## Aanvullend laden op noodzaak - HEMS dev.308, 19 oktober 2026
 
@@ -196,7 +210,7 @@ anonieme netlaadrestanten; marktexport, dagdoelen en lopend laden blijven besche
 84 gerichte tests en de gereconstrueerde diagnose-replay slagen. Publicatie via
 PR en CI; installatie en liveverificatie volgen afzonderlijk.
 
-## EV-eindtijdadvies — HEMS dev.300 / Energy Devices dev.7, 17 oktober 2026
+## EV-eindtijdadvies - HEMS dev.300 / Energy Devices dev.7, 17 oktober 2026
 
 Alex heeft release aangevraagd. Lees
 `docs/architecture/decisions/V2ADR-064.5-ev-deadline-advice.md` en
@@ -220,7 +234,7 @@ Exacte invoerreplay voorkomt alle drie reductietriggers van 6 oktober.
 Alex heeft release dev.286 aangevraagd. IMPLEMENTED; PR/CI volgt voor merge.
 Installatie en livecontrole volgen afzonderlijk. BMS-afbouw volgt apart.
 
-## Begrensde marktexportmeting — release dev.285, 4 oktober 2026
+## Begrensde marktexportmeting - release dev.285, 4 oktober 2026
 
 Alex heeft de gerichte reparatie en release via PR en CI aangevraagd.
 Lees `docs/architecture/ADR-019.10-bounded-market-export-measurement.md` en
@@ -231,7 +245,7 @@ de bovengrens telt voor het budget. Planner, marktselectie en EV-aansturing geli
 75 lokale tests, Ruff, mypy en de exacte diagnosemeting slagen.
 CI en livewerking zijn nog niet bevestigd; installatie volgt na publicatie.
 
-## Doorlopende kalenderhistorie huisverbruik — release dev.284, 3 oktober 2026
+## Doorlopende kalenderhistorie huisverbruik - release dev.284, 3 oktober 2026
 
 Alex heeft automatische registratie naast de huidige methode aangevraagd, met
 bestaande historie en vergelijking van maandag t/m zondag en werkdagen/weekenden.
@@ -252,14 +266,14 @@ This file is a routing index and guardrail.  The linked Accepted ADR files are
 the architectural authority.  Current code, tests, comments, diagnostics and
 earlier assistant memory are evidence, but they do not redefine ownership.
 
-## Instelbare Solcast-basis — release dev.283, 30 september 2026
+## Instelbare Solcast-basis - release dev.283, 30 september 2026
 
-Alex heeft lower, gemiddelde lower–central, central en upper aangevraagd.
+Alex heeft lower, gemiddelde lower-central, central en upper aangevraagd.
 Lees `docs/architecture/ADR-019.9-configurable-solcast-basis.md`. De standaard
 blijft het huidige gemiddelde. Bronprognoses, dagdoelen en commitmentregels
 blijven behouden. Alex heeft release dev.283 aangevraagd via PR en CI; central-failsafe blijft uitgesteld.
 
-## Betaald marktherstel — release dev.282, 30 september 2026
+## Betaald marktherstel - release dev.282, 30 september 2026
 
 Alex heeft release van uitsluitend de herstelfix aangevraagd via PR en CI.
 Lees `docs/architecture/ADR-019.8-paid-recovery-surplus.md` en
@@ -269,7 +283,7 @@ projecties werkelijk 100% bereiken. Alle kosten tellen mee, overschotwaarde is
 nul; bestaande revisievergelijkingen blijven strikt. De central-regel blijft
 uitgesteld. Installatie en livecontrole volgen afzonderlijk.
 
-## Marktroute na de hoofdlaadroute — release dev.281, 29 september 2026
+## Marktroute na de hoofdlaadroute - release dev.281, 29 september 2026
 
 Alex heeft het beperkte avondvenster en de eenmalige overgang voor nog niet
 begonnen ochtendroutes goedgekeurd. Lees `docs/architecture/ADR-019.7-post-main-market-window.md`
@@ -281,7 +295,7 @@ afgerond; lees het log voor de brede run en 42 geslaagde afsluitende controles.
 Alex heeft op 29 september expliciet release dev.281 aangevraagd via PR en CI.
 Installatie en livecontrole volgen afzonderlijk.
 
-## Expliciet opnieuw berekenen — release dev.280, 2026-09-29
+## Expliciet opnieuw berekenen - release dev.280, 2026-09-29
 
 Alex heeft om 23:48 Europe/Amsterdam reparatie van de bestaande resetknop
 gevraagd. Lees `docs/development_log/2026-09-28-daily-plan-recalculation.md`.
@@ -295,13 +309,13 @@ planversie worden gezamenlijk afgehandeld in Plan Store. Werkbranch:
 livecontrole volgen afzonderlijk. Gebruik na installatie eenmalig **Planning
 opnieuw berekenen** om een eerder opgeslagen plan expliciet te laten herzien.
 
-## Begrensd MEP-herstel — release dev.279, 2026-09-28
+## Begrensd MEP-herstel - release dev.279, 2026-09-28
 
 Voor het latere, om 22:23 goedgekeurde lokale hersteltraject: lees eerst
 `docs/development_log/2026-09-28-mep-recovery-boundaries.md` en
 `docs/architecture/ADR-037.21-bounded-recovery-and-execution-continuity.md`.
 Vijf bewezen grenzen zijn in de bestaande keten lokaal hersteld en gezamenlijk
-geverifieerd: 1.869 tests geslaagd, één overgeslagen; typecontrole, onafhankelijke
+geverifieerd: 1.869 tests geslaagd, ��n overgeslagen; typecontrole, onafhankelijke
 review, diagnose-replay en herstartcontrole geslaagd. De oorspronkelijke code
 reproduceert het opgenomen plan van 19:01 exact; het herstel behoudt de eerdere
 route zonder extra nacht-NOM of exportgerichte standby. De werkbranch is
@@ -309,23 +323,23 @@ route zonder extra nacht-NOM of exportgerichte standby. De werkbranch is
 release dev.279 aangevraagd via PR en CI. Installatie en livecontrole volgen
 afzonderlijk.
 
-## Dashboard bij grote marktroutevergelijking — lokaal, 2026-09-28
+## Dashboard bij grote marktroutevergelijking - lokaal, 2026-09-28
 
 Alex heeft om 20:17 Europe/Amsterdam de gerichte dashboardfix goedgekeurd.
 Lees `docs/development_log/2026-09-28-dashboard-market-payload.md` voor contract,
-reproductie en verificatie. Gedeelde verliesvrije bewijsreeksen en één volledige
+reproductie en verificatie. Gedeelde verliesvrije bewijsreeksen en ��n volledige
 webvergelijking voorkomen de 8M-overschrijding. Bij te veel extra schermdetail
 blijven het plan en de uitvoeringsstatus behouden, met een zichtbare beperking.
-MEP, aansturing en financiële afleiding blijven gelijk. 832 tests geslaagd,
+MEP, aansturing en financi�le afleiding blijven gelijk. 832 tests geslaagd,
 1 overgeslagen; beide echte planstatussen publiceren compleet. Alex heeft om
 20:37 Europe/Amsterdam release dev.278 aangevraagd via PR en CI. Installatie
 en livecontrole volgen afzonderlijk; dev.268 blijft de eerste terugvalbasis.
 
-## Financiële kwartierbalans en nachtstatus — lokaal, 2026-09-27
+## Financi�le kwartierbalans en nachtstatus - lokaal, 2026-09-27
 
-Alex heeft om 20:43 Europe/Amsterdam de gerichte financiële reparatie bevestigd.
+Alex heeft om 20:43 Europe/Amsterdam de gerichte financi�le reparatie bevestigd.
 Lees `docs/architecture/ADR-037.20-financial-quarter-and-night-evidence.md` en
-`docs/development_log/2026-09-27-financial-quarter-night.md`. De financiële
+`docs/development_log/2026-09-27-financial-quarter-night.md`. De financi�le
 afleiding gebruikt volledige getroffen klokkwartieren en geregistreerde
 dag/nachtstatus van `sun.sun`. MEP, voorraadkosten en ruwe metingen blijven gelijk.
 De echte diagnose van vandaag levert lokaal 9 van 9 bedragen; oude zonstatussen
@@ -334,13 +348,13 @@ Alex heeft om 21:00 Europe/Amsterdam akkoord gegeven op afzonderlijke publicatie
 als dev.277 via PR en CI. Installatie en controle van de historische nachtbron
 volgen afzonderlijk. Dev.268 blijft de eerste terugvalbasis.
 
-## Daggebonden marktherstel — 2026-09-27
+## Daggebonden marktherstel - 2026-09-27
 
-Alex koos voor wachten op bekende herstelprijzen vóór een nieuwe marktroute.
+Alex koos voor wachten op bekende herstelprijzen v��r een nieuwe marktroute.
 ADR-019.6 (`docs/architecture/ADR-019.6-daily-market-recovery.md`) preciseert
 ADR-019.5 en vervangt de optionele toelating zonder herstelbewijs uit ADR-019.1.
 Een herstelvraag van vandaag heropent geen export na het laden van morgen.
-Fysieke vooruitblik en financiële herstelgrens zijn afzonderlijke grenzen.
+Fysieke vooruitblik en financi�le herstelgrens zijn afzonderlijke grenzen.
 Zie `docs/development_log/2026-09-27-market-day-recovery-contract.md` voor
 de lokale wijziging, verificatie en grenzen. Dit is geen releaseverklaring.
 
@@ -348,11 +362,11 @@ Alex heeft op 27 september 2026 om 20:00 Europe/Amsterdam akkoord gegeven
 op de vervolgstap. Publicatie als dev.276 verloopt via PR en CI. Installatie
 en livecontrole volgen afzonderlijk; dev.268 blijft de eerste terugvalbasis.
 
-## Actuele eerste terugvalbasis — 2026-09-23
+## Actuele eerste terugvalbasis - 2026-09-23
 
 Alex heeft **2.0.0-dev.268** aangewezen als eerste terugvalbasis:
 `7e49bf9eff507e7f277f5007d400bac731b07f25`.
-Dit is de uitgebrachte versie vóór de nieuwe terugval op netbalans bij ontbrekende
+Dit is de uitgebrachte versie v��r de nieuwe terugval op netbalans bij ontbrekende
 PV. De lokale, nog niet uitgebrachte wijzigingen horen niet bij deze basis.
 Dit besluit vervangt oudere verwijzingen naar dev.254 als eerste terugvalbasis;
 dev.254 blijft een historisch checkpoint. Overige stop- en terugvalafspraken
@@ -395,20 +409,20 @@ the controlling baseline and explicit superseding clause before changing code.
 
 ```text
 PlanningInputSnapshot
-→ Opportunity Engine
-→ OpportunitySet
-→ MEP Candidate Generation and Simulation
-→ CandidateSet + complete EnergyPaths
-→ CandidateOutcomeSet
-→ Evaluation Engine
-→ Winning Candidate + Winning EnergyPath + EvaluationRecord
-→ Execution Plan Builder
-→ ExecutionPlanSet
-→ Plan Store / commitment persistence
-→ Execution Engine
-→ ExecutionPrimitiveRequest
-→ Device Adapter
-→ Vendor Command and observed result
+ Opportunity Engine
+ OpportunitySet
+ MEP Candidate Generation and Simulation
+ CandidateSet + complete EnergyPaths
+ CandidateOutcomeSet
+ Evaluation Engine
+ Winning Candidate + Winning EnergyPath + EvaluationRecord
+ Execution Plan Builder
+ ExecutionPlanSet
+ Plan Store / commitment persistence
+ Execution Engine
+ ExecutionPrimitiveRequest
+ Device Adapter
+ Vendor Command and observed result
 ```
 
 No stage may be replaced by a diagnostic projection, private planner result,
@@ -492,7 +506,7 @@ Every functional slice needs:
 Green CI alone is not architectural proof.  Diagnostics must show the same
 canonical identities and records across the full affected chain.
 
-## Current recovery checkpoint — 2026-08-31
+## Current recovery checkpoint - 2026-08-31
 
 Audit of pre-recovery `main` commit
 `808c4cf0b81556c8095c228f8bbeb44a43b5084e` identified these repair targets:
@@ -553,7 +567,7 @@ states plus the actual starting SoC.  Hybrid NOM/PV plus residual-grid
 Candidate construction remains a separate MEP Candidate Generation slice.
 
 
-## 2026-09-09 — historical SOC recovery and market volume alignment
+## 2026-09-09 - historical SOC recovery and market volume alignment
 
 Accepted supplement: `docs/architecture/ADR-037.11-historical-main-completion-recovery.md`.
 A raw 100% HA Recorder observation inside a then-valid admitted main window can
@@ -565,22 +579,22 @@ reconciliation. Manual override is unchanged. Market capacity and final simulati
 must use the same tariff/household boundaries; never relax volume validity to hide
 an interval mismatch. See the development log for implementation/test status.
 
-## 2026-09-11 — Passive grid-charge review and actual SOC
+## 2026-09-11 - Passive grid-charge review and actual SOC
 
 See `docs/architecture/ADR-037.13-passive-grid-charge-review.md`. This optional
 observer estimates retrospective grid reduction without planning authority.
 It must never feed MEP or replace the original canonical SOC projection.
 Runtime/UI additions are locally implemented; no new release or live validation.
 
-## 2026-09-12 — Pre-stable en begrensde proef verbruiksprognose
+## 2026-09-12 - Pre-stable en begrensde proef verbruiksprognose
 
 Lees `docs/architecture/ADR-037.14-clock-quarter-load-forecast.md` en
 `docs/development_log/2026-09-12-clock-quarter-trial.md`.
 Vaste terugvalbasis: dev.254 / `21314d87be70442d9643d75ee74e7beb3be97e89`.
-Slechter gedrag: direct terug. Niet slechter: hoogstens één kleine optimalisatie;
+Slechter gedrag: direct terug. Niet slechter: hoogstens ��n kleine optimalisatie;
 bij daarna ongewenst gedrag terug naar pre-stable en opnieuw ontwerpen.
 
-## 2026-09-12 — Bescherming bij lopende huisbelasting
+## 2026-09-12 - Bescherming bij lopende huisbelasting
 
 Lees `docs/architecture/ADR-037.15-ongoing-household-load-protection.md` en
 `docs/development_log/2026-09-12-load-protection-implementation.md`.
@@ -589,11 +603,11 @@ De kleine-tekortmarge vereist een strikt haalbare herstelproef binnen het bestaa
 hoofdvenster. Werkelijk 100% blijft verplicht. Implementatie lokaal, nog geen release.
 Dev.254 blijft de vaste terugvalbasis; werkdag/weekendweging is buiten scope.
 
-## 2026-09-14 — Auditcorrecties, lokaal en nog niet uitgebracht
+## 2026-09-14 - Auditcorrecties, lokaal en nog niet uitgebracht
 
 Lees `docs/development_log/2026-09-14-audit-repair.md` en
 `docs/development_log/2026-09-14-diagnostic-evidence-repair.md`.
-Monitor-vrijgave en native dagobservaties vormen één samenhangende wijziging;
+Monitor-vrijgave en native dagobservaties vormen ��n samenhangende wijziging;
 klokuitvoering blijft onafhankelijk. SOC-bronidentiteit, uitvoeringsconstraints,
 foutterugkoppeling en diagnostische herleidbaarheid zijn lokaal gecorrigeerd.
 Punt 8 (volwaardige incumbentvergelijking) was aanvankelijk open wegens de expliciete
@@ -602,16 +616,16 @@ het onderstaande besluit en vervolglog lossen dit op.
 Geen stilzwijgende nieuwe rangschikregel, release of livewijziging. De bestaande
 pre-stable terugvalafspraak blijft gelden. Zie het log voor verificatieresultaten.
 
-### Punt 8 — expliciet besluit over netlaadduur
+### Punt 8 - expliciet besluit over netlaadduur
 
 Alex heeft de gelijkspelregel bevestigd; zie
 `docs/architecture/ADR-037.16-netlaadduur-bij-gelijkwaardige-plannen.md`.
 Implementatie en verificatie: `docs/development_log/2026-09-14-grid-duration-comparison.md`.
-Bij gelijke beschikbare financiële uitkomsten wint minder resterende netlaadduur
-vóór lagere strategieprioriteiten en incumbentbehoud. PV/NOM-laadduur telt niet mee.
+Bij gelijke beschikbare financi�le uitkomsten wint minder resterende netlaadduur
+v��r lagere strategieprioriteiten en incumbentbehoud. PV/NOM-laadduur telt niet mee.
 Geen nieuwe herplantrigger of versoepeling van dagdoel/reserve/belastingbescherming.
 
-## 2026-09-14 — Afronding en release dev.260
+## 2026-09-14 - Afronding en release dev.260
 
 Alex heeft de resterende punten inclusief de gezamenlijke release laten oppakken.
 Lees `docs/development_log/2026-09-14-ha-followup.md` voor de vijf Gielz-templates,
@@ -619,7 +633,7 @@ recorderbeperkingen en livecontrole. Externe HA-YAML ontbreekt nog; snippets zij
 geen uitgevoerde reparatie van die automatisering. Geen databasegegevens wissen.
 De codewijzigingen gaan via PR en CI naar main; installatie/livebewijs volgt apart.
 
-## 2026-09-15 — Schakelhistorie, NOM-continuïteit en SOC-verwachting
+## 2026-09-15 - Schakelhistorie, NOM-continu�teit en SOC-verwachting
 
 Lees `docs/development_log/2026-09-15-observation-fixes.md` en
 `docs/architecture/decisions/V2ADR-066-soc-display-expectation-history.md`.
@@ -633,7 +647,7 @@ Geen actuele invoer betekent geen actuele toekomstige prognose.
 De wijzigingen zijn lokaal geverifieerd. Alex heeft release dev.261 aangevraagd;
 publicatie via PR en CI. Installatie en livevalidatie volgen daarna.
 
-## 2026-09-17 — HEMS dev.262: meetbewijs voor nacontrole
+## 2026-09-17 - HEMS dev.262: meetbewijs voor nacontrole
 
 Alex heeft release van de afzonderlijke meetregistratie/nacontrole aangevraagd.
 Begrensde, incrementele HA-history reads; gzip-archief van vandaag/gisteren in de
@@ -642,26 +656,26 @@ Geen ontbrekende data aangevuld en geen MEP-/commitment-/aansturingswijzigingen.
 Bronuitval blijft een blokkade; 17 september bevat een echte SOC-onderbreking van
 1,008294 seconde rond 09:31. Zie development_log/2026-09-17-review-measurement-evidence.md.
 
-## 2026-09-17 — HEMS dev.263: aparte kwartierbalans
+## 2026-09-17 - HEMS dev.263: aparte kwartierbalans
 
 Alex heeft release aangevraagd van de observer-only kwartierintegratie.
-De vermogensreeksen leveren afzonderlijk geïntegreerde Wh over gelijke kwartieren.
+De vermogensreeksen leveren afzonderlijk ge�ntegreerde Wh over gelijke kwartieren.
 Afgeleid huisverbruik blijft gescheiden van ruwe metingen en de strikte replay;
 geen nulvulling of nieuwe MEP-inputs. Op export 19:43: 74 afgeleide tijdvakken,
 vijf ongeldig. Geen bewijs dat de volledige 1,7 kWh netladen vermijdbaar was.
 Details: docs/development_log/2026-09-17-review-quarter-alignment.md.
 
-## 2026-09-19 — geïntegreerde passieve historie, lokaal en standaard uit
+## 2026-09-19 - ge�ntegreerde passieve historie, lokaal en standaard uit
 
 Lees `docs/development_log/2026-09-19-passive-history-implementation.md`.
-Alex heeft na de gezamenlijke ontwerpen en offline proeven de geïntegreerde
+Alex heeft na de gezamenlijke ontwerpen en offline proeven de ge�ntegreerde
 implementatiestap bevestigd. `picot.v2.passive_history` bevat opname, bewijsindex,
 compacte records/revisies, kalender, diagnose-import en een begrensde worker.
 De incidentregistratie heeft een optionele pre-reductiecallback; geen live callsite
 of workerinitialisatie toegevoegd. Planner, MEP, Plan Store, uitvoering en
-bestaande financiële/prognose-inputs blijven ongewijzigd. Geen release of live
+bestaande financi�le/prognose-inputs blijven ongewijzigd. Geen release of live
 activatie. Automatische afschaling, volledige dependencycertificering en
-NUC-belasting blijven vóór activering te beoordelen. Geen oude bestanden wissen.
+NUC-belasting blijven v��r activering te beoordelen. Geen oude bestanden wissen.
 
 Vervolg 19 september: `passive_history.retention` biedt nu een alleen-lezen
 bewaaroverzicht met bronsnapshottoken en een afzonderlijke offline vergelijkkopie.
@@ -690,14 +704,14 @@ Terminal & SSH heeft volgens Alex geen `python3`. Daarom is met zijn akkoord
 `picot_history_probe/` als afzonderlijke tijdelijke HA-testapp voorbereid:
 handmatig/eenzelfde eenmalige proef, eigen `/data`, geen API-/hosttoegang of gedeelde
 PicoT-bestanden. Bronnen zijn meegeleverd met hashcontrole. Nog niet gepubliceerd,
-gebouwd met Docker of op de NUC geïnstalleerd; dev.263 hoeft niet te wijzigen.
+gebouwd met Docker of op de NUC ge�nstalleerd; dev.263 hoeft niet te wijzigen.
 Zie README/DOCS in die appmap en het NUC-proeflog voor de concrete grenzen.
 
 Publicatie afgerond: PR #659, merge `27ec942abd3b7955eaa69ac43096f1fe2c5c2a50`.
 Uitsluitend `picot_history_probe/` en eigen CI-workflow gepubliceerd (18 nieuwe
 bestanden, geen bestaande wijzigingen); HEMS blijft dev.263. Containerproef,
 686 v2-tests en 1.618 PR-tests geslaagd; pushchecks eveneens groen. Testapp 0.1.0
-kan na appwinkelverversing worden geïnstalleerd en één keer handmatig gestart.
+kan na appwinkelverversing worden ge�nstalleerd en ��n keer handmatig gestart.
 Nog geen NUC-resultaat. Overige lokale historiewijzigingen zijn niet gepubliceerd.
 
 Eerste NUC-proef ontvangen: `workload_complete=true`, 4/4 gepubliceerd en verwerkt,
@@ -719,7 +733,7 @@ alleen de laatste 100 regels. Baseline en heartbeatmetingen ontbreken. Piek-RSS
 50,11 MiB per gerapporteerd proces; maximaal aanbod 0,064 ms. Nog geen oordeel
 over vertraging. Vraag bestaande logs met 300 regels op; proef niet opnieuw starten.
 
-## 2026-09-19 — runtime-opnameproef, lokaal en standaard uit
+## 2026-09-19 - runtime-opnameproef, lokaal en standaard uit
 
 Lees `docs/development_log/2026-09-19-history-capture-runtime-trial.md`.
 Het complete NUC-log bevat twee geslaagde grote proeven inclusief tikmetingen;
@@ -737,33 +751,33 @@ baseline op de NUC. De opnameproef start pas na expliciet inschakelen/herstarten
 Geen plannerwijziging of automatische verwijdering. Publicatiestatus volgt in het
 ontwikkellog van de runtimeproef; de eerdere lokale statusregels zijn historisch.
 
-## Dev.265 — trial diagnostic export
+## Dev.265 - trial diagnostic export
 
 See `docs/development_log/2026-09-20-history-trial-export.md` for the bounded
 read-only export and completed dev.264 trial. Keep capture false during update
 and download. The three actual NUC objects still require offline verification.
 
-## 20 september — tijdnotatie voor replay, lokaal
+## 20 september - tijdnotatie voor replay, lokaal
 
 Lees `docs/development_log/2026-09-20-history-time-offset.md`. De echte proefrecords
-zijn geverifieerd; de oorspronkelijke beslissing is inclusief ID’s gereproduceerd.
+zijn geverifieerd; de oorspronkelijke beslissing is inclusief ID's gereproduceerd.
 Recordopslag bewaart nu bronoffsets, terwijl fingerprints UTC blijven gebruiken.
 65 gerichte tests en de echte opslag/replayproef slagen; Ruff en mypy groen.
 Branch `fix/history-preserve-time-offset`, nog geen publicatie of livewijziging.
 
-Releasevoorbereiding na Alex’ akkoord: dev.266 via PR en CI. Opname blijft
+Releasevoorbereiding na Alex' akkoord: dev.266 via PR en CI. Opname blijft
 standaard false; installatie en livecontrole volgen afzonderlijk.
 
-## 20 september — standby-adapterherstel, lokaal
+## 20 september - standby-adapterherstel, lokaal
 
 Lees `docs/development_log/2026-09-20-adapter-standby.md`.
-De bestaande standby-koppeling werd door de HA-adapter geweigerd. Eén toegevoegde
+De bestaande standby-koppeling werd door de HA-adapter geweigerd. E�n toegevoegde
 primitive herstelt de vertaling; planner en runtime zijn ongewijzigd. 63 gerichte
 tests, Ruff, mypy en tien offline diagnosegrenzen slagen. Branch
 `fix/adapter-standby`. Alex heeft release dev.267 aangevraagd; publicatie via
 PR en CI, installatie en liveverificatie volgen afzonderlijk.
 
-## 21 september — bewijs van afgewezen huisverbruik, lokaal
+## 21 september - bewijs van afgewezen huisverbruik, lokaal
 
 Lees `docs/development_log/2026-09-21-household-rejection-evidence.md`.
 Branch `fix/household-rejection-evidence` vanaf dev.267. Afwijsredenen ontstaan in
@@ -772,11 +786,11 @@ registratie en diagnose-export. Geen wijzigingen aan geldige waarden, MEP of
 kwartierbalans; 240 vergelijkingen met dev.267 geven dezelfde observaties.
 76 gerichte tests, Ruff en mypy geslaagd. Nog niet gepubliceerd of live getest.
 
-Releasevoorbereiding na Alex’ akkoord: dev.268 via PR en CI. De aparte
+Releasevoorbereiding na Alex' akkoord: dev.268 via PR en CI. De aparte
 afwijsregistratie werkt zonder inschakelen van de snapshotproef. Installatie en
 nieuwe diagnose moeten de livewerking nog aantonen.
 
-## 2026-09-23 — Release dev.269: netbalans bij ontbrekende PV
+## 2026-09-23 - Release dev.269: netbalans bij ontbrekende PV
 
 Lees `docs/architecture/ADR-037.17-missing-pv-net-balance-review.md` en
 `docs/development_log/2026-09-23-missing-pv-net-balance.md`. Alex heeft release
@@ -786,7 +800,7 @@ en canonieke selectie blijven gelden; ontbrekende PV wordt niet ingevuld.
 Dev.268 is expliciet de eerste terugvalbasis. Publicatie via PR en CI;
 installatie en liveverificatie volgen afzonderlijk.
 
-## 2026-09-24 — lokaal crashherstel overbrugging samengesteld plan
+## 2026-09-24 - lokaal crashherstel overbrugging samengesteld plan
 
 Lees `docs/development_log/2026-09-24-shared-plan-bridge-owner.md`.
 De overbruggingscontrole volgt bij markt-/laadplannen de bewaarde laadherkomst;
@@ -795,13 +809,13 @@ gecontroleerde fout. Laadbeleid, marktroute en opslag blijven gelijk.
 Alex heeft release dev.270 aangevraagd; publicatie via PR en CI. Installatie
 en liveverificatie volgen afzonderlijk. Dev.268 blijft de afgesproken terugvalbasis.
 
-## 2026-09-26 — besloten financiële herziening marktroute
+## 2026-09-26 - besloten financi�le herziening marktroute
 
 Lees `docs/architecture/ADR-019.5-financial-market-revision.md`.
 Alex heeft het wijzigingsvoorstel bevestigd: behoud, inkorten en verwijderen
 zichtbaar vergelijken over de resterende uren van vandaag en morgen, met eerlijke
 eindvoorraad en behoud van laadverplichtingen. Het absolute exportbehoud wordt
-vervangen door canonieke financiële selectie; opslag controleert de verwerking.
+vervangen door canonieke financi�le selectie; opslag controleert de verwerking.
 Het oorspronkelijke incident en het voorafgaande overleg staan in
 `docs/development_log/2026-09-26-bridge-export-intent.md`.
 
@@ -811,10 +825,10 @@ Alex gaf om 19:55 akkoord op uitvoering. De implementatie is nu lokaal aanwezig;
 lees `docs/development_log/2026-09-26-market-revision-implementation.md` voor
 gedrag, verse verificatie, replays en beperkingen. Alex heeft om 20:50 akkoord
 gegeven op afzonderlijke release dev.271 via PR en CI. Installatie en livebewijs
-volgen daarna; het schakelpunt van 15:25–15:31 wordt vervolgens afzonderlijk
+volgen daarna; het schakelpunt van 15:25-15:31 wordt vervolgens afzonderlijk
 onderzocht. Dev.268 blijft de operationele terugvalbasis.
 
-### Vervolg — fix 2 na akkoord om 21:34
+### Vervolg - fix 2 na akkoord om 21:34
 
 Dev.271 is gepubliceerd via PR #668, merge
 `b5920fc046858fa07aaf2edaa91fb4c6160f1bad`. Alex meldt weer een actief plan;
@@ -822,44 +836,44 @@ volledig nieuw live-diagnosebewijs is nog niet ontvangen.
 
 Het schakelonderzoek staat in
 `docs/development_log/2026-09-26-switching-investigation.md`.
-De goedgekeurde beperkte reparatie is lokaal geïmplementeerd; lees
+De goedgekeurde beperkte reparatie is lokaal ge�mplementeerd; lees
 `docs/development_log/2026-09-26-charge-continuity-implementation.md` voor
-kandidaatcontinuïteit, uitvoeringsreden, replays en verificatiestatus. Alex heeft
+kandidaatcontinu�teit, uitvoeringsreden, replays en verificatiestatus. Alex heeft
 om 21:50 akkoord gegeven op afzonderlijke publicatie als dev.272 via PR en
 automatische controles. Installatie en liveverificatie volgen afzonderlijk.
-Het financiële tabblad is daarna een
+Het financi�le tabblad is daarna een
 afzonderlijk herstelpunt, vastgelegd in
 `docs/development_log/2026-09-26-financial-tab-triage.md`.
 
-### Vervolg — fix 3 na akkoord om 22:15
+### Vervolg - fix 3 na akkoord om 22:15
 
 Dev.272 is gepubliceerd via PR #669, merge
 `565150bdfe8caa0d9ebde512fcaad518d2843e64`. De diagnose van 22:09 bevestigt
 deze versie met een behouden actief plan om 22:07. Dit bewijst nog geen nieuwe
-belastingsproef van de herstelde laadcontinuïteit.
+belastingsproef van de herstelde laadcontinu�teit.
 
-Alex heeft de financiële herstelgrens bevestigd. Lees
+Alex heeft de financi�le herstelgrens bevestigd. Lees
 `docs/architecture/ADR-037.18-financial-result-availability.md` en
 `docs/development_log/2026-09-26-financial-availability.md`. Bedragen krijgen
 afzonderlijke meetdekking; historie en bestaande totalen blijven zichtbaar.
 De bestaande numerieke historie en voorraadkosten voor planning blijven gelijk.
-Lokaal geïmplementeerd en geverifieerd. Alex heeft om 22:39 akkoord gegeven op
+Lokaal ge�mplementeerd en geverifieerd. Alex heeft om 22:39 akkoord gegeven op
 afzonderlijke publicatie als dev.273 via PR en automatische controles.
-Installatie en livecontrole van het financiële tabblad volgen daarna.
+Installatie en livecontrole van het financi�le tabblad volgen daarna.
 
-### Vervolg — financiële afleiding na akkoord om 23:23
+### Vervolg - financi�le afleiding na akkoord om 23:23
 
 Dev.273 is gepubliceerd via PR #670, merge
 `1feaa9b049222fdf25bb9efdfbb2974c006ad369`. Alex bevestigt installatie; de
 diagnose van 23:16 toont deze versie met een behouden actief plan om 23:05.
-De resterende ontbrekende financiële waarden volgen uit nachtelijke PV en korte
+De resterende ontbrekende financi�le waarden volgen uit nachtelijke PV en korte
 brononderbrekingen. Lees
 `docs/architecture/ADR-037.19-financial-measurement-inference.md` en
 `docs/development_log/2026-09-26-financial-measurement-inference.md`.
 
-De goedgekeurde afleiding is lokaal geïmplementeerd op
+De goedgekeurde afleiding is lokaal ge�mplementeerd op
 `fix/financial-measurement-inference`: nachtbewijs, begrensde korte gaten,
-afgeleid huisverbruik en herkenbare financiële kwaliteit. Oorspronkelijke
+afgeleid huisverbruik en herkenbare financi�le kwaliteit. Oorspronkelijke
 dagvelden, voorraad, strikte terugblik en planning blijven gelijk. Het oude
 archief bevat geen zonhistorie: volledige historische nachtresultaten zijn
 daarmee nog niet geverifieerd. Geen nieuwe release, commit, push of livewijziging;
@@ -873,7 +887,7 @@ volgen na geslaagde publicatie afzonderlijk.
 
 
 Release dev.275: Alex heeft op 27 september 2026 om 16:13 Europe/Amsterdam
-akkoord gegeven op publicatie van de geïsoleerde planovergangenreparatie via PR
+akkoord gegeven op publicatie van de ge�soleerde planovergangenreparatie via PR
 en CI. Zie `docs/development_log/2026-09-27-retained-plan-boundaries.md`.
-Financiële meetverwerking, planuitleg en NOM-vervanging blijven vervolgstappen.
+Financi�le meetverwerking, planuitleg en NOM-vervanging blijven vervolgstappen.
 Installatie en livecontrole volgen na publicatie.

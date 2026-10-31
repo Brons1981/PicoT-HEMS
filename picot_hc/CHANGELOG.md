@@ -1,3 +1,9 @@
+# 0.1.0-dev.26
+
+- Behoud huisvermogen op het tablet wanneer de PV-omvormer in de nacht geen verse meting levert: neem alleen bij sun.sun below_horizon 0 W PV aan.
+- Behoud verse PV-metingen en de controles op net- en batterijvermogen. Overdag of bij onbekende zonnestatus blijft ontbrekende PV onbekend.
+- HEMS hoeft niet bijgewerkt te worden. Schakel na herstart de automatische HC-regeling weer in.
+
 # 0.1.0-dev.25
 
 - Werk de meegeleverde meldingsmodule bij naar de bestaande gedeelde versie; bestaande HC-meldingsaanroepen blijven gelijk.
@@ -51,7 +57,7 @@
 
 - Actuele temperatuur en ontvangsttijd samen ophalen via HA-sjabloon-API;
   voorkomt onterechte blokkering bij onveranderde Ecowitt-temperaturen.
-- Dezelfde controle in meetopslag en direct vóór een bronopdracht.
+- Dezelfde controle in meetopslag en direct v��r een bronopdracht.
 - Werkelijk oude/toekomstige of ontbrekende meldingen blijven geblokkeerd.
 - Duidelijke melding bij mislukte ontvangstcontrole; bestaande bronterugmelding
   blijft beschikbaar om eigen verwarming te stoppen.
@@ -78,7 +84,7 @@
 ## 0.1.0-dev.16
 
 - Eigen klimaatgrafiek per zone voor temperatuur, luchtvochtigheid en dauwpunt over de afgelopen 24 uur.
-- Temperatuur en dauwpunt delen de °C-as; relatieve luchtvochtigheid gebruikt een aparte 0–100%-as.
+- Temperatuur en dauwpunt delen de �C-as; relatieve luchtvochtigheid gebruikt een aparte 0-100%-as.
 - Meetwaarden aanwijzen, aantikken of met pijltjestoetsen bekijken. Ontbrekende waarden blijven onderbroken.
 
 ## 0.1.0-dev.15
@@ -111,7 +117,7 @@
 ## 0.1.0-dev.11
 
 - Daggroepen, losse dagkeuze en dupliceren; meerdere vensters per dag.
-- Eén temperatuur en comfortvinkje per venster; centrale optimalisatieband.
+- E�n temperatuur en comfortvinkje per venster; centrale optimalisatieband.
 - Comfort is een vast doel zonder economische afwijkingsruimte.
 - Dev.10-gegevens gearchiveerd; gewijzigde grenzen vragen controle.
 - Comfort blijft plannerinvoer zonder automatische apparaatopdrachten.
@@ -121,8 +127,8 @@
 - Bronvrij comfortschema beneden met begin/einde, harde ondergrens en flexibele band.
 - Plannerinvoer met comfortdeadlines; vaste doelen voor boven en badkamer.
 - Handmatige brontemperatuur als gedwongen bron met status, zones en eindmoment.
-- Directe dev.9-schemasturing vervalt; financiële planning volgt later.
-- Bestaande schema’s worden gearchiveerd en uitgeschakeld naar vensters omgezet.
+- Directe dev.9-schemasturing vervalt; financi�le planning volgt later.
+- Bestaande schema's worden gearchiveerd en uitgeschakeld naar vensters omgezet.
 
 ## 0.1.0-dev.9
 
@@ -134,7 +140,7 @@
 ## 0.1.0-dev.8
 
 - Cv-temperatuurbediening hersteld wanneer climate.huiskamer geen stapgrootte meldt.
-- Gebruik in dat geval de door de gebruiker bevestigde stap van 0,5 °C.
+- Gebruik in dat geval de door de gebruiker bevestigde stap van 0,5 �C.
 
 ## 0.1.0-dev.7
 
@@ -143,7 +149,7 @@
 
 ## 0.1.0-dev.6
 
-- Handmatige bronbediening voor cv, beide airco’s en badkamerverwarming.
+- Handmatige bronbediening voor cv, beide airco's en badkamerverwarming.
 - Duurzame opdrachtregistratie, HA-terugmeldingen, timeouts en foutstatussen.
 - Geen automatische herhaling; Uit kan een wachtende opdracht vervangen.
 - Schema, overrides, deurregeling en automatische prijsplanning blijven vervolgwerk.

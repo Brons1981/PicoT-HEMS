@@ -1,3 +1,11 @@
+# 2.0.0-dev.324
+
+- Beschrijf op Planning wat het actieve plan gaat doen: zonne-energie naar de batterij, resterende zonne-energie voor huisverbruik/teruglevering, netlaadhoeveelheden en laadvensters.
+- Toon het verwachte moment waarop 100% wordt bereikt vanuit de planprognose, met datum en tijd en zonder een deadline als voorspelling te gebruiken.
+- Leg stand-byperioden uit; toon alleen een financieel voordeel tegenover batterijondersteuning bij een aantoonbaar vergelijkbare totale-routeberekening.
+- Behoud gedateerde planuitleg bij dezelfde planidentiteit, ook na herstart. Ontbrekende gegevens worden niet als nul of besparing weergegeven.
+- Geen wijziging aan plankeuze of aansturing, geen planreset nodig. Voor bestaande plannen volgen nieuwe prognosegegevens bij een volgende planberekening. Home Climate blijft dev.24.
+
 # 2.0.0-dev.323
 
 - Beoordeel optionele laadherzieningen op totale routekosten bij gelijke eindvoorraad; een lagere laadprijs alleen mag geen duurder totaalplan laten winnen.

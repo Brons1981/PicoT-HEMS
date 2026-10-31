@@ -27,7 +27,8 @@ def explanation(**changes):
 
 
 def render(value):
-    return dom_run(["formatTimestamp", "formatDutchNumber", "renderPlanDecision"],
+    return dom_run(["formatTimestamp", "formatDutchNumber", "renderPlanNarrative",
+                    "renderPlanDecision"],
         "renderPlanDecision(" + json.dumps(value) + ");"
         "console.log(JSON.stringify({text:texts(element('plan-decision')),"
         "tags:walk(element('plan-decision')).map(n=>n.tagName)}));")

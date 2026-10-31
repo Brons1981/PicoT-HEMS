@@ -416,6 +416,10 @@ def _path(
                 battery_soc=(interval.storage_energy_at_end_wh / storage.usable_capacity_wh),
                 storage_energy_wh=interval.storage_energy_at_end_wh,
                 conversion_losses_w=0.0,
+                flow_starts_at=interval.starts_at,
+                pv_storage_input_wh=interval.pv_to_storage_input_wh,
+                pv_other_wh=interval.pv_to_household_wh + interval.pv_to_grid_wh,
+                grid_storage_input_wh=interval.grid_to_storage_input_wh,
             )
             for interval in central.intervals
         )
@@ -2139,6 +2143,10 @@ def _main_charge_energy_path(
             battery_soc=min(1.0, i.storage_energy_at_end_wh / storage.usable_capacity_wh),
             storage_energy_wh=i.storage_energy_at_end_wh,
             conversion_losses_w=(i.storage_charge_loss_wh + i.storage_discharge_loss_wh) / hours,
+            flow_starts_at=i.starts_at,
+            pv_storage_input_wh=i.pv_to_storage_input_wh,
+            pv_other_wh=i.pv_to_household_wh + i.pv_to_grid_wh,
+            grid_storage_input_wh=i.grid_to_storage_input_wh,
         )
         for i in projected
         for hours in ((i.ends_at - i.starts_at).total_seconds() / 3600,)

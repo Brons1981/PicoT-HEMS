@@ -56,7 +56,15 @@ def retain_plan_decision(
             return current
     except (ValueError, TypeError):
         return current
-    return {**current, "plan_decision": {**earlier, "evidence_retained": True}}
+    carried = {**earlier, "evidence_retained": True}
+    narrative = fresh.get("narrative")
+    prior_narrative = earlier.get("narrative")
+    if isinstance(narrative, dict):
+        if (not narrative.get("energy_available") and isinstance(prior_narrative, dict)
+                and prior_narrative.get("energy_available")):
+            narrative = {**prior_narrative, "windows": narrative.get("windows", [])}
+        carried["narrative"] = narrative
+    return {**current, "plan_decision": carried}
 
 
 def _validated(value: Any) -> dict[str, object]:

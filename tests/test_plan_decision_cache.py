@@ -35,6 +35,23 @@ def test_restart_restores_original_comparison_without_changing_input(tmp_path):
     assert restored["captured_at"] == incoming["captured_at"]
 
 
+def test_restart_retains_energy_evidence_but_uses_current_admitted_windows(tmp_path):
+    from test_plan_narrative_dashboard import narrative
+
+    path = tmp_path / "decision.json"
+    original = view(explanation(narrative=narrative()))["planning_status"]
+    cache(path).apply(original)
+    incoming = observation()
+    fresh_windows = [{"kind": "standby", "starts_at": "2026-10-31T20:00:00Z",
+                      "ends_at": "2026-10-31T22:00:00Z"}]
+    incoming["plan_decision"]["narrative"] = narrative(
+        energy_available=False, days=[], windows=fresh_windows)
+    restored = cache(path).apply(incoming)["plan_decision"]["narrative"]
+    assert restored["days"] == original["plan_decision"]["narrative"]["days"]
+    assert restored["windows"] == fresh_windows
+    assert restored["projected_at"] == "2026-10-31T19:00:00Z"
+
+
 def test_fresh_comparison_replaces_cache_and_is_never_overwritten(tmp_path):
     path = tmp_path / "decision.json"
     cache(path).apply(view()["planning_status"])

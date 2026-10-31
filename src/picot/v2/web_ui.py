@@ -29,11 +29,13 @@ from picot.v2.diagnostic_downloads import diagnostic_zip, incident_overview
 from picot.v2.household_calendar_history import CALENDAR_REPORT_PATH, calendar_dashboard_view
 from picot.v2.plan_decision_cache import PlanDecisionCache, retain_plan_decision
 from picot.v2.plan_decision_explanation import build_plan_decision
+from picot.v2.plan_narrative import build_plan_narrative
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
 from picot.v2.price_plan_reference import PricePlanReference
 from picot.v2.projection import Projection, project_market_revision_comparison
 from picot.v2.recovery_messages import recovery_details, recovery_message
 from picot.v2.soc_projection_cache import SOCDisplayHistory, SOCProjectionCache
+from picot.v2.standby_explanation import standby_comparison
 from picot.v2.startup_progress import StartupProgress
 from picot.v2.storage_mode_transition_history import StorageModeTransitionEvent
 
@@ -5851,6 +5853,69 @@ DASHBOARD_HTML = """<!doctype html>
       notice.textContent = status?.message_nl ?? "";
     }
 
+    function renderPlanNarrative(narrative, paragraph, now = new Date()) {
+      if (!narrative) return;
+      const finite = value => typeof value === "number" && Number.isFinite(value);
+      const dayKey = date => new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(date);
+      const today = dayKey(now);
+      const tomorrow = dayKey(new Date(Date.parse(today + "T12:00:00Z") + 86400000));
+      const stamp = value => new Intl.DateTimeFormat("nl-NL", {
+        timeZone: "Europe/Amsterdam", day: "numeric", month: "long",
+        hour: "2-digit", minute: "2-digit",
+      }).format(new Date(value));
+      const energy = value => `${formatDutchNumber(value)} kWh`;
+      const days = (narrative.days ?? []).filter(day => day.date >= today);
+      const windows = (narrative.windows ?? []).filter(w => Date.parse(w.ends_at) > now.getTime());
+      if (!days.length && !windows.length) return;
+      paragraph("Wat het actieve plan gaat doen", "h2");
+      for (const day of days) {
+        const date = new Intl.DateTimeFormat("nl-NL", {
+          timeZone: "Europe/Amsterdam", day: "numeric", month: "long",
+        }).format(new Date(day.date + "T12:00:00Z"));
+        const label = day.date === today ? `Vandaag (${date})` :
+          day.date === tomorrow ? `Morgen (${date})` : `Op ${date}`;
+        if (day.starts_at && day.ends_at) {
+          paragraph(`Prognoseperiode: ${stamp(day.starts_at)} tot ${stamp(day.ends_at)} uur.`);
+        }
+        if (finite(day.pv_charge_kwh) && finite(day.pv_other_kwh)) {
+          paragraph(`${label} wordt de batterij volgens het plan met ` +
+            `${energy(day.pv_charge_kwh)} zonne-energie geladen (vóór laadverliezen). ` +
+            `${energy(day.pv_other_kwh)} zonne-energie is beschikbaar voor ` +
+            "direct huisverbruik of teruglevering.");
+        }
+        if (finite(day.grid_charge_kwh)) {
+          paragraph(`${label} gaat naar verwachting ${energy(day.grid_charge_kwh)} ` +
+            "vanuit het net naar de batterij (vóór laadverliezen).");
+        }
+        if (day.full_at && Date.parse(day.full_at) > now.getTime()) {
+          paragraph(`De batterij bereikt naar verwachting op ${stamp(day.full_at)} uur 100%.`);
+        }
+      }
+      for (const window of windows) {
+        const period = `Van ${stamp(window.starts_at)} tot ${stamp(window.ends_at)} uur`;
+        if (window.kind === "grid_charge") {
+          paragraph(`${period} is aanvullend laden via het net gepland.`);
+        } else if (window.kind === "standby") {
+          paragraph(`${period} blijft de batterij in stand-by. ` +
+            "De batterij ondersteunt het huis dan niet; zon en net voorzien in het huisverbruik.");
+        }
+      }
+      if (!narrative.energy_available) {
+        paragraph("De laadhoeveelheden zijn voor dit actieve plan nog niet vastgelegd. " +
+          "De beschikbare geplande tijden staan hierboven.");
+      } else {
+        paragraph("Verwachting volgens de planberekening van " +
+          `${stamp(narrative.projected_at)} uur. ` +
+          "Hoeveelheden gelden voor de vastgelegde prognoseperiode; het zijn geen metingen.");
+      }
+      if (!days.some(day => day.full_at && Date.parse(day.full_at) > now.getTime())) {
+        paragraph("Er is geen toekomstig moment waarop 100% wordt bereikt vastgelegd " +
+          "in deze planprognose.");
+      }
+    }
+
     function renderPlanDecision(decision) {
       const target = element("plan-decision");
       target.replaceChildren();
@@ -5859,6 +5924,7 @@ DASHBOARD_HTML = """<!doctype html>
         node.textContent = text;
         target.append(node);
       };
+      renderPlanNarrative(decision?.narrative, paragraph);
       const labels = {retained: "Bestaand plan behouden", replaced: "Plan aangepast",
         selected: "Plan gekozen", publication_failed: "Bestaand plan blijft actief",
         failed: "Bestaand plan blijft actief", fallback: "Veilige terugval actief"};
@@ -5877,6 +5943,16 @@ DASHBOARD_HTML = """<!doctype html>
       const comparable = decision.horizon_start && decision.horizon_end &&
         [decision.incumbent_cost_eur, decision.alternative_cost_eur, decision.improvement_eur]
           .every(finite);
+      const standby = decision.standby_comparison;
+      if (comparable && standby && finite(standby.benefit_eur) && standby.benefit_eur > 0) {
+        paragraph(`Stand-by van ${formatTimestamp(standby.starts_at)} tot ` +
+          `${formatTimestamp(standby.ends_at)} is volgens deze volledige routevergelijking ` +
+          `${money(standby.benefit_eur)} voordeliger dan batterijondersteuning. ` +
+          "Dit is het verschil over de hele vergelijkingsperiode, inclusief laadverliezen.");
+      } else if (decision.narrative?.windows?.some(w => w.kind === "standby")) {
+        paragraph("Voor stand-by tegenover batterijondersteuning is geen afzonderlijk, " +
+          "vergelijkbaar financieel voordeel vastgelegd.");
+      }
       if (comparable) {
         paragraph(`Vergelijking: ${formatTimestamp(decision.horizon_start)} tot ` +
           `${formatTimestamp(decision.horizon_end)}. Vergelijkbare verwachte nettokosten.`);
@@ -5898,7 +5974,8 @@ DASHBOARD_HTML = """<!doctype html>
       if (decision.solcast_basis) assumptions.push(`Zonneprognose: ${decision.solcast_basis}`);
       if (decision.household_assumption) assumptions.push(decision.household_assumption);
       if (decision.ev_assumption) assumptions.push(decision.ev_assumption);
-      if (assumptions.length) paragraph(`Uitgangspunten: ${assumptions.join(". ")}.`);
+      if (assumptions.length) paragraph(`Uitgangspunten: ` +
+        `${assumptions.map(value => value.replace(/[.]+$/, "")).join(". ")}.`);
     }
 
     function renderTodaySummary(view) {
@@ -7844,6 +7921,9 @@ def _build_plan_explanation(run: CanonicalPipelineRun) -> dict[str, object]:
 
 def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
     """Expose one pipeline run as facts without deriving new conclusions."""
+    plan_decision = build_plan_decision(run)
+    plan_decision["narrative"] = build_plan_narrative(run)
+    plan_decision["standby_comparison"] = standby_comparison(run, plan_decision)
     candidates_by_id = {
         candidate.candidate_id: candidate for candidate in run.candidate_set.candidates
     }
@@ -8040,7 +8120,7 @@ def _build_planning_status(run: CanonicalPipelineRun) -> dict[str, object]:
             "confidence": (winning_outcome.confidence if winning_outcome is not None else None),
         },
         "market_revision_comparison": project_market_revision_comparison(run),
-        "plan_decision": build_plan_decision(run),
+        "plan_decision": plan_decision,
         "storage_target": {
             "required_energy_wh": (
                 requirement.required_energy_wh if requirement is not None else None

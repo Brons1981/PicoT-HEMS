@@ -137,6 +137,12 @@ class ProjectedEnergyState:
     controllable_load_w: float | None = None
     conversion_losses_w: float | None = None
     phase_loads: tuple[PhaseProjection, ...] = ()
+    # Optional producer-owned input-energy evidence for dashboard descriptions.
+    # These observations do not participate in candidate scoring or execution.
+    flow_starts_at: datetime | None = None
+    pv_storage_input_wh: float | None = None
+    pv_other_wh: float | None = None
+    grid_storage_input_wh: float | None = None
 
     def __post_init__(self) -> None:
         if self.at.tzinfo is None or self.at.utcoffset() is None:

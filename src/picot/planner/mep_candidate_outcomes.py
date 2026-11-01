@@ -1692,6 +1692,11 @@ def produce_main_charge_portfolio(
             supplemental=windows.purpose == "bridge",
             market_revision=financial_market_comparison,
         )
+        path = replace(
+            path,
+            projected_import_cost_eur=sum(i.grid_import_cost_eur for i in financial.intervals),
+            projected_export_revenue_eur=sum(i.grid_export_result_eur for i in financial.intervals),
+        )
         candidates.append(
             DomainCandidate(
                 candidate_id=candidate_id,

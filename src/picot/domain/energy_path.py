@@ -186,6 +186,9 @@ class EnergyPath:
     mapping_version: int
     assumptions: tuple[str, ...]
     confidence: float
+    # Display-only full-horizon cash, independent of acquisition-rate scoring.
+    projected_import_cost_eur: float | None = None
+    projected_export_revenue_eur: float | None = None
 
     def __post_init__(self) -> None:
         for text_value, label in (

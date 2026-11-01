@@ -1,3 +1,10 @@
+## Release HEMS dev.326 - 1 november 2026
+
+Alex vraagt release van de kostenprojectie. Basis main 25b36a8a132c8e90d1838ef91a303059d5ddad13.
+Werkmap plan-cost-projection; publicatie via PR na groene CI. ED blijft dev.14, HC dev.26.
+Geen planreset; kosten verschijnen bij een nieuwe planberekening. Geen live installatie.
+Zie docs/development_log/2026-11-01-active-plan-cost-projection.md.
+
 ## Release HEMS dev.325 en ED dev.14 - 1 november 2026
 
 Alex heeft release van de gezamenlijke EV/batterijreparatie aangevraagd. Basis main:

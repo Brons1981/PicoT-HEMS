@@ -5870,6 +5870,22 @@ DASHBOARD_HTML = """<!doctype html>
       const windows = (narrative.windows ?? []).filter(w => Date.parse(w.ends_at) > now.getTime());
       if (!days.length && !windows.length) return;
       paragraph("Wat het actieve plan gaat doen", "h2");
+      const cost = narrative.cost_projection;
+      if (cost && Date.parse(cost.ends_at) > now.getTime() &&
+          [cost.total_cost_eur, cost.import_cost_eur, cost.export_revenue_eur].every(finite)) {
+        const money = value => new Intl.NumberFormat("nl-NL", {
+          style: "currency", currency: "EUR", minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(value);
+        paragraph(`Verwachte totale stroomkosten: ${money(cost.total_cost_eur)}. ` +
+          `Netinkoop ${money(cost.import_cost_eur)} min terugleveropbrengst ` +
+          `${money(cost.export_revenue_eur)}.`);
+        paragraph(`Kostenprognose van ${stamp(cost.starts_at)} tot ${stamp(cost.ends_at)} uur, ` +
+          "inclusief het verwachte huisverbruik, de verwerkte autolaadsessie en de batterij. " +
+          "Exclusief vaste kosten; dit is een prognose, geen gemeten dagtotaal.");
+      } else {
+        paragraph("Voor dit actieve plan is nog geen volledige kostenprognose beschikbaar.");
+      }
       for (const day of days) {
         const date = new Intl.DateTimeFormat("nl-NL", {
           timeZone: "Europe/Amsterdam", day: "numeric", month: "long",

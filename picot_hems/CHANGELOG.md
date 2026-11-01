@@ -1,3 +1,10 @@
+# 2.0.0-dev.326
+
+- Toon de verwachte totale stroomkosten van het actieve plan, ook na herstel van het SOC-doel.
+- Splits netinkoop en terugleveropbrengst uit en vermeld de exacte prognoseperiode.
+- Bewaar de kostenprognose bij hetzelfde plan; neem geen oude kosten over bij een nieuw plan.
+- Geen planreset nodig. Kosten verschijnen na een nieuwe planberekening; bestaande prognoses zonder kosten blijven expliciet onbekend.
+
 # 2.0.0-dev.325
 
 - Vergelijk de totale kosten van huis, EV en batterij en verplaats het batterijladen als de combinatie goedkoper is.

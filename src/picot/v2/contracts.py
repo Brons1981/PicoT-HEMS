@@ -984,6 +984,10 @@ class EnergyPath:
     segments: tuple[PathSegment, ...] = ()
     projected_states: tuple[ProjectedEnergyState, ...] = ()
     capability_confidence: float | None = None
+    projected_import_cost_eur: float | None = None
+    projected_export_revenue_eur: float | None = None
+    cost_starts_at: datetime | None = None
+    cost_ends_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.segment_ids != tuple(segment.segment_id for segment in self.segments):

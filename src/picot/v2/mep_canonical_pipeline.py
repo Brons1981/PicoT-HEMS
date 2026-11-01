@@ -2099,6 +2099,10 @@ def _build_daily_main_run(
             segments=p.segments,
             projected_states=p.projected_states,
             capability_confidence=p.confidence,
+            projected_import_cost_eur=p.projected_import_cost_eur,
+            projected_export_revenue_eur=p.projected_export_revenue_eur,
+            cost_starts_at=p.horizon_start,
+            cost_ends_at=p.horizon_end,
         )
         for p in (comparable.candidate_set.energy_paths if comparable is not None else ())
     )

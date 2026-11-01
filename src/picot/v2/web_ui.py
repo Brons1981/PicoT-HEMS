@@ -1059,6 +1059,7 @@ DASHBOARD_HTML = """<!doctype html>
 
     <p id="dashboard-status" class="planning-attention" role="status" hidden></p>
     <p id="ev-storage-warning" class="planning-attention" role="alert" hidden></p>
+    <p id="soc-reserve-status" role="status" hidden></p>
 
     <section id="planning-reset" class="status" aria-live="polite">
       <span id="planning-reset-result">
@@ -6036,6 +6037,12 @@ DASHBOARD_HTML = """<!doctype html>
       const pipeline = Array.isArray(view.pipeline) ? view.pipeline : [];
       const planningInput = pipeline.find((item) => item.stage === 1);
       const primitiveBoundary = pipeline.find((item) => item.stage === 7);
+      const reserveStatus = element("soc-reserve-status");
+      reserveStatus.hidden = primitiveBoundary?.attributes?.execution_reason
+        !== "execution_soc_minimum_reached";
+      reserveStatus.textContent = reserveStatus.hidden ? "" :
+        "SOC-ondergrens bereikt: standby gevraagd om verder ontladen te voorkomen. " +
+        "Het geplande laadvenster blijft ongewijzigd.";
       const evWarning = element("ev-storage-warning");
       evWarning.hidden = primitiveBoundary?.attributes?.execution_reason
         !== "ev_storage_support_prohibited";

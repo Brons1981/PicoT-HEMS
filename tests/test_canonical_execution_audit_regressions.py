@@ -57,10 +57,25 @@ def test_persisted_daily_segment_constraints_reach_request(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("soc", [0.01, 0.1])
-def test_persisted_constraint_rejects_out_of_bounds_live_soc(tmp_path, monkeypatch, soc):
+def test_persisted_constraint_stops_discharge_at_lower_bound(tmp_path, monkeypatch, soc):
+    from picot.domain.execution_primitive import ExecutionPrimitive
+    from picot.v2.zendure_mode_capabilities import ZendureModeMapping
+
     store, observed, segment = daily_boundary(tmp_path, monkeypatch, discharge=True)
     observed = replace(
         observed,
+        storage_mode_capability_evidence=replace(
+            observed.storage_mode_capability_evidence,
+            mappings=(*observed.storage_mode_capability_evidence.mappings,
+                      ZendureModeMapping("Standby", (ExecutionPrimitive.STANDBY,), "none")),
+            current_vendor_mode="Test active",
+        ),
+        capability_snapshot_set=replace(
+            observed.capability_snapshot_set,
+            capabilities=tuple(replace(c, supported_primitives=(
+                *c.supported_primitives, ExecutionPrimitive.STANDBY,
+            )) for c in observed.capability_snapshot_set.capabilities),
+        ),
         current_storage_states=tuple(
             replace(state, current_soc=soc) for state in observed.current_storage_states
         ),
@@ -73,9 +88,42 @@ def test_persisted_constraint_rejects_out_of_bounds_live_soc(tmp_path, monkeypat
         _daily_execution_suspended=False,
     )
     outcome = runtime.advance_committed_boundary(observed, execution_enabled=True)
-    assert outcome.status == "blocked"
-    assert outcome.failure_reason == "execution_soc_below_segment_minimum"
-    assert calls == []
+    assert outcome.status == "dispatched", outcome
+    assert outcome.failure_reason is None
+    assert outcome.reason == "execution_soc_minimum_reached"
+    assert calls[0][0].primitive is ExecutionPrimitive.STANDBY
+    assert calls[0][0].requested_power_w is None
+    assert calls[0][0].soc_constraint == segment.soc_constraint
+    assert store.load_active_daily_main_plan("battery").segments == (
+        observed.daily_charge_context.main_plans[0].segments
+    )
+    assert runtime.advance_committed_boundary(observed, execution_enabled=True).status == (
+        "awaiting_mode_feedback"
+    )
+    confirmed = replace(observed, storage_mode_capability_evidence=replace(
+        observed.storage_mode_capability_evidence, current_vendor_mode="Standby",
+    ))
+    assert runtime.advance_committed_boundary(confirmed, execution_enabled=True).status == (
+        "already_active"
+    )
+    assert len(calls) == 1
+    plan = store.load_active_daily_main_plan("battery")
+    charge = next(s for s in plan.segments if s.primitive is ExecutionPrimitive.CHARGE_AT_POWER)
+    later = replace(
+        confirmed, captured_at=charge.starts_at,
+        storage_mode_capability_evidence=replace(
+            confirmed.storage_mode_capability_evidence, captured_at=charge.starts_at,
+        ),
+        daily_charge_context=replace(confirmed.daily_charge_context, restored_at=charge.starts_at),
+        capability_snapshot_set=replace(
+            confirmed.capability_snapshot_set, captured_at=charge.starts_at,
+        ),
+    )
+    later = with_mode(later, ExecutionPrimitive.CHARGE_AT_POWER)
+    assert runtime.advance_committed_boundary(later, execution_enabled=True).status == "dispatched"
+    assert calls[-1][0].primitive is ExecutionPrimitive.CHARGE_AT_POWER
+    assert calls[-1][0].segment_id == charge.segment_id
+    assert store.load_active_daily_main_plan("battery") == plan
 
 
 @pytest.mark.parametrize("failure", [TimeoutError("HA request timed out"), 503])

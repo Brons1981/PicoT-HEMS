@@ -637,9 +637,13 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                     raise ValueError("reconciliation requires historical completion evidence")
             previous_plan = self.load_daily_main_plan(assignment.assignment_id)
             assert previous_plan is not None
+            # A bridge can lie between main blocks of the same daily goal.
+            # Elapsed blocks remain in daily_main_history, not in the new
+            # future execution horizon. Ongoing and future blocks stay protected.
             originals = tuple(s for s in previous_plan.segments
-                              if s.segment_id in {m.segment_id for m in assignment.main_segments})
-            if len(matched) != len(originals) or any(
+                              if s.segment_id in {m.segment_id for m in assignment.main_segments}
+                              and s.ends_at > plan.created_at)
+            if not originals or len(matched) != len(originals) or any(
                 any(getattr(a, field) != getattr(b, field) for field in (
                     "starts_at", "ends_at", "primitive", "requested_power_w", "soc_constraint",
                     "capability_id", "charge_source_policy", "energy_profile_id",

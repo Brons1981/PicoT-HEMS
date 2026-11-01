@@ -1,3 +1,9 @@
+# 2.0.0-dev.327
+
+- Herstel terugval bij overbrugging tussen twee hoofdlaadblokken nadat het eerste blok is afgelopen.
+- Bescherm lopende en toekomstige hoofdlaadblokken ongewijzigd; bewaar verstreken blokken in de historie.
+- Geen planreset nodig. ED en HC blijven ongewijzigd.
+
 # 2.0.0-dev.326
 
 - Toon de verwachte totale stroomkosten van het actieve plan, ook na herstel van het SOC-doel.

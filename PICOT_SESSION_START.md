@@ -1,3 +1,10 @@
+## Release HEMS dev.327 - 1 november 2026
+
+Alex vraagt release van de overbruggingsreparatie na een verstreken hoofdlaadblok.
+Basis main e356a86472853e3c1e9de5d286a79ca399818f74; werkmap bridge-elapsed-main-fix.
+Publicatie via PR na groene CI. ED blijft dev.14, HC dev.26. Geen planreset of live installatie.
+Zie docs/development_log/2026-11-01-bridge-after-elapsed-main.md.
+
 ## Release HEMS dev.326 - 1 november 2026
 
 Alex vraagt release van de kostenprojectie. Basis main 25b36a8a132c8e90d1838ef91a303059d5ddad13.

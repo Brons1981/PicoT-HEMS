@@ -18,6 +18,7 @@ def build_plan_narrative(run: CanonicalPipelineRun) -> dict[str, Any]:
     result: dict[str, Any] = {
         "days": [], "windows": [], "projected_at": now.isoformat(),
         "energy_available": False,
+        "cost_projection": None,
     }
     if run.evaluation.status == "fallback_active":
         return result
@@ -55,6 +56,21 @@ def build_plan_narrative(run: CanonicalPipelineRun) -> dict[str, Any]:
     result["windows"] = merged
     if len(admitted) != 1 or not admitted.issubset(paths):
         return result
+    active_path = paths[next(iter(admitted))]
+    import_cost = active_path.projected_import_cost_eur
+    export_revenue = active_path.projected_export_revenue_eur
+    if (active_path.snapshot_id == run.planning_input.snapshot_id
+            and active_path.cost_starts_at == now
+            and active_path.cost_ends_at is not None and active_path.cost_ends_at > now
+            and import_cost is not None and isfinite(import_cost)
+            and export_revenue is not None and isfinite(export_revenue)):
+        result["cost_projection"] = {
+            "starts_at": now.isoformat(),
+            "ends_at": active_path.cost_ends_at.isoformat(),
+            "import_cost_eur": import_cost,
+            "export_revenue_eur": export_revenue,
+            "total_cost_eur": import_cost - export_revenue,
+        }
     days: dict[str, dict[str, Any]] = {}
 
     def day_for(at: datetime) -> dict[str, Any]:

@@ -47,13 +47,22 @@ def test_real_comparison_selects_low_price_without_mutating_committed_plan(tmp_p
     assert store._load_payload() == before
 
 
-def test_published_partial_horizon_returns_provisional_not_invented_prices(tmp_path):
+def test_missing_battery_horizon_prices_blocks_incomplete_total_comparison(tmp_path):
     _, snapshot, _ = scenario(tmp_path, complete=False, soc=0.9)
     answer = advise(snapshot, request(snapshot, ready_by=(
         snapshot.captured_at + timedelta(hours=40)).isoformat()), inputs()["conversion_model"])
+    assert answer["status"] == "blocked", answer
+    assert answer["reason"] == "joint_comparison_battery_horizon_prices_incomplete"
+
+
+def test_deadline_after_complete_plan_is_explicitly_provisional(tmp_path):
+    _, snapshot, _ = scenario(tmp_path, soc=0.9)
+    answer = advise(snapshot, request(snapshot, available_from=(
+        snapshot.captured_at + timedelta(hours=35)).isoformat(), ready_by=(
+        snapshot.captured_at + timedelta(hours=40)).isoformat()), inputs()["conversion_model"])
     assert answer["status"] == "provisional", answer
-    assert answer["price_coverage_until"] == (
-        snapshot.captured_at + timedelta(hours=24)).isoformat()
+    assert "battery_plan_ends_before_requested_deadline" in answer["provisional_reasons"]
+    assert "prices_missing_before_requested_deadline" in answer["provisional_reasons"]
 
 
 @pytest.mark.parametrize("changes,reason", [
@@ -110,10 +119,10 @@ def test_invalid_retained_route_does_not_become_an_ev_candidate(tmp_path):
 
 def test_offset_equivalent_deadlines_compare_as_instants(tmp_path):
     _, snapshot, _ = scenario(tmp_path, soc=0.9)
-    value = request(snapshot, ready_by="2026-08-23T12:30:00+02:00")
+    value = request(snapshot, ready_by="2026-08-23T12:32:00+02:00")
     answer = advise(snapshot, value, inputs()["conversion_model"])
     assert answer["status"] == "ready", answer
-    assert answer["slots"][0]["ends_at"] == "2026-08-23T10:30:00+00:00"
+    assert answer["slots"][0]["ends_at"] == "2026-08-23T10:32:00+00:00"
 
 
 def test_pv_cashflow_can_win_over_lower_market_price(tmp_path):
@@ -130,7 +139,8 @@ def test_pv_cashflow_can_win_over_lower_market_price(tmp_path):
     answer = advise(snapshot, request(snapshot, ready_by=(
         snapshot.captured_at + timedelta(hours=2)).isoformat()), inputs()["conversion_model"])
     assert answer["status"] == "ready", answer
-    assert answer["slots"][0]["starts_at"] == snapshot.captured_at.isoformat()
+    assert answer["slots"][0]["starts_at"] == (
+        snapshot.captured_at + timedelta(seconds=120)).isoformat()
 
 
 def test_dst_fold_ready_by_has_distinct_elapsed_capacity(tmp_path):
@@ -150,9 +160,10 @@ def test_dst_fold_ready_by_has_distinct_elapsed_capacity(tmp_path):
 
 def test_partial_quarter_energy_is_not_rounded_up(tmp_path):
     _, snapshot, _ = scenario(tmp_path, soc=0.9)
-    end = snapshot.captured_at + timedelta(hours=1234 / 2000)
+    start = snapshot.captured_at + timedelta(seconds=120)
+    end = start + timedelta(hours=1234 / 2000)
     answer = advise(snapshot, request(snapshot, remaining_energy_wh=1234,
                     ready_by=end.isoformat()), inputs()["conversion_model"])
     assert answer["status"] == "ready", answer
-    assert answer["slots"] == [{"starts_at": snapshot.captured_at.isoformat(),
+    assert answer["slots"] == [{"starts_at": start.isoformat(),
                                "ends_at": end.isoformat(), "energy_wh": 1234}]

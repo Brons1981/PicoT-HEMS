@@ -1416,7 +1416,7 @@ def _poll_live_cycle(
     advance_clock_boundaries: (
         Callable[[PlanningInputBundle], bool | None] | None
     ) = None,
-    observe: Callable[[PlanningInputBundle], None] | None = None,
+    observe: Callable[[PlanningInputBundle], bool | None] | None = None,
     runtime_monitor: RuntimeMonitorSession | None = None,
     runtime_observations: (
         Callable[[PlanningInputBundle], tuple[RuntimeObservation, ...]] | None
@@ -1476,8 +1476,23 @@ def _poll_live_cycle(
         if prepare_bundle is not None:
             bundle, preparation_diagnostics = prepare_bundle(bundle)
 
-    if observe is not None:
-        observe(bundle)
+    if observe is not None and observe(bundle):
+        # An accepted joint route changes durable ownership on this thread.
+        # Never execute or admit from the pre-publication ownership context.
+        if runtime_monitor is not None:
+            signal = runtime_monitor.observe((RuntimeObservation(
+                observation_id=f"joint-ev-acceptance:{bundle.snapshot.snapshot_id}",
+                kind=RuntimeObservationKind.COMMITMENT_CHANGED,
+                observed_at=bundle.snapshot.captured_at,
+                source_reference="accepted-joint-ev-route",
+                new_value="joint_route_committed",
+            ),), now=bundle.snapshot.captured_at)
+            force_runtime_replan = signal.fresh_snapshot_required
+        bundle = load_current_bundle()
+        preparation_diagnostics = None
+        if prepare_bundle is not None:
+            bundle, preparation_diagnostics = prepare_bundle(bundle)
+        previous_signature = None
 
     if prepare_bundle is not None:
 
@@ -2866,10 +2881,18 @@ def main() -> None:
         token, lambda snapshot: market_daily_planner_runtime.planning_configuration(snapshot)[0],
         accepted_loads,
     )
+    from picot.v2.ev_joint_adoption import JointEVAdopter
+
+    joint_ev_adopter = JointEVAdopter(
+        active_plan_commitment_store,
+        lambda snapshot: market_daily_planner_runtime.planning_configuration(snapshot)[0],
+        execution_enabled=execution_enabled,
+    )
     ev_deadline_advisor = (
         home_assistant_advisor(
             token,
             lambda snapshot: market_daily_planner_runtime.planning_configuration(snapshot)[0],
+            adopt=joint_ev_adopter.adopt, receipt=joint_ev_adopter.receipt,
         ) if options.get("energy_device_sessions_enabled", False) is True else None
     )
     web_view_store.set_diagnostic_paths(
@@ -3349,11 +3372,13 @@ def main() -> None:
             pass
 
     @startup.stage("source_publication", "Bronstatus en terugblik voorbereiden", 40)
-    def publish_input_sources(bundle: PlanningInputBundle) -> None:
+    def publish_input_sources(bundle: PlanningInputBundle) -> bool | None:
         startup.enter("source_advice", "Energieadvies bijwerken", 40)
         energy_outlook_publisher.submit(bundle.snapshot, bundle.controlled_load_summary,
                                         bundle.load_replacement_basis)
         if ev_deadline_advisor is not None:
+            if ev_deadline_advisor.accept_pending(bundle.snapshot):
+                return True
             ev_deadline_advisor.submit(bundle.snapshot)
         startup.enter("source_status", "Bronstatus publiceren", 40)
         publish_recalculation_status()
@@ -3378,6 +3403,7 @@ def main() -> None:
             except Exception as exc:
                 print(json.dumps({"event": "picot_v2_grid_charge_review_error",
                                   "error": type(exc).__name__}), flush=True)
+        return False
 
     def refresh_soc_expectation(bundle: PlanningInputBundle) -> None:
         # Dashboard evidence only: one unchanged-route simulation, no search,

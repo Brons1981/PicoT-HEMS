@@ -73,7 +73,7 @@ def read_session_demand(
     execution_scope_id: str,
     live_policy: ExternalLoadPolicy | None = None,
 ) -> ExternalLoadPolicy | None:
-    """Admit explicitly confirmed demand independently of regulation authority."""
+    """Admit user-accepted demand independently of charger switch permission."""
     if (
         not payload
         or payload.get("contract") != SESSION_METHOD
@@ -88,7 +88,16 @@ def read_session_demand(
         if generated.tzinfo is None or not 0 <= (captured_at - generated).total_seconds() <= 15:
             return None
         session = payload.get("session")
-        if not isinstance(session, dict) or session.get("confirmed") is not True:
+        if not isinstance(session, dict):
+            return None
+        advice = session.get("accepted_advice")
+        joint_pending = (
+            session.get("joint_pending") is True
+            and session.get("state") == "planned"
+            and session.get("recognition_source") == "accepted_hems_advice"
+            and isinstance(advice, dict) and bool(advice.get("selection_id"))
+        )
+        if session.get("confirmed") is not True and not joint_pending:
             return None
         state = session.get("state")
         if state not in {"planned", "active", "interrupted"}:

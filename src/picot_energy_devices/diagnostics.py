@@ -39,6 +39,35 @@ SESSION_FIELDS = {
     "expected_duration_seconds", "remaining_duration_seconds", "delivered_energy_wh",
     "remaining_energy_wh", "planned_start", "planned_end", "measured_at", "expected_power_w",
 }
+ADVICE_FIELDS = {
+    "contract", "session_id", "request_revision", "generated_at", "snapshot_id", "run_id",
+    "method_version", "status", "reason", "state", "available_from", "ready_by",
+    "remaining_energy_wh", "fixed_power_w", "evidence_source", "evidence_at", "charge_target",
+    "required_energy_wh", "scheduled_energy_wh", "advisory_only", "selection_scope",
+    "storage_support_allowed", "price_coverage_until", "published_price_coverage_until",
+    "assessed_horizon_until", "retained_plan_id", "provisional", "candidate_count",
+    "rejected_candidate_count", "search_truncated", "estimated_incremental_cost_eur",
+    "battery_checkpoints_preserved", "winning_candidate_id", "provisional_reasons",
+    "total_cost_eur", "baseline_total_cost_eur", "savings_eur", "comparison",
+    "candidate_comparisons", "candidates", "slots", "starts_at", "ends_at", "energy_wh",
+    "candidate_id", "battery_plan_id", "battery_route_changed", "accepted", "rejection_reasons",
+    "terminal_storage_energy_wh", "baseline_terminal_storage_energy_wh",
+    "selection_id", "execution_status", "joint_acceptance_required", "comparison_horizon_until",
+    "committed_at", "committed_plan_id", "execution_plan_id",
+    "execution_not_before", "earliest_executable_start", "terminal_storage_requirement_wh",
+}
+
+
+def _advice_data(value: object, *, depth: int = 0) -> object:
+    """Copy only diagnostic contract fields; never persist a raw transport/config payload."""
+    if depth > 8:
+        return None
+    if isinstance(value, dict):
+        return {k: _advice_data(v, depth=depth + 1) for k, v in value.items()
+                if k in ADVICE_FIELDS}
+    if isinstance(value, (list, tuple)):
+        return [_advice_data(v, depth=depth + 1) for v in value[:1000]]
+    return value if value is None or isinstance(value, (str, int, float, bool)) else None
 
 
 class DiagnosticsRecorder:
@@ -79,6 +108,10 @@ class DiagnosticsRecorder:
                                 if isinstance(session, dict) else None)}
         elif kind == "startup":
             data = {"version": __version__, "settings": self.options}
+        elif kind == "ev_advice":
+            data = {"request": _advice_data(payload.get("request")),
+                    "advice": _advice_data(payload.get("advice")),
+                    "accepted": payload.get("accepted") is True}
         else:
             return
         try:
@@ -114,6 +147,8 @@ class DiagnosticsRecorder:
                                        "measurement_available", "error")]
                                      if isinstance(session, dict)
                                      else payload.get("ev_switch_state"))
+                    elif kind == "ev_advice":
+                        signature = payload
                     else:
                         signature = None
                     encoded_signature = json.dumps(signature, separators=(",", ":"))
@@ -135,6 +170,8 @@ class DiagnosticsRecorder:
                         last_health = health
                     if stamp - last_cleanup >= 300:
                         db.execute("DELETE FROM samples WHERE stamp < ?", (stamp - 48 * 3600,))
+                        db.execute("DELETE FROM events WHERE kind='ev_advice' AND stamp < ?",
+                                   (stamp - 48 * 3600,))
                         last_cleanup = stamp
             except (OSError, ValueError, TypeError, sqlite3.Error) as error:
                 with self.lock:
@@ -194,6 +231,9 @@ class DiagnosticsRecorder:
                 archive.writestr("README.txt", "Energy Devices observer diagnostics.\n"
                                  "Measurements: latest 48 hours, up to one record/second/kind.\n"
                                  "Events persist independently of sample retention.\n"
+                                 "ev_advice records include requests, returned comparisons and "
+                                 "whether ED accepted the result.\n"
+                                 "Full advice comparisons are retained for 48 hours.\n"
                                  "Recording timestamps are not physical measurement timestamps.\n"
                                  "Check coverage, gaps and logging_health.\n"
                                  "Battery values use the configured source.\n"

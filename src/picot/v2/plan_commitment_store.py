@@ -59,6 +59,22 @@ LEGACY_COMMITMENT_METHOD_VERSION = "legacy-pre-household-simulation"
 
 
 @dataclass(frozen=True, slots=True)
+class JointEVAcceptance:
+    """Explicit ED user acceptance; never created by passive advice calculation."""
+
+    selection_id: str
+    session_id: str
+    request_revision: int
+    accepted_at: datetime
+
+    def __post_init__(self) -> None:
+        if (not self.selection_id or not self.session_id
+                or type(self.request_revision) is not int or self.request_revision < 1
+                or self.accepted_at.utcoffset() is None):
+            raise ValueError("joint EV acceptance requires explicit identity and aware time")
+
+
+@dataclass(frozen=True, slots=True)
 class CommittedPlanSegment:
     """Canonical segment retained as part of the durable incumbent path."""
 
@@ -513,6 +529,7 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
         market_binding: MarketPlanBinding | None = None,
         market_admission: MarketAdmission | None = None,
         market_revisions: tuple[MarketPlanRevision, ...] = (),
+        joint_ev_acceptance: JointEVAcceptance | None = None,
     ) -> DailyChargeAssignment:
         """Bind explicit winning source segments, never infer ownership from mode.
 
@@ -530,6 +547,15 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
         )
         if assignment is None:
             raise ValueError("daily assignment must exist before binding its winning plan")
+        if joint_ev_acceptance is not None:
+            if (not activate or not isinstance(optimisation_trigger, DailyMainRecalculationTrigger)
+                    or optimisation_trigger.request.request_id
+                    != "joint-ev:" + joint_ev_acceptance.selection_id
+                    or optimisation_trigger.request.assignment_ids != (assignment.assignment_id,)
+                    or optimisation_trigger.request.route_choice_token is not None
+                    or optimisation_trigger.request.requested_at > joint_ev_acceptance.accepted_at
+                    or self.load_daily_recalculation_request() is not None):
+                raise ValueError("joint EV acceptance requires its own current scoped revision")
         if plan.snapshot_id != window.projection.snapshot_id:
             raise ValueError("winning plan and main window snapshot must match")
         if plan.execution_scope_id != assignment.execution_scope_id:
@@ -569,7 +595,9 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
         if optimisation_trigger is not None:
             optimisation_trigger.validate(assignment, plan.snapshot_id, plan.created_at)
             if isinstance(optimisation_trigger, DailyMainRecalculationTrigger):
-                if self.load_daily_recalculation_request() != optimisation_trigger.request:
+                if (joint_ev_acceptance is None
+                        and self.load_daily_recalculation_request()
+                        != optimisation_trigger.request):
                     raise ValueError("manual recalculation request is no longer pending")
             if optimisation_trigger.target_wh != window.target_storage_energy_wh:
                 raise ValueError("shortfall trigger and revised target must match")
@@ -829,6 +857,18 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
             )
             payload.setdefault("execution_plans", {})[plan.plan_id] = serialized
         if isinstance(optimisation_trigger, DailyMainRecalculationTrigger):
+            if joint_ev_acceptance is not None:
+                previous_request = payload.get("daily_recalculation")
+                if previous_request is not None:
+                    payload.setdefault("daily_recalculation_history", {})[
+                        previous_request["request_id"]] = previous_request
+                request = optimisation_trigger.request
+                payload["daily_recalculation"] = {
+                    "request_id": request.request_id,
+                    "requested_at": request.requested_at.isoformat(),
+                    "status": "pending", "pending_assignment_ids": list(request.assignment_ids),
+                    "results": {}, "history_preserved": True,
+                }
             if optimisation_trigger.request.route_choice_token:
                 self._accept_route_choice(payload, optimisation_trigger, bound, plan)
             self._finish_daily_recalculation(
@@ -844,8 +884,57 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                 "status": "replanned", "reason": "explicit_planning_recovery",
                 "plan_id": plan.plan_id, "snapshot_id": plan.snapshot_id,
             }
+        if joint_ev_acceptance is not None:
+            self._put_joint_ev_receipt(payload, joint_ev_acceptance, plan)
         self._write(payload)
         return bound
+
+    @staticmethod
+    def _put_joint_ev_receipt(
+        payload: dict[str, Any], acceptance: JointEVAcceptance, plan: ExecutionPlan,
+    ) -> None:
+        receipts = payload.setdefault("joint_ev_receipts", {})
+        receipt = {
+            "selection_id": acceptance.selection_id, "session_id": acceptance.session_id,
+            "request_revision": acceptance.request_revision,
+            "battery_plan_id": plan.plan_id, "execution_scope_id": plan.execution_scope_id,
+            "committed_at": acceptance.accepted_at.isoformat(), "execution_status": "committed",
+        }
+        if acceptance.selection_id in receipts and receipts[acceptance.selection_id] != receipt:
+            raise ValueError("joint EV receipt identity is immutable")
+        receipts[acceptance.selection_id] = receipt
+        # Receipts support retry/restart, not an unbounded second plan history.
+        for key in sorted(receipts, key=lambda k: receipts[k]["committed_at"])[:-30]:
+            del receipts[key]
+
+    def load_joint_ev_receipt(self, selection_id: str) -> dict[str, Any] | None:
+        receipt = self._read_payload().get("joint_ev_receipts", {}).get(selection_id)
+        return deepcopy(receipt) if isinstance(receipt, dict) else None
+
+    def preview_retained_market_bindings(
+        self, plan: ExecutionPlan,
+    ) -> tuple[MarketPlanBinding, ...]:
+        """Validate unchanged market ownership for fresh pre-publication simulation."""
+        payload = self._load_payload()
+        self._preserve_market_bindings(payload, plan)
+        result = []
+        for raw in payload.get("market_plan_bindings", {}).values():
+            data = dict(raw)
+            for key in ("segment_ids", "segment_export_wh", "original_segment_ids"):
+                data[key] = tuple(data.get(key, ()))
+            result.append(MarketPlanBinding(**data))
+        return tuple(result)
+
+    def retain_joint_ev_plan(
+        self, *, acceptance: JointEVAcceptance, plan: ExecutionPlan,
+    ) -> dict[str, Any]:
+        """Record accepted unchanged route only while that exact route is active."""
+        if self.load_active_daily_main_plan(plan.execution_scope_id) != plan:
+            raise ValueError("joint EV retained route changed before acceptance")
+        payload = self._load_payload()
+        self._put_joint_ev_receipt(payload, acceptance, plan)
+        self._write(payload)
+        return deepcopy(payload["joint_ev_receipts"][acceptance.selection_id])
 
     def load_supplemental_assignments(self) -> tuple[SupplementalChargeAssignment, ...]:
         try:

@@ -1,3 +1,13 @@
+## Release HEMS dev.325 en ED dev.14 - 1 november 2026
+
+Alex heeft release van de gezamenlijke EV/batterijreparatie aangevraagd. Basis main:
+e72f0bfa3fedb5a26149416a9bf55d958fe47a27. Werkmap: joint-ev-repair.
+Volledige vergelijking van EV en batterij via bestaande canonieke onderdelen;
+expliciete acceptatie met duurzame batterijbevestiging voordat ED mag starten.
+Installeer eerst ED dev.14, daarna HEMS dev.325 en vraag nieuw laadadvies aan.
+HC blijft dev.26. Geen planreset vereist. Publicatie via PR na groene CI.
+Zie V2ADR-068 en docs/development_log/2026-11-01-joint-ev-battery-repair.md.
+
 ## Release HC dev.26 - 31 oktober 2026
 
 Alex vraagt release van de nachtelijke PV-reparatie. Basis main ec64f5e74983eb3971c90684b4c2a2f088130b24.

@@ -66,7 +66,7 @@ DASHBOARD_HTML = """<!doctype html>
     <p id="ev-status"></p>
     <p>Sluit de auto aan en druk op Nu laden. Daarmee bevestig je dat de stekker in de auto zit. Energy Devices schakelt de laadplug in en controleert het laadvermogen.</p>
     <button id="ev-now" disabled>Nu laden</button>
-    <details><summary>Goedkoop laden voor een eindtijd — laadadvies</summary>
+    <details><summary>Goedkoop laden voor een eindtijd - laadadvies</summary>
       <p>HEMS vergelijkt laadblokken met bekende prijzen, zonverwachting en het batterijplan. Kies Automatisch uitvoeren om het getoonde laadblok vast te zetten. Daarmee bevestig je dat de auto aangesloten is. De plug blijft uit tot de starttijd en stopt op de eindtijd. De laadbehoefte is energie aan de stekker, inclusief laadverlies.</p>
       <form id="ev-advice-form">
         <label>Gereed voor (lokale tijd)<input type="datetime-local" id="ev-ready-by" required></label>
@@ -135,14 +135,14 @@ DASHBOARD_HTML = """<!doctype html>
         : recovering ? "P1-correctie wordt hersteld. Ontvangst van de gecorrigeerde waarde wordt gecontroleerd; EV-beveiliging blijft actief."
         : blocked ? "P1-correctie niet beschikbaar. HEMS kan de batterij daarom in standby houden tijdens EV-verbruik. Een berekende correctie is geen bewijs dat deze wordt toegepast."
         : "P1-correctie beschikbaar.";
-      el("regulation-values").textContent = `Ruwe P1: ${number(value.raw_grid_w,"W")} · Berekende correctie: ${number(value.intended_candidate_w ?? value.candidate_w,"W")} · Gemeten aangeboden P1: ${number(value.offered_p1_w,"W")}`;
+      el("regulation-values").textContent = `Ruwe P1: ${number(value.raw_grid_w,"W")} � Berekende correctie: ${number(value.intended_candidate_w ?? value.candidate_w,"W")} � Gemeten aangeboden P1: ${number(value.offered_p1_w,"W")}`;
       const since = value.latched_at ? new Date(value.latched_at).toLocaleString("nl-NL") : "";
       el("regulation-details").textContent = [
         value.reason ? `Statusreden: ${value.reason}` : "",
         since ? `Geblokkeerd sinds: ${since}` : "",
         value.latched_origin ? `Oorzaak: ${value.latched_origin}` : "",
         value.evaluated_at ? `Laatste meting: ${new Date(value.evaluated_at).toLocaleString("nl-NL")}` : "Nog geen metingen",
-      ].filter(Boolean).join(" · ");
+      ].filter(Boolean).join(" � ");
     }
     async function load() {
       const response = await fetch("api/view", {cache:"no-store"});
@@ -154,9 +154,9 @@ DASHBOARD_HTML = """<!doctype html>
         const article = document.createElement("article"); article.className = "card";
         const title = document.createElement("h3"); title.textContent = card.name;
         const state = document.createElement("p"); state.className = "muted";
-        state.textContent = card.recording ? "Opname loopt — inclusief rustige fases" : "Klaar voor handmatig inleren";
+        state.textContent = card.recording ? "Opname loopt - inclusief rustige fases" : "Klaar voor handmatig inleren";
         const facts = document.createElement("p");
-        facts.textContent = `${number(card.expected_power_w,"W")} · ${number(card.expected_energy_wh,"Wh")} · ${card.completed_session_count} sessies`;
+        facts.textContent = `${number(card.expected_power_w,"W")} � ${number(card.expected_energy_wh,"Wh")} � ${card.completed_session_count} sessies`;
         const source = document.createElement("p"); source.className = "muted"; source.textContent = card.power_entity_id;
         const remove = document.createElement("button"); remove.className = "danger"; remove.textContent = "Niet meer volgen";
         remove.addEventListener("click", () => change({action:"remove",device_id:card.device_id}).catch(error=>{el("message").textContent=error.message;}));
@@ -164,7 +164,7 @@ DASHBOARD_HTML = """<!doctype html>
         const button = (label, action) => { const b=document.createElement("button"); b.textContent=label; b.onclick=async()=>{try {await action();} catch(error) {el("message").textContent=error.message;}}; return b; };
         article.append(button(card.recording ? "Programma klaar" : "Start inleren", async()=>{
           if(card.recording) { await change({action:"finish",device_id:card.device_id}); }
-          else {const name=prompt("Naam van het programma, bijvoorbeeld Eco 50°"); if(name?.trim()) await change({action:"start",device_id:card.device_id,name});}
+          else {const name=prompt("Naam van het programma, bijvoorbeeld Eco 50�"); if(name?.trim()) await change({action:"start",device_id:card.device_id,name});}
         }));
         if(card.legacy_session_count) article.append(button(`${card.legacy_session_count} oude automatische sessies wissen`, async()=>{
           if(confirm("Alle oude automatische sessies van dit apparaat wissen? Handmatige opnames blijven bewaard.")) await change({action:"clear_legacy",device_id:card.device_id});
@@ -172,15 +172,15 @@ DASHBOARD_HTML = """<!doctype html>
         const list=document.createElement("div");
         for(const rec of view.recordings[card.device_id] ?? []) {
           const block=document.createElement("section"); block.className="panel";
-          const label=document.createElement("p"); label.textContent=`${rec.name} — ${new Date(rec.starts_at).toLocaleString("nl-NL")}`;
-          const info=document.createElement("p"); info.textContent=rec.ends_at ? `${number(rec.duration_seconds/60,"min")} · ${number(rec.observed_energy_wh,"Wh gemeten (schatting)")} · ${rec.missing_seconds > 0 ? number(rec.missing_seconds,"s meetuitval — energie onvolledig") : "Geen meetgaten"}` : "Opname loopt";
+          const label=document.createElement("p"); label.textContent=`${rec.name} - ${new Date(rec.starts_at).toLocaleString("nl-NL")}`;
+          const info=document.createElement("p"); info.textContent=rec.ends_at ? `${number(rec.duration_seconds/60,"min")} � ${number(rec.observed_energy_wh,"Wh gemeten (schatting)")} � ${rec.missing_seconds > 0 ? number(rec.missing_seconds,"s meetuitval - energie onvolledig") : "Geen meetgaten"}` : "Opname loopt";
           block.append(label,info,button("Bekijken",()=>showRecording(rec.recording_id)),button("Naam wijzigen",async()=>{const name=prompt("Programmanaam",rec.name);if(name?.trim())await change({action:"rename",recording_id:rec.recording_id,name});}),button("Verwijderen",async()=>{if(confirm("Deze opname en het bijbehorende vermogensverloop verwijderen?"))await change({action:"delete_recording",recording_id:rec.recording_id});}));
           list.append(block);
         }
         article.append(list,remove); cards.append(article);
       }
       if (!(view.catalog.cards ?? []).length) cards.textContent = "Nog geen apparaten toegevoegd.";
-      el("metrics").textContent = `${view.catalog.cards?.length ?? 0} kaarten · ${(view.database_size_bytes/1024).toLocaleString("nl-NL",{maximumFractionDigits:0})} kB`;
+      el("metrics").textContent = `${view.catalog.cards?.length ?? 0} kaarten � ${(view.database_size_bytes/1024).toLocaleString("nl-NL",{maximumFractionDigits:0})} kB`;
     }
     let evSession=null;
     let evBusy=false;
@@ -190,7 +190,7 @@ DASHBOARD_HTML = """<!doctype html>
       renderChargingAdvice(ev);
       evSession=[...ev.sessions].reverse().find(s=>["recognized","planned","active","interrupted"].includes(s.state));
       const labels={recognized:"Herkend",planned:"Gepland",active:"Actief",interrupted:"Onderbroken",completed:"Voltooid",cancelled:"Geannuleerd"};
-      el("ev-status").textContent=evSession ? `${labels[evSession.state]} · ${number(evSession.current_power_w,"W")} · ${number(evSession.delivered_energy_wh,"Wh geleverd")} · ${number(evSession.remaining_energy_wh,"Wh resterend")} · ${number((evSession.remaining_duration_seconds??0)/60,"min resterend (schatting)")}${evSession.error ? " · "+evSession.error : ""}` : `Geen open laadsessie · ${ev.recognition?.reason??"wachten op meting"} · ${number(ev.recognition?.power_w,"W")} · meetleeftijd ${number(ev.recognition?.measurement_age_seconds,"s")}`;
+      el("ev-status").textContent=evSession ? `${labels[evSession.state]} � ${number(evSession.current_power_w,"W")} � ${number(evSession.delivered_energy_wh,"Wh geleverd")} � ${number(evSession.remaining_energy_wh,"Wh resterend")} � ${number((evSession.remaining_duration_seconds??0)/60,"min resterend (schatting)")}${evSession.error ? " � "+evSession.error : ""}` : `Geen open laadsessie � ${ev.recognition?.reason??"wachten op meting"} � ${number(ev.recognition?.power_w,"W")} � meetleeftijd ${number(ev.recognition?.measurement_age_seconds,"s")}`;
       el("ev-verify").disabled=ev.resume_verified;
       el("ev-now").disabled=evBusy || !!evSession || !ev.profile;
       el("ev-resume").disabled=evBusy || !evSession?.confirmed || !evSession?.manual_pause;
@@ -204,27 +204,51 @@ DASHBOARD_HTML = """<!doctype html>
       if(evSession?.expected_duration_seconds && !el("ev-duration").value)el("ev-duration").value=Math.round(evSession.expected_duration_seconds/60);
       if(evSession?.planned_start && !el("ev-start").value){const d=new Date(evSession.planned_start);el("ev-start").value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
       const timeline=el("ev-timeline");timeline.replaceChildren();
-      const completionLabels={vehicle_charging_ended:"BMW heeft laden beëindigd (geen bewijs van 100%)",scheduled_deadline:"Gepland laadvenster afgelopen",measured_low_power:"Laden gestopt op basis van laag vermogen",cancelled:"Geannuleerd"};
-      for(const s of [...ev.sessions].reverse()) {const p=document.createElement("p");p.textContent=`${s.planned_start ? new Date(s.planned_start).toLocaleString("nl-NL") : new Date(s.recognized_at).toLocaleString("nl-NL")} — ${labels[s.state]}${s.completion_reason ? " — "+(completionLabels[s.completion_reason]??s.completion_reason) : ""} · ${number(s.expected_power_w,"W")} · ${number((s.expected_duration_seconds??0)/60,"min")}`;timeline.append(p);}
+      const completionLabels={vehicle_charging_ended:"BMW heeft laden be�indigd (geen bewijs van 100%)",scheduled_deadline:"Gepland laadvenster afgelopen",measured_low_power:"Laden gestopt op basis van laag vermogen",cancelled:"Geannuleerd"};
+      for(const s of [...ev.sessions].reverse()) {const p=document.createElement("p");p.textContent=`${s.planned_start ? new Date(s.planned_start).toLocaleString("nl-NL") : new Date(s.recognized_at).toLocaleString("nl-NL")} - ${labels[s.state]}${s.completion_reason ? " - "+(completionLabels[s.completion_reason]??s.completion_reason) : ""} � ${number(s.expected_power_w,"W")} � ${number((s.expected_duration_seconds??0)/60,"min")}`;timeline.append(p);}
+    }
+    function chargingAdviceExplanation(advice) {
+      const money=value=>Number(value).toLocaleString("nl-NL",{style:"currency",currency:"EUR"});
+      const valid=value=>typeof value==="number" && Number.isFinite(value);
+      const reasonLabels={prices_missing_before_requested_deadline:"Nog niet alle prijzen tot jouw eindtijd zijn gepubliceerd",battery_plan_ends_before_requested_deadline:"Het beschikbare batterijplan dekt jouw eindtijd nog niet",candidate_search_truncated:"De vergelijking heeft niet alle mogelijke laadblokken onderzocht",prices_missing_before_deadline:"Nog niet alle prijzen tot jouw eindtijd zijn gepubliceerd",published_prices_incomplete:"Nog niet alle prijzen tot jouw eindtijd zijn gepubliceerd",price_coverage_incomplete:"Nog niet alle prijzen tot jouw eindtijd zijn gepubliceerd",planning_horizon_incomplete:"Het beschikbare batterijplan dekt jouw eindtijd nog niet",battery_plan_horizon_incomplete:"Het beschikbare batterijplan dekt jouw eindtijd nog niet",search_truncated:"De vergelijking heeft niet alle mogelijke laadblokken onderzocht"};
+      const provisional=(advice.provisional_reasons??[]).map(reason=>reasonLabels[reason]??`Beperking: ${reason}`).join(". ");
+      const status=advice.status==="provisional" ? `Voorlopig advies: ${provisional || "de reden voor de beperkte vergelijking is niet meegeleverd"}` : "";
+      let cost="";
+      if(valid(advice.total_cost_eur)) {
+        cost=`Geschatte totale kosten huis, auto en batterij: ${money(advice.total_cost_eur)}.`;
+        if(valid(advice.baseline_total_cost_eur))cost+=` Met behoud van de bestaande batterijroute: ${money(advice.baseline_total_cost_eur)}.`;
+        if(valid(advice.savings_eur))cost+=` Verwacht voordeel van de gezamenlijke route: ${money(advice.savings_eur)}.`;
+      } else if(valid(advice.estimated_incremental_cost_eur)) {
+        cost=`Geschatte extra kosten tegenover het batterijplan zonder deze EV-sessie: ${money(advice.estimated_incremental_cost_eur)}.`;
+      }
+      if(cost)cost+=" Beste van de beoordeelde routes; de diagnose bevat de vergelijking.";
+      return {status,cost};
+    }
+    function jointAcceptanceStatus(advice, session) {
+      const reason=session?.error || (advice?.execution_status==="blocked" ? advice.reason : null);
+      const labels={joint_selection_expired_request_new_advice:"Het gekozen advies is niet meer beschikbaar. Annuleer deze aanvraag en vraag nieuw advies aan",joint_ev_selection_expired:"Het gekozen advies is verlopen. Annuleer deze aanvraag en vraag nieuw advies aan",joint_ev_slot_requires_fresh_advice:"Het gekozen laadblok kan niet meer op tijd starten. Annuleer deze aanvraag en vraag nieuw advies aan",joint_ev_battery_owner_changed:"Het batterijplan is sinds het advies veranderd. Annuleer deze aanvraag en vraag nieuw advies aan",joint_ev_execution_disabled:"De automatische HEMS-uitvoering staat uit",joint_ev_context_unavailable:"De actuele batterijplangegevens zijn niet beschikbaar"};
+      return reason ? `Gezamenlijke route nog niet bevestigd: ${labels[reason]??reason}. De auto start niet zolang deze bevestiging ontbreekt.` : "Wachten op HEMS: de gezamenlijke route voor auto en batterij wordt bevestigd. De auto start pas na deze bevestiging.";
     }
     function renderChargingAdvice(ev) {
       const request=ev.charging_request, advice=ev.charging_advice;
       const pending=request?.state==="requested";
-      el("ev-advice-cancel").disabled=evBusy || !pending;
-      el("ev-advice-submit").disabled=evBusy || !ev.profile || ev.sessions.some(s=>["recognized","planned","active","interrupted"].includes(s.state));
+      const waitingForHEMS=request?.state==="accepted" && ev.sessions.some(s=>s.session_id===request.session_id && s.joint_pending===true);
+      el("ev-advice-cancel").disabled=evBusy || !(pending || waitingForHEMS);
+      el("ev-advice-submit").disabled=evBusy || waitingForHEMS || !ev.profile || ev.sessions.some(s=>["recognized","planned","active","interrupted"].includes(s.state));
       if(!el("ev-required-kwh").value && (pending || ev.profile))el("ev-required-kwh").value=(pending ? request.remaining_energy_wh/1000 : ev.profile.expected_power_w*ev.profile.expected_duration_seconds/3600000).toFixed(2);
       if(pending && !el("ev-ready-by").value){const d=new Date(request.ready_by);el("ev-ready-by").value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
-      const labels={ready:"Laadadvies beschikbaar",provisional:"Voorlopig advies: nog niet alle prijzen of plangegevens zijn bekend",blocked:"Nog geen bruikbaar laadadvies",infeasible:"Laadbehoefte niet haalbaar voor deze eindtijd"};
-      const reasons={deadline_capacity_insufficient:"Er is te weinig tijd voor de gevraagde energie",known_horizon_has_insufficient_capacity:"Er zijn nog onvoldoende uren met bekende prijzen en plangegevens",retained_battery_plan_unavailable:"Wachten op een actueel batterijplan",retained_battery_plan_requires_repair:"HEMS moet eerst het batterijplan bijwerken",no_placement_preserves_battery_commitments:"Geen passend laadblok gevonden dat het batterijplan behoudt",existing_ev_demand_requires_reconciliation:"Er is al een laadsessie actief"};
+      const explanation=chargingAdviceExplanation(advice??{});
+      const labels={ready:"Laadadvies beschikbaar",provisional:explanation.status,blocked:"Nog geen bruikbaar laadadvies",infeasible:"Laadbehoefte niet haalbaar voor deze eindtijd"};
+      const reasons={no_future_ev_start_after_comparison:"De beoordeelde laadblokken zijn inmiddels begonnen; vraag een nieuw advies aan",joint_comparison_battery_horizon_prices_incomplete:"Wachten op prijzen voor de volledige gezamenlijke vergelijkingsperiode",deadline_capacity_insufficient:"Er is te weinig tijd voor de gevraagde energie",known_horizon_has_insufficient_capacity:"Er zijn nog onvoldoende uren met bekende prijzen en plangegevens",retained_battery_plan_unavailable:"Wachten op een actueel batterijplan",retained_battery_plan_requires_repair:"HEMS moet eerst het batterijplan bijwerken",no_placement_preserves_battery_commitments:"Geen gezamenlijke route gevonden die de laad- en reservedoelen haalt",existing_ev_demand_requires_reconciliation:"Er is al een laadsessie actief"};
       const fresh=advice && Date.now()-new Date(advice.generated_at).getTime()<=300000;
       const execute=el("ev-advice-execute");
       execute.disabled=evBusy || !pending || !fresh || !["ready","provisional"].includes(advice?.status) || advice?.slots?.length!==1;
       execute.onclick=()=>evChange({action:"execute_advice",session_id:advice.session_id,request_revision:advice.request_revision,generated_at:advice.generated_at});
       const scheduled=ev.sessions.find(s=>s.session_id===request?.session_id && s.accepted_advice);
-      el("ev-advice-status").textContent=scheduled ? `Vastgezet laadblok: ${new Date(scheduled.planned_start).toLocaleString("nl-NL")} tot ${new Date(scheduled.planned_end).toLocaleString("nl-NL")}. ${scheduled.confirmed ? "Automatische aansturing actief; annuleren kan bij de laadsessie." : "Aansturing beëindigd. Resterend: "+number(scheduled.remaining_energy_wh/1000,"kWh (schatting)")}` : !ev.profile ? "Sla eerst het vaste laadprofiel op." : !pending ? "Geen open adviesaanvraag" : !advice ? "Wachten op HEMS" : !fresh ? "Advies verlopen; wachten op actuele beoordeling door HEMS" : (labels[advice.status]??"Wachten op HEMS")+(reasons[advice.reason] ? `. ${reasons[advice.reason]}` : "")+". Kies Automatisch uitvoeren om dit laadblok vast te zetten; latere prijzen wijzigen dit blok niet.";
-      el("ev-advice-cost").textContent=pending && fresh && advice.estimated_incremental_cost_eur!==undefined ? `Geschatte extra kosten: ${number(advice.estimated_incremental_cost_eur,"EUR")}. Beste van de beoordeelde laadblokken; geen garantie dat alle mogelijke starttijden zijn vergeleken.` : "";
+      el("ev-advice-status").textContent=waitingForHEMS ? jointAcceptanceStatus(advice,scheduled) : scheduled ? `Vastgezet laadblok: ${new Date(scheduled.planned_start).toLocaleString("nl-NL")} tot ${new Date(scheduled.planned_end).toLocaleString("nl-NL")}. ${scheduled.confirmed ? "Automatische aansturing actief; annuleren kan bij de laadsessie." : "Aansturing be�indigd. Resterend: "+number(scheduled.remaining_energy_wh/1000,"kWh (schatting)")}` : !ev.profile ? "Sla eerst het vaste laadprofiel op." : !pending ? "Geen open adviesaanvraag" : !advice ? "Wachten op HEMS" : !fresh ? "Advies verlopen; wachten op actuele beoordeling door HEMS" : (labels[advice.status]??"Wachten op HEMS")+(reasons[advice.reason] ? `. ${reasons[advice.reason]}` : "")+". Kies Automatisch uitvoeren om dit laadblok vast te zetten; latere prijzen wijzigen dit blok niet.";
+      el("ev-advice-cost").textContent=(pending || waitingForHEMS) && fresh ? explanation.cost : "";
       const list=el("ev-advice-slots");list.replaceChildren();
-      if(pending && fresh)for(const slot of advice.slots??[]){const li=document.createElement("li");li.textContent=`${new Date(slot.starts_at).toLocaleString("nl-NL")} – ${new Date(slot.ends_at).toLocaleString("nl-NL")}: ${number(slot.energy_wh/1000,"kWh")}`;list.append(li);}
+      if((pending || waitingForHEMS) && fresh)for(const slot of advice.slots??[]){const li=document.createElement("li");li.textContent=`${new Date(slot.starts_at).toLocaleString("nl-NL")} - ${new Date(slot.ends_at).toLocaleString("nl-NL")}: ${number(slot.energy_wh/1000,"kWh")}`;list.append(li);}
     }
     async function evChange(payload) {
       if(evBusy)return;
@@ -245,9 +269,9 @@ DASHBOARD_HTML = """<!doctype html>
       const response=await fetch(`api/recording?id=${id}`,{cache:"no-store"});
       const rec=await response.json(); if(!response.ok)throw new Error(rec.error);
       el("detail-title").textContent=rec.name;
-      el("detail-summary").textContent=rec.ends_at ? `${number(rec.duration_seconds/60,"min")} · ${number(rec.observed_energy_wh,"Wh gemeten (schatting)")} · ${number(rec.missing_seconds,"s meetuitval")}` : "Opname loopt; sluit dit venster en open opnieuw voor de nieuwste metingen.";
+      el("detail-summary").textContent=rec.ends_at ? `${number(rec.duration_seconds/60,"min")} � ${number(rec.observed_energy_wh,"Wh gemeten (schatting)")} � ${number(rec.missing_seconds,"s meetuitval")}` : "Opname loopt; sluit dit venster en open opnieuw voor de nieuwste metingen.";
       const body=el("sample-rows");body.replaceChildren();
-      for(const sample of rec.samples){const tr=document.createElement("tr");for(const value of [new Date(sample.observed_at).toLocaleTimeString("nl-NL"),sample.power_w ?? "—",sample.energy_meter_wh ?? "—",sample.power_w===null ? "Niet beschikbaar" : sample.error==="start_boundary_held_last_reading" ? "Startwaarde uit laatste meting" : "Gemeten"]){const td=document.createElement("td");td.textContent=String(value);tr.append(td);}body.append(tr);}
+      for(const sample of rec.samples){const tr=document.createElement("tr");for(const value of [new Date(sample.observed_at).toLocaleTimeString("nl-NL"),sample.power_w ?? "-",sample.energy_meter_wh ?? "-",sample.power_w===null ? "Niet beschikbaar" : sample.error==="start_boundary_held_last_reading" ? "Startwaarde uit laatste meting" : "Gemeten"]){const td=document.createElement("td");td.textContent=String(value);tr.append(td);}body.append(tr);}
       const c=el("shape"),ctx=c.getContext("2d");ctx.clearRect(0,0,c.width,c.height);
       const start=Date.parse(rec.starts_at),end=Date.parse(rec.ends_at ?? rec.samples.at(-1)?.observed_at ?? rec.starts_at),span=Math.max(1,end-start);
       const peak=rec.samples.reduce((max,s)=>Math.max(max,s.power_w ?? 0),1);
@@ -261,7 +285,7 @@ DASHBOARD_HTML = """<!doctype html>
       await load();
     }
     el("device-form").addEventListener("submit", async (event) => {
-      event.preventDefault(); el("message").textContent = "Opslaan…";
+      event.preventDefault(); el("message").textContent = "Opslaan.";
       try {
         await change({action:"add",name:el("name").value,power_entity_id:el("power").value,energy_entity_id:el("energy").value});
         el("message").textContent = "Apparaat toegevoegd. De eerste kaart is direct beschikbaar.";
@@ -287,7 +311,7 @@ DASHBOARD_HTML = """<!doctype html>
         button.disabled = true;
         progress.hidden = false;
         progress.removeAttribute("value");
-        status.textContent = "Verzoek versturen — nog geen ontvangstbevestiging.";
+        status.textContent = "Verzoek versturen - nog geen ontvangstbevestiging.";
         let downloadController;
         let downloadTimer;
         try {
@@ -297,14 +321,14 @@ DASHBOARD_HTML = """<!doctype html>
             status.textContent = `Opdracht ontvangen door PicoT. ${job.message}`;
             if (job.total > 0) {
               progress.max = job.total; progress.value = job.completed;
-              status.textContent += ` — ${Math.round(100 * job.completed / job.total)}%`;
+              status.textContent += ` - ${Math.round(100 * job.completed / job.total)}%`;
             } else { progress.removeAttribute("value"); }
             await new Promise(resolve => setTimeout(resolve, 1000));
             job = await request("api/diagnostics/export");
             if (job.job_id !== jobId) throw new Error("Deze export is vervangen. Probeer opnieuw.");
           }
           if (job.status !== "ready") throw new Error(job.error || "Diagnose maken mislukt.");
-          status.textContent = "Diagnose gereed. Download starten…";
+          status.textContent = "Diagnose gereed. Download starten.";
           progress.removeAttribute("value");
           downloadController = new AbortController();
           const armTimeout = () => {

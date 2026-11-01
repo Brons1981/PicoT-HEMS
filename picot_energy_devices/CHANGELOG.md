@@ -1,3 +1,11 @@
+# 0.4.0-dev.14
+
+- Wacht bij gezamenlijk laadadvies op de duurzame HEMS-bevestiging voordat de auto automatisch mag laden.
+- Houd geaccepteerde EV-vraag zichtbaar in de prognose tijdens bevestiging, zonder dubbel tellen.
+- Toon totale kosten, besparing, concrete voorlopigheidsredenen en bevestigingsfouten.
+- Bewaar aanvragen, kandidaatvergelijkingen en bevestigingen 48 uur in de diagnose.
+- Gebruik samen met HEMS 2.0.0-dev.325. Installeer ED eerst en vraag na beide updates nieuw laadadvies aan.
+
 # 0.4.0-dev.13
 
 - Geef P1 exact door na 30 seconden bevestigd EV-sluimerverbruik (maximaal 5 W); reset afronding en demping.

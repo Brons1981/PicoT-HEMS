@@ -1,3 +1,10 @@
+# 2.0.0-dev.325
+
+- Vergelijk de totale kosten van huis, EV en batterij en verplaats het batterijladen als de combinatie goedkoper is.
+- Behoud het dagelijkse 100%-doel en de vereiste eindreserve; vergelijk alle beschikbare prijsgrenzen.
+- Leg na expliciete acceptatie de gekozen batterijroute vast voordat ED mag starten.
+- Vereist ED 0.4.0-dev.14. Installeer eerst ED, daarna HEMS en vraag nieuw laadadvies aan. Geen planreset nodig.
+
 # 2.0.0-dev.324
 
 - Beschrijf op Planning wat het actieve plan gaat doen: zonne-energie naar de batterij, resterende zonne-energie voor huisverbruik/teruglevering, netlaadhoeveelheden en laadvensters.

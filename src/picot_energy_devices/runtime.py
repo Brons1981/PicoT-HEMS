@@ -419,7 +419,7 @@ def main() -> None:
             name="ev-sessions",
             daemon=True,
         ).start()
-        Thread(target=exchange_loop, args=(ev_sessions, HomeAssistantClient(token)),
+        Thread(target=exchange_loop, args=(ev_sessions, HomeAssistantClient(token), diagnostics),
                name="ev-charging-advice", daemon=True).start()
     server = create_web_server(store, host="0.0.0.0", port=8100, ev_sessions=ev_sessions,
                                diagnostics=diagnostics, regulation=snapshots)

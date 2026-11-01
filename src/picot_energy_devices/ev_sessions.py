@@ -68,7 +68,7 @@ class EVSessionManager:
         if old_target is not None and (old_target != switch_entity or old_source != power_entity):
             if self.current(state) is not None:
                 raise ValueError(
-                    "Annuleer de bestaande EV-sessie vóór het wijzigen van de meetplug"
+                    "Annuleer de bestaande EV-sessie v��r het wijzigen van de meetplug"
                 )
             state["resume_verified"] = False
             state.pop("profile", None)
@@ -119,16 +119,54 @@ class EVSessionManager:
         with self.lock:
             state = self.load()
             # A physical session supersedes a pending hypothetical request.
-            if self.current(state) is not None:
+            session = self.current(state)
+            if session is not None and not session.get("joint_pending"):
                 self.invalidate_advice(state)
                 self.save(state)
             return {"generated_at": self.now().isoformat(),
-                    "request": state.get("charging_request")}
+                    "request": state.get("charging_request"),
+                    "selected_advice": session.get("accepted_advice") if session else None}
 
     def receive_advice(self, advice: Payload) -> bool:
         with self.lock:
             state = self.load()
             request = state.get("charging_request")
+            session = self.current(state)
+            if advice.get("execution_status") == "blocked":
+                accepted = session.get("accepted_advice") if session else None
+                if (not session or not accepted or not request
+                        or request.get("state") != "accepted"
+                        or not accepted.get("selection_id")
+                        or any(advice.get(k) != accepted.get(k) for k in (
+                            "selection_id", "session_id", "request_revision"))):
+                    return False
+                session["error"] = str(advice.get("reason", "joint_plan_not_confirmed"))[:240]
+                self.save(state)
+                return True
+            if advice.get("execution_status") == "committed":
+                accepted = session.get("accepted_advice") if session else None
+                if (not session or not accepted or not request
+                        or request.get("state") not in {"accepted", "executing"}
+                        or session.get("cancel_requested")
+                        or not accepted.get("selection_id")
+                        or any(advice.get(k) != accepted.get(k) for k in (
+                            "selection_id", "session_id", "request_revision"))
+                        or not advice.get("battery_plan_id")):
+                    return False
+                try:
+                    age = (self.now() - instant(advice.get("committed_at"))).total_seconds()
+                    if (not 0 <= age <= 300
+                            or self.now() > instant(session["planned_start"])
+                            and session.get("joint_pending")):
+                        return False
+                except (ValueError, TypeError):
+                    return False
+                session.update(confirmed=True, start_status="waiting_for_schedule", error=None,
+                               joint_pending=False,
+                               joint_receipt=advice)
+                request["state"] = "executing"
+                self.save(state)
+                return True
             if (not request or request["state"] != "requested"
                     or self.current(state) is not None
                     or advice.get("contract") != "energy-device-charging-advice:v1"
@@ -206,6 +244,10 @@ class EVSessionManager:
                 }
                 state["charging_advice"] = None
             elif action == "cancel_advice":
+                if session is not None and session.get("joint_pending"):
+                    self.change(session, state="cancelled", confirmed=False)
+                    if state.get("charging_request"):
+                        state["charging_request"]["state"] = "cancelled"
                 self.invalidate_advice(state)
             elif action == "save_profile":
                 power = payload.get("expected_power_w")
@@ -293,6 +335,9 @@ class EVSessionManager:
                         start_status="waiting_for_schedule", ready_by=request["ready_by"],
                     )
                     request.update(state="accepted", request_revision=accepted["request_revision"])
+                    if accepted.get("selection_id"):
+                        session.update(confirmed=False, start_status="waiting_for_hems",
+                                       joint_pending=True)
                 state["sessions"].append(session)
                 state["sessions"] = state["sessions"][-30:]
             elif action == "verify_resume":
@@ -346,6 +391,8 @@ class EVSessionManager:
                     raise ValueError("Onbekende sessie")
                 # Explicit cancellation also requests the selected charger off.
                 self.change(session, cancel_requested=True)
+                if session.get("joint_pending") and state.get("charging_request"):
+                    state["charging_request"]["state"] = "cancelled"
             else:
                 raise ValueError("Onbekende EV-actie")
             self.save(state)

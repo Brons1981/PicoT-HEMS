@@ -1,3 +1,9 @@
+# 2.0.0-dev.328
+
+- Vraag standby aan wanneer een ontlaadsegment de SOC-ondergrens bereikt, in plaats van een normale reservegrens als uitvoeringsfout te tonen.
+- Behoud SOC-beveiliging, bestaand laadplan en laadvensters; toon de wachtstatus op het dashboard.
+- Geen planreset nodig. ED en HC blijven ongewijzigd.
+
 # 2.0.0-dev.327
 
 - Herstel terugval bij overbrugging tussen twee hoofdlaadblokken nadat het eerste blok is afgelopen.
@@ -622,4 +628,5 @@ Ontwikkelrelease voor de gezamenlijke liveproef van de dagelijkse laadcyclus en 
 Na installeren: controleer dev.244 in PicoT en vul de gewenste handelsfractie en minimumspread in. Herstel kan voor de eerste proef uit blijven. Bestaande instellingen en historische diagnostiek blijven bewaard.
 
 Dit is een ontwikkelrelease: lokale controles zijn uitgevoerd; werking met de echte HA-meethistorie en modusfeedback wordt in de gezamenlijke liveproef beoordeeld.
+
 

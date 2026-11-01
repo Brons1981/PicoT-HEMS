@@ -767,6 +767,15 @@ class CanonicalExecutionRuntime:
             market_override = True
             market_reason = "ev_storage_support_prohibited"
             primitive = ev_guarded
+        # Reaching the discharge reserve is a normal stop, not a failed plan.
+        # Resolve before mapping/feedback so an already-active discharge mode
+        # also stops. Keep the saved segment and future charge windows intact.
+        if isinstance(segment, ExecutionPlanSegment) and self._soc_blocker(
+            snapshot, scope_id, segment.capability_id, primitive, segment.soc_constraint,
+        ) == "execution_soc_below_segment_minimum":
+            primitive = ExecutionPrimitive.STANDBY
+            market_override = True
+            market_reason = "execution_soc_minimum_reached"
         mapping = self._mapping(
             evidence=evidence,
             primitive=primitive,
@@ -1094,6 +1103,17 @@ class CanonicalExecutionRuntime:
             boundary = replace(
                 boundary, planned_primitive=ev_guarded,
                 request_id=f"{boundary.request_id}:ev-storage-exclusion",
+            )
+            requested_power_w = None
+        assert boundary.planned_primitive is not None
+        if not fallback and self._soc_blocker(
+            run.planning_input, scope_id, capability_id,
+            boundary.planned_primitive, segment.soc_constraint,
+        ) == "execution_soc_below_segment_minimum":
+            boundary = replace(
+                boundary, planned_primitive=ExecutionPrimitive.STANDBY,
+                request_id=f"{boundary.request_id}:soc-minimum",
+                execution_reason="execution_soc_minimum_reached",
             )
             requested_power_w = None
         if not fallback and run.planning_input.daily_charge_context is not None:

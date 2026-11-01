@@ -1,3 +1,17 @@
+## Release HEMS dev.328 - 1 november 2026
+
+Alex vraagt publicatie van de SOC-ondergrensreparatie. Basis main cb99c5897330aeef993f7375cff513702267fdcc.
+Werkmap soc-minimum-wait-fix; publicatie via PR na groene CI. Geen live installatie.
+ED en HC ongewijzigd; geen planreset. Zie docs/development_log/2026-11-01-soc-reserve-wait.md.
+
+## Reparatie SOC-ondergrens - 1 november 2026
+
+Alex vraagt reparatie van execution_soc_below_segment_minimum bij 10% SOC.
+Werkmap soc-minimum-wait-fix; basis main cb99c5897330aeef993f7375cff513702267fdcc.
+Uitvoering vraagt standby op de ontlaadondergrens, met normale statusmelding.
+SOC-beveiliging en opgeslagen laadplan blijven behouden. Geen release/installatie.
+Zie docs/development_log/2026-11-01-soc-reserve-wait.md voor bewijs en tests.
+
 ## Release HEMS dev.327 - 1 november 2026
 
 Alex vraagt release van de overbruggingsreparatie na een verstreken hoofdlaadblok.
@@ -915,3 +929,4 @@ akkoord gegeven op publicatie van de geïsoleerde planovergangenreparatie via PR
 en CI. Zie `docs/development_log/2026-09-27-retained-plan-boundaries.md`.
 Financiële meetverwerking, planuitleg en NOM-vervanging blijven vervolgstappen.
 Installatie en livecontrole volgen na publicatie.
+

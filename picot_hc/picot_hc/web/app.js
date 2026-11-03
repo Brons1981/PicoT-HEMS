@@ -247,6 +247,22 @@ let scheduleForm=null;
 function renderSchedule(data){
   if(!data)return;
   renderHeating(current.heating);
+  let dayAhead=$('day-ahead-status');
+  if(!dayAhead){dayAhead=el('div',undefined,'panel');dayAhead.id='day-ahead-status';$('planner-status').after(dayAhead);}
+  dayAhead.replaceChildren(el('strong','Verwarmingsprognose voor morgen'));
+  const dayForecast=current.day_ahead_forecast, adopted=current.energy_outlook?.hc_day_ahead;
+  const forecastReasons={daily_cold_side_scenario:'dagweer: koude kant als voorlopige raming',current_outdoor_persistence:'geen bruikbare weersverwachting: huidige buitentemperatuur aangehouden',provisional_recent_heat_loss_scaling:'voorlopig uit recente verwarmingsmetingen',provisional_recent_warmup:'voorlopige opwarmraming',cooling_unknown_assume_setpoint:'afkoeling nog onvoldoende geleerd',no_energy_measurements:'nog geen bruikbare verbruiksmetingen',no_comparable_energy_measurements:'geen vergelijkbare verbruiksmetingen',no_warmup_measurements:'opwarmenergie nog onbekend',fresh_thermal_context_required:'actuele, geldige ruimtemetingen ontbreken',hc_forecast_exact_heating_attribution_missing:'verwarmingsaandeel in huisverbruik nog onvoldoende bekend',hc_forecast_stale:'HC-prognose verlopen',hc_forecast_missing_or_unavailable:'HC-prognose ontbreekt of is niet bruikbaar'};
+  if(dayForecast?.slots?.length){
+    const dateKey=s=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Amsterdam'}).format(new Date(s));
+    const rows=dayForecast.slots.filter(s=>dateKey(s.starts_at)===dayForecast.delivery_date);
+    const total=rows.reduce((sum,s)=>sum+s.energy_wh,0)/1000;
+    dayAhead.append(el('p',dayForecast.delivery_date+': '+total.toFixed(2)+' kWh, uitgaande van airco beneden. '+(dayForecast.status==='provisional'?'Voorlopige raming.':'Geleerde raming.')));
+    const groups=[];
+    for(const row of rows){const last=groups[groups.length-1];if(last&&last.phase===row.phase&&last.end===row.starts_at){last.end=row.ends_at;last.wh+=row.energy_wh;}else groups.push({phase:row.phase,start:row.starts_at,end:row.ends_at,wh:row.energy_wh});}
+    for(const row of groups)dayAhead.append(el('p',fmt(Date.parse(row.start)/1000)+' – '+fmt(Date.parse(row.end)/1000)+': '+({warmup:'opwarmen',maintain:'handhaven',setback:'minimumtemperatuur'}[row.phase]||row.phase)+' · '+(row.wh/1000).toFixed(2)+' kWh','sub'));
+  }else dayAhead.append(el('p',dayForecast?.status==='disabled'?'Automatisch verwarmen op schema staat uit.':'Nog geen volledige verwarmingsraming; HEMS gebruikt de huisprognose.'));
+  if(dayForecast?.reasons?.length)dayAhead.append(el('p',dayForecast.reasons.map(r=>forecastReasons[r]||r).join('; '),'sub'));
+  dayAhead.append(el('p',adopted?.applied?(adopted.revision===dayForecast?.revision?'HEMS heeft deze raming opgenomen in zijn planningsinvoer.':'HEMS gebruikt nog de vorige raming; deze wijziging wacht op verwerking.'):adopted?.status==='disabled'?'Geen actieve HC-dagprognose.':'HEMS gebruikt de huisprognose: '+(forecastReasons[adopted?.reason]||adopted?.reason||'nog geen actuele ontvangstbevestiging')+'.','sub'));
   let energy=$('energy-outlook-status');
   if(!energy){energy=el('p',undefined,'sub');energy.id='energy-outlook-status';$('planner-status').after(energy);}
   let assessment=$('energy-assessment-status');

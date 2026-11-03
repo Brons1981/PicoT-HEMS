@@ -239,6 +239,7 @@ DEFAULT_BINDINGS = (
     ("energy_devices", "external_load_policy", "energy_device_policy_entity"),
     ("energy_devices", "ev_session_demand", "energy_device_session_entity"),
     ("energy_devices", "controlled_load_measurement", "hc_load_measurement_entity"),
+    ("energy_devices", "hc_day_ahead_forecast", "hc_day_ahead_entity"),
 )
 
 LEGACY_SOC_ENTITY_MIGRATIONS = {
@@ -709,8 +710,9 @@ def load_bindings(options_path: str = "/data/options.json") -> tuple[SourceBindi
     options = load_options(options_path)
     result: list[SourceBinding] = []
     for category, semantic_role, option_key in DEFAULT_BINDINGS:
-        raw = options.get(option_key, 'sensor.picot_hc_load_measurement'
-                          if semantic_role == 'controlled_load_measurement' else None)
+        defaults = {"controlled_load_measurement": "sensor.picot_hc_load_measurement",
+                    "hc_day_ahead_forecast": "sensor.picot_hc_day_ahead"}
+        raw = options.get(option_key, defaults.get(semantic_role))
         entity_id = raw.strip() if isinstance(raw, str) and raw.strip() else None
         result.append(SourceBinding(category, semantic_role, entity_id))
     return tuple(result)
@@ -838,7 +840,8 @@ class HomeAssistantStateReader:
             external_load_payload=(
                 typed_attributes
                 if binding.semantic_role in {
-                    "external_load_policy", "ev_session_demand", "controlled_load_measurement"
+                    "external_load_policy", "ev_session_demand", "controlled_load_measurement",
+                    "hc_day_ahead_forecast",
                 }
                 and not unavailable else None
             ),
@@ -1325,7 +1328,7 @@ def assemble_planning_input(
         snapshot, historical_forecast, joint_attribution or exact_attribution,
         modeled_source_id=household_load_observation.modeled_source_id
         if joint_attribution and household_load_observation is not None else None)
-    return PlanningInputBundle(
+    bundle = PlanningInputBundle(
         snapshot,
         evidence,
         facts,
@@ -1335,4 +1338,11 @@ def assemble_planning_input(
         household_load_rejection_reason,
         controlled_summary,
         replacement_basis,
+    )
+    from picot.v2.hc_day_ahead import apply as apply_hc_day_ahead
+
+    hc_source = next((e for e in evidence if e.semantic_role == "hc_day_ahead_forecast"), None)
+    return apply_hc_day_ahead(
+        bundle, hc_source.external_load_payload if hc_source else None,
+        build_basis(snapshot, historical_forecast, exact_attribution),
     )

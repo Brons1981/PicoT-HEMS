@@ -16,6 +16,7 @@ from .control import Control
 from .schedule import Schedule, DOOR
 from .heating import Heating
 from .energy_outlook import read_outlook
+from .day_ahead import DayAhead, ENTITY as DAY_AHEAD_ENTITY
 from .energy_portfolio import read_assessment
 from .energy_measurement import measurement, MeasurementPublisher
 from .energy_model import context as energy_context
@@ -99,6 +100,7 @@ class Runtime:
         self.energy_publisher = MeasurementPublisher(url, token)
         self.auxiliary_history = AuxiliaryHistory()
         self.energy_proposals = Proposals(store, ProposalPublisher(url, token))
+        self.day_ahead = DayAhead(store, ProposalPublisher(url, token, DAY_AHEAD_ENTITY))
         self.start_intent = StartIntent(store)
         self.energy_selection = Selection(store, ProposalPublisher(url, token, SELECTION_ENTITY))
         self.energy_execution_publisher = ProposalPublisher(url, token, EXECUTION_ENTITY)
@@ -232,6 +234,7 @@ class Runtime:
 
     def _energy_advice(self):
         # Advice failure must not interrupt the thermostat or device protection.
+        self._day_ahead_advice()
         try:
             now = time.time()
             states = self.control.states
@@ -297,6 +300,20 @@ class Runtime:
             self.energy_proposals.standby.observe(None, time.time())
             self.energy_proposals.withdraw('Verbruiksadvies tijdelijk niet beschikbaar.')
 
+    def _day_ahead_advice(self):
+        # Independent of short-lived HEMS requests and their availability.
+        try:
+            now = time.time()
+            plan = self.heating.view(self.config, now)
+            meter = measurement(self.config, self.control.states, now)
+            self.day_ahead.tick(
+                self.schedule.data['settings'], self.heating.data['settings']['enabled'],
+                plan.get('learning_context'), meter.get('source_id'),
+                self.energy_proposals.model, self.warmup_energy, self.heating.learning.cooling,
+                self.weather.hourly.view(now), self.weather.view(now), now)
+        except Exception:
+            self.day_ahead.failed(time.time())
+
     def _notify_health(self):
         # Reporting must never change heating or command handling.
         try:
@@ -348,6 +365,7 @@ class Runtime:
                 self.control.connected and self.connection == 'connected' and age is not None
                 and 0 <= age <= self.config['stale_seconds'])
             data['energy_proposals'] = self.energy_proposals.view(time.time())
+            data['day_ahead_forecast'] = self.day_ahead.view()
             data['warmup_energy'] = self.warmup_energy.view(self.warmup_sample, time.time())
             data['startup_energy'] = self.startup_energy.view(self.startup_sample, time.time())
             cv_now = time.time()
@@ -520,7 +538,10 @@ def handler(runtime, ingress, tablet_only=False):
             self.close_connection = True
             compressor = zlib.compressobj(wbits=31)
             metadata = dict(format='picot_hc_building_history', version=1, exported_until=until,
-                            retention_days=runtime.config['retention_days'])
+                             retention_days=runtime.config['retention_days'],
+                             day_ahead_forecast=runtime.day_ahead.view(),
+                             energy_outlook=read_outlook(runtime.control.states, until,
+                                 runtime.control.connected))
             try:
                 self.wfile.write(compressor.compress((json.dumps(metadata) + '\n').encode()))
                 for record in runtime.store.building_records(until):

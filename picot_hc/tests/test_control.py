@@ -18,6 +18,7 @@ from picot_hc.core import Store
 # allowlist so an unexpected write still reaches the command assertions.
 TELEMETRY_PATHS = frozenset('/api/states/' + entity for entity in (
     'sensor.picot_hc_load_measurement',
+    'sensor.picot_hc_day_ahead',
     'sensor.picot_hc_energy_proposals',
     'sensor.picot_hc_energy_selection',
     'sensor.picot_hc_energy_execution',

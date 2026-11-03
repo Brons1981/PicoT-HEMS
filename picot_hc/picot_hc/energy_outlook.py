@@ -57,6 +57,8 @@ def read_outlook(states, now, connected=True):
             except (KeyError, ValueError, TypeError, OverflowError):
                 pass
         history = value.get('controlled_load_history')
+        if isinstance(history, dict) and isinstance(history.get('hc_day_ahead'), dict):
+            empty['hc_day_ahead'] = history['hc_day_ahead']
         if isinstance(history, dict) and history.get('active_forecast_corrected') is False:
             if history.get('status') == 'collecting':
                 empty['load_history_status'] = 'collecting'

@@ -1,3 +1,9 @@
+# 2.0.0-dev.330
+
+- Neem de HC-dagprognose vooraf op in de laadplanning, met vervanging van het aantoonbare historische aircoverbruik.
+- Behoud overige huisvraag, EV en CV-hulpverbruik; toon de reden wanneer de huisprognose als terugval wordt gebruikt.
+- Installeer ook HC dev.27 voor publicatie van de prognose. Geen planreset nodig.
+
 # 2.0.0-dev.329
 
 - Herstel safe modus wanneer een noodzakelijk nieuw laadplan wordt afgewezen door vergelijking met de te lage eindvoorraad van een ongeldig bestaand plan.

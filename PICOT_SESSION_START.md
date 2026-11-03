@@ -1,3 +1,18 @@
+## Release HEMS dev.330 en HC dev.27 - 3 november 2026
+
+Alex vraagt publicatie van de HC-dagprognose via PR en CI. Basis main d7ced9b3f0ed255144d87a3e48187f9a2e37e4d7.
+Werkmap hc-day-ahead-work; voor release gelijkgetrokken met alle actuele HC dev.26-bestanden.
+Installeer beide apps; geen planreset. Na HC-herstart automatische verwarming weer inschakelen.
+Geen live installatie. Zie docs/development_log/2026-11-03-hc-day-ahead-implementation.md.
+
+## HC day-ahead forecast — local implementation, 3 November 2026
+
+Alex confirmed dev.329 live with an active plan, then approved HC day-ahead work.
+Workdir hc-day-ahead-work; base dev.329 / main d7ced9b3f0ed255144d87a3e48187f9a2e37e4d7.
+Alex explicitly chose recent measured heating as provisional fallback; no fixed kWh reserve.
+See V2ADR-069 and docs/development_log/2026-11-03-hc-day-ahead-implementation.md.
+No release, version bump, remote commit or live installation in this slice.
+
 ## Release HEMS dev.329 - 3 november 2026
 
 Alex vraagt publicatie van de beperkte safe-modusreparatie via PR en CI.
@@ -950,4 +965,3 @@ akkoord gegeven op publicatie van de geïsoleerde planovergangenreparatie via PR
 en CI. Zie `docs/development_log/2026-09-27-retained-plan-boundaries.md`.
 Financiële meetverwerking, planuitleg en NOM-vervanging blijven vervolgstappen.
 Installatie en livecontrole volgen na publicatie.
-

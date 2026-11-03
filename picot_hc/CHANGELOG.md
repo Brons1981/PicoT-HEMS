@@ -1,3 +1,10 @@
+# 0.1.0-dev.27
+
+- Publiceer rond 12:00 en bij relevante wijzigingen een bewaarde verwarmingsprognose voor morgen: opwarmen, handhaven en minimumtemperatuur beneden.
+- Gebruik leergegevens en herkenbare voorlopige ramingen uit recente metingen; toon beperkingen van dagweer en ontbrekende gegevens.
+- Toon tijdvakken, kWh en ontvangst door HEMS. Bestaande tablet- en nachtelijke-PV-functionaliteit blijft behouden.
+- Installeer ook HEMS dev.330. Schakel na HC-herstart de automatische regeling weer in; het comfortschema blijft bewaard.
+
 # 0.1.0-dev.26
 
 - Behoud huisvermogen op het tablet wanneer de PV-omvormer in de nacht geen verse meting levert: neem alleen bij sun.sun below_horizon 0 W PV aan.

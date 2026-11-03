@@ -1,3 +1,24 @@
+## Release HEMS dev.329 - 3 november 2026
+
+Alex vraagt publicatie van de beperkte safe-modusreparatie via PR en CI.
+Basis main 3c01af64507212d18aff5ad0b39aa0b646b220e2; werkmap planning-repair-1103.
+HEMS dev.329; HC en ED ongewijzigd. Geen live installatie of planreset.
+Zie docs/development_log/2026-11-03-supplemental-repair-invalid-incumbent.md.
+
+## Local HEMS repair and HC forecast investigation — 3 November 2026
+
+Alex requested resolution of the current safe-mode issue before HC day-ahead forecasting.
+Workdir: planning-repair-1103; baseline dev.328 / main release merge
+3c01af64507212d18aff5ad0b39aa0b646b220e2. No release/version bump or live action.
+One producer condition corrected: an invalid incumbent cannot impose terminal-stock
+comparison on necessary supplemental/main repair. Live-input replay now selects a
+valid plan, achieves 8160 Wh, remains above the floor and retains it on the next run.
+85 affected tests, final regression, Ruff and targeted Mypy passed.
+See docs/development_log/2026-11-03-supplemental-repair-invalid-incumbent.md.
+HC day-ahead scope is investigated, not implemented; see
+ docs/development_log/2026-11-03-hc-day-ahead-forecast-scope.md.
+Phone notification delivery still unverified; diagnostic transport state is absent.
+
 ## Release HEMS dev.328 - 1 november 2026
 
 Alex vraagt publicatie van de SOC-ondergrensreparatie. Basis main cb99c5897330aeef993f7375cff513702267fdcc.

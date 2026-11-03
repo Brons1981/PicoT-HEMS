@@ -1520,8 +1520,10 @@ def produce_main_charge_portfolio(
     # Retiring bridge charging changes costs outside the main acquisition
     # window. Compare complete cash flows only with the same terminal stock;
     # never grant a fictitious inventory value or alter market commitments.
+    # An invalid incumbent is not a financial reference: necessary repair must
+    # not reproduce the ending stock of a route that cannot meet its goals.
     supplemental_comparison = (windows.purpose != "bridge" and market_basis is None
-        and incumbent is not None
+        and incumbent is not None and not incumbent_invalidity
         and any(w.supplemental_retirements for w in windows.windows))
     financial_market_comparison = (market_basis is not None and market_basis.horizon_complete
                                    and not market_basis.unplanned_assignment_ids)

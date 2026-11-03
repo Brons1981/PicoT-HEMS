@@ -1,3 +1,9 @@
+# 2.0.0-dev.329
+
+- Herstel safe modus wanneer een noodzakelijk nieuw laadplan wordt afgewezen door vergelijking met de te lage eindvoorraad van een ongeldig bestaand plan.
+- Behoud de financiele vergelijking bij geldige plannen en alle SOC- en vermogensgrenzen.
+- Geen planreset nodig. HC en ED blijven ongewijzigd; de HC-dagprognose en telefoonmeldingen zijn geen onderdeel van deze reparatie.
+
 # 2.0.0-dev.328
 
 - Vraag standby aan wanneer een ontlaadsegment de SOC-ondergrens bereikt, in plaats van een normale reservegrens als uitvoeringsfout te tonen.

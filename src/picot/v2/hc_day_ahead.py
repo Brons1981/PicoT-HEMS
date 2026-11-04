@@ -15,6 +15,25 @@ if TYPE_CHECKING:
     from picot.v2.planning_input import PlanningInputBundle
 
 
+def unavailable_explanation(attributes: dict[str, Any]) -> str:
+    """Describe advisory unavailability without accepting its forecast payload."""
+    labels = {
+        "no_warmup_measurements": "onvoldoende bruikbare opwarmhistorie",
+        "fresh_thermal_context_required": "actuele temperatuur- en regelgegevens ontbreken",
+        "no_energy_measurements": "onvoldoende bruikbare energiehistorie",
+        "no_comparable_energy_measurements": "geen vergelijkbare energiemetingen",
+        "forecast_generation_failed": "aanmaken van de prognose mislukt",
+    }
+    reasons = attributes.get("reasons")
+    known = (
+        [text for code, text in labels.items() if code in reasons]
+        if attributes.get("contract") == "hc-day-ahead:v1" and isinstance(reasons, list)
+        else []
+    )
+    cause = "; ".join(known) or "oorzaak niet aangeleverd of niet herkend"
+    return f"Niet beschikbaar: {cause}. Huishoudprognose wordt gebruikt."
+
+
 def validate(value: Any, now: datetime) -> list[dict[str, Any]]:
     if not isinstance(value, dict) or (
         value.get("contract") != "hc-day-ahead:v1"

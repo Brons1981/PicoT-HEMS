@@ -4,6 +4,8 @@ All notable project changes are recorded in this file.
 
 ## [Unreleased]
 
+- Treat measured 100% SOC during a charge segment with a 100% ceiling as a reached charge target: select NOM without an execution fault, retain existing completion evidence handling and EV isolation.
+
 ### DEV.238
 
 - Voeg de zelfstandige, read-only Home Assistant-add-on **PicoT Energy

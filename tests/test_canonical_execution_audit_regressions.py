@@ -270,13 +270,18 @@ def test_late_selector_observation_resolves_pending_without_another_command(tmp_
     assert len(calls) == 1
 
 
-def test_full_battery_does_not_start_another_fast_charge(tmp_path, monkeypatch):
+@pytest.mark.parametrize("current_mode", ["Nul op de meter", "Test active"])
+def test_full_battery_does_not_start_another_fast_charge(tmp_path, monkeypatch, current_mode):
+    from picot.domain.execution_primitive import ExecutionPrimitive as P
+    from picot.v2.zendure_mode_capabilities import ZendureModeMapping
+
     store, observed, segment = daily_boundary(tmp_path, monkeypatch, charge=True)
     assert segment.primitive.value == "charge_at_power"
     observed = replace(
         observed,
         current_storage_states=tuple(
-            replace(state, current_soc=1) for state in observed.current_storage_states
+            replace(state, current_soc=1, measured_at=observed.captured_at)
+            for state in observed.current_storage_states
         ),
     )
     calls = []
@@ -286,7 +291,38 @@ def test_full_battery_does_not_start_another_fast_charge(tmp_path, monkeypatch):
         # Boundary fixture after plan admission; startup is tested separately.
         _daily_execution_suspended=False,
     )
+    evidence = observed.storage_mode_capability_evidence
+    observed = replace(
+        observed,
+        storage_mode_capability_evidence=replace(
+            evidence, current_vendor_mode=current_mode,
+            mappings=(*evidence.mappings, ZendureModeMapping(
+                "Nul op de meter", (P.BALANCE_BIDIRECTIONAL,), "none")),
+        ),
+        capability_snapshot_set=replace(
+            observed.capability_snapshot_set,
+            capabilities=tuple(replace(c, supported_primitives=tuple(dict.fromkeys((
+                *c.supported_primitives, P.BALANCE_BIDIRECTIONAL,
+            )))) for c in observed.capability_snapshot_set.capabilities),
+        ),
+    )
+    saved = store.load_active_daily_main_plan("battery")
     result = runtime.advance_committed_boundary(observed, execution_enabled=True)
-    assert result.status == "blocked"
-    assert result.failure_reason == "execution_soc_above_segment_maximum"
-    assert calls == []
+    assert result.status == (
+        "already_active" if current_mode == "Nul op de meter" else "dispatched"
+    )
+    assert result.failure_reason is None
+    assert result.reason == "execution_charge_target_reached"
+    assert result.primitive is P.BALANCE_BIDIRECTIONAL
+    assert all(call[0].primitive is P.BALANCE_BIDIRECTIONAL for call in calls)
+    assert store.load_active_daily_main_plan("battery") == saved
+    if current_mode == "Nul op de meter":
+        assert calls == []
+        assert any(owner.completed_at is not None for owner in store.load_daily_assignments())
+    else:
+        assert len(calls) == 1
+        assert calls[0][0].requested_power_w is None
+        assert runtime.advance_committed_boundary(observed, execution_enabled=True).status == (
+            "awaiting_mode_feedback"
+        )
+        assert len(calls) == 1

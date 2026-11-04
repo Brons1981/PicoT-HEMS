@@ -52,6 +52,86 @@ class HeatingTests(ControlFixture):
             self.ctl.observe(self.states, NOW, NOW)
             self.heat.update(dict(revision=0, settings=dict(self.heat.data['settings'], enabled=True)))
 
+    def test_missing_temperature_grace_holds_then_stops(self):
+        self.temperature('boven',22); self.temperature('badkamer',22)
+        self.enable(); self.poll(NOW+121); self.poll(NOW+152)
+        self.temperature('beneden','unavailable')
+        view=self.poll(NOW+180)
+        self.assertEqual(len(self.calls),1)
+        self.assertIn('beneden',view['data_grace_sources'])
+        self.poll(NOW+479)
+        self.assertEqual(len(self.calls),1)
+        self.poll(NOW+480)
+        self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
+
+    def test_data_recovery_during_grace_does_not_cycle_or_write_target(self):
+        self.temperature('boven',22); self.temperature('badkamer',22)
+        self.enable(); self.poll(NOW+121); self.poll(NOW+152)
+        self.temperature('beneden','unavailable'); self.poll(NOW+180)
+        self.runtime.schedule.data['settings']['thermostat_temperature']=21
+        self.poll(NOW+240)
+        self.assertEqual(len(self.calls),1)
+        self.temperature('beneden',18)
+        view=self.poll(NOW+270)
+        self.assertEqual(view['data_grace_sources'],[])
+        self.assertEqual(self.calls[-1][1],dict(entity_id=self.config['zones'][0]['device'],temperature=21,hvac_mode='heat'))
+        self.assertFalse(any(c[1].get('hvac_mode')=='off' for c in self.calls))
+
+    def test_missing_door_grace_and_explicit_disable(self):
+        self.temperature('boven',22); self.temperature('badkamer',22)
+        self.enable(); self.poll(NOW+121); self.poll(NOW+152)
+        self.states[DOOR]['state']='unavailable'
+        view=self.poll(NOW+180)
+        self.assertIn('beneden',view['data_grace_sources'])
+        self.assertEqual(len(self.calls),1)
+        self.heat.update(dict(revision=self.heat.data['revision'],settings=dict(self.heat.data['settings'],enabled=False)))
+        self.poll(NOW+210)
+        self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
+
+    def test_restart_preserves_enabled_and_confirmed_heat_without_replay(self):
+        self.temperature('boven',22); self.temperature('badkamer',22)
+        self.enable(); self.poll(NOW+121); self.poll(NOW+152)
+        other=Runtime(self.config,self.store,self.url,'fake-secret')
+        self.assertTrue(other.heating.data['settings']['enabled'])
+        self.assertTrue(other.heating.armed)
+        with patch('time.time',return_value=NOW+200):
+            other.heating.tick(other.config,NOW+200)
+            other.control.observe(self.states,NOW+200,NOW+200)
+            other.heating.tick(other.config,NOW+200)
+        self.assertEqual(len(self.calls),1)
+
+    def test_grace_deadline_survives_hc_restart(self):
+        self.temperature('boven',22); self.temperature('badkamer',22)
+        self.enable(); self.poll(NOW+121); self.poll(NOW+152)
+        self.temperature('beneden','unavailable'); self.poll(NOW+180)
+        other=Runtime(self.config,self.store,self.url,'fake-secret')
+        self.heat,self.ctl=other.heating,other.control
+        self.poll(NOW+450)
+        self.assertEqual(len(self.calls),1)
+        self.poll(NOW+480)
+        self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
+
+    def test_missing_temperature_does_not_authorize_airco_start(self):
+        self.temperature('boven',22); self.temperature('badkamer',22)
+        self.temperature('beneden','unavailable'); self.enable()
+        view=self.poll(NOW+121)
+        self.assertEqual(view['data_grace_sources'],[])
+        self.assertEqual(self.calls,[])
+
+    def test_temporary_missing_price_holds_existing_airco(self):
+        self.temperature('boven',22); self.temperature('badkamer',22)
+        self.enable(); self.poll(NOW+121); self.poll(NOW+152)
+        del self.states[self.config['price_entity']]
+        view=self.poll(NOW+180)
+        self.assertIn('beneden',view['data_grace_sources'])
+        self.assertEqual(len(self.calls),1)
+        self.price(.25); view=self.poll(NOW+240)
+        self.assertEqual(view['data_grace_sources'],[])
+        self.assertEqual(len(self.calls),1)
+        del self.states[self.config['price_entity']]
+        self.poll(NOW+270); self.poll(NOW+570)
+        self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
+
     def test_four_sources_and_shared_cv_switch_waits_for_off_feedback(self):
         self.enable()
         self.poll(NOW+121); self.poll(); self.poll(); self.poll()
@@ -105,10 +185,11 @@ class HeatingTests(ControlFixture):
         self.assertEqual(len(self.calls),1)
         # Protective stop still enforces minimum off time before restarting.
         self.temperature('beneden','unavailable'); self.poll()
+        self.poll(self.at+300)
         self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
         self.temperature('beneden',19); self.poll()
         self.assertEqual(len(self.calls),2)
-        self.poll(NOW+600)
+        self.poll(self.at+180)
         self.assertEqual(len(self.calls),3)
 
     def test_door_preempts_pending_heat_despite_missing_temperature(self):
@@ -161,8 +242,10 @@ class HeatingTests(ControlFixture):
     def test_stale_measurement_stops_owned_and_freshness_is_not_poll_time(self):
         self.temperature('boven',22); self.temperature('badkamer',22)
         self.enable(); self.poll(NOW+121); self.poll(); self.poll(NOW+901)
+        self.assertEqual(len(self.calls),1)
+        self.poll(NOW+1201)
         self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
-        self.poll(NOW+1000)
+        self.poll(NOW+1300)
         self.assertEqual(len(self.calls),2)
 
     def test_invalid_price_and_expired_gas(self):
@@ -190,14 +273,15 @@ class HeatingTests(ControlFixture):
         self.assertEqual(len(self.calls),2)  # One start, one protective stop.
         self.assertIn('beneden',self.heat.data['faults'])
 
-    def test_restart_is_disabled_and_never_replays_or_stops(self):
+    def test_restart_preserves_enabled_but_does_not_replay_uncertain_start(self):
         self.enable(); self.poll(NOW+121)
         other=Runtime(self.config,self.store,self.url,'fake-secret')
-        self.assertFalse(other.heating.data['settings']['enabled'])
+        self.assertTrue(other.heating.data['settings']['enabled'])
         with patch('time.time',return_value=NOW+200):
             other.control.observe(self.states,NOW+200,NOW+200)
             other.heating.tick(other.config,NOW+200)
-        self.assertEqual(len(self.calls),1)
+        self.assertEqual(len(self.calls),2)
+        self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
 
     def test_disable_stops_only_owned_sources(self):
         self.temperature('boven',22); self.temperature('badkamer',22)
@@ -250,8 +334,9 @@ class HeatingTests(ControlFixture):
         self.temperature('boven',22);self.temperature('badkamer',22)
         self.enable();self.poll(NOW+121);self.poll()
         self.temperature('beneden','unavailable')
+        self.poll()
         self.status=400;self.apply=False
-        self.poll();self.poll();self.poll()
+        self.poll(self.at+300);self.poll();self.poll()
         self.assertEqual(len(self.calls),2)
         self.heat.reset_faults();self.status=200;self.apply=True
         self.poll();self.poll()
@@ -372,8 +457,9 @@ class HeatingTests(ControlFixture):
         self.assertEqual(len(self.calls),3)
         self.heat=Heating(self.ctl,self.runtime.schedule,self.store)
         self.poll();self.poll()
-        self.assertEqual(len(self.calls),4)
-        self.assertEqual(self.calls[-1],('/api/services/switch/turn_off',{'entity_id':self.config['zones'][2]['device']}))
+        self.assertEqual(len(self.calls),3)
+        self.assertEqual(self.heat.data['timer']['status'],'restart')
+        self.assertTrue(self.heat.data['settings']['enabled'])
         self.assertEqual(self.states[self.config['zones'][0]['device']]['state'],'heat')
 
     def test_removed_bounds_during_timer_stop_owned_heat(self):
@@ -422,12 +508,14 @@ class HeatingTests(ControlFixture):
             self.assertIn('ontvangsttijd',view['zones']['beneden']['reason'])
         self.assertEqual(self.calls,[])
 
-    def test_template_failure_stops_owned_heat_without_losing_source_feedback(self):
+    def test_template_failure_waits_before_stopping_owned_heat(self):
         self.enable();self.live_reports();self.collect_at()
         self.template_status=503
         view=self.collect_at(NOW+152)
         self.assertEqual(self.runtime.connection,'connected')
-        self.assertIn('ontvangsttijd',view['zones']['beneden']['reason'])
+        self.assertIn('tijdelijk',view['zones']['beneden']['reason'])
+        self.assertEqual(len(self.calls),1)
+        self.collect_at(NOW+452)
         self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
         self.assertEqual(len(self.calls),2)
 

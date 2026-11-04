@@ -1,3 +1,8 @@
+# 2.0.0-dev.331
+
+- Handel een gemeten volle batterij tijdens een laadsegment naar 100% af als bereikt laaddoel met NOM, zonder onnodige storingsmelding.
+- Behoud bewijs voor planvoltooiing, EV-isolatie en lagere ingestelde SOC-bovengrenzen. Geen planreset nodig.
+
 # 2.0.0-dev.330
 
 - Neem de HC-dagprognose vooraf op in de laadplanning, met vervanging van het aantoonbare historische aircoverbruik.

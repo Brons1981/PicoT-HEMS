@@ -34,6 +34,7 @@ from picot.v2.external_load_policy import (
     read_external_load_policy,
     read_session_demand,
 )
+from picot.v2.hc_day_ahead import unavailable_explanation
 from picot.v2.household_load_forecast import (
     build_fallback_household_load_forecast,
     build_historical_household_load_forecast,
@@ -833,6 +834,8 @@ class HomeAssistantStateReader:
                 if binding.semantic_role == "controlled_load_measurement" and unavailable
                 and typed_attributes.get("contract") == "controlled-load-measurement:v1"
                 and isinstance(typed_attributes.get("error"), str)
+                else unavailable_explanation(typed_attributes)
+                if binding.semantic_role == "hc_day_ahead_forecast" and unavailable
                 else None
             ),
             price_points=price_points,

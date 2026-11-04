@@ -1,3 +1,8 @@
+## Release HEMS dev.332 - 4 november 2026
+
+Reparatie HC-dagprognosemelding: concrete oorzaak en huishoudprognose als terugval zichtbaar.
+Basis main dev.331; HC blijft dev.28. Berekening en aansturing ongewijzigd. Geen planreset.
+
 ## Release HEMS dev.331 en HC dev.28 - 4 november 2026
 
 Alex vraagt publicatie van de SOC-volreparatie en HC-continuiteit via PR en groene CI.

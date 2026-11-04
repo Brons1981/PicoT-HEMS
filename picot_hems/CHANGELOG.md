@@ -1,3 +1,8 @@
+# 2.0.0-dev.332
+
+- Toon bij een ontbrekende HC-dagprognose de concrete oorzaak en de terugval op de huishoudprognose.
+- Prognoseberekening en aansturing blijven ongewijzigd. HC blijft dev.28; geen planreset nodig.
+
 # 2.0.0-dev.331
 
 - Handel een gemeten volle batterij tijdens een laadsegment naar 100% af als bereikt laaddoel met NOM, zonder onnodige storingsmelding.

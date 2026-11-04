@@ -4,6 +4,7 @@ All notable project changes are recorded in this file.
 
 ## [Unreleased]
 
+- Toon bij een ontbrekende HC-dagprognose de concrete oorzaak (zoals onvoldoende bruikbare opwarmhistorie) en de terugval op de huishoudprognose, in plaats van een generieke ontbrekende meting. Prognoseberekening en aansturing blijven ongewijzigd.
 - Treat measured 100% SOC during a charge segment with a 100% ceiling as a reached charge target: select NOM without an execution fault, retain existing completion evidence handling and EV isolation.
 
 ### DEV.238

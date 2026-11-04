@@ -2926,7 +2926,8 @@ DASHBOARD_HTML = """<!doctype html>
           s => s.availability === "unavailable" || s.error);
         for (const source of sources) {
           const label = source.semantic_role === "controlled_load_measurement"
-            ? "Home Climate-belastingsmeting" : names[source.category] ?? source.category ?? "Bron";
+            ? "Home Climate-belastingsmeting" : source.semantic_role === "hc_day_ahead_forecast"
+            ? "HC-dagprognose" : names[source.category] ?? source.category ?? "Bron";
           faults.push(`${label}: ` +
             `${source.error || "geen bruikbare meting beschikbaar"}` +
             (source.entity_id ? ` (${source.entity_id})` : ""));

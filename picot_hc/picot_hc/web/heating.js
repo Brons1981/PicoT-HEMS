@@ -7,12 +7,13 @@ function renderHeating(data) {
   $('regulation-badge').textContent = data.enabled ? 'Automatische verwarming actief' : data.timer?.active ? 'Badkamertimer actief' : 'Automatische verwarming uit';
   $('heating-status').textContent = data.enabled
     ? 'HC regelt op de actuele temperatuurdoelen. Handmatige keuzes blijven leidend.'
-    : 'Uit. Na een herstart opnieuw activeren. Controleer de apparaatstanden; herstart zet apparaten niet uit.';
+    : 'Automatische verwarming staat uit. De gekozen instelling blijft bij een herstart bewaard.';
   const decisions = $('heating-decisions'); decisions.replaceChildren();
   for (const [zone, state] of Object.entries(data.zones)) {
     const selected = Object.keys(data.desired).filter(s => s === zone || s === 'cv' && zone !== 'badkamer');
     decisions.append(el('p', zone + ': ' + state.reason + (selected.length ? ' Gekozen: ' + selected.map(s=>names[s]).join(', ') + '.' : '')));
   }
+  if (data.door_fan && data.door_fan.reason) decisions.append(el('p', data.door_fan.reason));
   const costs = $('heating-costs'); costs.replaceChildren();
   for (const [key, name] of Object.entries(names)) {
     const cost = data.costs[key];

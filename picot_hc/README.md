@@ -56,8 +56,8 @@ Ontbrekende, te oude of tegenstrijdige waarden worden geen nulmeting.
 
 Bediening wacht op actuele HC-metingen en ingeschakelde automatische verwarming.
 Deurbeveiliging, bronblokkades, minimale looptijden en HEMS-starttoestemming
-blijven gelden. Na een HC-herstart moet de bestaande automatische regeling
-zoals gebruikelijk opnieuw worden ingeschakeld. Oude iPad Safari moet nog op
+blijven gelden. De gekozen automatische modus blijft na een HC-herstart
+bewaard; nieuwe opdrachten vereisen actuele gegevens. Oude iPad Safari moet nog op
 het fysieke apparaat worden getest; de pagina gebruikt ES5, XHR en SVG.
 
 ## Beneden instellen
@@ -160,8 +160,18 @@ zonder onderbouwing als dezelfde vervangbare belasting behandeld.
 De eigen Ecowitt-temperatuurmeting blijft de ruimtemeting. HC controleert waarde,
 eenheid en `last_reported` samen via HA. Een constante temperatuur met een nieuwe
 melding kan dus geldig blijven, ook als `last_updated` oud is. Bij ontbrekende of
-te oude metingen blokkeert HC nieuwe verwarming en stopt het zo nodig zijn eigen
-betrokken bron. Laatst bekende waarden blijven zichtbaar als verouderd.
+te oude metingen blokkeert HC nieuwe verwarming. Een bevestigde, door HC aangestuurde
+airco beneden behoudt bij tijdelijk ontbrekende temperatuur-, deur- of prijsgegevens maximaal
+vijf minuten zijn bestaande stand, zonder nieuwe temperatuur- of startopdrachten.
+Daarna geldt de bestaande stopbeveiliging zodra HA weer bereikbaar is. Handmatige
+uitschakeling en bronstoringen krijgen geen extra wachttijd. Laatst bekende waarden
+blijven zichtbaar als verouderd.
+
+Bij een open achterdeur blijft een draaiende airco beneden aan. Na de ingestelde
+openvertraging kiest HC `stil` via `select.airco_woonkamer_ventilatorsnelheid`;
+na sluiten en de sluitvertraging kiest HC `auto`. Dit vermindert de ventilatorsnelheid,
+maar garandeert geen lager compressorvermogen. Een ontbrekende ventilatorselectie
+veroorzaakt geen uitschakeling. Nieuwe starts wachten op een gesloten deur.
 
 De ingestelde `weather_entity` levert actuele weersomstandigheden en een aparte
 dagverwachting. Alleen wanneer die HA-bron uurverwachtingen ondersteunt, vraagt HC
@@ -221,8 +231,8 @@ HA-bronnen en de woning moet na installatie nog worden gecontroleerd.
 Gegevens staan in `/data/hc.sqlite3` en blijven bij gewone herstart/update behouden.
 Maak voor installatie en teruggaan een HA-back-up inclusief HC; oudere versies
 begrijpen niet noodzakelijk alle nieuwe instellingen en opgeslagen plannen.
-Na herstart staat automatische verwarming uit. Controleer doelen, apparaatstanden
-en meldingen voordat je de regeling weer inschakelt.
+Na herstart blijft automatische verwarming aan of uit zoals gekozen. Onbevestigde
+opdrachten worden niet herhaald; handmatige overnames en bronstoringen blijven gelden.
 
 **Meetgegevens downloaden** levert de opgeslagen woningmetingen als gzip-JSONL.
 Downloaden stuurt geen apparaten aan en verlengt de ingestelde bewaartermijn niet.

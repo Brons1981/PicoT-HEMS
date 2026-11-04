@@ -298,6 +298,31 @@ class CanonicalExecutionRuntime:
             return "execution_soc_above_segment_maximum"
         return None
 
+    @staticmethod
+    def _full_charge_target_reached(
+        snapshot: PlanningInputSnapshot,
+        scope_id: str,
+        capability_id: str,
+        primitive: ExecutionPrimitive,
+        constraint: SocConstraint | None,
+    ) -> bool:
+        """A full battery needs NOM, not another charge or a fault.
+
+        Do not relax a lower configured ceiling: NOM could charge beyond it.
+        Completion attribution remains with the existing evidence-based observer.
+        """
+        return (
+            primitive in {
+                ExecutionPrimitive.CHARGE_AT_POWER, ExecutionPrimitive.BALANCE_CHARGE_ONLY
+            }
+            and constraint is not None and constraint.maximum == 1.0
+            and any(
+                state.execution_scope_id == scope_id and state.capability_id == capability_id
+                and state.current_soc == 1.0
+                for state in snapshot.current_storage_states
+            )
+        )
+
     def reset_pending_state(self) -> None:
         """Drop only process-local dispatch state after a manual plan reset."""
 
@@ -776,6 +801,18 @@ class CanonicalExecutionRuntime:
             primitive = ExecutionPrimitive.STANDBY
             market_override = True
             market_reason = "execution_soc_minimum_reached"
+        if isinstance(segment, ExecutionPlanSegment) and self._full_charge_target_reached(
+            snapshot, scope_id, segment.capability_id, primitive, segment.soc_constraint,
+        ):
+            primitive = ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+            market_override = True
+            market_reason = "execution_charge_target_reached"
+            # Reapply EV isolation to the replacement primitive as well.
+            guarded = self._ev_primitive(snapshot, scope_id, primitive, segment.soc_constraint)
+            ev_override |= guarded is not primitive
+            if guarded is not primitive:
+                market_reason = "ev_storage_support_prohibited"
+            primitive = guarded
         mapping = self._mapping(
             evidence=evidence,
             primitive=primitive,
@@ -1114,6 +1151,26 @@ class CanonicalExecutionRuntime:
                 boundary, planned_primitive=ExecutionPrimitive.STANDBY,
                 request_id=f"{boundary.request_id}:soc-minimum",
                 execution_reason="execution_soc_minimum_reached",
+            )
+            requested_power_w = None
+        assert boundary.planned_primitive is not None
+        if not fallback and self._full_charge_target_reached(
+            run.planning_input, scope_id, capability_id,
+            boundary.planned_primitive, segment.soc_constraint,
+        ):
+            guarded = self._ev_primitive(
+                run.planning_input, scope_id, ExecutionPrimitive.BALANCE_BIDIRECTIONAL,
+                segment.soc_constraint,
+            )
+            ev_override |= guarded is not ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+            boundary = replace(
+                boundary, planned_primitive=guarded,
+                request_id=f"{boundary.request_id}:charge-target-reached",
+                execution_reason=(
+                    "ev_storage_support_prohibited"
+                    if guarded is not ExecutionPrimitive.BALANCE_BIDIRECTIONAL
+                    else "execution_charge_target_reached"
+                ),
             )
             requested_power_w = None
         if not fallback and run.planning_input.daily_charge_context is not None:

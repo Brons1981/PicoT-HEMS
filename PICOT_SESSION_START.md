@@ -1,3 +1,11 @@
+## Release HEMS dev.331 en HC dev.28 - 4 november 2026
+
+Alex vraagt publicatie van de SOC-volreparatie en HC-continuiteit via PR en groene CI.
+Basis main 554d2c97e038da2d49de76b26c546dfbf81450b8; werkmap hc-day-ahead-work.
+HC bewaart automatische modus, gebruikt stil/auto bij achterdeur en 5 minuten meetuitvalvertraging voor een bevestigde eigen airco beneden.
+HEMS handelt 100% SOC bij 100%-laaddoel af zonder foutmelding; EV-isolatie blijft gelden.
+Geen live installatie of planreset. Als HC al uit stond, eenmalig automatisch inschakelen.
+
 ## Release HEMS dev.330 en HC dev.27 - 3 november 2026
 
 Alex vraagt publicatie van de HC-dagprognose via PR en CI. Basis main d7ced9b3f0ed255144d87a3e48187f9a2e37e4d7.

@@ -828,7 +828,7 @@ class EnergyStartTests(DownstairsComfortTests):
         self.runtime.collect()
         restored = Runtime(self.config, self.store, "http://fake/api", "test")
         self.assertEqual(restored.start_intent.view(self.now)["status"], "cancelled")
-        self.assertFalse(restored.heating.view(self.config, self.now)["enabled"])
+        self.assertTrue(restored.heating.view(self.config, self.now)["enabled"])
         count = len(self.calls)
         restored.heating.tick(self.config, self.now)
         self.assertEqual(len(self.calls), count)

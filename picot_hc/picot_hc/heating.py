@@ -6,10 +6,11 @@ import time
 import uuid
 from datetime import datetime
 
-from .control import numeric
+from .control import PENDING, numeric
 from .core import observation, prices, tariff_confirmed, timestamp
 from .schedule import TZ
 from .learning import Learning
+from .door_fan import DoorFan
 
 DEFAULTS = dict(enabled=False, cv_efficiency=.90, gas_kwh_m3=35.17/3.6,
                 cop_beneden=3.72, cop_boven=3.0)
@@ -43,14 +44,13 @@ class Heating:
         self.data.setdefault('timer', None)
         self.learning = Learning(store)
         self.energy_start = None
-        self.armed = False
+        # Persist the user's choice; fresh source/measurement checks still gate writes.
+        self.armed = bool(self.data['settings']['enabled'])
+        self.data.setdefault('missing_data_since', {})
+        self.door_fan = DoorFan(self)
         if self.data['timer'] and self.data['timer']['status'] == 'running':
             self.data['timer']['status'] = 'restart'
             self.data['timer_revision'] += 1
-            self.save()
-        if self.data['settings']['enabled']:
-            self.data['settings']['enabled'] = False
-            self.data['revision'] += 1
             self.save()
 
     def save(self):
@@ -203,6 +203,7 @@ class Heating:
         if view.get('temporary_temperature'):
             learning.update(phase='temporary', target=None, preheating=False)
         zones, demand = {}, {}
+        invalid_temperature = set()
         fresh = (self.control.connected and self.control.received is not None
                  and 0 <= now-self.control.received <= config['stale_seconds'])
         for zone in config['zones']:
@@ -251,6 +252,9 @@ class Heating:
                 reason = 'Timerdoel valt buiten de badkamergrenzen.'
             elif zid in blocked:
                 reason = 'Handmatige bronkeuze heeft voorrang.'
+            if (sample.get('report_error') or not fresh or sample['quality'] != 'available'
+                    or age is None or not 0 <= age <= view['settings']['sensor_max_age_seconds']):
+                invalid_temperature.add(zid)
             target = goal['target'] if goal else None
             on = False
             maintaining = False
@@ -280,8 +284,18 @@ class Heating:
         door = view['door'] or {'value': 'unknown', 'since': now}
         elapsed = now-door['since']
         door_start = door['value'] == 'off' and elapsed >= view['settings']['door_close_seconds']
-        door_stop = (door['value'] == 'unknown' or
-                     door['value'] == 'on' and elapsed >= view['settings']['door_open_seconds'])
+        # A known open door reduces the fan of an existing airco run; it must
+        # not cycle the compressor. New starts still require door_start.
+        door_stop = door['value'] == 'unknown'
+        down_owned = owned.get('beneden', {})
+        down_command = records.get(down_owned.get('command'), {})
+        door_pending = (door['value'] == 'on' and elapsed < view['settings']['door_open_seconds']
+            and bool(down_owned) and not down_owned.get('released')
+            and down_command.get('status') in PENDING and down_command.get('value') != 'off')
+        door_continue = (not door_stop and bool(down_owned) and not down_owned.get('released')
+            and sources['beneden']['state'] == 'heat'
+            and down_command.get('status') in ('confirmed', 'already_set')
+            and down_command.get('value') != 'off')
 
         def eligible(source, target):
             s = sources[source]
@@ -301,7 +315,7 @@ class Heating:
             for zid in ('beneden', 'boven', 'badkamer'):
                 target = zones[zid]['target']
                 if demand[zid] and eligible(zid, target):
-                    if zid == 'beneden' and not (door_start or zid in owned and not door_stop):
+                    if zid == 'beneden' and not (door_start or door_continue or door_pending):
                         zones[zid]['reason'] = 'Airco wacht op gesloten achterdeur en herstelvertraging.'
                     else:
                         desired[zid] = target
@@ -320,7 +334,7 @@ class Heating:
                 if own.get('released') or c.get('value') == 'off' or source in desired or now-own['since'] >= 300:
                     continue
                 viable = (cv_ok if source == 'cv' else demand[source] and eligible(source, zones[source]['target'])
-                          and (source != 'beneden' or not door_stop))
+                          and (source != 'beneden' or door_start or door_continue or door_pending))
                 if viable:
                     for other in list(desired):
                         if set(COVERAGE[source]) & set(COVERAGE[other]):
@@ -346,6 +360,35 @@ class Heating:
         # A scheduled energy recipe must not replace an explicit room goal.
         if self.energy_start is not None and not view.get('temporary_temperature'):
             result = self.energy_start.apply(result, config, now, direct_desired)
+        # A brief telemetry gap must not cycle an already confirmed airco. Keep
+        # its existing device state only: no fresh start, target write or source
+        # switch is authorized by this grace period. Persist the deadline so an
+        # HC restart cannot repeatedly extend an unresolved gap.
+        grace = []
+        missing = self.data['missing_data_since']
+        source = 'beneden'
+        own = owned.get(source, {})
+        command = records.get(own.get('command'), {})
+        gap = (source in invalid_temperature or door['value'] == 'unknown'
+               or price is None and tariff_confirmed(config))
+        holding_allowed = (enabled and gap and source in owned and not own.get('released')
+            and source not in blocked and source not in self.data['faults']
+            and command.get('status') in ('confirmed', 'already_set')
+            and command.get('value') != 'off'
+            and sources[source]['state'] in ('heat', None, 'unknown', 'unavailable')
+            and not view['comfort']['zones'][source]['errors']
+            and zones[source]['target'] is not None
+            and 5 <= zones[source]['target'] <= 35
+            and not (door['value'] == 'on' and door_stop))
+        if holding_allowed:
+            since = missing.setdefault(source, now)
+            if 0 <= now-since < 300:
+                grace.append(source)
+                zones[source]['reason'] = ('Meetgegevens tijdelijk niet beschikbaar; '
+                    'bestaande aircostand blijft maximaal 5 minuten behouden.')
+        else:
+            missing.pop(source, None)
+        result['data_grace_sources'] = grace
         return result
 
     def action(self, plan, now):
@@ -355,7 +398,7 @@ class Heating:
         for source, own in self.data['owned'].items():
             if not self.armed and source != 'badkamer':
                 continue
-            if source in holds:
+            if source in holds or source in plan.get('data_grace_sources', []):
                 continue
             c = records.get(own['command'], {})
             if c.get('value') == 'off' and not own.get('retry_stop'):
@@ -366,6 +409,8 @@ class Heating:
         if plan.get('energy_start'):
             desired.sort(key=lambda item: item[0] != plan['energy_start'].get('source', 'beneden'))
         for source, target in desired:
+            if source in plan.get('data_grace_sources', []):
+                continue
             s = plan['sources'][source]
             if s['pending'] or source in self.data['faults']:
                 continue
@@ -394,6 +439,7 @@ class Heating:
         # One write per poll, prioritising stops; remaining independent sources follow.
         chosen = self.action(plan, now)
         if chosen is None:
+            self.door_fan.tick(config, now)
             return
         source, field, value = chosen
         request_id = str(uuid.uuid4())
@@ -426,6 +472,7 @@ class Heating:
 
     def view(self, config, now):
         result = self.plan(config, now)
+        result['door_fan'] = self.door_fan.view(config, now, result)
         result.update(settings=copy.deepcopy(self.data['settings']), revision=self.data['revision'],
                       faults=copy.deepcopy(self.data['faults']), owned=copy.deepcopy(self.data['owned']))
         timer = copy.deepcopy(self.data['timer'])

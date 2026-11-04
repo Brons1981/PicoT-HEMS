@@ -14,6 +14,7 @@ PENDING = {'sending', 'awaiting_feedback', 'uncertain'}
 MODES = {'off', 'heat', 'cool', 'heat_cool', 'auto', 'dry', 'fan_only'}
 # Confirmed by the owner; only used when this entity omits HA step metadata.
 CONFIRMED_CELSIUS_STEPS = {'climate.huiskamer': 0.5}
+DOWNSTAIRS_FAN = 'select.airco_woonkamer_ventilatorsnelheid'
 
 
 def source_bindings(config):
@@ -191,7 +192,15 @@ class Control:
                 raise ValueError(source['reason'])
             field, value = payload['field'], payload['value']
             data = {'entity_id': binding['entity_id']}
-            if field == 'state' and binding['kind'] == 'switch' and value in ('on', 'off'):
+            if field == 'fan' and payload['source'] == 'beneden' and origin == 'schedule':
+                fan = states.get(DOWNSTAIRS_FAN, {})
+                if (source['state'] != 'heat' or fan.get('state') in (None, 'unknown', 'unavailable')
+                        or value not in ('stil', 'auto')
+                        or value not in (fan.get('attributes') or {}).get('options', [])):
+                    raise ValueError('Geen bruikbare ventilatorselectie voor de draaiende airco.')
+                data = {'entity_id': DOWNSTAIRS_FAN, 'option': value}
+                service = '/services/select/select_option'
+            elif field == 'state' and binding['kind'] == 'switch' and value in ('on', 'off'):
                 service = '/services/switch/turn_' + value
             elif field == 'mode' and binding['kind'] == 'climate' and isinstance(value, str) and value in source['modes']:
                 service = '/services/climate/set_hvac_mode'
@@ -214,7 +223,7 @@ class Control:
                     data['hvac_mode'] = 'heat'
             else:
                 raise ValueError('Opdracht of modus wordt niet ondersteund.')
-            pending = [c for c in self.records() if c['entity_id'] == binding['entity_id'] and c['status'] in PENDING]
+            pending = [c for c in self.records() if c['entity_id'] == data['entity_id'] and c['status'] in PENDING]
             if pending and value != 'off':
                 raise ValueError('Er loopt nog een opdracht. Wacht op terugmelding of kies Uit.')
             now = time.time()
@@ -223,7 +232,9 @@ class Control:
             if guard:
                 guard()
             actual = source['temperature'] if field in ('temperature', 'heating') else source['state']
-            command = dict(id=request_id, source=payload['source'], entity_id=binding['entity_id'],
+            if field == 'fan':
+                actual = states[DOWNSTAIRS_FAN]['state']
+            command = dict(id=request_id, source=payload['source'], entity_id=data['entity_id'],
                            field=field, value=value, origin=origin, created=now, sent=None, accepted=None,
                            before=dict(mode=source['state'], temperature=source['temperature'],
                                        preset=(states[binding['entity_id']].get('attributes') or {}).get('preset_mode')),

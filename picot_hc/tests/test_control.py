@@ -66,6 +66,8 @@ class ControlFixture(unittest.TestCase):
                     state = outer.states[data['entity_id']]
                     if 'hvac_mode' in data: state['state'] = data['hvac_mode']
                     if 'temperature' in data: state['attributes']['temperature'] = data['temperature']
+                    if self.path == '/api/services/select/select_option':
+                        state['state'] = data['option']
                     if self.path.startswith('/api/services/switch/'):
                         state['state'] = 'on' if self.path.endswith('turn_on') else 'off'
                 if outer.drop:

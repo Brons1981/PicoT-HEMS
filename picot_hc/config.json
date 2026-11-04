@@ -1,6 +1,6 @@
 {
   "name": "PicoT Home Climate",
-  "version": "0.1.0-dev.27",
+  "version": "0.1.0-dev.28",
   "slug": "picot_hc",
   "description": "Comfortvensters, vaste zonetemperaturen en handmatige bronbediening",
   "arch": [

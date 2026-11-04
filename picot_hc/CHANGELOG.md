@@ -1,3 +1,11 @@
+# 0.1.0-dev.28
+
+- Behoud automatische verwarming na herstart; actuele gegevens en bestaande handmatige overnames blijven bepalend voor uitvoering.
+- Laat een bevestigde, door HC geregelde airco beneden maximaal vijf minuten ongewijzigd bij tijdelijk ontbrekende temperatuur-, deur- of prijsgegevens. De wachttijd blijft bij herstart bewaard.
+- Achterdeur open: ventilator na de openvertraging op stil in plaats van de airco uit. Na sluiten en de sluitvertraging terug naar auto via de bevestigde ventilatorselectie.
+- Ventilatoropdrachten gebruiken verse HA-controle en duurzame opdrachtregistratie; onzekere opdrachten worden niet herhaald. Toon ontbrekende ventilatorbediening in het dashboard.
+- Deze wijzigingen vervangen de oorspronkelijke herstart-, deurstop- en onmiddellijke meetuitvalregels uit HC-ADR-013/017 op verzoek van Alex op 4 november 2026. Handmatige uitschakeling, bronstoringen en badkamertimerbeveiliging blijven gelden.
+
 # 0.1.0-dev.27
 
 - Publiceer rond 12:00 en bij relevante wijzigingen een bewaarde verwarmingsprognose voor morgen: opwarmen, handhaven en minimumtemperatuur beneden.

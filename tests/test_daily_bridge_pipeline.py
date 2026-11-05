@@ -64,7 +64,7 @@ def test_direct_grid_winner_is_retained_and_cannot_reopen_completed_goal(tmp_pat
     old = next(a for a in store.load_daily_assignments() if a.completed_at is None)
     result = pipeline.run(planning_input=recover(source))
     assert result.evaluation.daily_bridge.status == "energy_shortfall", result.evaluation.reason
-    assert result.evaluation.status == "winner_selected", result.evaluation.reason
+    assert result.evaluation.status == "plan_retained", result.evaluation.reason
     from picot.v2.projection import project
 
     before_projection = (tmp_path / "plans.json").read_bytes()
@@ -75,7 +75,7 @@ def test_direct_grid_winner_is_retained_and_cannot_reopen_completed_goal(tmp_pat
     assert card.attributes["daily_bridge"]["review_triggered"] is True
     assert (tmp_path / "plans.json").read_bytes() == before_projection
     plan = store.load_active_daily_main_plan("battery")
-    assert plan.plan_id != initial.execution_plan_set.plans[0].plan_id
+    assert plan.plan_id == initial.execution_plan_set.plans[0].plan_id
     assert all(
         s.primitive is not ExecutionPrimitive.CHARGE_AT_POWER
         for s in plan.segments
@@ -264,7 +264,8 @@ def test_bridge_write_failure_does_not_partially_replace_plan(tmp_path, monkeypa
 
     monkeypatch.setattr(store, "_write", failed_write)
     result = pipeline.run(planning_input=recovered)
-    assert result.evaluation.status == "fallback_active"
+    assert result.evaluation.status == "plan_retained"
+    assert result.evaluation.reason == "disk unavailable"
     assert (tmp_path / "plans.json").read_bytes() == before
     assert (
         store.load_active_daily_main_plan("battery").plan_id
@@ -326,9 +327,13 @@ def test_changed_household_need_reopens_bridge_assessment_only(tmp_path, monkeyp
         next(
             a for a in store.load_daily_assignments() if a.assignment_id == owner.assignment_id
         ).revision
-        == owner.revision + 1
+        == owner.revision
     )
 
+
+    assert result.evaluation.status == "plan_retained"
+    state = store.load_daily_bridge_state(owner.assignment_id)
+    assert state.accepted_deficits == result.evaluation.daily_bridge.deficits
 
 def test_corrupt_bridge_state_blocks_recovery_without_erasing_route(tmp_path, monkeypatch):
     import json
@@ -412,7 +417,7 @@ def test_roundtrip_losses_can_make_direct_grid_cheaper_than_precharging(tmp_path
     )
     result = pipeline.run(planning_input=recover(changed))
     assert result.evaluation.daily_bridge.trigger is not None
-    assert result.evaluation.status == "winner_selected", result.evaluation.reason
+    assert result.evaluation.status == "plan_retained", result.evaluation.reason
     plan = store.load_active_daily_main_plan("battery")
     # 0.49 / (0.9 * 0.9) > 0.50 EUR per delivered kWh, despite cheaper input.
     assert not any(

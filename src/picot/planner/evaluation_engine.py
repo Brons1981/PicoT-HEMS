@@ -47,6 +47,7 @@ class EvaluationEngine:
         incumbent_candidate_id: str | None = None,
         financial_equivalence_margin: float = 0.0,
         minimum_commitment_improvement_eur: float = 0.0,
+        prefer_financial_stability: bool = False,
     ) -> EvaluationResult:
         if not isfinite(minimum_commitment_improvement_eur) or (
             minimum_commitment_improvement_eur < 0.0
@@ -121,6 +122,7 @@ class EvaluationEngine:
                         if objective is ObjectiveKind.FINANCIAL_RESULT
                         else 0.0
                     ),
+                    exclusive_margin=prefer_financial_stability,
                 )
                 objective_records.append(objective_record)
                 if weight > 0 and objective_record.available:
@@ -130,6 +132,20 @@ class EvaluationEngine:
                         objective_records[-1] = self._mark_objective_decisive(
                             objective_record
                         )
+                        break
+                # Opt-in bridge policy: physical validity precedes this comparison.
+                # A subcent route difference cannot displace a valid commitment or
+                # buy additional switches through a lower-priority objective.
+                if (prefer_financial_stability
+                        and objective is ObjectiveKind.FINANCIAL_RESULT
+                        and weight > 0 and objective_record.available
+                        and objective_record.unit == "EUR" and len(remaining) > 1):
+                    if incumbent_candidate_id in remaining:
+                        break  # The existing incumbent tie-break records the decision below.
+                    switch_record, remaining = self._compare_switching(remaining, by_id)
+                    tie_records.append(switch_record)
+                    if switch_record.decisive:
+                        decisive_step = "tie_break:expected_switching_count"
                         break
                 # ADR-037.16: after comparable equal financial outcomes,
                 # prefer less net charging before lower-priority objectives.
@@ -185,6 +201,7 @@ class EvaluationEngine:
             outcomes.candidate_set_reference,
             strategy.strategy_version,
             minimum_commitment_improvement_eur,
+            financial_equivalence_margin if prefer_financial_stability else None,
         )
         evaluation_record = EvaluationRecord(
             evaluation_id=evaluation_id,
@@ -278,6 +295,7 @@ class EvaluationEngine:
         outcomes: dict[str, CandidateOutcome],
         *,
         equivalence_margin: float,
+        exclusive_margin: bool = False,
     ) -> tuple[ObjectiveComparisonRecord, list[str]]:
         values = []
         direction: ComparisonDirection | None = None
@@ -324,6 +342,8 @@ class EvaluationEngine:
             candidate_id
             for candidate_id, value in values
             if (
+                round(abs(best - value), 12) < equivalence_margin
+                if exclusive_margin and equivalence_margin > 0 else
                 best - value <= equivalence_margin
                 if direction is ComparisonDirection.HIGHER_IS_BETTER
                 else value - best <= equivalence_margin
@@ -411,6 +431,24 @@ class EvaluationEngine:
             retained_candidate_ids=tuple(retained),
             available=True,
             decisive=decisive,
+        ), retained
+
+    @staticmethod
+    def _compare_switching(
+        candidate_ids: list[str], outcomes: dict[str, CandidateOutcome],
+    ) -> tuple[TieBreakRecord, list[str]]:
+        raw = [(item, outcomes[item].expected_switching_count) for item in candidate_ids]
+        available = all(value is not None for _, value in raw)
+        best = min((value for _, value in raw if value is not None), default=0)
+        retained = [item for item, value in raw if not available or value == best]
+        return TieBreakRecord(
+            kind=TieBreakKind.EXPECTED_SWITCHING_COUNT,
+            values=tuple(CandidateComparisonValue(
+                item, value, RelativeResult.UNAVAILABLE if not available else
+                RelativeResult.EQUAL if item in retained else RelativeResult.WORSE,
+            ) for item, value in raw),
+            retained_candidate_ids=tuple(retained), available=available,
+            decisive=len(retained) == 1,
         ), retained
 
     def _apply_tie_breaks(
@@ -508,9 +546,12 @@ class EvaluationEngine:
         candidate_set_reference: str,
         strategy_version: int,
         minimum_commitment_improvement_eur: float = 0.0,
+        bridge_equivalence_margin: float | None = None,
     ) -> str:
         source = (
             f"{candidate_set.snapshot_id}|{candidate_set_reference}|"
             f"{strategy_version}|{IMPLEMENTATION_VERSION}|{minimum_commitment_improvement_eur}"
         )
+        if bridge_equivalence_margin is not None:
+            source += f"|bridge-stability:v1:{bridge_equivalence_margin}"
         return f"evaluation-{sha256(source.encode()).hexdigest()[:16]}"

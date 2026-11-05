@@ -267,6 +267,7 @@ class DailyMainChargeWindowSet:
     purpose: str = "main_charge"
     rejected_windows: tuple[DailyMainRejectedWindow, ...] = ()
     market_revision: MarketRevisionBasis | None = None
+    retained_schedule_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.purpose not in {"main_charge", "bridge"}:

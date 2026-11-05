@@ -1,3 +1,11 @@
+## Release HEMS dev.333 - 5 november 2026
+
+Alex vraagt publicatie van de stand-byreparatie via PR en groene CI.
+Bij minder dan EUR 0.01 routevoordeel behoudt een gewone overbrugging het geldige
+bestaande plan; anders krijgen gelijkwaardige kandidaten met minder schakelingen voorrang.
+HC en ED ongewijzigd. Geen live installatie of planreset.
+Zie docs/development_log/2026-11-05-standby-financial-stability.md.
+
 ## Release HEMS dev.332 - 4 november 2026
 
 Reparatie HC-dagprognosemelding: concrete oorzaak en huishoudprognose als terugval zichtbaar.

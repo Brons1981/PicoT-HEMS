@@ -383,3 +383,7 @@ hernoemd. De bewaartermijn blijft zoals ingesteld.
 De buitenbatterijmelding gebruikt `binary_sensor.0_energie_gw1200a_wh26_battery`.
 
 Actuele verificatie: [typeherstel en browserproef](../docs/development_log/2026-10-24-hc-type-repair.md).
+
+## Diagnose van bronopdrachten
+
+Gebruik in het HC-dashboard bij **Bronbediening** de link **Diagnose en opdrachtenhistorie downloaden**. Het bestand picot-hc-diagnose.json.gz bevat alle opgeslagen opdrachten (niet alleen de laatste twintig), actuele verwarmingsblokkeringen, handmatige overnames, deurventilatorstatus, gemelde apparaatstanden en de ingestelde bevestigingstermijn. Tijdstippen zijn Unix-seconden; de lokale tijdzone is Europe/Amsterdam. Het is een momentopname met de laatst opgeslagen status per opdracht, geen volledig log van alle statusovergangen. Wachtwoorden en toegangstokens worden niet opgenomen. De download is beschikbaar via de gewone HC-ingress, niet via de beperkte tabletserver. Downloaden bedient geen apparaten en heft geen blokkeringen op.

@@ -504,6 +504,9 @@ def handler(runtime, ingress, tablet_only=False):
             if path == '/api/building-export':
                 self.export_building()
                 return
+            if path == '/api/diagnostics-export':
+                self.export_diagnostics()
+                return
             if path == '/api/snapshot':
                 body = json.dumps(runtime.current(), allow_nan=False).encode()
                 mime = 'application/json'
@@ -525,6 +528,23 @@ def handler(runtime, ingress, tablet_only=False):
             self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self'")
             self.end_headers()
             self.wfile.write(body)
+
+        def export_diagnostics(self):
+            from .diagnostics import collect
+            compressor = zlib.compressobj(wbits=31)
+            payload = json.dumps(collect(runtime), allow_nan=False).encode()
+            body = compressor.compress(payload) + compressor.flush()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/gzip')
+            self.send_header('Content-Disposition', 'attachment; filename="picot-hc-diagnose.json.gz"')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
         def export_building(self):
             until = time.time()

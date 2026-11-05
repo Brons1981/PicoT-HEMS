@@ -36,7 +36,7 @@ class DownstairsComfortTests(unittest.TestCase):
                 target_temp_step=.5, supported_features=1))
         for zone in self.config['zones']:
             self.states[zone['temperature']] = dict(entity_id=zone['temperature'], state='22',
-                attributes={'unit_of_measurement': '�C'}, last_updated=self.stamp(NOW), last_reported=self.stamp(NOW))
+                attributes={'unit_of_measurement': '°C'}, last_updated=self.stamp(NOW), last_reported=self.stamp(NOW))
         self.states[DOOR] = dict(entity_id=DOOR, state='off', attributes={})
         self.states[self.config['price_entity']] = dict(state='.25', attributes={
             'unit_of_measurement': 'EUR/kWh', 'raw_today': [dict(start=self.stamp(NOW-3600),
@@ -61,7 +61,7 @@ class DownstairsComfortTests(unittest.TestCase):
 
     def request(self, url, token, path, payload=None):
         if path == '/config':
-            return {'unit_system': {'temperature': '�C'}}
+            return {'unit_system': {'temperature': '°C'}}
         self.assertTrue(path.startswith('/services/'), path)
         self.calls.append((path, copy.deepcopy(payload)))
         state = self.states[payload['entity_id']]

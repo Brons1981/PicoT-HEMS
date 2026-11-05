@@ -1945,9 +1945,41 @@ def produce_main_charge_portfolio(
     return MainChargeComparablePortfolio(
         candidate_set, outcome_set, strategy, tuple(sources),
         _id("main-charge-candidate", incumbent.schedule.schedule_id)
-        if incumbent is not None else None,
+        if incumbent is not None else next((
+            s.candidate_id for s, path in zip(sources, paths, strict=True)
+            if windows.purpose == "bridge" and windows.market_revision is None
+            and s.window is not None
+            and s.window.schedule.schedule_id == windows.retained_schedule_id
+            and _unchanged_bridge_actions(snapshot, path)), None),
         tuple(market_evidence),
     )
+
+
+
+def _unchanged_bridge_actions(snapshot: PlanningInputSnapshot, path: DomainEnergyPath) -> bool:
+    """A simulated baseline is an incumbent only if its actual commands are unchanged."""
+    context = snapshot.daily_charge_context
+    plans = [p for p in context.main_plans if p.plan_id in context.active_main_plan_ids] \
+        if context is not None else []
+    if len(plans) != 1 or plans[0].valid_until != path.horizon_end:
+        return False
+    original = plans[0]
+    boundaries = {t for s in original.segments for t in (s.starts_at, s.ends_at)}
+    boundaries.update(t for s in path.segments for t in (s.starts_at, s.ends_at))
+    bounds = sorted({path.horizon_start, path.horizon_end,
+                     *(t for t in boundaries if path.horizon_start < t < path.horizon_end)})
+    fields = ("primitive", "capability_id", "requested_power_w", "soc_constraint",
+              "charge_source_policy", "energy_profile_id")
+    for start, end in zip(bounds, bounds[1:], strict=False):
+        before = next((s for s in original.segments
+                       if s.starts_at <= start < end <= s.ends_at), None)
+        after = next((s for s in path.segments
+                      if s.starts_at <= start < end <= s.ends_at), None)
+        if before is None or after is None or any(
+            getattr(before, field) != getattr(after, field) for field in fields
+        ):
+            return False
+    return True
 
 
 def _main_charge_energy_path(

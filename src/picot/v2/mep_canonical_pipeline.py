@@ -93,6 +93,7 @@ from picot.v2.route_choice_policy import (
 ARCHITECTURE_OWNERSHIP = architecture_ownership("pipeline_composition", __name__)
 PV_CHARGE_PROGRESS_METHOD_VERSION = "pv-charge-progress:v1"
 MINIMUM_OPTIONAL_GRID_REDUCTION_BENEFIT_EUR = 0.01
+BRIDGE_FINANCIAL_EQUIVALENCE_EUR = 0.01
 
 
 @dataclass(frozen=True, slots=True)
@@ -1320,6 +1321,7 @@ def _build_daily_main_run(
     bridge_assessment = None
     input_shortfalls: tuple[DailyMainShortfallTrigger, ...] = ()
     canonical_set = None
+    bridge_stability = False
     planning_blocked = False
     future_goal_unresolved = False
     execution_continuity = None
@@ -1553,6 +1555,8 @@ def _build_daily_main_run(
                         market_policy.saldering_energy_tax_credit_enabled
                         if windows.market_revision is not None else True),
                 )
+                bridge_stability = (windows.purpose == "bridge"
+                                    and windows.market_revision is None)
                 comparable = produce_main_charge_portfolio(
                     snapshot=snapshot, windows=windows, tariffs=tariffs,
                     opportunity_ids=opportunities.opportunity_ids,
@@ -1615,6 +1619,9 @@ def _build_daily_main_run(
                     comparable.candidate_set, comparable.strategy, comparable.outcome_set,
                     created_at=snapshot.captured_at,
                     incumbent_candidate_id=comparable.incumbent_candidate_id,
+                    financial_equivalence_margin=(
+                        BRIDGE_FINANCIAL_EQUIVALENCE_EUR if bridge_stability else 0.0),
+                    prefer_financial_stability=bridge_stability,
                     minimum_commitment_improvement_eur=(
                         MINIMUM_OPTIONAL_GRID_REDUCTION_BENEFIT_EUR
                         if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger) else 0.0
@@ -1646,6 +1653,9 @@ def _build_daily_main_run(
             comparable.outcome_set,
             created_at=snapshot.captured_at,
             incumbent_candidate_id=comparable.incumbent_candidate_id,
+            financial_equivalence_margin=(
+                BRIDGE_FINANCIAL_EQUIVALENCE_EUR if bridge_stability else 0.0),
+            prefer_financial_stability=bridge_stability,
             minimum_commitment_improvement_eur=(
                 MINIMUM_OPTIONAL_GRID_REDUCTION_BENEFIT_EUR
                 if isinstance(optimisation_trigger, DailyMainPVSurplusTrigger) else 0.0
@@ -2186,6 +2196,8 @@ def _build_daily_main_run(
             optimisation_trigger, DailyMainShortfallTrigger,
         ) else None),
         daily_bridge=bridge_assessment,
+        financial_equivalence_margin_eur=(
+            BRIDGE_FINANCIAL_EQUIVALENCE_EUR if bridge_stability else 0.0),
         daily_main_input_shortfalls=input_shortfalls,
         daily_pv_comparison=pv_comparison,
         daily_pv_surplus_trigger=(optimisation_trigger if isinstance(

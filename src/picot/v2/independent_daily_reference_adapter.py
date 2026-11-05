@@ -667,6 +667,7 @@ class IndependentDailyReferenceAdapter:
             owner.assignment_id, snapshot.snapshot_id, tuple(windows),
             "discovered" if windows else "unreachable", "reserve_bridge_alternatives",
             simulations, purpose="bridge", rejected_windows=tuple(rejected),
+            retained_schedule_id=baseline.schedule_id if revision_schedule is None else None,
         )
 
     def main_route_shortfalls(

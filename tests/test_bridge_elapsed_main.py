@@ -17,7 +17,7 @@ from picot.v2.plan_commitment_store import (
 )
 
 
-def between_blocks(tmp_path, monkeypatch, offset_seconds=0):
+def between_blocks(tmp_path, monkeypatch, offset_seconds=0, *, cheap_bridge=False):
     store, pipeline, recover, source, completed, _ = started(tmp_path, monkeypatch)
     owner = next(a for a in store.load_daily_assignments() if a.completed_at is None)
     plan = store.load_active_daily_main_plan(owner.execution_scope_id)
@@ -47,6 +47,11 @@ def between_blocks(tmp_path, monkeypatch, offset_seconds=0):
         current_storage_states=tuple(replace(s, measured_at=at)
                                      for s in observation.current_storage_states),
         capability_snapshot_set=replace(observation.capability_snapshot_set, captured_at=at))
+    if cheap_bridge:
+        # A material saving still exercises actual replacement and publication guards.
+        observation = replace(observation, price_points=tuple(
+            replace(p, value_eur_per_kwh=0.01) if p.starts_at.hour == 11 else p
+            for p in observation.price_points))
     return store, pipeline, recover(observation), owner, plan, completed
 
 
@@ -55,7 +60,7 @@ def test_bridge_after_elapsed_solar_preserves_future_main_and_history(
     tmp_path, monkeypatch, offset_seconds,
 ):
     store, pipeline, snapshot, owner, original, completed = between_blocks(
-        tmp_path, monkeypatch, offset_seconds)
+        tmp_path, monkeypatch, offset_seconds, cheap_bridge=True)
     result = pipeline.run(planning_input=snapshot)
     assert result.evaluation.status == "winner_selected", result.evaluation.reason
     assert result.evaluation.daily_bridge.status == "energy_shortfall"
@@ -83,7 +88,8 @@ def test_bridge_after_elapsed_solar_preserves_future_main_and_history(
     {"charge_source_policy": ChargeSourcePolicy.PV_ONLY},
 ])
 def test_future_main_changes_still_rejected_atomically(tmp_path, monkeypatch, change):
-    store, pipeline, snapshot, owner, original, _ = between_blocks(tmp_path, monkeypatch, 52)
+    store, pipeline, snapshot, owner, original, _ = between_blocks(
+        tmp_path, monkeypatch, 52, cheap_bridge=True)
     before = store._path.read_bytes()
     bind = store.bind_daily_main_plan
 
@@ -100,3 +106,13 @@ def test_future_main_changes_still_rejected_atomically(tmp_path, monkeypatch, ch
     assert result.evaluation.reason == "bridge cannot move or change the next main session"
     assert store._path.read_bytes() == before
     assert store.load_active_daily_main_plan(owner.execution_scope_id) == original
+
+
+def test_equivalent_bridge_after_elapsed_main_is_retained_and_recorded(tmp_path, monkeypatch):
+    store, pipeline, snapshot, owner, original, _ = between_blocks(tmp_path, monkeypatch, 52)
+    result = pipeline.run(planning_input=snapshot)
+    assert result.evaluation.reason == "daily_main_incumbent_retained"
+    assert store.load_active_daily_main_plan(owner.execution_scope_id) == original
+    state = store.load_daily_bridge_state(owner.assignment_id)
+    assert state.plan_id == original.plan_id
+    assert state.next_starts_at == result.evaluation.daily_bridge.next_starts_at

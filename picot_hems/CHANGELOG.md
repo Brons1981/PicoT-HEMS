@@ -1,3 +1,9 @@
+# 2.0.0-dev.333
+
+- Voorkom extra stand-bykwartieren bij een totaal routevoordeel kleiner dan EUR 0.01: behoud het geldige bestaande overbruggingsplan.
+- Kies bij financieel gelijkwaardige nieuwe overbruggingen eerst minder schakelingen. Noodzakelijk herstel en veiligheidsgrenzen blijven leidend.
+- HC en ED ongewijzigd; geen planreset nodig. Bestaande stand-byblokken worden niet achteraf verwijderd.
+
 # 2.0.0-dev.332
 
 - Toon bij een ontbrekende HC-dagprognose de concrete oorzaak en de terugval op de huishoudprognose.

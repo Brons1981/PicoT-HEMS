@@ -1190,7 +1190,8 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                 or any(i.candidate_id == record.winning_candidate_id
                        for i in record.invalid_candidates)
                 or not deficits or deficits[0].starts_at != assessed_at
-                or min(s.starts_at for s in owner.main_segments) != trigger.next_starts_at):
+                or min((s.starts_at for s in owner.main_segments
+                        if s.starts_at > assessed_at), default=None) != trigger.next_starts_at):
             raise ValueError("retained bridge assessment must match current selected ownership")
         DailyBridgeState(owner.assignment_id, active.plan_id, trigger.next_starts_at, deficits)
         payload = self._load_payload()

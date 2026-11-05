@@ -1,6 +1,7 @@
 """Measure an HC off-to-heat command from a pre-command meter baseline."""
 
 import copy
+import time
 
 from .energy_model import EnergyModel, finite
 from .warmup_energy import WarmupEnergy
@@ -12,6 +13,8 @@ class StartupEnergy:
         self.baseline = self.active = None
 
     def reset(self):
+        if self.model.session is not None:
+            self.model.note("rejected", "startup_command_or_measurement_context_lost", time.time())
         self.baseline = self.active = self.model.session = None
 
     def prepare(self, sample, view, plan, action, now):
@@ -22,10 +25,10 @@ class StartupEnergy:
         if (
             sample is None
             or not plan.get("enabled")
-            or not plan.get("preheating")
+            or plan.get("learning_status", {}).get("phase") not in ("preheat", "comfort")
             or not view["settings"].get("enabled")
             or not view["settings"].get("learning_enabled")
-            or not view.get("next")
+            or not (view.get("next") if plan.get("preheating") else view.get("current"))
             or source.get("state") != "off"
             or source.get("pending")
             or action != ("beneden", "heating", sample["target"])

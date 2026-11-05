@@ -88,3 +88,40 @@ werkelijk gemeten energie en comfort, voordat autonome selectie wordt toegevoegd
 De huidige wijziging bevat geen volledige eurovergelijking en geen automatische
 selectie tussen de drie strategieën. Ventilatoroptievertaling en de eerdere
 melding/blokkering rond opdrachtbevestiging worden hier niet gewijzigd.
+
+
+## Vervolgcorrectie 5 november 2026 (0.1.0-dev.31)
+
+De eerste versie onderdrukte voorverwarmen tijdens expliciete lage blokken.
+Dit is op verzoek van Alex herzien: een zacht blok met een lager doel mag binnen
+het ingestelde voorverwarmvenster wijken voor het volgende hogere comfortdoel.
+Een hard blok blijft leidend. Bij ontbrekende leeruitkomsten geldt de bestaande
+initial_preheat_minutes (bij Alex 45 minuten); maximum en deadlinefeedback blijven
+bepalend. Een lager volgend nachtelijk doel veroorzaakt geen voorverwarming.
+
+CV-modus heat/auto is op zichzelf geen bewijs van actieve warmtevraag. Alleen bij
+beschikbare, niet-pending terugmelding met hvac_action=idle en een doel minstens
+0,3 °C onder de eigen gemeten kamertemperatuur mag HC concurrerende aircoverwarming
+hervatten. De handmatige CV-instelling blijft onaangeraakt en die CV wordt niet als
+automatische bron gekozen zolang de handmatige overname actief is. Heating,
+ontbrekende actie/temperatuur of een hoger doel blijven conservatief blokkeren.
+De bestaande minimum-uitduur van de airco blijft van toepassing bij hervatten.
+
+Opwarmmetingen mogen nu ook tijdens een normale automatische comfortstart beginnen.
+De energiemeter moet geldig zijn; handmatige aircoverwarming levert geen geldig
+runtime-meetmonster. De grens van 0,5 °C, 90 seconden meetcontinuïteit, 120 seconden
+bevestigd doel en consistentie van vermogen/teller blijven behouden. Een begonnen
+maar niet voltooide sessie wordt na herstart niet gereconstrueerd. Maximaal 64
+gebeurtenissen per model verklaren starten, voltooiing, wachten en afwijzing.
+Diagnose bevat de afzonderlijke records en gebeurtenissen; bestaande records blijven
+leesbaar. Een tevreden CV in idle sluit zuivere aircometingen niet langer uit.
+
+De dagprognose kan de aparte volledige-startmetingen benutten. Expliciete lage
+blokken krijgen uitperioden op basis van gemeten afkoeling; bij de kamergrens wordt
+ondergrensverwarming met een geldige apparaatstand geraamd. Deze cyclusraming is
+voorlopig: opwarmenergie wordt conservatief tot het apparaatdoel geraamd, terwijl de
+kamertoestand tot de stopgrens wordt geprojecteerd. Minimale draaitijd is tien
+minuten. Een ontbrekende afkoelraming wordt niet vervangen door onbeperkt gratis
+uitstaan. Er worden nog steeds geen startcommando's uit de prognose verzonden.
+Een bruikbare prognose ontstaat pas zodra voldoende relevante historie bestaat;
+voorlopige schaling kan al een complete passende sessie benutten.

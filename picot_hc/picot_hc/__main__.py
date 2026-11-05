@@ -318,7 +318,9 @@ class Runtime:
                 self.schedule.data['settings'], self.heating.data['settings']['enabled'],
                 plan.get('learning_context'), meter.get('source_id'),
                 self.energy_proposals.model, self.warmup_energy, self.heating.learning.cooling,
-                self.weather.hourly.view(now), self.weather.view(now), now)
+                self.weather.hourly.view(now), self.weather.view(now), now,
+                startup=self.startup_energy.model,
+                heating_minimum=plan['sources']['beneden'].get('heating_minimum') or 18.0)
         except Exception:
             self.day_ahead.failed(time.time())
 

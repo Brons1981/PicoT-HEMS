@@ -5,6 +5,7 @@ import json
 import math
 from datetime import datetime
 
+from .cv_state import passive_idle
 from .thermal_weather import comparable
 
 
@@ -44,7 +45,7 @@ def meter_context(config, states, plan, meter, now, *, target=None):
         or not finite(thermal.get("indoor"))
         or not finite(thermal.get("outdoor"))
         or not ac.get("available")
-        or cv.get("state") != "off"
+        or (cv.get("state") != "off" and not passive_idle(cv))
         or not cv.get("available")
         or cv.get("pending")
         or meter.get("status") != "available"

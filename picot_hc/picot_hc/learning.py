@@ -54,8 +54,10 @@ class Learning:
         status = self.status(view, context)
         window = view['next']
         active = view['current']
-        # An existing comfort window keeps its own bounds and target.
-        preheat = bool(enabled and status['enabled'] and not active and window
+        # A soft low-temperature block may precede a higher comfort deadline.
+        lower_block = bool(active and window and not active['hard']
+                           and active['target'] < window['target'])
+        preheat = bool(enabled and status['enabled'] and (not active or lower_block) and window
                        and window['starts_at']-status['lead_minutes']*60 <= now < window['starts_at'])
         settings = view['settings']
         estimate = self.cooling.estimate(context, now)

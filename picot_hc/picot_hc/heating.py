@@ -203,6 +203,7 @@ class Heating:
         if view.get('temporary_temperature'):
             learning.update(phase='temporary', target=None, preheating=False)
         zones, demand = {}, {}
+        floor_mode = False
         invalid_temperature = set()
         fresh = (self.control.connected and self.control.received is not None
                  and 0 <= now-self.control.received <= config['stale_seconds'])
@@ -212,7 +213,17 @@ class Heating:
             zid = zone['id']
             req = view['comfort']['zones'][zid]
             goal = req['request']
-            if zid == 'beneden' and learning['target'] is not None:
+            # A scheduled room floor below the airco's supported heat target is
+            # guarded by room feedback, not forwarded as an invalid setpoint.
+            if zid == 'beneden':
+                minimum = sources[zid].get('heating_minimum')
+                floor_mode = bool(view['settings']['enabled'] and view.get('current')
+                                  and not view.get('temporary_temperature')
+                                  and goal and numeric(goal.get('target')) is not None
+                                  and minimum is not None and goal['target'] < minimum)
+                if floor_mode:
+                    learning.update(phase='room_floor', target=None, preheating=False)
+            if zid == 'beneden' and not floor_mode and learning['target'] is not None:
                 target = learning['target']
                 if learning['phase'] != 'coast':
                     target = max(target, (goal or {}).get('target') or 5)
@@ -260,7 +271,14 @@ class Heating:
             maintaining = False
             if reason is None:
                 on = temp < target if self.data['demand'].get(zid) else temp <= target-.3
-                if zid == 'beneden':
+                if zid == 'beneden' and floor_mode:
+                    own = owned.get('beneden', {})
+                    running = (own.get('floor_run') and not own.get('released')
+                               and records.get(own.get('command'), {}).get('value') != 'off')
+                    on = temp < target + .3 if running else temp <= target
+                    if running and now-own.get('since', now) < 600:
+                        on = True
+                elif zid == 'beneden':
                     maintaining = any(source in owned and not owned[source].get('released')
                                       and records.get(owned[source]['command'], {}).get('value') != 'off'
                                       for source in ('beneden', 'cv'))
@@ -269,6 +287,9 @@ class Heating:
             zones[zid] = dict(temperature=temp, target=target, demand=on, reason=reason or
                               ('Temperatuur handhaven.' if maintaining and temp >= target else
                                'Warmtevraag.' if on else 'Temperatuur bereikt; geen warmtevraag.'))
+            if zid == 'beneden' and floor_mode and reason is None:
+                zones[zid]['reason'] = ('Ondergrens bewaken; airco gebruikt minimaal 18 \u00b0C.' if on else
+                    'Natuurlijk afkoelen; airco uit tot de kamerondergrens is bereikt.')
         rows, warnings = prices(self.control.states.get(config['price_entity']), config, now)
         price = next((p['value'] for p in rows if p['start'] <= now < p['end']), None)
         if not tariff_confirmed(config) or warnings:
@@ -314,6 +335,10 @@ class Heating:
         if enabled and price is not None:
             for zid in ('beneden', 'boven', 'badkamer'):
                 target = zones[zid]['target']
+                if zid == 'beneden' and target is not None:
+                    minimum = sources[zid].get('heating_minimum')
+                    if minimum is not None:
+                        target = max(target, minimum)
                 if demand[zid] and eligible(zid, target):
                     if zid == 'beneden' and not (door_start or door_continue or door_pending):
                         zones[zid]['reason'] = 'Airco wacht op gesloten achterdeur en herstelvertraging.'
@@ -322,7 +347,9 @@ class Heating:
             direct_desired = dict(desired)
             down = zones['beneden']
             # The room thermostat is downstairs: it cannot independently heat upstairs.
-            cv_ok = (demand['beneden'] and eligible('cv', down['target'])
+            # The currently physically disabled CV is not a fallback for this
+            # below-device-minimum floor policy. Comfort source choice is unchanged.
+            cv_ok = (not floor_mode and demand['beneden'] and eligible('cv', down['target'])
                      and costs['cv'] is not None)
             if cv_ok and ('beneden' not in desired or costs['cv'] < costs['beneden']):
                 desired.pop('beneden', None)
@@ -331,7 +358,7 @@ class Heating:
             # Keep a viable incumbent for five minutes before an economic switch.
             for source, own in owned.items():
                 c = records.get(own['command'], {})
-                if own.get('released') or c.get('value') == 'off' or source in desired or now-own['since'] >= 300:
+                if floor_mode or own.get('released') or c.get('value') == 'off' or source in desired or now-own['since'] >= 300:
                     continue
                 viable = (cv_ok if source == 'cv' else demand[source] and eligible(source, zones[source]['target'])
                           and (source != 'beneden' or door_start or door_continue or door_pending))
@@ -355,10 +382,11 @@ class Heating:
                     door_stop=door_stop, sources=sources, enabled=enabled,
                     estimate=True, strategy='current_heat_cost', preheating=learning['preheating'], learning=learning['enabled'], learning_status=learning, learning_context=context)
         result['cv_handover_seconds'] = max(60, 2 * config.get('poll_seconds', 30))
+        result['room_floor_mode'] = floor_mode
         if hasattr(self, 'hourly_weather'):
             result['hourly_weather'] = self.hourly_weather(now)
         # A scheduled energy recipe must not replace an explicit room goal.
-        if self.energy_start is not None and not view.get('temporary_temperature'):
+        if self.energy_start is not None and not view.get('temporary_temperature') and not floor_mode:
             result = self.energy_start.apply(result, config, now, direct_desired)
         # A brief telemetry gap must not cycle an already confirmed airco. Keep
         # its existing device state only: no fresh start, target write or source
@@ -453,6 +481,8 @@ class Heating:
             previous = copy.deepcopy(self.data)
             self.data['owned'][source] = dict(command=request_id,
                 since=self.data['owned'].get(source, {}).get('since', moment))
+            if source == 'beneden' and field == 'heating' and current.get('room_floor_mode'):
+                self.data['owned'][source]['floor_run'] = True
             if (field == 'heating' and current.get('energy_start')
                     and source == current['energy_start'].get('source', 'beneden')):
                 self.data['owned'][source]['energy_start'] = copy.deepcopy(current['energy_start'])

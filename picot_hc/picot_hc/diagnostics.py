@@ -29,4 +29,5 @@ def collect(runtime):
             commands=control.records(), heating=runtime.heating.data,
             schedule=runtime.schedule.data, door_fan=runtime.heating.door_fan.data,
             reported_states=states,
+            strategy_readiness=getattr(runtime, 'strategy_readiness', None),
         ))

@@ -14,6 +14,8 @@ PENDING = {'sending', 'awaiting_feedback', 'uncertain'}
 MODES = {'off', 'heat', 'cool', 'heat_cool', 'auto', 'dry', 'fan_only'}
 # Confirmed by the owner; only used when this entity omits HA step metadata.
 CONFIRMED_CELSIUS_STEPS = {'climate.huiskamer': 0.5}
+# Confirmed by HA's heat-mode validation on this installation (5 November 2026).
+CONFIRMED_HEATING_MINIMUM = {'climate.airco_woonkamer': 18.0}
 DOWNSTAIRS_FAN = 'select.airco_woonkamer_ventilatorsnelheid'
 
 
@@ -152,6 +154,8 @@ class Control:
                 pending = next((c for c in records if c['entity_id'] == entity and c['status'] in PENDING), None)
                 result.append(dict(binding, id=source_id, available=available, pending=bool(pending),
                     modes=modes, minimum=minimum, maximum=maximum, step=step, unit=self.unit,
+                    heating_minimum=(max(minimum, CONFIRMED_HEATING_MINIMUM.get(entity, minimum))
+                                     if minimum is not None and self.unit == '\u00b0C' else minimum),
                     temperature_supported=temperature_ok, state=item.get('state'),
                     temperature=numeric(attrs.get('temperature')), action=attrs.get('hvac_action'),
                     received=self.received, source_updated=item.get('last_updated'),
@@ -209,6 +213,8 @@ class Control:
                 if not source['temperature_supported'] or isinstance(value, bool) or not isinstance(value, (int, float)):
                     raise ValueError('Temperatuurgrenzen, stap of °C-eenheid niet bevestigd door HA.')
                 value = number(value)
+                if (field == 'heating' or source['state'] == 'heat') and value < source['heating_minimum']:
+                    raise ValueError('Verwarmingsinstelling is lager dan de toegestane apparaatgrens.')
                 steps = (value - source['minimum']) / source['step']
                 if not source['minimum'] <= value <= source['maximum'] or not math.isclose(steps, round(steps), abs_tol=0.00001):
                     raise ValueError('Temperatuur ligt buiten apparaatgrenzen of past niet bij de stapgrootte.')

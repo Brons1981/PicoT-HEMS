@@ -1,3 +1,9 @@
+# 0.1.0-dev.30
+
+- Behandel het expliciete 17 °C-schemablok beneden als kamerondergrens: airco uit zolang de kamer warm genoeg is; ondergrensverwarming op de geldige apparaatstand 18 °C met hysterese en minimale draaitijd. Het bestaande schema bepaalt de start om 22:00.
+- Weiger een verwarmingsopdracht onder de bevestigde 18 °C-grens van de woonkamerairco vóór verzending.
+- Toon meetdekking voor handhaven, verlagen en uitschakelen in dashboard en diagnose. De volledige financiële vergelijking wordt nog niet uitgevoerd; het vervolg staat in HC-ADR-020.
+
 # 0.1.0-dev.29
 
 - Voeg bij Bronbediening een diagnose-download toe met alle opgeslagen opdrachten, actuele blokkeringen, apparaatstanden en de ingestelde bevestigingstermijn. Downloaden verandert de regeling niet.

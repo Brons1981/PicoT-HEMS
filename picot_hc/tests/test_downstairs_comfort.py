@@ -200,7 +200,7 @@ class DownstairsComfortTests(unittest.TestCase):
         self.temperature('beneden', 20)
         self.poll(NOW+4*3600-self.now)
         state = self.states[self.config['zones'][0]['device']]
-        self.assertEqual((state['state'], state['attributes']['temperature']), ('heat', 17))
+        self.assertEqual((state['state'], state['attributes']['temperature']), ('heat', 18))
         self.assertFalse(any(body.get('hvac_mode') == 'off' for _, body in self.calls))
 
     def test_manual_off_is_respected_while_maintaining(self):

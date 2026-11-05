@@ -249,6 +249,12 @@ class Runtime:
             self.warmup_energy.observe(self.warmup_sample, view, plan, now)
             sample = energy_context(self.config, states, plan,
                                     measurement(self.config, states, now), now)
+            from .strategy_readiness import assess
+            try:
+                self.strategy_readiness = assess(self, plan, sample, now)
+            except Exception:
+                self.strategy_readiness = dict(status='unavailable', execution_authorized=False,
+                    reason='Meetstatus tijdelijk niet beschikbaar; geen strategie-keuze.')
             outlook = read_outlook(states, now, self.control.connected and self.connection == 'connected')
             idle_sample = idle_context(self.config, states, plan,
                                       measurement(self.config, states, now), view, now)
@@ -291,6 +297,8 @@ class Runtime:
                                       idle_sample, view, plan, now)
         except Exception:
             self.startup_sample = None
+            self.strategy_readiness = dict(status='unavailable', execution_authorized=False,
+                reason='Meetstatus tijdelijk niet beschikbaar; geen strategie-keuze.')
             self.start_intent.cancel('Energieadvies tijdelijk niet beschikbaar.')
             self.energy_selection.withdraw('Energieadvies tijdelijk niet beschikbaar.')
             self.startup_energy.reset()
@@ -358,6 +366,7 @@ class Runtime:
         with self.control.lock:
             data['schedule'] = self.schedule.view(time.time())
             data['heating'] = self.heating.view(self.config, time.time())
+            data['heating']['strategy_readiness'] = copy.deepcopy(getattr(self, 'strategy_readiness', None))
             data['energy_outlook'] = read_outlook(self.control.states, time.time(),
                 self.control.connected and self.connection == 'connected' and age is not None
                 and 0 <= age <= self.config['stale_seconds'])

@@ -14,6 +14,16 @@ function renderHeating(data) {
     decisions.append(el('p', zone + ': ' + state.reason + (selected.length ? ' Gekozen: ' + selected.map(s=>names[s]).join(', ') + '.' : '')));
   }
   if (data.door_fan && data.door_fan.reason) decisions.append(el('p', data.door_fan.reason));
+  const readiness = data.strategy_readiness;
+  if (readiness) {
+    decisions.append(el('h3', 'Meetbasis voor handhaven, verlagen en uitschakelen'));
+    decisions.append(el('p', readiness.reason));
+    for (const [name, model] of Object.entries(readiness.models || {})) {
+      decisions.append(el('p', name + ': ' + model.matching + '/' + model.required +
+        ' passende metingen; ' + model.recent + ' recent, ' + model.stored +
+        ' opgeslagen. ' + model.reason));
+    }
+  }
   const costs = $('heating-costs'); costs.replaceChildren();
   for (const [key, name] of Object.entries(names)) {
     const cost = data.costs[key];

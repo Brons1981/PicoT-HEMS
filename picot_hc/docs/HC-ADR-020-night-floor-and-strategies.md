@@ -90,7 +90,7 @@ selectie tussen de drie strategieën. Ventilatoroptievertaling en de eerdere
 melding/blokkering rond opdrachtbevestiging worden hier niet gewijzigd.
 
 
-## Vervolgcorrectie 5 november 2026 (nog niet uitgebracht)
+## Vervolgcorrectie 5 november 2026 (0.1.0-dev.31)
 
 De eerste versie onderdrukte voorverwarmen tijdens expliciete lage blokken.
 Dit is op verzoek van Alex herzien: een zacht blok met een lager doel mag binnen

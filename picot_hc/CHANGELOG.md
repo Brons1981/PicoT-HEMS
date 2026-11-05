@@ -1,3 +1,7 @@
+# 0.1.0-dev.29
+
+- Voeg bij Bronbediening een diagnose-download toe met alle opgeslagen opdrachten, actuele blokkeringen, apparaatstanden en de ingestelde bevestigingstermijn. Downloaden verandert de regeling niet.
+
 # 0.1.0-dev.28
 
 - Behoud automatische verwarming na herstart; actuele gegevens en bestaande handmatige overnames blijven bepalend voor uitvoering.

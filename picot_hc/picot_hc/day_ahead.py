@@ -90,7 +90,36 @@ def steady(model, sample, now):
     return min(16000, watts), "provisional_recent_heat_loss_scaling"
 
 
-def build(settings, enabled, context, source_id, model, warmup, cooling, hourly, daily, now):
+class ForecastWarmup:
+    """Prefer complete starts; keep legacy warmups when no start evidence exists."""
+
+    def __init__(self, warmup, startup):
+        self.warmup, self.startup = warmup, startup
+        self.records = list(startup.records if startup is not None else []) + list(warmup.records)
+
+    def estimate(self, query, now):
+        if self.startup is not None:
+            estimate = self.startup.estimate(query, now)
+            if finite(estimate.get("energy_wh")):
+                return estimate
+        return self.warmup.estimate(query, now)
+
+
+def build(
+    settings,
+    enabled,
+    context,
+    source_id,
+    model,
+    warmup,
+    cooling,
+    hourly,
+    daily,
+    now,
+    startup=None,
+    heating_minimum=18.0,
+):
+    warmup = ForecastWarmup(warmup, startup)
     today = datetime.fromtimestamp(now, TZ).date()
     tomorrow = today + timedelta(days=1)
     # Cover remaining today too: tomorrow's forecast stays useful after midnight.
@@ -159,7 +188,11 @@ def build(settings, enabled, context, source_id, model, warmup, cooling, hourly,
                             * 1.25,
                         ),
                     )
-            if following["starts_at"] - lead <= start and following["target"] > target:
+            if (
+                (not window or not window["hard"])
+                and following["starts_at"] - lead <= start
+                and following["target"] > target
+            ):
                 target, phase = following["target"], "warmup"
             if start < following["starts_at"] - lead < finish:
                 finish = following["starts_at"] - lead
@@ -168,6 +201,40 @@ def build(settings, enabled, context, source_id, model, warmup, cooling, hourly,
         ]
         if boundaries:
             finish = min(boundaries)
+        floor = bool(window and window["target"] < heating_minimum and phase != "warmup")
+        recovery = target
+        if job is not None and job["target"] != (heating_minimum if floor else target):
+            job = None
+        if floor:
+            reasons.add("provisional_room_floor_cycle")
+            floor_target = window["target"]
+            if indoor > floor_target + 0.01 and job is None:
+                rate = cooling.estimate(
+                    dict(context, indoor=indoor, outdoor=outdoor, weather=weather), now
+                ).get("cooling_rate")
+                if not finite(rate) or rate <= 0:
+                    return dict(
+                        result,
+                        status="unavailable",
+                        reasons=sorted(reasons | {"no_floor_cooling_measurements"}),
+                    )
+                finish = min(finish, start + (indoor - floor_target) / rate * 3600)
+                indoor = max(floor_target, indoor - rate * (finish - start) / 3600)
+                slots.append(
+                    dict(
+                        starts_at=stamp(start),
+                        ends_at=stamp(finish),
+                        energy_wh=0,
+                        phase="off",
+                        target=floor_target,
+                        weather_method=weather_method,
+                        method="measured_cooling_to_room_floor",
+                    )
+                )
+                start = finish
+                continue
+            target = heating_minimum
+            recovery = floor_target + 0.3
         query = dict(
             context,
             valid=True,
@@ -186,15 +253,15 @@ def build(settings, enabled, context, source_id, model, warmup, cooling, hourly,
         energy = power * duration / 3600
         cooling_estimate = cooling.estimate(dict(query, indoor=indoor), now)
         rate = cooling_estimate.get("cooling_rate")
-        if indoor > target + 0.1 and finite(rate):
+        if not floor and indoor > target + 0.1 and finite(rate):
             cooling_seconds = min(duration, (indoor - target) / max(0.01, rate) * 3600)
             indoor -= rate * cooling_seconds / 3600
             energy *= 1 - cooling_seconds / duration
-        elif indoor > target + 0.1:
+        elif not floor and indoor > target + 0.1:
             # Do not project today's warm room unchanged into tomorrow.
             reasons.add("cooling_unknown_assume_setpoint")
             indoor = target
-        if indoor < target - 0.1:
+        if indoor < recovery - 0.01 or job is not None:
             if job is None or job["target"] != target:
                 estimate = warmup.estimate(dict(query, indoor=indoor), now)
                 wh, seconds = estimate.get("energy_wh"), estimate.get("duration_seconds")
@@ -221,11 +288,14 @@ def build(settings, enabled, context, source_id, model, warmup, cooling, hourly,
                         * (target - indoor)
                     )
                     reasons.add("provisional_recent_warmup")
-                job = dict(target=target, wh=wh, seconds=max(1, seconds))
+                job = dict(target=target, wh=wh, seconds=max(600 if floor else 1, seconds))
+            if floor:
+                duration = min(duration, job["seconds"])
+                finish = start + duration
             used_seconds = min(duration, job["seconds"])
             fraction = used_seconds / job["seconds"]
             energy = job["wh"] * fraction + power * (duration - used_seconds) / 3600
-            indoor += (target - indoor) * fraction
+            indoor += (recovery - indoor) * fraction
             job["seconds"] -= used_seconds
             job["wh"] *= 1 - fraction
             if job["seconds"] <= 0:
@@ -266,7 +336,19 @@ class DayAhead:
         self.last_key, self.last_run = None, 0
 
     def tick(
-        self, settings, enabled, context, source_id, model, warmup, cooling, hourly, daily, now
+        self,
+        settings,
+        enabled,
+        context,
+        source_id,
+        model,
+        warmup,
+        cooling,
+        hourly,
+        daily,
+        now,
+        startup=None,
+        heating_minimum=18.0,
     ):
         # Regenerate at least every half hour and on noon/date/settings changes.
         local = datetime.fromtimestamp(now, TZ)
@@ -293,12 +375,25 @@ class DayAhead:
                 daily.get("received"),
                 model.records,
                 warmup.records,
+                startup.records if startup is not None else [],
+                heating_minimum,
                 cooling.samples,
             ]
         )
         if key != self.last_key or now - self.last_run >= 1800:
             value = build(
-                settings, enabled, context, source_id, model, warmup, cooling, hourly, daily, now
+                settings,
+                enabled,
+                context,
+                source_id,
+                model,
+                warmup,
+                cooling,
+                hourly,
+                daily,
+                now,
+                startup=startup,
+                heating_minimum=heating_minimum,
             )
             value["input_fingerprint"] = key
             value["revision"] = digest(value)

@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 
 from .control import PENDING, numeric
+from .cv_state import passive_idle
 from .core import observation, prices, tariff_confirmed, timestamp
 from .schedule import TZ
 from .learning import Learning
@@ -191,9 +192,14 @@ class Heating:
         owned = self.data['owned']
         records = {c['id']: c for c in self.control.records()}
         holds = [h for h in view['overrides'] if h['active']]
-        blocked = {z for h in holds for z in h['zones']}
+        cv_idle = passive_idle(sources.get('cv', {}))
+        manual_sources = {h['source'] for h in holds}
+        blocked = {z for h in holds for z in h['zones']
+                   if not (h['source'] == 'cv' and cv_idle)}
         # Existing manual heat/dry/cool and unconfirmed manual writes retain authority.
         for source, item in sources.items():
+            if source == 'cv' and cv_idle:
+                continue
             if source not in owned and (item['state'] not in ('off', None, 'unknown', 'unavailable') or item['pending']):
                 blocked.update(COVERAGE[source])
         if view['legacy_pause']:
@@ -218,7 +224,7 @@ class Heating:
             if zid == 'beneden':
                 minimum = sources[zid].get('heating_minimum')
                 floor_mode = bool(view['settings']['enabled'] and view.get('current')
-                                  and not view.get('temporary_temperature')
+                                  and not view.get('temporary_temperature') and not learning['preheating']
                                   and goal and numeric(goal.get('target')) is not None
                                   and minimum is not None and goal['target'] < minimum)
                 if floor_mode:
@@ -320,6 +326,8 @@ class Heating:
 
         def eligible(source, target):
             s = sources[source]
+            if source in manual_sources or (source == 'cv' and cv_idle and source not in owned):
+                return False
             if not s['available'] or source in self.data['faults'] or any(z in blocked for z in COVERAGE[source]):
                 return False
             if source == 'badkamer':

@@ -1,3 +1,10 @@
+# 0.1.0-dev.31
+
+- Laat de airco doorwerken bij een beschikbare CV-thermostaat die expliciet idle meldt en minimaal 0,3 °C onder zijn eigen kamertemperatuur staat. Behoud de handmatige CV-instelling; actieve, aangevraagde of onzekere CV-verwarming houdt voorrang.
+- Sta voorverwarmen toe vanuit een lager zacht schemablok naar het volgende hogere comfortblok. Gebruik de ingestelde initiële opwarmtijd zolang nog geen bruikbare leeruitkomsten bestaan; de stop om 22:00 blijft intact.
+- Verzamel ook complete normale automatische comfortstarts voor opwarm- en opstartenergie. Bewaar leersessie-uitkomsten en afwijsredenen en neem de leerrecords op in diagnose.
+- Benut complete opstartmetingen in de dagprognose en modelleer expliciete lage blokken als afkoelen met ondergrensverwarming. Zonder onderbouwde afkoel- of opwarmraming blijft de prognose onbeschikbaar in plaats van ontbrekend verbruik op nul te zetten.
+
 # 0.1.0-dev.30
 
 - Behandel het expliciete 17 °C-schemablok beneden als kamerondergrens: airco uit zolang de kamer warm genoeg is; ondergrensverwarming op de geldige apparaatstand 18 °C met hysterese en minimale draaitijd. Het bestaande schema bepaalt de start om 22:00.

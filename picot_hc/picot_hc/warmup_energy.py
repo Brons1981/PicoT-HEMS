@@ -2,6 +2,7 @@
 
 import copy
 import json
+import time
 
 from .energy_model import EnergyModel
 
@@ -18,14 +19,28 @@ class WarmupEnergy:
             row = db.execute(f"SELECT payload FROM {self.table} WHERE id=1").fetchone()
         data = json.loads(row[0]) if row else dict(records=[], attempted=[])
         self.records, self.attempted = data["records"], data["attempted"]
+        self.events = data.get("events", [])
+        if self.events and self.events[-1]["kind"] == "started":
+            self.note("rejected", "restart_incomplete_trajectory", time.time())
 
     def save(self, records, attempted):
         with self.store.connect() as db:
             db.execute(
                 f"INSERT OR REPLACE INTO {self.table} VALUES (1, ?)",
-                (json.dumps(dict(records=records, attempted=attempted), allow_nan=False),),
+                (
+                    json.dumps(
+                        dict(records=records, attempted=attempted, events=self.events),
+                        allow_nan=False,
+                    ),
+                ),
             )
         self.records, self.attempted = records, attempted
+
+    def note(self, kind, reason, now):
+        if self.events and (self.events[-1]["kind"], self.events[-1]["reason"]) == (kind, reason):
+            return
+        self.events = (self.events + [dict(at=now, kind=kind, reason=reason)])[-64:]
+        self.save(self.records, self.attempted)
 
     def observe(self, sample, view, plan, now):
         window = view.get("next") if plan.get("preheating") else view.get("current")
@@ -39,6 +54,11 @@ class WarmupEnergy:
             and abs(sample["target"] - window["target"]) < 0.05
         )
         if not valid:
+            self.note(
+                "rejected" if self.session is not None else "waiting",
+                "measurement_or_automatic_comfort_context_lost",
+                now,
+            )
             self.session = None
             return
         s = self.session
@@ -53,17 +73,41 @@ class WarmupEnergy:
             or abs(sample["outdoor"] - s["first"]["outdoor"]) > 1.5
             or sample["indoor"] < s["high"] - 0.3
         ):
+            reason = (
+                "measurement_gap"
+                if not 0 < now - s["last"] <= 90
+                else "duration_limit"
+                if now - s["start"] > 10800
+                else "schedule_changed"
+                if key != s["key"] or view["revision"] != s["revision"]
+                else "counter_reset"
+                if sample["energy_wh"] < s["previous"]["energy_wh"]
+                else "weather_changed"
+                if abs(sample["outdoor"] - s["first"]["outdoor"]) > 1.5
+                else "temperature_fell"
+                if sample["indoor"] < s["high"] - 0.3
+                else "source_or_target_changed"
+            )
+            self.note("rejected", reason, now)
             self.session = None
             return
         if s is None:
             if (
-                not plan.get("preheating")
+                plan.get("learning_status", {}).get("phase") not in ("preheat", "comfort")
                 or key in self.attempted
                 or sample["target"] - sample["indoor"] < 0.5
             ):
+                self.note(
+                    "waiting",
+                    "window_already_attempted"
+                    if key in self.attempted
+                    else "temperature_deficit_below_0.5",
+                    now,
+                )
                 return
             # Persist the attempt before sampling: never resume a partial trajectory after restart.
             self.save(self.records, (self.attempted + [key])[-32:])
+            self.note("started", "preheat" if plan.get("preheating") else "comfort_start", now)
             self.session = dict(
                 key=key,
                 revision=view["revision"],
@@ -98,7 +142,9 @@ class WarmupEnergy:
             or not 50 <= used * 3600 / duration <= 16000
             or abs(used - s["integrated_wh"]) > max(10, used * 0.3)
         ):
+            self.note("rejected", "duration_power_or_energy_consistency", now)
             return
+        self.note("completed", "target_confirmed_for_120_seconds", now)
         record = dict(
             s["first"],
             measured_at=now,
@@ -140,4 +186,5 @@ class WarmupEnergy:
             measuring=self.session is not None,
             completed_sessions=sum(0 <= now - r["measured_at"] <= 7 * 86400 for r in self.records),
             execution_authorized=False,
+            recent_events=copy.deepcopy(self.events),
         )

@@ -19,6 +19,13 @@ def collect(runtime):
                               ('state', 'last_updated', 'last_changed', 'last_reported')}
             states[entity]['attributes'] = {key: attrs.get(key) for key in
                 ('temperature', 'hvac_action', 'hvac_modes', 'target_temp_step', 'options')}
+        learning_models = {}
+        for name, model in (("warmup", getattr(runtime, 'warmup_energy', None)),
+                            ("startup", getattr(getattr(runtime, 'startup_energy', None), 'model', None)),
+                            ("maintenance", getattr(getattr(runtime, 'energy_proposals', None), 'model', None))):
+            if model is not None:
+                learning_models[name] = dict(records=model.records,
+                    events=getattr(model, 'events', []), attempted=getattr(model, 'attempted', []))
         return copy.deepcopy(dict(
             format='picot_hc_control_diagnostics', version=1, hc_version=__version__,
             exported_at=time.time(), timezone='Europe/Amsterdam',
@@ -28,6 +35,6 @@ def collect(runtime):
             connected=control.connected, last_received=control.received,
             commands=control.records(), heating=runtime.heating.data,
             schedule=runtime.schedule.data, door_fan=runtime.heating.door_fan.data,
-            reported_states=states,
+            reported_states=states, learning_models=learning_models,
             strategy_readiness=getattr(runtime, 'strategy_readiness', None),
         ))

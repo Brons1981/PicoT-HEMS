@@ -158,6 +158,7 @@ class Control:
                                      if minimum is not None and self.unit == '\u00b0C' else minimum),
                     temperature_supported=temperature_ok, state=item.get('state'),
                     temperature=numeric(attrs.get('temperature')), action=attrs.get('hvac_action'),
+                    current_temperature=numeric(attrs.get('current_temperature')),
                     received=self.received, source_updated=item.get('last_updated'),
                     reason=None if available else 'Geen actuele, bruikbare HA-terugmelding.'))
             return result

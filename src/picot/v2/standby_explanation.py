@@ -5,7 +5,7 @@ from math import isfinite
 
 from picot.domain.evaluation import CandidateValidity, ComparisonDirection
 from picot.domain.objectives import ObjectiveKind
-from picot.v2.contracts import CanonicalPipelineRun
+from picot.v2.contracts import CanonicalPipelineRun, EnergyPath
 
 
 def _standby_pair(
@@ -69,8 +69,14 @@ def _standby_pair(
     benefit = alternative - incumbent if retained else incumbent - alternative
     if benefit <= 0:
         return None
-    return {"starts_at": windows[0][0].isoformat(), "ends_at": windows[0][1].isoformat(),
-            "benefit_eur": benefit}
+    result: dict[str, object] = {
+        "starts_at": windows[0][0].isoformat(), "ends_at": windows[0][1].isoformat(),
+        "benefit_eur": benefit,
+    }
+    usage = _standby_usage(active, *windows[0])
+    if usage is not None:
+        result["usage"] = usage
+    return result
 
 
 def standby_comparison(
@@ -106,3 +112,39 @@ def standby_comparison(
                                   standby_cost_eur=-costs[winner].value)
                     return result
     return _standby_pair(run, decision)
+
+
+def _standby_usage(path: EnergyPath, start: datetime, end: datetime) -> dict[str, float] | None:
+    """Sum exact producer intervals; missing or partial coverage is not zero use."""
+    cursor = start
+    totals = dict.fromkeys(("household_demand_wh", "pv_household_wh", "grid_household_wh",
+                            "grid_import_cost_eur"), 0.0)
+    for state in sorted(path.projected_states, key=lambda s: s.at):
+        flow_start = getattr(state, "flow_starts_at", None)
+        if flow_start is None or state.at <= start or flow_start >= end:
+            continue
+        if flow_start != cursor or state.at > end or state.at <= flow_start:
+            return None
+        values: dict[str, float] = {}
+        for key in totals:
+            value = getattr(state, key, None)
+            if not isinstance(value, (int, float)) or not isfinite(value):
+                return None
+            values[key] = value
+        if any(values[key] < 0 for key in totals if key != "grid_import_cost_eur"):
+            return None
+        # Only household import may contribute to this block's cost.
+        if getattr(state, "grid_storage_input_wh", None) != 0:
+            return None
+        if abs(values["household_demand_wh"] - values["pv_household_wh"]
+               - values["grid_household_wh"]) > 1e-6:
+            return None
+        for key, value in values.items():
+            totals[key] += value
+        cursor = state.at
+    if cursor != end:
+        return None
+    return {"household_kwh": totals["household_demand_wh"] / 1000,
+            "solar_used_kwh": totals["pv_household_wh"] / 1000,
+            "grid_kwh": totals["grid_household_wh"] / 1000,
+            "grid_cost_eur": totals["grid_import_cost_eur"]}

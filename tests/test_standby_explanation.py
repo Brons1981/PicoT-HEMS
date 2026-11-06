@@ -77,3 +77,60 @@ def test_explicit_support_baseline_works_without_incumbent_cost_comparison():
     assert result["comparison_basis"] == "normal_support_then_refill"
     run.candidate_set.energy_paths[1].projected_states[0].storage_energy_wh = 4000
     assert standby_comparison(run, {"status": "selected"}) is None
+
+
+def usage_evidence():
+    from picot.domain.energy_path import ProjectedEnergyState
+    run, decision = evidence()
+    path = run.candidate_set.energy_paths[0]
+    start, end = path.horizon_start, path.horizon_end
+    middle = start + timedelta(hours=1)
+    path.projected_states = [
+        ProjectedEnergyState(at=middle, confidence=1, flow_starts_at=start,
+            household_demand_wh=1000, pv_household_wh=200, grid_household_wh=800,
+            grid_storage_input_wh=0, grid_import_cost_eur=0.24, pv_other_wh=700),
+        ProjectedEnergyState(at=end, confidence=1, flow_starts_at=middle,
+            household_demand_wh=500, pv_household_wh=0, grid_household_wh=500,
+            grid_storage_input_wh=0, grid_import_cost_eur=0.20, storage_energy_wh=5000),
+    ]
+    return run, decision
+
+
+def test_standby_usage_reports_household_solar_not_all_pv_and_interval_costs():
+    run, decision = usage_evidence()
+    usage = standby_comparison(run, decision)['usage']
+    assert usage == pytest.approx(dict(household_kwh=1.5, solar_used_kwh=0.2,
+                                      grid_kwh=1.3, grid_cost_eur=0.44))
+
+
+@pytest.mark.parametrize('case', ['missing', 'gap', 'overlap', 'partial', 'charging'])
+def test_incomplete_standby_usage_is_not_reported_as_zero(case):
+    from dataclasses import replace
+    run, decision = usage_evidence()
+    path = run.candidate_set.energy_paths[0]
+    first = path.projected_states[0]
+    if case == 'missing':
+        first = replace(first, pv_household_wh=None)
+    elif case == 'gap':
+        first = replace(first, flow_starts_at=first.flow_starts_at + timedelta(minutes=15))
+    elif case == 'overlap':
+        first = replace(first, at=first.at + timedelta(minutes=15))
+    elif case == 'partial':
+        first = replace(first, flow_starts_at=first.flow_starts_at - timedelta(minutes=15))
+    else:
+        first = replace(first, grid_storage_input_wh=100)
+    path.projected_states[0] = first
+    result = standby_comparison(run, decision)
+    assert result['benefit_eur'] == pytest.approx(0.2)
+    assert 'usage' not in result
+
+
+def test_standby_usage_preserves_negative_tariff_cost_and_true_zero_solar():
+    from dataclasses import replace
+    run, decision = usage_evidence()
+    path = run.candidate_set.energy_paths[0]
+    path.projected_states[0] = replace(path.projected_states[0],
+        household_demand_wh=800, pv_household_wh=0, grid_import_cost_eur=-0.30)
+    usage = standby_comparison(run, decision)['usage']
+    assert usage['solar_used_kwh'] == 0
+    assert usage['grid_cost_eur'] == pytest.approx(-0.10)

@@ -143,6 +143,10 @@ class ProjectedEnergyState:
     pv_storage_input_wh: float | None = None
     pv_other_wh: float | None = None
     grid_storage_input_wh: float | None = None
+    household_demand_wh: float | None = None
+    pv_household_wh: float | None = None
+    grid_household_wh: float | None = None
+    grid_import_cost_eur: float | None = None
 
     def __post_init__(self) -> None:
         if self.at.tzinfo is None or self.at.utcoffset() is None:

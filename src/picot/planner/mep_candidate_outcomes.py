@@ -1699,8 +1699,13 @@ def produce_main_charge_portfolio(
             supplemental=windows.purpose == "bridge",
             market_revision=financial_market_comparison,
         )
+        interval_costs = {(i.starts_at, i.ends_at): i.grid_import_cost_eur
+                          for i in financial.intervals}
         path = replace(
             path,
+            projected_states=tuple(replace(s, grid_import_cost_eur=interval_costs.get(
+                (s.flow_starts_at, s.at)) if s.flow_starts_at is not None else None)
+                for s in path.projected_states),
             projected_import_cost_eur=sum(i.grid_import_cost_eur for i in financial.intervals),
             projected_export_revenue_eur=sum(i.grid_export_result_eur for i in financial.intervals),
         )
@@ -2221,6 +2226,9 @@ def _main_charge_energy_path(
             pv_storage_input_wh=i.pv_to_storage_input_wh,
             pv_other_wh=i.pv_to_household_wh + i.pv_to_grid_wh,
             grid_storage_input_wh=i.grid_to_storage_input_wh,
+            household_demand_wh=i.household_demand_wh,
+            pv_household_wh=i.pv_to_household_wh,
+            grid_household_wh=i.grid_to_household_wh,
         )
         for i in projected
         for hours in ((i.ends_at - i.starts_at).total_seconds() / 3600,)

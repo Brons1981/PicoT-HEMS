@@ -81,3 +81,19 @@ def test_unknown_floor_timing_is_explicit_even_without_other_narrative():
         "support_until": None, "next_charge_at": None}))
     assert "nog niet betrouwbaar voorspeld" in text
     assert "voordeliger" not in text
+
+
+def test_standby_block_energy_and_costs_are_separate_from_route_saving():
+    comparison = {"starts_at": "2026-11-06T21:45:00Z",
+                  "ends_at": "2026-11-07T08:30:00Z", "benefit_eur": 0.097,
+                  "usage": {"household_kwh": 3.09055, "solar_used_kwh": 0.14495,
+                            "grid_kwh": 2.94560, "grid_cost_eur": 1.247956}}
+    text = render(explanation(standby_comparison=comparison))["text"]
+    for expected in ("3,09 kWh", "0,14 kWh", "2,95 kWh", "1,248", "0,097",
+                     "afnamekosten binnen het stand-byblok", "later bijladen",
+                     "terugleveropbrengsten"):
+        assert expected in text
+    comparison.pop("usage")
+    text = render(explanation(standby_comparison=comparison))["text"]
+    assert "nog niet volledig beschikbaar" in text
+    assert "0,00 kWh" not in text

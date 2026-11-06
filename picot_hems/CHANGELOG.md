@@ -1,3 +1,10 @@
+# 2.0.0-dev.338
+
+- Toon bij een onderbouwd stand-byblok het verwachte huisverbruik, direct gebruikte zonne-energie, netafname en netkosten voor dat blok.
+- Houd de kosten binnen het stand-byblok apart van de besparing over de volledige route inclusief later bijladen.
+- Toon ontbrekende intervalgegevens als onbekend in plaats van nul. Planning en aansturing blijven gelijk.
+- HC en ED ongewijzigd. Geen planreset nodig; de details verschijnen na een nieuwe volledige vergelijking.
+
 # 2.0.0-dev.337
 
 - Vergelijk een aaneengesloten stand-byblok op goedkopere kwartieren met batterijondersteuning en later aanvullen, inclusief omzettingsverliezen.

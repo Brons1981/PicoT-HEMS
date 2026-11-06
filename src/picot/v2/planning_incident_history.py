@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
+from picot.v2.comparison_archive import archive_comparison_record, expand_comparison_record
 from picot.v2.contracts import CanonicalPipelineRun
 from picot.v2.evidence_sequences import EvidenceSequenceEncoder
 from picot.v2.planning_input import PlanningInputBundle
@@ -447,6 +448,11 @@ class PlanningIncidentHistory:
             except Exception:
                 pass
         if encoded_size > MAX_INCIDENT_RECORD_BYTES:
+            # Archive the normalized comparison before the final bounded fallback.
+            archived = archive_comparison_record(json.loads(encoded))
+            encoded = json.dumps(archived, separators=(",", ":"))
+            encoded_size = len(encoded)
+        if encoded_size > MAX_INCIDENT_RECORD_BYTES:
             bounded = _basic_incident_record(record)
             bounded["detail_level"] = "bounded"
             bounded["oversized_record_bytes"] = encoded_size
@@ -575,6 +581,8 @@ def _record_captured_at(record: dict[str, object]) -> datetime | None:
 
 
 def _basic_incident_record(record: dict[str, object]) -> dict[str, object]:
+    # Retention must derive the dev.334 decision summary from the full comparison.
+    record = expand_comparison_record(record)
     poll_value = record.get("poll")
     if not isinstance(poll_value, dict):
         # A second retention pass must preserve existing bounded evidence/identity.

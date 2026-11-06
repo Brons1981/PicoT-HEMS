@@ -1,3 +1,10 @@
+# 2.0.0-dev.335
+
+- Pas de bestaande EUR 0.01-grens ook toe op marktroute-herzieningen: behoud het geldige bestaande plan bij een kleiner voordeel.
+- Houd grote vergelijkingen leesbaar op het dashboard met de gekozen route, het bestaande plan en voorbeelden.
+- Bewaar grote marktvergelijkingen verliesloos gecomprimeerd in de diagnose, inclusief invoer en alle uitkomsten.
+- Behoud de wijzigingen uit dev.334. Geen planreset nodig; bestaande stand-byblokken worden niet achteraf verwijderd.
+
 # 2.0.0-dev.334
 
 - Gebruik geldige HC-energie-intervallen afzonderlijk; behoud de huishoudprognose voor onbekende intervallen. Belastingsvensters blijven beschikbaar zonder temperatuurgegevens.

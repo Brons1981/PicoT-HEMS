@@ -123,7 +123,8 @@ def test_projection_does_not_extend_missing_horizon_or_invent_financial_value():
     assert row["invalidity_reasons"] == ["price_coverage_incomplete"]
 
 
-def test_dashboard_renders_losing_and_incomparable_market_alternatives():
+@pytest.mark.parametrize("summarized", [False, True])
+def test_dashboard_renders_losing_and_incomparable_market_alternatives(summarized):
     node = shutil.which("node")
     assert node is not None, "Node.js is required to verify the dashboard"
     functions = []
@@ -135,6 +136,8 @@ def test_dashboard_renders_losing_and_incomparable_market_alternatives():
         end = DASHBOARD_HTML.index("    function ", start + 13)
         functions.append(DASHBOARD_HTML[start:end])
     comparison = _build_planning_status(comparison_run())["market_revision_comparison"]
+    if summarized:
+        comparison.update(alternative_count=7200, omitted_alternative_count=7197)
     script = "\n".join(functions) + "\n" + """
 const document = {createElement(tag) {
   return {tag, children: [], dataset: {}, textContent: "", append(...nodes) {
@@ -157,6 +160,8 @@ process.stdout.write(JSON.stringify({cards, text: cards.flatMap(collect)}));
     assert result.returncode == 0, result.stderr
     rendered = json.loads(result.stdout)
     text = rendered["text"]
+    if summarized:
+        assert any("Getoond: 3 van 7200" in value for value in text)
     assert "Behouden (bestaand plan)" in text
     assert "Verwijderen" in text
     assert "Inkorten" in text

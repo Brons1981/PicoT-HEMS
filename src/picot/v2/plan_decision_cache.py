@@ -62,7 +62,8 @@ def retain_plan_decision(
     if isinstance(narrative, dict):
         if (not narrative.get("energy_available") and isinstance(prior_narrative, dict)
                 and prior_narrative.get("energy_available")):
-            narrative = {**prior_narrative, "windows": narrative.get("windows", [])}
+            narrative = {**prior_narrative, "windows": narrative.get("windows", []),
+                         "operation": narrative.get("operation")}
         carried["narrative"] = narrative
     return {**current, "plan_decision": carried}
 

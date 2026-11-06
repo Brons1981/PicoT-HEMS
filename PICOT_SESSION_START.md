@@ -1,3 +1,10 @@
+## Release HEMS dev.337 - 6 november 2026
+
+Alex vraagt publicatie van de economische stand-byreparatie en dashboarduitleg via PR en groene CI.
+Basis dev.336. Een goedkoop aaneengesloten stand-byblok vergelijken met normale ondersteuning tot de SOC-ondergrens en later aanvullen.
+Zie docs/development_log/2026-11-06-economic-standby.md. HC dev.32 en ED ongewijzigd.
+Geen live installatie of planreset.
+
 ## Release HEMS dev.336 - 6 november 2026
 
 Alex vraagt release van de reparatie voor ontbrekende doorlopende stand-byvensters.

@@ -5876,7 +5876,8 @@ DASHBOARD_HTML = """<!doctype html>
       const energy = value => `${formatDutchNumber(value)} kWh`;
       const days = (narrative.days ?? []).filter(day => day.date >= today);
       const windows = (narrative.windows ?? []).filter(w => Date.parse(w.ends_at) > now.getTime());
-      if (!days.length && !windows.length) return;
+      const operation = narrative.operation;
+      if (!days.length && !windows.length && !operation) return;
       paragraph("Wat het actieve plan gaat doen", "h2");
       const cost = narrative.cost_projection;
       if (cost && Date.parse(cost.ends_at) > now.getTime() &&
@@ -5917,12 +5918,39 @@ DASHBOARD_HTML = """<!doctype html>
           paragraph(`De batterij bereikt naar verwachting op ${stamp(day.full_at)} uur 100%.`);
         }
       }
+      if (operation) {
+        const floor = formatDutchNumber(operation.minimum_soc_percent);
+        const untilCharge = operation.next_charge_at
+          ? ` tot het geplande laden op ${stamp(operation.next_charge_at)} uur` : "";
+        if (operation.floor_status === "reached") {
+          paragraph(`Stand-by bij de ondergrens: de batterij heeft ${floor}% bereikt. ` +
+            `Het huis gebruikt zon en netstroom${untilCharge}. Dit is normale werking.`);
+        } else {
+          if (operation.support_until && Date.parse(operation.support_until) > now.getTime()) {
+            paragraph(`De batterij ondersteunt het huis naar verwachting tot ` +
+              `${stamp(operation.support_until)} uur.`);
+          }
+          if (operation.floor_status === "projected" && operation.floor_at) {
+            paragraph("De batterij bereikt naar verwachting rond " +
+              `${stamp(operation.floor_at)} uur ` +
+              `de ondergrens van ${floor}%. Daarna staat de batterij in stand-by${untilCharge}. ` +
+              "Dit is normale werking, geen afzonderlijk besparingsblok.");
+          } else if (operation.floor_status === "unknown") {
+            paragraph(`Wanneer de batterij ${floor}% bereikt is nog niet betrouwbaar voorspeld. ` +
+              "Bij de ondergrens stopt de batterijondersteuning normaal.");
+          }
+        }
+        if (operation.next_charge_at) {
+          paragraph(`Het volgende geplande laadvenster begint op ` +
+            `${stamp(operation.next_charge_at)} uur.`);
+        }
+      }
       for (const window of windows) {
         const period = `Van ${stamp(window.starts_at)} tot ${stamp(window.ends_at)} uur`;
         if (window.kind === "grid_charge") {
           paragraph(`${period} is aanvullend laden via het net gepland.`);
         } else if (window.kind === "standby") {
-          paragraph(`${period} blijft de batterij in stand-by. ` +
+          paragraph(`${period} is stand-by gepland. ` +
             "De batterij ondersteunt het huis dan niet; zon en net voorzien in het huisverbruik.");
         }
       }
@@ -5968,11 +5996,14 @@ DASHBOARD_HTML = """<!doctype html>
         [decision.incumbent_cost_eur, decision.alternative_cost_eur, decision.improvement_eur]
           .every(finite);
       const standby = decision.standby_comparison;
-      if (comparable && standby && finite(standby.benefit_eur) && standby.benefit_eur > 0) {
+      if (standby && finite(standby.benefit_eur) && standby.benefit_eur > 0) {
         paragraph(`Stand-by van ${formatTimestamp(standby.starts_at)} tot ` +
           `${formatTimestamp(standby.ends_at)} is volgens deze volledige routevergelijking ` +
-          `${money(standby.benefit_eur)} voordeliger dan batterijondersteuning. ` +
-          "Dit is het verschil over de hele vergelijkingsperiode, inclusief laadverliezen.");
+          `${money(standby.benefit_eur)} voordeliger dan batterijondersteuning ` +
+          "en later aanvullen. " +
+          "Het huis gebruikt in dit blok rechtstreeks zon en netstroom. " +
+          "Dit is het verschil over de hele vergelijkingsperiode, " +
+          "inclusief laad- en ontlaadverliezen.");
       } else if (decision.narrative?.windows?.some(w => w.kind === "standby")) {
         paragraph("Voor stand-by tegenover batterijondersteuning is geen afzonderlijk, " +
           "vergelijkbaar financieel voordeel vastgelegd.");
@@ -5987,7 +6018,7 @@ DASHBOARD_HTML = """<!doctype html>
           paragraph(`Minimaal voordeel voor een optionele wijziging: ` +
             `${money(decision.minimum_improvement_eur)}.`);
         }
-      } else {
+      } else if (!standby) {
         paragraph("Geen vergelijkbare totale kosten vastgelegd.");
       }
       const assumptions = [];

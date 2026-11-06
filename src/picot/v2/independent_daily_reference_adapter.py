@@ -533,60 +533,29 @@ class IndependentDailyReferenceAdapter:
                 runs.append([])
             runs[-1].append(n)
             previous_price = price
-        for surrounding in dict.fromkeys((baseline.intervals, pv)):
-            if household_need:
-                for run in (*runs, list(free)):
-                    add(tuple(replace(i, intent=DailyStorageIntent.STANDBY,
-                                      storage_export_target_wh=0.0)
-                              if n in run else i for n, i in enumerate(surrounding)))
-                # Offer the shortest sufficient contiguous standby span at each
-                # start, including spans crossing different quarter prices. Do
-                # not enumerate every O(n^2) pair or add binary-search probes to
-                # the portfolio. Standby can only conserve energy monotonically
-                # where it neither suppresses PV charging nor replaces an export
-                # or a committed/reserve action; those are hard span boundaries.
-                standby_free = set(n for n in free if n not in pv_surplus
-                    and surrounding[n].intent in (
-                        DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY, DailyStorageIntent.NOM))
-                for start in sorted(standby_free):
-                    stop = start
-                    while stop + 1 in standby_free:
-                        stop += 1
-                    if stop == start:
-                        continue  # Single intervals are already in the portfolio.
+        # Deliberate grid use is an economic option, not a requirement to keep
+        # SOC above its floor until the next main. Release old discretionary
+        # standby when constructing the support reference; retain protected work.
+        from picot.v2.economic_standby import cheap_contiguous_blocks
 
-                    def standby_until(
-                        end: int, start: int = start,
-                        surrounding: tuple[DailyReferenceIntentInterval, ...] = surrounding,
-                    ) -> DailyReferenceIntentSchedule:
-                        return add(tuple(replace(i, intent=DailyStorageIntent.STANDBY,
-                                                 storage_export_target_wh=0.0)
-                            if start <= n <= end else i
-                            for n, i in enumerate(surrounding)), include=False)
-
-                    def sufficient(schedule: DailyReferenceIntentSchedule) -> bool:
-                        return not any(i.deficit_wh > 1e-6 for i in energy_deficits(
-                            project(schedule), schedule, until=trigger.next_starts_at,
-                            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w))
-
-                    longest = standby_until(stop)
-                    if not sufficient(longest):
-                        continue
-                    # A minimum-length repair may resume discharge in cheaper
-                    # hours. Also compare keeping standby through this free span
-                    # (up to main charging, PV, export or another protected action).
-                    # This adds at most one candidate per start, using the cached
-                    # feasibility projection; financial selection stays canonical.
-                    schedules.setdefault(longest.intervals, longest)
-                    lo, hi = start, stop
-                    while lo < hi:
-                        mid = (lo + hi) // 2
-                        if sufficient(standby_until(mid)):
-                            hi = mid
-                        else:
-                            lo = mid + 1
-                    chosen = standby_until(lo)
-                    schedules.setdefault(chosen.intervals, chosen)
+        support = tuple(replace(i, intent=DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY)
+                        if n in free and i.intent is DailyStorageIntent.STANDBY else i
+                        for n, i in enumerate(pv))
+        support_schedule = add(support)
+        if revision_schedule is None:
+            support_schedule = replace(support_schedule,
+                schedule_id="bridge-economic-support:" + support_schedule.schedule_id)
+            schedules[support] = support_schedule
+        prices = {n: p.value_eur_per_kwh for n in free if n not in pv_surplus
+                  and support[n].intent in (DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY,
+                                             DailyStorageIntent.NOM)
+                  for p in snapshot.price_points
+                  if p.starts_at <= support[n].starts_at and support[n].ends_at <= p.ends_at}
+        for start, end in (cheap_contiguous_blocks(prices) if household_need else ()):
+            add(tuple(replace(i, intent=DailyStorageIntent.STANDBY,
+                              storage_export_target_wh=0.0)
+                      if start <= n <= end else i for n, i in enumerate(support)))
+        for surrounding in dict.fromkeys((support,)):
             if revision_schedule is not None:
                 for run in runs:
                     add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT,
@@ -594,8 +563,6 @@ class IndependentDailyReferenceAdapter:
                               if n in run else i for n, i in enumerate(surrounding)))
             for n in free:
                 intents: tuple[DailyStorageIntent, ...] = (DailyStorageIntent.GRID_REQUIREMENT,)
-                if household_need:
-                    intents += (DailyStorageIntent.STANDBY,)
                 for intent in intents:
                     add(tuple(replace(i, intent=intent, storage_export_target_wh=0.0)
                               if k == n else i for k, i in enumerate(surrounding)))
@@ -715,7 +682,8 @@ class IndependentDailyReferenceAdapter:
             owner.assignment_id, snapshot.snapshot_id, tuple(windows),
             "discovered" if windows else "unreachable", "reserve_bridge_alternatives",
             simulations, purpose="bridge", rejected_windows=tuple(rejected),
-            retained_schedule_id=baseline.schedule_id if revision_schedule is None else None,
+            retained_schedule_id=schedules[baseline.intervals].schedule_id
+            if revision_schedule is None else None,
         )
 
     def main_route_shortfalls(

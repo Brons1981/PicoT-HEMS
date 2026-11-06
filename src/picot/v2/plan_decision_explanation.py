@@ -69,8 +69,9 @@ def build_plan_decision(run: CanonicalPipelineRun) -> dict[str, object]:
         reason = ("Plan aangepast omdat de bestaande route het vereiste laad-/SOC-doel "
                   "niet meer haalt. Uitvoerbaarheid gaat voor financieel planbehoud.")
     elif evaluation.daily_bridge is not None and evaluation.daily_bridge.trigger is not None:
-        reason = ("Plan aangepast vanwege een verwacht energietekort vóór het volgende "
-                  "laadvenster. De uitvoerbare overbruggingsroutes zijn vergeleken.")
+        reason = ("Plan aangepast na vergelijking van de kosten van de volledige routes, "
+                  "inclusief later aanvullen en omzettingsverliezen. "
+                  "Het bereiken van de SOC-ondergrens is normale werking.")
     elif step == "objective:financial_result":
         reason = "Deze route wint de vastgelegde financiële vergelijking."
     else:

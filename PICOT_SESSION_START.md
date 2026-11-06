@@ -1,3 +1,9 @@
+## Release HEMS dev.336 - 6 november 2026
+
+Alex vraagt release van de reparatie voor ontbrekende doorlopende stand-byvensters.
+Basis dev.335. HC dev.32 en ED ongewijzigd. Geen live installatie of planreset.
+Zie docs/development_log/2026-11-06-standby-through-main-boundary.md.
+
 ## Release HEMS dev.335 - 6 november 2026
 
 Alex vraagt publicatie van marktroute-stabiliteit en herstel van grote dashboard/diagnosevergelijkingen.

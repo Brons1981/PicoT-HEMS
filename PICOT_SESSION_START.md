@@ -1,3 +1,10 @@
+## Release HEMS dev.334 en HC dev.32 - 6 november 2026
+
+Alex vraagt publicatie via PR en groene CI. Gedeeltelijke elektrische HC-prognose,
+kortere stand-byvensters en compacte beslisinformatie. Temperaturen blijven in HC.
+Basis daa1d5e1b5be971c1a12735a6d14dc4d25bc269c; geen live installatie of planreset.
+Zie docs/development_log/2026-11-06-partial-load-and-bridge.md.
+
 ## Release HEMS dev.333 - 5 november 2026
 
 Alex vraagt publicatie van de stand-byreparatie via PR en groene CI.

@@ -539,6 +539,47 @@ class IndependentDailyReferenceAdapter:
                     add(tuple(replace(i, intent=DailyStorageIntent.STANDBY,
                                       storage_export_target_wh=0.0)
                               if n in run else i for n, i in enumerate(surrounding)))
+                # Offer the shortest sufficient contiguous standby span at each
+                # start, including spans crossing different quarter prices. Do
+                # not enumerate every O(n^2) pair or add binary-search probes to
+                # the portfolio. Standby can only conserve energy monotonically
+                # where it neither suppresses PV charging nor replaces an export
+                # or a committed/reserve action; those are hard span boundaries.
+                standby_free = set(n for n in free if n not in pv_surplus
+                    and surrounding[n].intent in (
+                        DailyStorageIntent.HOUSEHOLD_SUPPORT_ONLY, DailyStorageIntent.NOM))
+                for start in sorted(standby_free):
+                    stop = start
+                    while stop + 1 in standby_free:
+                        stop += 1
+                    if stop == start:
+                        continue  # Single intervals are already in the portfolio.
+
+                    def standby_until(
+                        end: int, start: int = start,
+                        surrounding: tuple[DailyReferenceIntentInterval, ...] = surrounding,
+                    ) -> DailyReferenceIntentSchedule:
+                        return add(tuple(replace(i, intent=DailyStorageIntent.STANDBY,
+                                                 storage_export_target_wh=0.0)
+                            if start <= n <= end else i
+                            for n, i in enumerate(surrounding)), include=False)
+
+                    def sufficient(schedule: DailyReferenceIntentSchedule) -> bool:
+                        return not any(i.deficit_wh > 1e-6 for i in energy_deficits(
+                            project(schedule), schedule, until=trigger.next_starts_at,
+                            maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w))
+
+                    if not sufficient(standby_until(stop)):
+                        continue
+                    lo, hi = start, stop
+                    while lo < hi:
+                        mid = (lo + hi) // 2
+                        if sufficient(standby_until(mid)):
+                            hi = mid
+                        else:
+                            lo = mid + 1
+                    chosen = standby_until(lo)
+                    schedules.setdefault(chosen.intervals, chosen)
             if revision_schedule is not None:
                 for run in runs:
                     add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT,

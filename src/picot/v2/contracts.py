@@ -749,6 +749,23 @@ class DailyChargePlanningContext:
 
 
 @dataclass(frozen=True, slots=True)
+class ExternalLoadFact:
+    """Validated electrical advice; no device comfort settings or execution authority."""
+
+    source_id: str
+    revision: str
+    generated_at: datetime
+    valid_until: datetime
+    starts_at: datetime
+    ends_at: datetime
+    timing_status: str
+    operation: str
+    energy_status: str
+    energy_wh: float | None
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class PlanningInputSnapshot:
     run_id: str
     snapshot_id: str
@@ -784,6 +801,7 @@ class PlanningInputSnapshot:
     external_load_policy: ExternalLoadPolicy | None = None
     solcast_planning_basis: str = "mean-lower-central"
     storage_reserve_checkpoints: tuple[tuple[str, datetime, float], ...] = ()
+    external_load_facts: tuple[ExternalLoadFact, ...] = ()
 
     def __post_init__(self) -> None:
         if self.solcast_planning_basis not in {"lower", "mean-lower-central", "central", "upper"}:

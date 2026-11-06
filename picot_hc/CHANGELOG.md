@@ -1,3 +1,8 @@
+# 0.1.0-dev.32
+
+- Publiceer belastingsvensters en geldige energie-intervallen afzonderlijk, ook bij ontbrekende opwarmhistorie. Houd temperaturen binnen HC.
+- Toon gedeeltelijke prognoses met onbekende energie expliciet. Onderbouwde handhaaf- en afkoelramingen blijven bruikbaar wanneer een ander model ontbreekt of faalt.
+
 # 0.1.0-dev.31
 
 - Laat de airco doorwerken bij een beschikbare CV-thermostaat die expliciet idle meldt en minimaal 0,3 °C onder zijn eigen kamertemperatuur staat. Behoud de handmatige CV-instelling; actieve, aangevraagde of onzekere CV-verwarming houdt voorrang.

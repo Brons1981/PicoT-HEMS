@@ -32,7 +32,7 @@ def conditions(hourly, daily, when, now, current):
         if row:
             return row["outdoor"], row.get("weather"), "hourly"
     day = datetime.fromtimestamp(when, TZ).date()
-    if not daily.get("stale", True) and daily.get("temperature_unit") in ("°C", "°F"):
+    if not daily.get("stale", True) and daily.get("temperature_unit") in ("\u00b0C", "\u00b0F"):
         row = next(
             (
                 r
@@ -45,7 +45,7 @@ def conditions(hourly, daily, when, now, current):
             values = [row.get(k) for k in ("templow", "temperature") if finite(row.get(k))]
             if values:
                 value = min(values)
-                if daily["temperature_unit"] == "°F":
+                if daily["temperature_unit"] == "\u00b0F":
                     value = (value - 32) / 1.8
                 return value, None, "daily_cold_side_scenario"
     return current, None, "current_outdoor_persistence"
@@ -381,20 +381,61 @@ class DayAhead:
             ]
         )
         if key != self.last_key or now - self.last_run >= 1800:
-            value = build(
-                settings,
-                enabled,
-                context,
-                source_id,
-                model,
-                warmup,
-                cooling,
-                hourly,
-                daily,
-                now,
-                startup=startup,
-                heating_minimum=heating_minimum,
+            try:
+                value = build(
+                    settings,
+                    enabled,
+                    context,
+                    source_id,
+                    model,
+                    warmup,
+                    cooling,
+                    hourly,
+                    daily,
+                    now,
+                    startup=startup,
+                    heating_minimum=heating_minimum,
+                )
+            except Exception:
+                value = dict(
+                    contract=CONTRACT,
+                    scope="beneden",
+                    source_id=source_id,
+                    source_assumption="airco",
+                    execution_authorized=False,
+                    generated_at=stamp(now),
+                    valid_until=stamp(now + 7200),
+                    timezone="Europe/Amsterdam",
+                    delivery_date=(local.date() + timedelta(days=1)).isoformat(),
+                    status="unavailable",
+                    slots=[],
+                    reasons=["forecast_generation_failed"],
+                )
+            from .load_facts import build as load_facts
+
+            value["load_facts"] = load_facts(
+                settings, enabled, context, cooling, now, heating_minimum, model, source_id
             )
+            if value["status"] in ("ready", "provisional"):
+                for fact in value["load_facts"]:
+                    left = datetime.fromisoformat(fact["starts_at"]).timestamp()
+                    right = datetime.fromisoformat(fact["ends_at"]).timestamp()
+                    covered = energy = 0
+                    for slot in value["slots"]:
+                        a = datetime.fromisoformat(slot["starts_at"]).timestamp()
+                        b = datetime.fromisoformat(slot["ends_at"]).timestamp()
+                        seconds = max(0, min(right, b) - max(left, a))
+                        covered += seconds
+                        energy += slot["energy_wh"] * seconds / (b - a)
+                    if abs(covered - (right - left)) < 0.001:
+                        fact.update(
+                            energy_status=value["status"],
+                            energy_wh=energy,
+                            reason="quantified_load_forecast",
+                        )
+            if value["status"] == "unavailable" and value["load_facts"]:
+                value["status"] = "partial"
+            # Climate targets remain in the local dashboard, never in HEMS advice.
             value["input_fingerprint"] = key
             value["revision"] = digest(value)
             with self.store.connect() as db:
@@ -403,7 +444,10 @@ class DayAhead:
                     (json.dumps(value, allow_nan=False),),
                 )
             self.current, self.last_key, self.last_run = value, key, now
-        self.publisher.submit(dict(state=self.current["status"], attributes=self.current))
+        public = copy.deepcopy(self.current)
+        for row in public.get("slots", []):
+            row.pop("target", None)
+        self.publisher.submit(dict(state=public["status"], attributes=public))
 
     def view(self):
         return copy.deepcopy(self.current)

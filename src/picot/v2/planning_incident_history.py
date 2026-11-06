@@ -22,6 +22,8 @@ FULL_DETAIL_RETENTION = timedelta(hours=36)
 COMPACTION_INTERVAL = timedelta(hours=1)
 MAX_INCIDENT_HISTORY_BYTES = 64 * 1024 * 1024
 MAX_INCIDENT_RECORD_BYTES = 8 * 1024 * 1024
+MAX_DECISION_CANDIDATES = 512
+MAX_DECISION_EVIDENCE_BYTES = 512 * 1024
 
 
 def _json_value(value: object) -> object:
@@ -574,6 +576,9 @@ def _record_captured_at(record: dict[str, object]) -> datetime | None:
 
 def _basic_incident_record(record: dict[str, object]) -> dict[str, object]:
     poll_value = record.get("poll")
+    if not isinstance(poll_value, dict):
+        # A second retention pass must preserve existing bounded evidence/identity.
+        return {**record, "detail_level": "basic"}
     poll = poll_value if isinstance(poll_value, dict) else {}
     evaluation_value = poll.get("evaluation")
     evaluation = evaluation_value if isinstance(evaluation_value, dict) else {}
@@ -596,6 +601,7 @@ def _basic_incident_record(record: dict[str, object]) -> dict[str, object]:
         "decisive_step": evaluation.get("decisive_step"),
         "winning_candidate_id": evaluation.get("winning_candidate_id"),
         "winning_energy_path_id": evaluation.get("winning_energy_path_id"),
+        "decision_evidence": _decision_evidence(poll),
         "plans": [
             {
                 "execution_scope_id": plan.get("execution_scope_id"),
@@ -609,3 +615,112 @@ def _basic_incident_record(record: dict[str, object]) -> dict[str, object]:
         if isinstance(plans, list)
         else [],
     }
+
+
+def _decision_evidence(poll: dict[str, Any]) -> dict[str, Any] | None:
+    """Bounded scalar decision proof, independent of bulky trajectories and inputs.
+
+    This is not replay evidence. Keep winner/incumbent first and explicitly report
+    any omitted candidates or text. Never substitute missing values with zero.
+    """
+    evaluation = poll.get("evaluation")
+    if not isinstance(evaluation, dict):
+        return None
+    truncated = False
+
+    def select(value: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
+        nonlocal truncated
+        result = {}
+        for name in names:
+            if name not in value:
+                continue
+            item = value[name]
+            if isinstance(item, str) and len(item) > 512:
+                item, truncated = item[:512], True
+            elif isinstance(item, (tuple, list)):
+                if len(item) > 16:
+                    truncated = True
+                texts = []
+                for text in item[:16]:
+                    if isinstance(text, str):
+                        truncated |= len(text) > 512
+                        texts.append(text[:512])
+                item = texts
+            elif isinstance(item, dict):
+                continue
+            result[name] = item
+        return result
+
+    canonical = evaluation.get("canonical_record") or {}
+    outcomes = poll.get("outcomes") or {}
+    raw_rows = outcomes.get("outcomes", ())
+    canonical_rows = outcomes.get("canonical_outcomes", ())
+    ids = dict.fromkeys(evaluation.get("evaluated_candidate_ids", ()))
+    detail = {r["candidate_id"]: r for r in raw_rows if isinstance(r, dict)}
+    domain = {r["candidate_id"]: r for r in canonical_rows if isinstance(r, dict)}
+    ids.update(dict.fromkeys((*detail, *domain)))
+    comparisons = canonical.get("objective_comparisons", ())
+    ties = canonical.get("tie_breaks", ())
+    for group in (*comparisons, *ties):
+        ids.update(dict.fromkeys(r["candidate_id"] for r in group.get("values", ())))
+    priority = (evaluation.get("winning_candidate_id"), evaluation.get("incumbent_candidate_id"))
+    ordered = list(dict.fromkeys(i for i in (*priority, *ids) if i is not None))
+    selected = ordered[:MAX_DECISION_CANDIDATES]
+    selected_ids = set(selected)
+    comparison_meta = ("objective", "configured_weight", "direction", "unit", "available",
+                       "decisive", "equivalence_margin")
+    tie_meta = ("kind", "available", "decisive", "minimum_improvement_eur")
+    result = dict(
+        format="compact-decision-evidence:v1", replay_available=False,
+        evaluation=select(evaluation, ("evaluation_id", "status", "reason", "decisive_step",
+            "winning_candidate_id", "winning_energy_path_id", "incumbent_candidate_id",
+            "financial_equivalence_margin_eur", "commitment_decision")),
+        strategic_objective_order=list(canonical.get("strategic_objective_order", ()))[:16],
+        canonical_policy=select(canonical, ("strategy_version", "implementation_version")),
+        objective_comparisons=[select(c, comparison_meta) for c in comparisons[:16]],
+        tie_breaks=[select(t, tie_meta) for t in ties[:16]],
+        candidate_count=len(ordered), candidates=[],
+    )
+    truncated |= (len(comparisons) > 16 or len(ties) > 16
+                  or len(canonical.get("strategic_objective_order", ())) > 16)
+    # Inverse comparison index avoids scanning all candidate values per row.
+    columns: dict[str, list[dict[str, Any]]] = {}
+    tie_columns: dict[str, list[dict[str, Any]]] = {}
+    for groups, target in ((comparisons, columns), (ties, tie_columns)):
+        for number, group in enumerate(groups[:16]):
+            retained = set(group.get("retained_candidate_ids", ()))
+            for item in group.get("values", ()):
+                cid = item.get("candidate_id")
+                if cid in selected_ids:
+                    target.setdefault(cid, []).append(dict(
+                        index=number, retained=cid in retained,
+                        **select(item, ("value", "result"))))
+    invalid = {r["candidate_id"]: r.get("reasons", ())
+               for r in canonical.get("invalid_candidates", ())}
+    used = len(json.dumps(result, default=_record_json_value).encode("utf-8")) + 512
+    rows = []
+    for cid in selected:
+        value = detail.get(cid, domain.get(cid, {}))
+        objectives = domain.get(cid, {}).get("objective_outcomes", ())
+        truncated |= len(objectives) > 16
+        row = dict(candidate_id=cid, outcome=select(value, (
+            "energy_path_id", "incumbent", "validity", "invalidity_reasons",
+            "worst_case_financial_result_eur", "confidence", "recoverability",
+            "execution_complexity", "expected_switching_count", "grid_charge_duration_seconds",
+            "commitment_improvement_eur", "financial_equivalence_margin_eur",
+            "comparison_horizon_start", "comparison_horizon_end", "daily_target_reached",
+            "household_reserve_respected", "method_version")),
+            objectives=[select(v, ("objective", "value", "direction", "unit", "confidence"))
+                        for v in objectives[:16]],
+            comparisons=columns.get(cid, []), tie_breaks=tie_columns.get(cid, []))
+        if cid in invalid:
+            row["invalidity_reasons"] = select({"reasons": invalid[cid]}, ("reasons",))["reasons"]
+        size = len(json.dumps(row, default=_record_json_value).encode("utf-8")) + 1
+        if used + size > MAX_DECISION_EVIDENCE_BYTES:
+            break
+        rows.append(row)
+        used += size
+    result.update(candidates=rows, omitted_candidate_count=len(ordered) - len(rows),
+                  text_or_comparison_truncated=truncated,
+                  complete=len(rows) == len(ordered) and not truncated)
+    return result

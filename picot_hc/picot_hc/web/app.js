@@ -260,6 +260,9 @@ function renderSchedule(data){
     const groups=[];
     for(const row of rows){const last=groups[groups.length-1];if(last&&last.phase===row.phase&&last.end===row.starts_at){last.end=row.ends_at;last.wh+=row.energy_wh;}else groups.push({phase:row.phase,start:row.starts_at,end:row.ends_at,wh:row.energy_wh});}
     for(const row of groups)dayAhead.append(el('p',fmt(Date.parse(row.start)/1000)+' – '+fmt(Date.parse(row.end)/1000)+': '+({off:'uit: natuurlijk afkoelen',warmup:'opwarmen',maintain:'handhaven',setback:'minimumtemperatuur'}[row.phase]||row.phase)+' · '+(row.wh/1000).toFixed(2)+' kWh','sub'));
+  }else if(dayForecast?.status==='partial'){
+    dayAhead.append(el('p','Gedeeltelijke belastingsprognose. Bekende tijdvakken blijven beschikbaar; onbekende energie blijft afzonderlijk gemarkeerd.'));
+    for(const row of (dayForecast.load_facts||[]))dayAhead.append(el('p',fmt(Date.parse(row.starts_at)/1000)+' – '+fmt(Date.parse(row.ends_at)/1000)+': '+({load_expected:'belasting verwacht',load_released:'geplande belasting stopt',conditional_load:'mogelijke aanvullende belasting'}[row.operation]||'onbekend')+' · '+(row.energy_wh==null?'energie nog onbekend':(row.energy_wh/1000).toFixed(2)+' kWh (raming)'),'sub'));
   }else dayAhead.append(el('p',dayForecast?.status==='disabled'?'Automatisch verwarmen op schema staat uit.':'Nog geen volledige verwarmingsraming; HEMS gebruikt de huisprognose.'));
   if(dayForecast?.reasons?.length)dayAhead.append(el('p',dayForecast.reasons.map(r=>forecastReasons[r]||r).join('; '),'sub'));
   dayAhead.append(el('p',adopted?.applied?(adopted.revision===dayForecast?.revision?'HEMS heeft deze raming opgenomen in zijn planningsinvoer.':'HEMS gebruikt nog de vorige raming; deze wijziging wacht op verwerking.'):adopted?.status==='disabled'?'Geen actieve HC-dagprognose.':'HEMS gebruikt de huisprognose: '+(forecastReasons[adopted?.reason]||adopted?.reason||'nog geen actuele ontvangstbevestiging')+'.','sub'));

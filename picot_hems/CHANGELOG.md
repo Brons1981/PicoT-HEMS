@@ -1,3 +1,10 @@
+# 2.0.0-dev.334
+
+- Gebruik geldige HC-energie-intervallen afzonderlijk; behoud de huishoudprognose voor onbekende intervallen. Belastingsvensters blijven beschikbaar zonder temperatuurgegevens.
+- Vergelijk ook kortere aaneengesloten stand-byvensters over verschillende kwartierprijzen, met behoud van het hoofdlaadplan.
+- Bewaar de compacte financiele vergelijking en afwijsredenen ook bij te grote diagnosegegevens.
+- Werk ook HC bij naar dev.32 voor de gedeeltelijke prognose. Geen planreset nodig.
+
 # 2.0.0-dev.333
 
 - Voorkom extra stand-bykwartieren bij een totaal routevoordeel kleiner dan EUR 0.01: behoud het geldige bestaande overbruggingsplan.

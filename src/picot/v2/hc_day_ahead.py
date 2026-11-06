@@ -8,6 +8,7 @@ from math import isfinite
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
+from picot.v2.contracts import ExternalLoadFact
 from picot.v2.energy_portfolio import fingerprint, instant
 from picot.v2.load_replacement import LoadReplacementBasis, _forecast_digest, replace_profile
 
@@ -40,7 +41,7 @@ def validate(value: Any, now: datetime) -> list[dict[str, Any]]:
         or value.get("scope") != "beneden"
         or value.get("source_assumption") != "airco"
         or value.get("execution_authorized") is not False
-        or value.get("status") not in ("ready", "provisional")
+        or value.get("status") not in ("ready", "provisional", "partial")
         or value.get("timezone") != "Europe/Amsterdam"
         or not isinstance(value.get("revision"), str)
     ):
@@ -73,6 +74,95 @@ def validate(value: Any, now: datetime) -> list[dict[str, Any]]:
     return result
 
 
+def load_facts(
+    value: Any, now: datetime, *, report: dict[str, Any] | None = None,
+) -> tuple[ExternalLoadFact, ...]:
+    if not isinstance(value, dict) or "load_facts" not in value:
+        return ()
+    # Reuse envelope freshness/identity validation, with a harmless validation row.
+    check = dict(
+        value,
+        slots=[
+            dict(starts_at=value.get("generated_at"), ends_at=value.get("valid_until"), energy_wh=0)
+        ],
+    )
+    validate(check, now)
+    source = value.get("source_id")
+    if not isinstance(source, str) or not source:
+        raise ValueError("hc_forecast_source_missing")
+    rows = value["load_facts"]
+    if not isinstance(rows, list) or len(rows) > 300:
+        if report is not None:
+            report.update(rejected_timing_facts=len(rows) if isinstance(rows, list) else 1,
+                          load_fact_rejections={"hc_load_facts_invalid": 1})
+        return ()
+    generated, until = instant(value["generated_at"]), instant(value["valid_until"])
+    result: list[ExternalLoadFact] = []
+    rejected: dict[str, int] = {}
+    for row in rows:
+        try:
+            if not isinstance(row, dict):
+                raise ValueError("invalid row")
+            start, end = instant(row["starts_at"]), instant(row["ends_at"])
+            if not generated <= start < end <= generated + timedelta(hours=51):
+                raise ValueError("invalid timing")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            code = "hc_load_facts_invalid_timing"
+            rejected[code] = rejected.get(code, 0) + 1
+            continue
+        timing = row.get("timing_status")
+        operation = row.get("operation")
+        if timing not in ("known", "unknown") or operation not in (
+            "load_expected",
+            "conditional_load",
+            "load_released",
+        ):
+            code = "hc_load_facts_invalid_operation"
+            rejected[code] = rejected.get(code, 0) + 1
+            continue
+        status, energy = row.get("energy_status"), row.get("energy_wh")
+        if (
+            status not in ("ready", "provisional")
+            or energy is None
+            or type(energy) not in (int, float)
+            or (
+                not isfinite(energy)
+                or not 0 <= energy <= 20000 * (end - start).total_seconds() / 3600
+            )
+        ):
+            status, energy = "unknown", None
+        reason = str(row.get("reason", "unspecified"))[:160]
+        result.append(
+            ExternalLoadFact(
+                source,
+                value["revision"],
+                generated,
+                until,
+                start,
+                end,
+                timing,
+                operation,
+                status,
+                energy,
+                reason,
+            )
+        )
+    # No last-row-wins rule: quarantine every overlapping interval, even when
+    # one of them was encountered earlier. Independent intervals remain useful.
+    result.sort(key=lambda fact: (fact.starts_at, fact.ends_at))
+    conflicts: set[int] = set()
+    for index, fact in enumerate(result):
+        for other_index in range(index + 1, len(result)):
+            if result[other_index].starts_at >= fact.ends_at:
+                break
+            conflicts.update((index, other_index))
+    if conflicts:
+        rejected["hc_load_facts_overlap"] = len(conflicts)
+    if report is not None:
+        report.update(rejected_timing_facts=sum(rejected.values()), load_fact_rejections=rejected)
+    return tuple(fact for index, fact in enumerate(result) if index not in conflicts)
+
+
 def apply(
     bundle: PlanningInputBundle, value: Any, airco_basis: LoadReplacementBasis | None
 ) -> PlanningInputBundle:
@@ -98,7 +188,23 @@ def apply(
                 status.update(status="disabled", reason="automatic_schedule_disabled")
                 summary["hc_day_ahead"] = status
                 return replace(bundle, controlled_load_summary=summary)
-        slots = validate(value, bundle.snapshot.captured_at)
+        facts = load_facts(value, bundle.snapshot.captured_at, report=status)
+        if facts:
+            bundle = replace(bundle, snapshot=replace(bundle.snapshot, external_load_facts=facts))
+            status.update(
+                timing_facts=len(facts),
+                unknown_energy_intervals=sum(f.energy_wh is None for f in facts),
+            )
+        if isinstance(value, dict) and value.get("status") == "partial":
+            slots: list[dict[str, Any]] = [
+                dict(start=f.starts_at, end=f.ends_at, energy=f.energy_wh)
+                for f in facts
+                if f.energy_wh is not None
+            ]
+            if not slots:
+                raise ValueError("hc_forecast_energy_unknown")
+        else:
+            slots = validate(value, bundle.snapshot.captured_at)
         basis = airco_basis
         if (
             basis is None
@@ -125,7 +231,20 @@ def apply(
                 )
         if not clipped:
             raise ValueError("hc_forecast_outside_planning_horizon")
-        updated = replace_profile(bundle.snapshot, basis, clipped)
+        updated = bundle.snapshot
+        # Known intervals can be separated by unknown intervals. Apply each known
+        # interval and rebase the digest; unknown demand remains unchanged.
+        groups: list[list[dict[str, Any]]] = []
+        for known_slot in clipped:
+            if not groups or groups[-1][-1]["end"] != known_slot["start"]:
+                groups.append([])
+            groups[-1].append(known_slot)
+        for group in groups:
+            assert updated.household_load_forecast is not None
+            current_basis = replace(
+                basis, forecast_digest=_forecast_digest(updated.household_load_forecast)
+            )
+            updated = replace_profile(updated, current_basis, group)
         forecast = updated.household_load_forecast
         assert forecast is not None
         updated = replace(
@@ -136,7 +255,8 @@ def apply(
                     replace(
                         item,
                         confidence=min(
-                            item.confidence, 0.5 if value["status"] == "provisional" else 1
+                            item.confidence,
+                            0.5 if value["status"] in ("provisional", "partial") else 1,
                         ),
                         source_reference="hc-day-ahead:" + value["revision"],
                         method_version="attributed-hc-day-ahead:v1",
@@ -194,7 +314,9 @@ def apply(
         status.update(
             applied=True,
             status=value["status"],
-            fallback=None,
+            fallback="historical_household_forecast_for_unknown_intervals"
+            if value["status"] == "partial"
+            else None,
             reason=None,
             source_assumption="airco",
             energy_wh=sum(s["energy"] for s in clipped),

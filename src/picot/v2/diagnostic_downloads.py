@@ -126,7 +126,7 @@ def diagnostic_zip(
 
 
 def _compact_incident(record: dict[str, object]) -> dict[str, object]:
-    if record.get("detail_level") == "basic":
+    if record.get("detail_level") in {"basic", "bounded"}:
         return {
             "event": record.get("event"),
             "incident_id": record.get("incident_id"),
@@ -134,6 +134,7 @@ def _compact_incident(record: dict[str, object]) -> dict[str, object]:
             "captured_at_utc": record.get("captured_at_utc"),
             "run_id": record.get("run_id"),
             "reason": record.get("evaluation_reason"),
+            "decision_evidence": record.get("decision_evidence"),
             "polls": [],
         }
     poll = record.get("poll")

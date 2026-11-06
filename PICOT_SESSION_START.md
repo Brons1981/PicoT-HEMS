@@ -1,3 +1,10 @@
+## Release HEMS dev.338 - 6 november 2026
+
+Alex vraagt publicatie van verbruik, direct gebruikte zon en netkosten bij de stand-byuitleg via PR en groene CI.
+Basis dev.337. Zie docs/development_log/2026-11-06-standby-energy-detail.md.
+Alleen extra producergegevens en dashboarduitleg; planning en uitvoering ongewijzigd. HC en ED ongewijzigd.
+Geen live installatie of planreset.
+
 ## Release HEMS dev.337 - 6 november 2026
 
 Alex vraagt publicatie van de economische stand-byreparatie en dashboarduitleg via PR en groene CI.

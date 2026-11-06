@@ -6004,6 +6004,22 @@ DASHBOARD_HTML = """<!doctype html>
           "Het huis gebruikt in dit blok rechtstreeks zon en netstroom. " +
           "Dit is het verschil over de hele vergelijkingsperiode, " +
           "inclusief laad- en ontlaadverliezen.");
+        const usage = standby.usage;
+        if (usage && [usage.household_kwh, usage.solar_used_kwh, usage.grid_kwh,
+                      usage.grid_cost_eur].every(finite)) {
+          const kwh = value => new Intl.NumberFormat("nl-NL", {
+            minimumFractionDigits: 2, maximumFractionDigits: 2,
+          }).format(value);
+          paragraph(`In dit stand-byblok verbruikt het huis naar verwachting ` +
+            `${kwh(usage.household_kwh)} kWh, waarvan ${kwh(usage.solar_used_kwh)} kWh ` +
+            `rechtstreeks uit zon en ${kwh(usage.grid_kwh)} kWh uit het net. ` +
+            `De netstroom voor het huis kost naar verwachting ${money(usage.grid_cost_eur)}. ` +
+            "Dit zijn de afnamekosten binnen het stand-byblok; later bijladen en " +
+            "eventuele terugleveropbrengsten zijn hierin niet opgenomen.");
+        } else {
+          paragraph("Verbruik, gebruikte zonne-energie en netkosten van dit stand-byblok " +
+            "zijn nog niet volledig beschikbaar.");
+        }
       } else if (decision.narrative?.windows?.some(w => w.kind === "standby")) {
         paragraph("Voor stand-by tegenover batterijondersteuning is geen afzonderlijk, " +
           "vergelijkbaar financieel voordeel vastgelegd.");

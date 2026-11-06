@@ -1555,8 +1555,10 @@ def _build_daily_main_run(
                         market_policy.saldering_energy_tax_credit_enabled
                         if windows.market_revision is not None else True),
                 )
+                # Market-bound bridges/revisions need the same relay stability
+                # as ordinary bridges. Invalid incumbents remain filtered first.
                 bridge_stability = (windows.purpose == "bridge"
-                                    and windows.market_revision is None)
+                                    or windows.market_revision is not None)
                 comparable = produce_main_charge_portfolio(
                     snapshot=snapshot, windows=windows, tariffs=tariffs,
                     opportunity_ids=opportunities.opportunity_ids,

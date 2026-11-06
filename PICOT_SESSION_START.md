@@ -1,3 +1,10 @@
+## Release HEMS dev.335 - 6 november 2026
+
+Alex vraagt publicatie van marktroute-stabiliteit en herstel van grote dashboard/diagnosevergelijkingen.
+Boven op dev.334 / HC dev.32; behoud alle wijzigingen uit PR749. Geen HC/ED-wijzigingen in deze release.
+Zie docs/development_log/2026-11-06-market-standby-and-comparison-size.md.
+Publicatie via PR en groene CI; geen live installatie of planreset.
+
 ## Release HEMS dev.334 en HC dev.32 - 6 november 2026
 
 Alex vraagt publicatie via PR en groene CI. Gedeeltelijke elektrische HC-prognose,

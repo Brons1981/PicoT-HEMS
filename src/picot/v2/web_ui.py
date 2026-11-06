@@ -3380,6 +3380,12 @@ DASHBOARD_HTML = """<!doctype html>
       const note = document.createElement("p");
       note.textContent = "Verwachte bedragen vanaf het rekenmoment. " +
         "Verschillen zijn ten opzichte van behoud van het bestaande plan.";
+      if (comparison.omitted_alternative_count > 0) {
+        note.textContent += ` Getoond: ${alternatives.length} van `
+          + `${comparison.alternative_count} alternatieven, inclusief de gekozen route `
+          + "en het bestaande plan. Overige rijen zijn voorbeelden per variant. "
+          + "De volledige vergelijking is beschikbaar in de diagnose.";
+      }
       card.append(note);
       const table = document.createElement("table");
       const head = document.createElement("thead");
@@ -6432,7 +6438,7 @@ def _bounded_dashboard_view(view: dict[str, object]) -> dict[str, object]:
         "status": "details_limited", "reason": "dashboard_payload_limit",
         "message_nl": "Een deel van de extra scherminformatie is te groot en wordt niet getoond. "
                       "De plan- en uitvoeringsstatus blijven zichtbaar. "
-                      "Volledige onderbouwing staat in de diagnose.",
+                      "De diagnose bevat de beschikbare beslisinformatie.",
         "omitted_sections": sorted(omitted),
     }
     bounded["dashboard_status"] = notice
@@ -6527,6 +6533,9 @@ class WebViewStore:
         self,
         view: dict[str, object],
     ) -> None:
+        from picot.v2.comparison_display import compact_dashboard_comparison
+
+        view = compact_dashboard_comparison(view)
         self._overlay_fast_grid_power_source(view)
         if self._storage_status is not None:
             old = view.get("zendure_now")

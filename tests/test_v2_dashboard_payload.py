@@ -13,8 +13,8 @@ from picot.v2.projection import project
 from picot.v2.web_ui import DASHBOARD_HTML, MAX_WEB_VIEW_CHARACTERS, WebViewStore, build_web_view
 
 
-@pytest.mark.parametrize("count", [1393, 4007])
-def test_large_market_comparison_keeps_every_outcome_and_lossless_evidence(tmp_path, count):
+@pytest.mark.parametrize("count", [49, 50, 51, 1393, 4007])
+def test_market_display_preserves_selected_examples_and_lossless_evidence(tmp_path, count):
     run = large_market_run(tmp_path, count)
     view = build_web_view(run, project(run))
     store = WebViewStore()
@@ -31,11 +31,17 @@ def test_large_market_comparison_keeps_every_outcome_and_lossless_evidence(tmp_p
     assert "alternatives" not in card_summary
     assert comparison["winning_candidate_id"] == run.evaluation.winning_candidate_id
     assert comparison["incumbent_candidate_id"] == run.evaluation.incumbent_candidate_id
-    assert len(comparison["alternatives"]) == count
+    assert len(comparison["alternatives"]) == min(count, 50)
+    if count > 50:
+        assert comparison["alternative_count"] == count
+        assert comparison["omitted_alternative_count"] == count - 50
+    shown_ids = {row["candidate_id"] for row in comparison["alternatives"]}
+    assert {run.evaluation.winning_candidate_id, run.evaluation.incumbent_candidate_id} <= shown_ids
+    assert len(view["planning_status"]["market_revision_comparison"]["alternatives"]) == count
     dictionary = comparison["evidence_dictionary"]
-    for actual, expected in zip(
-        comparison["alternatives"], run.outcomes.market_revision_evidence, strict=True,
-    ):
+    expected_by_id = {row.candidate_id: row for row in run.outcomes.market_revision_evidence}
+    for actual in comparison["alternatives"]:
+        expected = expected_by_id[actual["candidate_id"]]
         assert actual["candidate_id"] == expected.candidate_id
         assert actual["comparable_result_eur"] == expected.comparable_result_eur
         assert actual["delta_from_incumbent_eur"] == expected.delta_from_incumbent_eur
@@ -48,7 +54,7 @@ def test_large_market_comparison_keeps_every_outcome_and_lossless_evidence(tmp_p
             ids = base[:item["prefix_count"]] + item["middle"] + base[item["suffix_start"]:]
         assert ids == list(expected.evidence_ids)
     assert latest["planning_status"]["chosen_plan"] == view["planning_status"]["chosen_plan"]
-    assert "dashboard_status" not in latest, "ordinary large comparisons need no detail loss"
+    assert "dashboard_status" not in latest, "candidate examples must not displace whole sections"
 
 
 @pytest.mark.parametrize("observer_only", [False, True])

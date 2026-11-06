@@ -1,6 +1,6 @@
 # V2ADR-070: Independent electrical load facts and bounded recovery evidence
 
-Status: implemented locally, not released. Date: 2026-11-06.
+Status: included in HEMS dev.334 / HC dev.32. Date: 2026-11-06.
 Baseline: main daa1d5e1b5be971c1a12735a6d14dc4d25bc269c (HEMS333 / HC31).
 
 ## Ownership and contract
@@ -54,6 +54,6 @@ full replay evidence. Aging and download preserve this compact explanation.
 ## Limits
 
 This does not establish which live plan would have won on 5 November at 21:42: its full
-input/comparison was not retained. No live device settings, plans, release or installation
-are changed. Missing historical attribution or unknown energy still requires fallback;
+input/comparison was not retained. No live device settings, plans or installation
+are changed by publication. Missing historical attribution or unknown energy still requires fallback;
 there is no fabricated fixed heating-power assumption.

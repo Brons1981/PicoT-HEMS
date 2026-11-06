@@ -569,8 +569,15 @@ class IndependentDailyReferenceAdapter:
                             project(schedule), schedule, until=trigger.next_starts_at,
                             maximum_discharge_output_power_w=inputs.maximum_discharge_output_power_w))
 
-                    if not sufficient(standby_until(stop)):
+                    longest = standby_until(stop)
+                    if not sufficient(longest):
                         continue
+                    # A minimum-length repair may resume discharge in cheaper
+                    # hours. Also compare keeping standby through this free span
+                    # (up to main charging, PV, export or another protected action).
+                    # This adds at most one candidate per start, using the cached
+                    # feasibility projection; financial selection stays canonical.
+                    schedules.setdefault(longest.intervals, longest)
                     lo, hi = start, stop
                     while lo < hi:
                         mid = (lo + hi) // 2

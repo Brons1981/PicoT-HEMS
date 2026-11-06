@@ -1,3 +1,9 @@
+# 2.0.0-dev.336
+
+- Vergelijk ook eerst ontladen en daarna aaneengesloten stand-by tot het laadvenster, met behoud van PV-, export- en laadgrenzen.
+- Voorkom dat deze ontbrekende alternatieven onnodig vroege stand-by veroorzaken. Financiele selectieregels en SOC-grenzen blijven gelijk.
+- HC en ED ongewijzigd. Geen planreset nodig; bestaande plannen veranderen pas bij een nieuwe vergelijking.
+
 # 2.0.0-dev.335
 
 - Pas de bestaande EUR 0.01-grens ook toe op marktroute-herzieningen: behoud het geldige bestaande plan bij een kleiner voordeel.

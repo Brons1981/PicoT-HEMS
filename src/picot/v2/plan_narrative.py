@@ -54,6 +54,7 @@ def build_plan_narrative(run: CanonicalPipelineRun) -> dict[str, Any]:
         else:
             merged.append(dict(window))
     result["windows"] = merged
+    result["operation"] = _operation_summary(run, plans, paths)
     if len(admitted) != 1 or not admitted.issubset(paths):
         return result
     active_path = paths[next(iter(admitted))]
@@ -138,3 +139,62 @@ def build_plan_narrative(run: CanonicalPipelineRun) -> dict[str, Any]:
     result["days"] = [days[key] for key in sorted(days)]
     return result
 
+def _operation_summary(
+    run: CanonicalPipelineRun, plans: list[Any], paths: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Describe support/floor timing from the admitted plan, without replanning."""
+    if len(plans) != 1:
+        return None
+    plan = plans[0]
+    now = run.planning_input.captured_at
+    segments = sorted((s for s in plan.segments if s.ends_at > now),
+                      key=lambda s: s.starts_at)
+    if not segments:
+        return None
+    current = next((s for s in segments if s.starts_at <= now < s.ends_at), None)
+    first = current or segments[0]
+    constraint = first.soc_constraint
+    if constraint is None:
+        return None
+    minimum = constraint.minimum
+    state = next((s for s in run.planning_input.current_storage_states
+                  if s.execution_scope_id == plan.execution_scope_id), None)
+    charging = [s for s in segments if s.main_assignment_id is not None or
+                s.primitive.value in {"charge_at_power", "balance_charge_only"}]
+    charge_at = max(now, charging[0].starts_at) if charging else None
+    support_modes = {"balance_discharge_only", "balance_bidirectional"}
+    supporting = current is not None and current.primitive.value in support_modes
+    support_until = current.ends_at if supporting and current is not None else None
+    if support_until is not None:
+        for segment in segments:
+            if segment.starts_at < support_until:
+                continue
+            if (segment.starts_at != support_until or segment.main_assignment_id is not None
+                    or segment.primitive.value not in support_modes):
+                break
+            support_until = segment.ends_at
+    path = paths.get(plan.winning_energy_path_id)
+    floor_at = None
+    status = "unknown" if path is None or not path.projected_states else "not_projected"
+    if (state is not None and state.current_soc <= minimum + 1e-9
+            and current is not None and current.main_assignment_id is None
+            and current.primitive.value in support_modes | {"standby"}):
+        floor_at, status = now, "reached"
+    elif path is not None:
+        for projected in sorted(path.projected_states, key=lambda s: s.at):
+            if (projected.at <= now or (charge_at is not None and projected.at > charge_at)
+                    or projected.battery_soc is None or projected.battery_soc > minimum + 1e-9):
+                continue
+            segment = next((s for s in segments
+                            if s.starts_at < projected.at <= s.ends_at), None)
+            if (segment is not None and segment.main_assignment_id is None
+                    and segment.primitive.value in support_modes):
+                floor_at, status = projected.at, "projected"
+                break
+    if support_until is not None and floor_at is not None:
+        support_until = min(support_until, floor_at)
+    return {"minimum_soc_percent": minimum * 100,
+            "floor_status": status,
+            "floor_at": floor_at.isoformat() if floor_at else None,
+            "support_until": support_until.isoformat() if support_until else None,
+            "next_charge_at": charge_at.isoformat() if charge_at else None}

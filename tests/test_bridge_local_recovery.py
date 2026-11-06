@@ -31,11 +31,12 @@ def test_night_bridge_does_not_repaint_surroundings_or_use_standby_only_for_trad
                     if any(i.intent is Intent.STANDBY for i in w.schedule.intervals))
     assert bool(standby) is household_need
     if household_need:
-        # A single local support interval must be possible without altering the
-        # household support or committed export modes around it.
-        assert any(sum(a != b for a, b in zip(
-            w.schedule.intervals, baseline.intervals, strict=True,
-        )) == 1 for w in standby)
+        # Economic standby is one connected block; flat-price runs need not
+        # be split into isolated quarters merely to manufacture alternatives.
+        for window in standby:
+            changed = [n for n, (a, b) in enumerate(zip(
+                window.schedule.intervals, baseline.intervals, strict=True)) if a != b]
+            assert changed == list(range(changed[0], changed[-1] + 1))
     for w in windows.windows:
         for before, after in zip(baseline.intervals, w.schedule.intervals, strict=True):
             if before.intent is Intent.STORAGE_EXPORT:

@@ -1624,6 +1624,11 @@ def produce_main_charge_portfolio(
     ] = (*windows.windows, *windows.rejected_windows)
     if incumbent is not None:
         compared += (incumbent,)
+    support_reference = next((w for w in windows.windows
+        if w.schedule.schedule_id.startswith("bridge-economic-support:")), None)
+    support_financial = (settlement.settle_planning_basis(
+        projection=support_reference.projection, tariffs=tariffs)
+        if support_reference is not None else None)
     incumbent_result = None
     if (market_basis is not None and incumbent is not None and recovery is not None
             and incumbent.schedule.schedule_id in recovered_schedule_ids):
@@ -1757,6 +1762,36 @@ def produce_main_charge_portfolio(
                 recovered_schedule_ids
             ):
                 invalid += ("market_recovery_not_proven",)
+        if windows.purpose == "bridge":
+            boundary = min(s.starts_at for s in window.main_segments)
+            standby_groups = 0
+            was_standby = False
+            for action in window.schedule.intervals:
+                if action.starts_at >= boundary:
+                    break
+                is_standby = action.intent is DailyStorageIntent.STANDBY
+                standby_groups += int(is_standby and not was_standby)
+                was_standby = is_standby
+            if standby_groups > 1:
+                invalid += ("economic_standby_must_be_contiguous",)
+            if standby_groups and market_basis is None and support_reference is not None:
+                assert support_financial is not None
+                if abs(intervals[-1].storage_energy_at_end_wh -
+                       support_reference.projection.intervals[-1].storage_energy_at_end_wh) > 1e-6:
+                    invalid += ("economic_standby_terminal_inventory_not_equal",)
+                elif financial.cash_result_eur <= support_financial.cash_result_eur + 1e-9:
+                    invalid += ("economic_standby_has_no_saving",)
+        switching_count = max(0, len(path.segments) - 1)
+        # Count the transition from the confirmed current device mode as well.
+        # Starting a new plan must not make an immediate switch appear free.
+        observed = snapshot.storage_mode_capability_evidence
+        if (windows.purpose == "bridge" and observed is not None and path.segments
+                and observed.status == "available"
+                and observed.captured_at == snapshot.captured_at):
+            current = next((m for m in observed.mappings
+                            if m.vendor_mode == observed.current_vendor_mode), None)
+            if current is not None and path.segments[0].primitive not in current.primitives:
+                switching_count += 1
         price = financial.acquisition_eur_per_stored_kwh
         objectives = _objective_outcomes(
             financial=financial.cash_result_eur,
@@ -1805,7 +1840,7 @@ def produce_main_charge_portfolio(
                 confidence=confidence,
                 recoverability=None,
                 execution_complexity=len(path.segments),
-                expected_switching_count=max(0, len(path.segments) - 1),
+                expected_switching_count=switching_count,
                 complexity_version="main-charge-segment-count:v2;acquisition-decimals:12",
                 grid_charge_duration_seconds=None if financial_market_comparison else sum(
                     (s.ends_at - s.starts_at).total_seconds()

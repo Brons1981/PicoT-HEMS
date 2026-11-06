@@ -57,3 +57,27 @@ def test_standby_euros_require_explicit_attribution_not_general_route_savings():
 def test_assumptions_do_not_have_double_full_stops():
     assert "prognose.." not in render(explanation(
         household_assumption="Verbruik uit de prognose."))["text"]
+
+
+def test_normal_floor_and_economic_standby_have_distinct_explanations():
+    operation = {"minimum_soc_percent": 10, "floor_status": "projected",
+                 "floor_at": "2026-10-31T21:00:00Z", "support_until": "2026-10-31T21:00:00Z",
+                 "next_charge_at": "2026-10-31T22:00:00Z"}
+    text = narrative_text(narrative(operation=operation))
+    assert "ondersteunt het huis naar verwachting tot" in text
+    assert "ondergrens van 10,00%" in text
+    assert "normale werking, geen afzonderlijk besparingsblok" in text
+    assert "volgende geplande laadvenster" in text
+    assert "voordeliger" not in text
+    operation.update(floor_status="reached")
+    text = narrative_text(narrative(operation=operation))
+    assert "Stand-by bij de ondergrens" in text
+    assert "heeft 10,00% bereikt" in text
+
+
+def test_unknown_floor_timing_is_explicit_even_without_other_narrative():
+    text = narrative_text(narrative(days=[], windows=[], operation={
+        "minimum_soc_percent": 10, "floor_status": "unknown", "floor_at": None,
+        "support_until": None, "next_charge_at": None}))
+    assert "nog niet betrouwbaar voorspeld" in text
+    assert "voordeliger" not in text

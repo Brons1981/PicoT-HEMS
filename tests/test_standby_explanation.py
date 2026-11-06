@@ -58,3 +58,22 @@ def test_unproven_attribution_is_suppressed(case):
     else:
         decision["status"] = "publication_failed"
     assert standby_comparison(run, decision) is None
+
+
+def test_explicit_support_baseline_works_without_incumbent_cost_comparison():
+    from picot.domain.evaluation import CandidateValidity, ComparisonDirection
+    from picot.domain.objectives import ObjectiveKind
+    run, _ = evidence()
+    def outcome(candidate, cost, baseline=False):
+        return N(candidate_id=candidate, validity=CandidateValidity.VALID,
+                 objective_outcomes=(N(objective=ObjectiveKind.FINANCIAL_RESULT,
+                    unit="EUR", direction=ComparisonDirection.HIGHER_IS_BETTER,
+                    value=-cost,
+                    evidence_ids=("bridge-economic-support:fixture",) if baseline else ()),))
+    run.execution_plan_set.plans[0].winning_candidate_id = "a"
+    run.outcomes = N(canonical_outcomes=(outcome("a", 1.9), outcome("b", 2.1, True)))
+    result = standby_comparison(run, {"status": "selected"})
+    assert result["benefit_eur"] == pytest.approx(0.2)
+    assert result["comparison_basis"] == "normal_support_then_refill"
+    run.candidate_set.energy_paths[1].projected_states[0].storage_energy_wh = 4000
+    assert standby_comparison(run, {"status": "selected"}) is None

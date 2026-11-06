@@ -3,10 +3,12 @@
 from datetime import datetime
 from math import isfinite
 
+from picot.domain.evaluation import CandidateValidity, ComparisonDirection
+from picot.domain.objectives import ObjectiveKind
 from picot.v2.contracts import CanonicalPipelineRun
 
 
-def standby_comparison(
+def _standby_pair(
     run: CanonicalPipelineRun, decision: dict[str, object],
 ) -> dict[str, object] | None:
     """Never turn a general route saving or acquisition rate into standby savings."""
@@ -69,3 +71,38 @@ def standby_comparison(
         return None
     return {"starts_at": windows[0][0].isoformat(), "ends_at": windows[0][1].isoformat(),
             "benefit_eur": benefit}
+
+
+def standby_comparison(
+    run: CanonicalPipelineRun, decision: dict[str, object],
+) -> dict[str, object] | None:
+    """Prefer the explicit normal-support baseline for economic standby."""
+    outcomes = getattr(run, "outcomes", None)
+    canonical = getattr(outcomes, "canonical_outcomes", ())
+    costs = {o.candidate_id: f for o in canonical
+             if o.validity is CandidateValidity.VALID
+             for f in o.objective_outcomes
+             if f.objective is ObjectiveKind.FINANCIAL_RESULT and f.unit == "EUR"
+             and f.direction is ComparisonDirection.HIGHER_IS_BETTER and isfinite(f.value)}
+    admitted = {getattr(p, "winning_candidate_id", None)
+                for p in run.execution_plan_set.plans}
+    if len(admitted) == 1:
+        winner = next(iter(admitted))
+        if winner in costs:
+            for candidate, financial in costs.items():
+                if candidate == winner or not any(
+                    e.startswith("bridge-economic-support:") for e in financial.evidence_ids
+                ):
+                    continue
+                result = _standby_pair(run, {
+                    "status": "replaced", "incumbent_candidate_id": candidate,
+                    "alternative_candidate_id": winner,
+                    "incumbent_cost_eur": -financial.value,
+                    "alternative_cost_eur": -costs[winner].value,
+                })
+                if result is not None:
+                    result.update(comparison_basis="normal_support_then_refill",
+                                  support_cost_eur=-financial.value,
+                                  standby_cost_eur=-costs[winner].value)
+                    return result
+    return _standby_pair(run, decision)

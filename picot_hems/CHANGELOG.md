@@ -1,3 +1,11 @@
+# 2.0.0-dev.337
+
+- Vergelijk een aaneengesloten stand-byblok op goedkopere kwartieren met batterijondersteuning en later aanvullen, inclusief omzettingsverliezen.
+- Laat normale ondersteuning tot de SOC-ondergrens toe; het bereiken van 10% is geen tekort dat altijd vooraf voorkomen moet worden.
+- Tel direct overschakelen vanuit de actuele batterijstand mee in de vergelijking.
+- Toon op het dashboard ondersteuning tot, de SOC-ondergrens, het volgende laadmoment en alleen aantoonbare stand-bybesparing.
+- HC en ED ongewijzigd. Geen planreset nodig; de nieuwe afweging geldt bij een volgende planvergelijking.
+
 # 2.0.0-dev.336
 
 - Vergelijk ook eerst ontladen en daarna aaneengesloten stand-by tot het laadvenster, met behoud van PV-, export- en laadgrenzen.

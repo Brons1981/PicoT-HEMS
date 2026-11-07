@@ -1,3 +1,9 @@
+# 0.1.0-dev.33
+
+- Lees de actuele rapportagetijd van de kWh-teller ook bij gelijkblijvende tellerstand, zodat volledige starts vanuit uitstand geregistreerd kunnen worden.
+- Behoud strikte controles op verouderde of ontbrekende metingen.
+- Toon waarom een volledige startmeting niet kan beginnen in dashboard en diagnose. Bestaande leermetingen blijven behouden.
+
 # 0.1.0-dev.32
 
 - Publiceer belastingsvensters en geldige energie-intervallen afzonderlijk, ook bij ontbrekende opwarmhistorie. Houd temperaturen binnen HC.

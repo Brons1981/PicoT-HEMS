@@ -55,6 +55,8 @@ def meter_context(config, states, plan, meter, now, *, target=None):
         return None
     zone = next(z for z in config["zones"] if z["id"] == "beneden")
     counter = states.get(zone.get("energy")) or {}
+    if counter.get("hc_report_error"):
+        return None
     try:
         raw = counter.get("state")
         if isinstance(raw, bool):

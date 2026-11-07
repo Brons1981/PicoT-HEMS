@@ -1,3 +1,10 @@
+## Release HC dev.33 - 7 november 2026
+
+Volledige-startleren: directe kWh-rapportage en uitleg bij ontbrekende beginmetingen.
+Basis HEMS dev.338 / HC dev.32. Alleen HC; HEMS en ED ongewijzigd.
+Publiceren via PR en groene CI. Geen live installatie of reset van leermetingen.
+Zie picot_hc/docs/2026-11-07-startup-counter-report.md.
+
 ## Release HEMS dev.338 - 6 november 2026
 
 Alex vraagt publicatie van verbruik, direct gebruikte zon en netkosten bij de stand-byuitleg via PR en groene CI.

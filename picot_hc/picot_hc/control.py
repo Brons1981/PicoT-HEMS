@@ -53,7 +53,8 @@ class Control:
         self.bindings = source_bindings(config)
         self.temperature_entities = [z.get('temperature') for z in config['zones']] + [config.get('outdoor')]
         self.report_entities = self.temperature_entities + [
-            z.get('power') for z in config['zones'] if z.get('id') == 'beneden']
+            z.get(field) for z in config['zones'] if z.get('id') == 'beneden'
+            for field in ('power', 'energy')]
         self.timeout = config.get('command_timeout_seconds', 300)
         if not isinstance(self.timeout, int) or not 30 <= self.timeout <= 900:
             raise ValueError('command_timeout_seconds moet tussen 30 en 900 liggen.')

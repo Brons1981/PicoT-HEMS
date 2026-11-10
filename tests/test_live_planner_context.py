@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import Mock
 
 from picot.addon.history_store import HistoryStore
 from picot.addon.live_planner_context import (
@@ -41,7 +42,10 @@ class _Snapshot:
     captured_at = BASE
 
 
-def test_confidence_uses_its_own_rolling_mean(tmp_path: Path) -> None:
+def test_confidence_uses_its_own_rolling_mean(tmp_path: Path, monkeypatch) -> None:
+    clock = Mock(wraps=datetime)
+    clock.now.return_value = BASE
+    monkeypatch.setattr("picot.addon.history_store.datetime", clock)
     store = HistoryStore(tmp_path / "history.jsonl")
     for index in range(12):
         store.append(

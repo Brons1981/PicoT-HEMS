@@ -21,7 +21,8 @@ class Cooling:
 
     def estimate(self, context, now):
         if not context or not context['valid']:
-            return dict(cooling_samples=0, cooling_rate=None)
+            return dict(cooling_samples=0, cooling_stored_samples=len(self.samples), cooling_rate=None,
+                        cooling_reason='Actuele meetcontext niet bruikbaar; opgeslagen metingen blijven bewaard.')
         indoor, outdoor = context['indoor'], context['outdoor']
         samples = [s for s in self.samples if 0 <= now-s['end'] <= 7*86400
                    and s['identity'] == context['identity'] and comparable(s, context)
@@ -29,7 +30,10 @@ class Cooling:
         rate = None
         if len(samples) >= 3 and indoor-outdoor >= 3:
             rate = max(s['coefficient'] for s in samples)*(indoor-outdoor)*1.5+.1
-        return dict(cooling_samples=len(samples), cooling_rate=rate)
+        reason = ('Minimaal drie recente, vergelijkbare afkoelmetingen nodig.' if len(samples) < 3 else
+                  'Binnen-buitenverschil te klein voor een betrouwbare afkoelraming.' if rate is None else None)
+        return dict(cooling_samples=len(samples), cooling_stored_samples=len(self.samples),
+                    cooling_rate=rate, cooling_reason=reason)
 
     def observe(self, context, plan, view, now, max_gap):
         active = view['current']

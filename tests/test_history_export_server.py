@@ -1,7 +1,8 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from threading import Thread
+from unittest.mock import Mock
 
 from picot.addon.history_export_server import make_handler
 from picot.addon.history_store import HistoryStore
@@ -29,19 +30,22 @@ def test_history_export_page_is_available(tmp_path):
         server.server_close()
 
 
-def test_history_export_download_filters_selected_range(tmp_path):
+def test_history_export_download_filters_selected_range(tmp_path, monkeypatch):
+    clock = Mock(wraps=datetime)
+    clock.now.return_value = datetime(2026, 8, 12, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr("picot.addon.history_store.datetime", clock)
     store = HistoryStore(tmp_path / "history.jsonl")
     store.append(
         {
             "event": "picot_goodwe_snapshot",
-            "observed_at": datetime(2026, 8, 10, 21, 0, tzinfo=timezone.utc).isoformat(),
+            "observed_at": datetime(2026, 8, 10, 21, 0, tzinfo=UTC).isoformat(),
             "marker": "inside",
         }
     )
     store.append(
         {
             "event": "picot_goodwe_snapshot",
-            "observed_at": datetime(2026, 8, 11, 9, 0, tzinfo=timezone.utc).isoformat(),
+            "observed_at": datetime(2026, 8, 11, 9, 0, tzinfo=UTC).isoformat(),
             "marker": "outside",
         }
     )

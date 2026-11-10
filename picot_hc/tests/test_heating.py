@@ -168,6 +168,67 @@ class HeatingTests(ControlFixture):
         self.ctl.states[self.config['cv']]['state']='off'
         self.assertNotIn('cv',self.heat.plan(self.config,self.at)['desired'])
 
+    def cv_ready(self):
+        self.states[self.config['cv']]['attributes'].update(min_temp=5, current_temperature=20, hvac_action='idle')
+        self.temperature('boven',22); self.temperature('badkamer',22)
+
+    def test_cv_ends_at_15_and_can_be_selected_again(self):
+        self.cv_ready(); self.price(.90); self.enable()
+        self.poll(NOW+121); self.poll()
+        self.heat.update(dict(revision=1, settings=dict(self.heat.data['settings'], enabled=False)))
+        self.poll(); self.poll(); self.poll()
+        self.assertEqual(self.calls[-1][1], dict(entity_id=self.config['cv'], temperature=15, hvac_mode='heat'))
+        self.assertEqual(len(self.calls),2)
+        self.heat.update(dict(revision=2, settings=dict(self.heat.data['settings'], enabled=True)))
+        self.poll()
+        self.assertEqual(len(self.calls),2)
+        self.poll(self.at+181)
+        self.assertEqual(self.calls[-1][1]['temperature'],20)
+        self.assertFalse(any(c[1].get('hvac_mode')=='off' for c in self.calls))
+
+    def test_cv_standby_waits_for_idle_before_airco_takeover(self):
+        self.cv_ready(); self.price(.90); self.enable()
+        self.poll(NOW+121); self.poll()
+        self.states[self.config['cv']]['attributes']['hvac_action']='heating'
+        self.price(.25); self.poll(NOW+500); self.poll(); self.poll()
+        self.assertEqual(len(self.calls),2)
+        self.assertEqual(self.calls[-1][1], dict(entity_id=self.config['cv'], temperature=15, hvac_mode='heat'))
+        self.states[self.config['cv']]['attributes']['hvac_action']='idle'
+        self.poll()
+        self.assertEqual(self.calls[-1][1]['entity_id'],self.config['zones'][0]['device'])
+
+    def test_cv_failed_standby_is_not_replayed_after_restart(self):
+        self.cv_ready(); self.price(.90); self.enable()
+        self.poll(NOW+121); self.poll()
+        self.price(.25); self.apply=False
+        self.poll(NOW+500); self.poll(NOW+850)
+        other=Runtime(self.config,self.store,self.url,'fake-secret')
+        self.heat,self.ctl=other.heating,other.control
+        self.poll(NOW+880); self.poll(NOW+900)
+        self.assertEqual(len(self.calls),2)
+        self.assertIn('cv',self.heat.data['faults'])
+        self.assertEqual(self.calls[-1][1].get('temperature'),15)
+
+    def test_manual_cv_expires_at_schedule_boundary_across_restart(self):
+        self.cv_ready()
+        self.runtime.schedule.data['settings'].update(enabled=True, setback_temperature=17, windows=[dict(
+            day=2, start='13:00', end='14:05', target=20, hard=False)])
+        self.runtime.schedule.save()
+        self.enable(); self.poll(NOW+121); self.poll()
+        self.states[self.config['cv']]['state']='heat'
+        self.states[self.config['cv']]['attributes']['temperature']=23
+        self.poll(NOW+180); self.poll()
+        hold=self.runtime.schedule.view(self.at)['overrides'][0]
+        self.assertEqual(hold['until'],NOW+300)
+        count=len(self.calls)
+        other=Runtime(self.config,self.store,self.url,'fake-secret')
+        self.heat,self.ctl=other.heating,other.control
+        self.poll(NOW+299)
+        self.assertEqual(len(self.calls),count)
+        self.poll(NOW+300)
+        self.assertEqual(self.calls[-1][1],dict(entity_id=self.config['cv'], temperature=15, hvac_mode='heat'))
+        self.assertEqual(other.schedule.view(self.at)['overrides'],[])
+
     def test_cv_choice_accepts_satisfied_upstairs(self):
         self.temperature('boven',22); self.temperature('badkamer',22)
         self.price(.90); self.enable(); self.poll(NOW+121)
@@ -266,14 +327,15 @@ class HeatingTests(ControlFixture):
         self.temperature('beneden',22); self.temperature('boven',22); self.temperature('badkamer',22)
         self.assertEqual(self.poll()['desired'],{'beneden':20})
 
-    def test_timeout_stop_once_and_no_automatic_retry(self):
+    def test_timeout_stop_once_and_confirmed_stop_clears_fault(self):
         self.temperature('boven',22); self.temperature('badkamer',22)
         self.apply=False; self.enable(); self.poll(NOW+121)
         self.poll(NOW+450); self.poll(NOW+800); self.poll(NOW+900)
         self.assertEqual(len(self.calls),2)  # One start, one protective stop.
-        self.assertIn('beneden',self.heat.data['faults'])
+        self.assertNotIn('beneden',self.heat.data['faults'])
+        self.assertEqual(self.heat.data['fault_recoveries']['beneden']['reason'],'latest_intent_confirmed')
 
-    def test_restart_preserves_enabled_but_does_not_replay_uncertain_start(self):
+    def test_restart_confirms_arrived_start_without_stopping_it(self):
         self.enable(); self.poll(NOW+121)
         other=Runtime(self.config,self.store,self.url,'fake-secret')
         self.assertTrue(other.heating.data['settings']['enabled'])
@@ -281,7 +343,8 @@ class HeatingTests(ControlFixture):
             other.control.observe(self.states,NOW+200,NOW+200)
             other.heating.tick(other.config,NOW+200)
         self.assertEqual(len(self.calls),2)
-        self.assertEqual(self.calls[-1][1]['hvac_mode'],'off')
+        self.assertEqual(self.calls[-1][1]['entity_id'],self.config['zones'][1]['device'])
+        self.assertTrue(all(c[1]['hvac_mode']=='heat' for c in self.calls))
 
     def test_disable_stops_only_owned_sources(self):
         self.temperature('boven',22); self.temperature('badkamer',22)
@@ -319,13 +382,15 @@ class HeatingTests(ControlFixture):
                 urlopen(Request(url+'/api/heating',data=json.dumps(payload).encode(),headers=headers))
 
     def test_resume_releases_manual_cv_and_switches_back_to_airco(self):
+        self.cv_ready()
+        self.temperature('boven',18)
         self.temperature('badkamer',22);self.enable()
         self.states[self.config['cv']]['state']='heat'
         self.poll(NOW+121)
         self.assertEqual(self.calls,[])
         self.runtime.schedule.resume(self.at)
         self.poll()
-        self.assertEqual(self.calls[-1][1],{'entity_id':self.config['cv'],'hvac_mode':'off'})
+        self.assertEqual(self.calls[-1][1],{'entity_id':self.config['cv'],'hvac_mode':'heat','temperature':15})
         self.poll();self.poll()
         self.assertEqual({c[1]['entity_id'] for c in self.calls[1:]},
                          {z['device'] for z in self.config['zones'][:2]})

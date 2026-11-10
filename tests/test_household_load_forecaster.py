@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import Mock
 
 from picot.addon.history_store import HistoryStore
 from picot.addon.household_load_forecaster import HouseholdLoadForecaster
@@ -41,7 +42,10 @@ def _timeline(start: datetime) -> PVEnergyTimeline:
     )
 
 
-def test_weighted_profile_uses_recent_matching_quarter_hours(tmp_path: Path) -> None:
+def test_weighted_profile_uses_recent_matching_quarter_hours(tmp_path: Path, monkeypatch) -> None:
+    clock = Mock(wraps=datetime)
+    clock.now.return_value = datetime(2026, 8, 12, 10, 0, tzinfo=UTC)
+    monkeypatch.setattr("picot.addon.history_store.datetime", clock)
     path = tmp_path / "history.jsonl"
     history = HistoryStore(path)
     now = datetime(2026, 8, 12, 10, 0, tzinfo=UTC)

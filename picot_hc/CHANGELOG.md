@@ -1,3 +1,10 @@
+# 0.1.0-dev.34
+
+- Zet de CV na automatische warmtevraag op 15 graden in verwarmingsmodus. Respecteer handmatige bediening tot het volgende comfortschemamoment.
+- Hef bronblokkeringen automatisch op bij verse bevestiging van de laatst gevraagde stand, ook na timeout of herstart. Bewaar de eerdere fout en herstelmelding; verstuur geen herhaalopdracht voor herstel.
+- Laat leren doorgaan bij een historische CV-fout wanneer de CV aantoonbaar geen warmte levert en geen opdracht op bevestiging wacht.
+- Toon opgeslagen en momenteel vergelijkbare afkoelmetingen afzonderlijk en exporteer de afkoelrecords in diagnose. Bestaande metingen en comfortgrenzen blijven behouden.
+
 # 0.1.0-dev.33
 
 - Lees de actuele rapportagetijd van de kWh-teller ook bij gelijkblijvende tellerstand, zodat volledige starts vanuit uitstand geregistreerd kunnen worden.

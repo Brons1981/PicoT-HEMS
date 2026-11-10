@@ -38,6 +38,22 @@ def test_acceptance_records_exact_plan_and_survives_restart(tmp_path):
     assert restarted.receipt(selected.selection_id) == receipt
 
 
+def test_house_grid_fallback_does_not_block_fresh_acceptance(tmp_path):
+    from test_market_revision_comparison import scenario as market_scenario
+
+    store, snapshot, plan = market_scenario(tmp_path, soc=0.9)
+    start = snapshot.captured_at + timedelta(hours=14)
+    selected = JointEVSelection(
+        snapshot=snapshot, request=request(snapshot), retained_plan_id=plan.plan_id,
+        plan=plan, starts_at=start, ends_at=start + timedelta(minutes=30),
+        selection_id="grid-fallback-ev",
+    )
+    adopter = JointEVAdopter(store, lambda _: inputs()["conversion_model"])
+    receipt = adopter.adopt(selected, snapshot)
+    assert receipt["execution_status"] == "committed"
+    assert receipt["battery_plan_id"] == plan.plan_id
+
+
 def test_expired_advice_cannot_change_commitments(tmp_path):
     store, snapshot, selected, adopter = setup(tmp_path)
     before = store._load_payload()

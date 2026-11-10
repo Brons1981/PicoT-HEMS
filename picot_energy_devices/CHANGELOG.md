@@ -1,3 +1,9 @@
+# 0.4.0-dev.15
+
+- Toon de instructie Automatisch uitvoeren alleen wanneer een actueel, uitvoerbaar laadblok beschikbaar is.
+- Gebruik met HEMS 2.0.0-dev.339 voor laadadvies bij batterijondersteuning tot de SOC-ondergrens.
+- Bestaande vastgezette laadsessies en de HEMS-bevestiging blijven behouden. Vraag na de updates opnieuw advies aan voor een nog niet geplande sessie.
+
 # 0.4.0-dev.14
 
 - Wacht bij gezamenlijk laadadvies op de duurzame HEMS-bevestiging voordat de auto automatisch mag laden.
@@ -122,4 +128,3 @@ Na installatie: start een proefopname, controleer het vermogensverloop en rond d
 ## 0.1.0
 
 Eerste onafhankelijke Energy Devices-add-on met apparaatregistratie en automatische sessieprofielen.
-

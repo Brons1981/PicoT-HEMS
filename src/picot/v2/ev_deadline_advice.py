@@ -165,7 +165,8 @@ def advise(
         plan = plans[0]
         adapter = IndependentDailyReferenceAdapter()
         if adapter.committed_execution_invalidity_reasons(
-            snapshot=snapshot, plan=plan, conversion_model=conversion_model
+            snapshot=snapshot, plan=plan, conversion_model=conversion_model,
+            household_grid_fallback=True,
         ):
             raise ValueError("retained_battery_plan_requires_repair")
         tariff_adapter = IndependentDailyTariffAdapter()
@@ -276,7 +277,8 @@ def advise(
         for index, placement in enumerate(ordered):
             changed = _overlay(snapshot, placement, placement + duration, power, covered)
             reasons = adapter.committed_execution_invalidity_reasons(
-                snapshot=changed, plan=plan, conversion_model=conversion_model
+                snapshot=changed, plan=plan, conversion_model=conversion_model,
+                household_grid_fallback=True,
             )
             projection, _ = adapter.committed_plan_projection(
                 snapshot=changed,

@@ -340,6 +340,7 @@ class IndependentDailyReferenceAdapter:
     def committed_execution_invalidity_reasons(
         self, *, snapshot: PlanningInputSnapshot, plan: ExecutionPlan,
         conversion_model: StorageConversionModel, current_until: datetime | None = None,
+        household_grid_fallback: bool = False,
     ) -> tuple[str, ...]:
         """Prove the existing execution independently of unbound future discovery.
 
@@ -405,7 +406,11 @@ class IndependentDailyReferenceAdapter:
         proof_until = current_until or min((a.starts_at for a in context.assignments
                              if a.route_plan_id is None and a.starts_at > snapshot.captured_at),
                             default=plan.valid_until)
-        if any(i.starts_at < proof_until and i.deficit_wh > 1e-6 for i in energy_deficits(
+        # Grid/PV-only EV advice need not guarantee continuous battery support
+        # for the house. Its full-horizon settlement includes that grid import.
+        # All bound charge/export goals and physical reserves remain mandatory.
+        if not household_grid_fallback and any(
+            i.starts_at < proof_until and i.deficit_wh > 1e-6 for i in energy_deficits(
             assessment.projection, assessment.schedule, until=plan.valid_until,
             maximum_discharge_output_power_w=limits.maximum_discharge_output_power_w,
         )):

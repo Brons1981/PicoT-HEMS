@@ -9,3 +9,5 @@ A historical CV fault no longer invalidates airco/cooling learning if CV is avai
 The 10 November diagnosis had 25 stored cooling records, 20 recent, but no valid context due to the historical CV fault. Its latest CV command was confirmed off and the reported state was off. Offline replay clears this fault without creating any command. No measurements are fabricated or deleted.
 
 Local checks cover late/mismatched feedback, newer intent, restart persistence, manual takeover, CV standby, cooling/coasting, exported evidence and downstream forecasts. JavaScript syntax passes. Full HC tests, browser interaction and container packaging are required in CI before merge. This release does not include the separate unpublished shadow-comparison work and does not change HEMS or ED.
+
+Release CI also exposed three pre-existing calendar-dependent root tests: August 2026 fixtures had aged outside the 90-day history retention window. The same failures reproduce on the unchanged HEMS source. Freeze only the history-store clock to each test scenario; retain pruning and all assertions. No HEMS production change. All eight tests in the affected modules pass with the fixed clocks.

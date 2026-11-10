@@ -111,15 +111,26 @@ class Control:
                 except Exception:
                     self.unit = None
             self.expire(received)
+            seen = set()
             for command in self.records():
-                if command['status'] not in PENDING or started <= command['sent']:
+                latest = command['entity_id'] not in seen
+                seen.add(command['entity_id'])
+                late = latest and command['status'] in {'failed', 'timed_out', 'interrupted'}
+                if (command['status'] not in PENDING and not late
+                        or not command.get('sent') or started <= command['sent']):
                     continue
                 item = states.get(command['entity_id'], {})
                 if item.get('state') in (None, 'unknown', 'unavailable'):
                     continue
                 actual = item.get('attributes', {}).get('temperature') if command['field'] in ('temperature', 'heating') else item['state']
+                matched = self.matches(actual, command['value']) and (command['field'] != 'heating' or item['state'] == 'heat')
+                if late and not matched:
+                    continue
                 command['reported'] = {'value': actual, 'received': received, 'source_updated': item.get('last_updated')}
-                if self.matches(actual, command['value']) and (command['field'] != 'heating' or item['state'] == 'heat'):
+                if matched:
+                    if late:
+                        command.update(recovered_from=command['status'], recovered_at=received,
+                                       previous_error=command.get('error'), previous_finished=command.get('finished'))
                     command.update(status='confirmed', finished=received, error=None)
                 self.save(command)
             if self.observer:

@@ -316,7 +316,8 @@ class Schedule:
                     if value is None or previous.get(field) is None or value == previous[field]:
                         continue
                     own = next((c for c in records if c['entity_id'] == entity and c.get('sent')
-                                and c['sent'] <= now <= c['deadline'] and c['status'] != 'failed'
+                                and (c['sent'] <= now <= c['deadline'] or c.get('recovered_at') == now)
+                                and c['status'] != 'failed'
                                 and (c['field'] == field or (field == 'mode' and c['field'] == 'state')
                                      or c['field'] == 'heating' or field == 'preset')), None)
                     expected = False

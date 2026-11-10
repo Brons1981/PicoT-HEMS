@@ -54,6 +54,31 @@ class CoolingTests(DownstairsComfortTests):
         plan = self.poll(3*3600+30*60)
         self.assertEqual(plan['zones']['beneden']['target'], 20)
 
+    def test_known_inactive_cv_fault_does_not_discard_cooling(self):
+        self.heat.data['faults']['cv']='Old unconfirmed command'
+        self.measured_cooling()
+        self.assertGreaterEqual(len(self.heat.learning.cooling.samples),3)
+        self.now = NOW+3*3600+30*60
+        self.temperature('beneden',20)
+        self.assertEqual(self.poll()['learning_status']['phase'],'coast')
+
+    def test_uncertain_cv_activity_still_blocks_learning(self):
+        self.configure()
+        self.heat.data['faults']['cv']='Old unconfirmed command'
+        self.states[self.config['cv']]['state']='unavailable'
+        self.temperature('beneden',21)
+        plan=self.poll()
+        self.assertFalse(plan['learning_context']['valid'])
+        self.assertIsNone(self.heat.learning.cooling.segment)
+
+    def test_invalid_context_does_not_hide_stored_cooling_count(self):
+        self.measured_cooling()
+        estimate=self.heat.learning.cooling.estimate({'valid':False},self.now)
+        self.assertGreaterEqual(estimate['cooling_stored_samples'],3)
+        self.assertEqual(estimate['cooling_samples'],0)
+        self.assertIsNone(estimate['cooling_rate'])
+        self.assertIn('bewaard',estimate['cooling_reason'])
+
     def test_open_door_never_trains(self):
         from picot_hc.schedule import DOOR
         self.configure()

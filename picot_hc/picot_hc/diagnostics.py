@@ -26,6 +26,9 @@ def collect(runtime):
             if model is not None:
                 learning_models[name] = dict(records=model.records,
                     events=getattr(model, 'events', []), attempted=getattr(model, 'attempted', []))
+        cooling = getattr(getattr(runtime.heating, 'learning', None), 'cooling', None)
+        if cooling is not None:
+            learning_models['cooling'] = dict(records=cooling.samples, segment=cooling.segment)
         return copy.deepcopy(dict(
             format='picot_hc_control_diagnostics', version=1, hc_version=__version__,
             exported_at=time.time(), timezone='Europe/Amsterdam',

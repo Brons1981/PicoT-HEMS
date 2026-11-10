@@ -124,6 +124,26 @@ class Heating:
 
     def reconcile(self, now):
         records = {c['id']: c for c in self.control.records()}
+        # Fresh confirmation of the latest intent, including a protective stop,
+        # clears a historical fault without resending commands or releasing holds.
+        received = self.control.received
+        if (self.control.connected and received is not None
+                and 0 <= now-received <= self.schedule.config['stale_seconds']):
+            for source in list(self.data['faults']):
+                entity = self.control.bindings[source]['entity_id']
+                command = next((c for c in records.values() if c['entity_id'] == entity), None)
+                item = self.control.states.get(entity, {})
+                if (not command or command['status'] not in ('confirmed', 'already_set')
+                        or item.get('state') in (None, 'unknown', 'unavailable')
+                        or received < command.get('finished', now)):
+                    continue
+                actual = (item.get('attributes', {}).get('temperature')
+                          if command['field'] in ('temperature', 'heating') else item['state'])
+                if (self.control.matches(actual, command['value'])
+                        and (command['field'] != 'heating' or item['state'] == 'heat')):
+                    del self.data['faults'][source]
+                    self.data.setdefault('fault_recoveries', {})[source] = dict(
+                        at=now, command=command['id'], reason='latest_intent_confirmed')
         holds = {h['source'] for h in self.schedule.view(now)['overrides'] if h['active']}
         timer = self.data['timer']
         if timer and timer['status'] == 'running' and (now >= timer['ends'] or 'badkamer' in holds):
@@ -143,7 +163,7 @@ class Heating:
                 del self.data['owned'][source]  # Respect manual takeover, including manual Off.
                 continue
             command = records.get(own['command'])
-            if own.get('released') or own.get('retry_stop'):
+            if (own.get('released') and not own.get('standby')) or own.get('retry_stop'):
                 continue
             if not command or command['status'] in FAILURES:
                 self.data['faults'][source] = (command or {}).get('error') or 'Opdracht niet bevestigd; controleer bron.'
@@ -167,12 +187,17 @@ class Heating:
                 and 0 <= age <= view['settings']['sensor_max_age_seconds']) else None
         indoor, outdoor = temperature(zone['temperature']), temperature(config['outdoor'])
         door = view['door'] or {}
+        sources = {s['id']: s for s in self.control.sources(now, config['stale_seconds'])}
+        cv = sources['cv']
+        cv_inactive = (cv['available'] and not cv['pending']
+                       and (cv['state'] == 'off' or passive_idle(cv)))
         valid = (self.control.connected and self.control.received is not None
                  and 0 <= now-self.control.received <= config['stale_seconds']
                  and indoor is not None and outdoor is not None and 'beneden' not in blocked
                  and door.get('value') == 'off'
                  and now-door.get('since', now) >= view['settings']['door_close_seconds']
-                 and not any(source in self.data['faults'] for source in ('beneden', 'cv')))
+                 and 'beneden' not in self.data['faults']
+                 and ('cv' not in self.data['faults'] or cv_inactive))
         idle = True
         identities = [zone['temperature'], config['outdoor']]
         for source in ('beneden', 'cv'):
@@ -437,9 +462,11 @@ class Heating:
             if source in holds or source in plan.get('data_grace_sources', []):
                 continue
             c = records.get(own['command'], {})
-            if c.get('value') == 'off' and not own.get('retry_stop'):
+            if (c.get('value') == 'off' or own.get('standby')) and not own.get('retry_stop'):
                 continue  # Includes failed/uncertain stops: never replay automatically.
             if source not in plan['desired'] and plan['sources'][source]['available']:
+                if source == 'cv':
+                    return source, 'heating', 15
                 return source, 'state' if source == 'badkamer' else 'mode', 'off'
         desired = list(plan['desired'].items())
         if plan.get('energy_start'):
@@ -451,10 +478,13 @@ class Heating:
             if s['pending'] or source in self.data['faults']:
                 continue
             conflict = any(other != source and set(COVERAGE[source]) & set(COVERAGE[other])
-                           for other in self.data['owned'])
+                           and not (other == 'cv' and own.get('standby')
+                                    and records.get(own['command'], {}).get('status') in ('confirmed', 'already_set')
+                                    and passive_idle(plan['sources'][other]))
+                           for other, own in self.data['owned'].items())
             if conflict:
                 continue
-            if source not in self.data['owned'] and now-self.data['changed'].get(source, -1e20) < 180:
+            if (source not in self.data['owned'] or self.data['owned'][source].get('standby')) and now-self.data['changed'].get(source, -1e20) < 180:
                 continue
             if source == 'badkamer':
                 if s['state'] != 'on':
@@ -489,9 +519,13 @@ class Heating:
             previous = copy.deepcopy(self.data)
             self.data['owned'][source] = dict(command=request_id,
                 since=self.data['owned'].get(source, {}).get('since', moment))
+            if source == 'cv' and source not in current['desired']:
+                # Keep ownership to allow later CV demand, but do not count the
+                # standby setpoint as a continuing comfort heat request.
+                self.data['owned'][source].update(standby=True, released=True)
             if source == 'beneden' and field == 'heating' and current.get('room_floor_mode'):
                 self.data['owned'][source]['floor_run'] = True
-            if (field == 'heating' and current.get('energy_start')
+            if (field == 'heating' and source in current['desired'] and current.get('energy_start')
                     and source == current['energy_start'].get('source', 'beneden')):
                 self.data['owned'][source]['energy_start'] = copy.deepcopy(current['energy_start'])
             self.data['changed'][source] = moment

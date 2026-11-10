@@ -72,3 +72,13 @@ def test_download_keeps_ingress_and_tablet_access_boundaries(tmp_path):
 def test_dashboard_has_relative_download_link():
     html = (Path(__file__).parents[1] / 'picot_hc/web/index.html').read_text()
     assert 'href="api/diagnostics-export"' in html
+
+
+def test_download_includes_cooling_records_without_mutating(tmp_path):
+    rt=runtime(tmp_path)
+    samples=[dict(end=123,indoor=20,outdoor=5,coefficient=.01,identity='source')]
+    rt.heating.learning=SimpleNamespace(cooling=SimpleNamespace(samples=samples,segment=None))
+    response=request(rt)
+    data=json.loads(gzip.decompress(response.wfile.getvalue()))
+    assert data['learning_models']['cooling']['records']==samples
+    assert rt.heating.learning.cooling.samples==samples

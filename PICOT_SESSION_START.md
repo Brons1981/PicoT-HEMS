@@ -1,3 +1,11 @@
+## Release HC dev.34 - 10 november 2026
+
+Alex vraagt publicatie van de CV-ruststand, automatisch bronherstel en afkoelleerherstel via PR en groene CI.
+Basis main 79c1f000ac9b9416347ffcf83d952bf67b8688f4 / HC dev.33; HEMS en ED ongewijzigd.
+Geen live installatie, instellingenwijziging of reset van metingen. De afzonderlijke lokale schaduwvergelijking
+in hc-comparison-work blijft bewaard voor een eigen integratie. Zie picot_hc/docs/2026-11-10-cv-recovery.md.
+Vervolg: HEMS moet ED een uitvoerbaar laadvenster teruggeven; ED beoordeelt het batterijplan niet.
+
 ## Release HC dev.33 - 7 november 2026
 
 Volledige-startleren: directe kWh-rapportage en uitleg bij ontbrekende beginmetingen.

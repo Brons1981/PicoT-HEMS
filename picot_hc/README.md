@@ -192,6 +192,34 @@ bij de weerleverancier. Ontbrekende waarden worden nooit nul.
 
 ## Handmatige bediening en badkamer
 
+Een bronblokkering herstelt automatisch wanneer een verse HA-uitlezing de laatst
+gevraagde instelling bevestigt. Ook een late bevestiging na een timeout of HC-herstart
+telt mee, zolang geen nieuwere opdracht die intentie heeft vervangen. De eerdere fout
+en het herstelmoment blijven in de opdrachtenhistorie staan. Het herstel zelf verstuurt
+geen apparaatopdracht en wist geen handmatige overname. Na herstel kan de normale
+regeling weer nieuwe besluiten uitvoeren, met de bestaande wachttijden.
+
+Een historische CV-blokkering maakt airco- en afkoelmetingen niet ongeldig als de CV
+beschikbaar is, geen opdracht wacht op bevestiging en de bron aantoonbaar uit of
+tevreden in rust staat. Bij onbekende CV-activiteit blijft die uitzondering gesloten.
+Het dashboard onderscheidt opgeslagen en momenteel vergelijkbare afkoelmetingen;
+de diagnose bevat nu ook de afzonderlijke afkoelrecords. Eerder afbouwen blijft
+afhankelijk van voldoende recente, vergelijkbare metingen en de comfortmarge.
+
+Wanneer HC zijn CV-warmtevraag beëindigt, zet het de thermostaat op **15 °C in
+verwarmingsmodus**. Dit geldt ook bij uitschakelen van de automatische regeling;
+HC schakelt de CV niet automatisch naar Uit. De 15 °C is de ruststand van de
+thermostaat en staat los van de ingestelde kamerondergrens. Een volgende
+CV-warmtevraag kan de temperatuur weer verhogen. De airco krijgt pas vrijgave
+na bevestiging van de ruststand én een beschikbare, tevreden thermostaat met
+activiteit `idle`. Een onbevestigde opdracht wordt niet automatisch herhaald.
+
+Een handmatige wijziging aan de CV blijft leidend tot het volgende begin of einde
+van een actief comfortvenster. Daarna neemt HC automatisch over. De overname
+blijft bij een herstart bewaard. Zonder ingeschakeld comfortschema is er geen
+volgend schakelmoment en blijft handmatige vrijgave nodig. Expliciet handmatig
+Uit blijft mogelijk; ook die keuze respecteert HC tot het volgende schemamoment.
+
 Onder **Bronbediening** kun je modus en apparaattemperatuur handmatig instellen.
 De apparaatmodus Auto is niet de HC-planner. Handmatige keuzes blijven leidend;
 een schemabewerking neemt de bron niet automatisch over. Een HTTP-antwoord van HA

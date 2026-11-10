@@ -1,3 +1,10 @@
+# 2.0.0-dev.339
+
+- Geef ED weer een laadvenster wanneer alleen de doorlopende batterijondersteuning voor het huis niet haalbaar is; het huis kan dan netstroom gebruiken.
+- Reken die netafname mee in de volledige routekosten. Behoud laad- en terugleverdoelen, apparaatgrenzen en eindreserve, ook bij het vastzetten van het advies.
+- Laad de auto via netstroom of beschikbare zon; de bestaande batterijuitsluiting voor EV blijft gelden.
+- HC blijft dev.34. Geen planreset nodig. Vraag na de update opnieuw laadadvies aan in ED.
+
 # 2.0.0-dev.338
 
 - Toon bij een onderbouwd stand-byblok het verwachte huisverbruik, direct gebruikte zonne-energie, netafname en netkosten voor dat blok.
@@ -691,5 +698,3 @@ Ontwikkelrelease voor de gezamenlijke liveproef van de dagelijkse laadcyclus en 
 Na installeren: controleer dev.244 in PicoT en vul de gewenste handelsfractie en minimumspread in. Herstel kan voor de eerste proef uit blijven. Bestaande instellingen en historische diagnostiek blijven bewaard.
 
 Dit is een ontwikkelrelease: lokale controles zijn uitgevoerd; werking met de echte HA-meethistorie en modusfeedback wordt in de gezamenlijke liveproef beoordeeld.
-
-

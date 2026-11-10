@@ -123,7 +123,8 @@ class JointEVAdopter:
         adapter = IndependentDailyReferenceAdapter()
         conversion = self.conversion_model(changed)
         invalid = adapter.committed_execution_invalidity_reasons(
-            snapshot=changed, plan=selection.plan, conversion_model=conversion)
+            snapshot=changed, plan=selection.plan, conversion_model=conversion,
+            household_grid_fallback=True)
         if invalid:
             raise ValueError("joint_ev_fresh_validation_failed:" + ";".join(invalid))
         projection, _ = adapter.committed_plan_projection(

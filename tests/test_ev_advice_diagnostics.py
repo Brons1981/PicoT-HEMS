@@ -96,6 +96,35 @@ def test_dashboard_legacy_cost_is_not_mislabelled_as_joint_total():
     assert "totale kosten" not in result["cost"]
 
 
+@pytest.mark.parametrize("status,slots,enabled", [
+    ("blocked", [], False), ("infeasible", [], False),
+    ("ready", [], False),
+    ("ready", [{"starts_at": "2026-11-11T02:00:00Z",
+                "ends_at": "2026-11-11T03:00:00Z", "energy_wh": 2000}], True),
+])
+def test_execute_instruction_only_appears_for_executable_advice(status, slots, enabled):
+    source = DASHBOARD_HTML.split("    function chargingAdviceExplanation(advice) {", 1)[1]
+    source = "function chargingAdviceExplanation(advice) {" + source.split(
+        "    async function evChange(payload)", 1)[0]
+    setup = """
+const nodes={}; const el=id=>nodes[id]??={value:'',replaceChildren(){},append(){}};
+const evBusy=false; const evChange=()=>{}; const number=String;
+const document={createElement:()=>({})};
+"""
+    value = {"profile": {"expected_power_w": 2000, "expected_duration_seconds": 3600},
+             "charging_request": {"state": "requested", "remaining_energy_wh": 2000,
+                                  "ready_by": "2026-11-11T07:00:00Z"},
+             "charging_advice": {"status": status, "slots": slots}, "sessions": []}
+    call = "const ev=" + json.dumps(value) + ";"
+    call += "ev.charging_advice.generated_at=new Date().toISOString();"
+    call += "renderChargingAdvice(ev);console.log(JSON.stringify(nodes));"
+    result = subprocess.run(["node"], input=setup + source + call, text=True,
+                            encoding="utf-8", capture_output=True, check=True)
+    nodes = json.loads(result.stdout)
+    assert nodes["ev-advice-execute"]["disabled"] is not enabled
+    assert ("Kies Automatisch uitvoeren" in nodes["ev-advice-status"]["textContent"]) is enabled
+
+
 @pytest.mark.parametrize("joint_pending", [True, False])
 def test_dashboard_waiting_is_only_for_joint_confirmation(joint_pending):
     source = DASHBOARD_HTML.split("    function chargingAdviceExplanation(advice) {", 1)[1]

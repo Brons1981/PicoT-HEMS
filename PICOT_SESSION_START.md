@@ -1,3 +1,11 @@
+## Release HEMS dev.339 en ED dev.15 - 10 november 2026
+
+Herstel laadadvies bij normale netterugval voor het huis aan de batterijondergrens.
+HEMS rekent laadvensters door en geeft het gekozen tijdvak aan ED; ED beoordeelt het batterijplan niet.
+Behoud laad-/exportdoelen, SOC- en apparaatgrenzen en eindreserve bij advies en verse acceptatie.
+ED toont Automatisch uitvoeren alleen bij uitvoerbaar advies. HC dev.34 ongewijzigd.
+Zie docs/development_log/2026-11-10-ed-grid-fallback-advice.md. Geen live installatie of planreset.
+
 ## Release HC dev.34 - 10 november 2026
 
 Alex vraagt publicatie van de CV-ruststand, automatisch bronherstel en afkoelleerherstel via PR en groene CI.

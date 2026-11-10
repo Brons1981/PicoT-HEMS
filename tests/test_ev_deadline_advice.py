@@ -112,9 +112,28 @@ def test_active_load_blocks_double_counting(tmp_path):
 
 
 def test_invalid_retained_route_does_not_become_an_ev_candidate(tmp_path):
-    _, snapshot, _ = market_scenario(tmp_path, soc=0.9)
+    # Low stock also makes the bound market export unreachable; allowing house
+    # grid fallback must never waive that independent commitment.
+    _, snapshot, _ = market_scenario(tmp_path, soc=0.1)
     answer = advise(snapshot, request(snapshot), inputs()["conversion_model"])
     assert answer["reason"] == "retained_battery_plan_requires_repair"
+
+
+def test_grid_fallback_at_battery_floor_does_not_block_charging_advice(tmp_path):
+    store, snapshot, plan = market_scenario(tmp_path, soc=0.9)
+    from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
+
+    conversion = inputs()["conversion_model"]
+    assert IndependentDailyReferenceAdapter().committed_execution_invalidity_reasons(
+        snapshot=snapshot, plan=plan, conversion_model=conversion
+    ) == ("household_bridge_unreachable",)
+    before = store._load_payload()
+    answer = advise(snapshot, request(snapshot), conversion)
+    assert answer["status"] == "ready", answer
+    assert answer["scheduled_energy_wh"] == 1000
+    assert answer["slots"][0]["starts_at"] == (
+        snapshot.captured_at + timedelta(hours=14)).isoformat()
+    assert store._load_payload() == before
 
 
 def test_offset_equivalent_deadlines_compare_as_instants(tmp_path):

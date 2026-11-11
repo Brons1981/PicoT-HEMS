@@ -23,7 +23,7 @@ class HeatingTests(ControlFixture):
         self.at = NOW
         for zone in self.config['zones']:
             zone.update(minimum=10, target=20, maximum=25)
-            self.states[zone['temperature']] = dict(entity_id=zone['temperature'], state='18', attributes={'unit_of_measurement':'�C'},
+            self.states[zone['temperature']] = dict(entity_id=zone['temperature'], state='18', attributes={'unit_of_measurement':'°C'},
                 last_updated=datetime.fromtimestamp(NOW, timezone.utc).isoformat())
         self.runtime.schedule.data['settings'].update(setback_temperature=20, thermostat_temperature=20)
         self.runtime.schedule.save()

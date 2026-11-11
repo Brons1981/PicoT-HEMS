@@ -178,7 +178,7 @@ class Heating:
         from .thermal_weather import observed
         zone = next(z for z in config['zones'] if z['id'] == 'beneden')
         def temperature(entity):
-            sample = observation(entity, self.control.states, now, True, '�C')
+            sample = observation(entity, self.control.states, now, True, '°C')
             try:
                 age = now-timestamp(sample.get('source_reported') or sample.get('source_updated'))
             except (TypeError, ValueError, OverflowError):
@@ -273,7 +273,7 @@ class Heating:
                     learning.update(phase='unsupported_target', target=None, preheating=False)
             if zid == 'badkamer' and self.timer_active(now):
                 goal = {'target': self.data['timer']['temperature']}
-            sample = observation(zone['temperature'], self.control.states, now, True, '�C')
+            sample = observation(zone['temperature'], self.control.states, now, True, '°C')
             temp = sample['value']
             reason = None
             try:

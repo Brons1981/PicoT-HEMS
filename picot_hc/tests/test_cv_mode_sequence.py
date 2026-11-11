@@ -28,7 +28,7 @@ class CVModeSequenceTests(LocalHeatingFixture):
 
         def request(url, token, path, payload=None):
             if path == '/config':
-                return {'unit_system': {'temperature': '�C'}}
+                return {'unit_system': {'temperature': '°C'}}
             self.calls.append((path, copy.deepcopy(payload)))
             state = self.states[payload['entity_id']]
             attrs = state['attributes']

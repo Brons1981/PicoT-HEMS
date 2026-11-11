@@ -11,24 +11,24 @@ const {gunzipSync} = require('node:zlib');
   const data = mkdtempSync(path.join(tmpdir(), 'hc-browser-'));
   const root = path.resolve(__dirname, '..');
   const weatherState = {entity_id:'weather.buienradar',state:'cloudy',last_updated:new Date().toISOString(),
-    attributes:{temperature:20.7,apparent_temperature:20.7,temperature_unit:'�C',humidity:81,
+    attributes:{temperature:20.7,apparent_temperature:20.7,temperature_unit:'°C',humidity:81,
       pressure:1021.3,pressure_unit:'hPa',wind_speed:9.72,wind_gust_speed:18,wind_speed_unit:'km/h',precipitation_unit:'mm'}};
   const deviceCalls=[];
   const deviceStates=['climate.airco_woonkamer','climate.19791209313101_climate','climate.huiskamer','switch.1_5_3_badkamer_verwarming_badkamer'].map(entity_id=>({entity_id,state:'off',last_updated:new Date().toISOString(),attributes:{temperature:20,min_temp:16,max_temp:30,target_temp_step:0.5,supported_features:1,hvac_modes:['off','heat','dry'],hvac_action:'idle'}}));
   const cv=deviceStates.find(s=>s.entity_id==='climate.huiskamer');
   delete cv.attributes.target_temp_step;
   Object.assign(cv.attributes,{min_temp:5,current_temperature:20,supported_features:401,hvac_modes:['off','heat','auto']});
-  deviceStates.push({entity_id:'sensor.downstairs',state:'19',attributes:{unit_of_measurement:'�C'},last_reported:new Date().toISOString()});
+  deviceStates.push({entity_id:'sensor.downstairs',state:'19',attributes:{unit_of_measurement:'°C'},last_reported:new Date().toISOString()});
   const doorState={entity_id:'binary_sensor.1_3_woonkamer_deur_raam_sensor_achterdeur_contact',state:'on',attributes:{device_class:'door'},last_updated:new Date().toISOString()};
-  deviceStates.push(doorState,{entity_id:'sensor.0_energie_gw1200a_outdoor_temperature',state:'10',attributes:{unit_of_measurement:'�C'},last_reported:new Date().toISOString()});
+  deviceStates.push(doorState,{entity_id:'sensor.0_energie_gw1200a_outdoor_temperature',state:'10',attributes:{unit_of_measurement:'°C'},last_reported:new Date().toISOString()});
   const options=JSON.parse(readFileSync(path.join(root,'options.example.json'),'utf8'));
   options.zones[0].temperature='sensor.downstairs';options.poll_seconds=10;options.stale_seconds=30;
   for(const [entity_id,state,attributes] of [
-    ['sensor.gw1200a_indoor_dewpoint','11.5',{unit_of_measurement:'�C'}],
-    ['sensor.gw1200a_dewpoint_2','12.5',{unit_of_measurement:'�C'}],
+    ['sensor.gw1200a_indoor_dewpoint','11.5',{unit_of_measurement:'°C'}],
+    ['sensor.gw1200a_dewpoint_2','12.5',{unit_of_measurement:'°C'}],
     ['sensor.gw1200a_humidity_2','70',{unit_of_measurement:'%'}],
-    ['sensor.gw1200a_dewpoint_3','14.5',{unit_of_measurement:'�C'}],
-    ['sensor.0_energie_gw1200a_dewpoint','8.5',{unit_of_measurement:'�C'}],
+    ['sensor.gw1200a_dewpoint_3','14.5',{unit_of_measurement:'°C'}],
+    ['sensor.0_energie_gw1200a_dewpoint','8.5',{unit_of_measurement:'°C'}],
     ['binary_sensor.gw1200a_battery_1','off',{device_class:'battery'}],
     ['binary_sensor.gw1200a_battery_2','on',{device_class:'battery'}],
     ['binary_sensor.gw1200a_battery_3','unavailable',{device_class:'battery'}],
@@ -37,15 +37,15 @@ const {gunzipSync} = require('node:zlib');
   deviceStates.push(
     {entity_id:'binary_sensor.0_energie_gw1200a_wh26_battery',state:'off',attributes:{device_class:'battery'}},
     {entity_id:'sensor.0_energie_gw1200a_vapour_pressure_deficit',state:'7.5',attributes:{unit_of_measurement:'hPa'}},
-    {entity_id:'sensor.gw1200a_temperature_1',state:'16',attributes:{unit_of_measurement:'�C'}},
+    {entity_id:'sensor.gw1200a_temperature_1',state:'16',attributes:{unit_of_measurement:'°C'}},
     {entity_id:'sensor.gw1200a_humidity_1',state:'55',attributes:{unit_of_measurement:'%'}},
-    {entity_id:'sensor.gw1200a_dewpoint_1',state:'7',attributes:{unit_of_measurement:'�C'}}
+    {entity_id:'sensor.gw1200a_dewpoint_1',state:'7',attributes:{unit_of_measurement:'°C'}}
   );
   const fakeHA = http.createServer((req,res) => {
     res.setHeader('Content-Type','application/json');
     deviceStates.find(s=>s.entity_id==='sensor.downstairs').last_reported=new Date().toISOString();
     if(req.method === 'GET' && req.url === '/api/states') res.end(JSON.stringify([weatherState,...deviceStates]));
-    else if(req.method === 'GET' && req.url === '/api/config') res.end(JSON.stringify({unit_system:{temperature:'�C'}}));
+    else if(req.method === 'GET' && req.url === '/api/config') res.end(JSON.stringify({unit_system:{temperature:'°C'}}));
     else if(req.method === 'POST' && req.url === '/api/template') {
       let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{
         const ids=JSON.parse(JSON.parse(body).template.split('{% for id in ')[1].split(' %}')[0]);
@@ -86,33 +86,33 @@ const {gunzipSync} = require('node:zlib');
     assert.equal(await page.locator('form.temperature-settings').count(), 2);
     assert.equal(await page.locator('#zones .zone').first().locator('form.temperature-settings').count(),0);
     await page.waitForFunction(()=>document.querySelectorAll('.forecast-day').length===5);
-    assert.match(await page.locator('#weather-measured').textContent(), /Dauwpunt: 8,5 �C/);
+    assert.match(await page.locator('#weather-measured').textContent(), /Dauwpunt: 8,5 °C/);
     assert.match(await page.locator('#weather-measured').textContent(), /Sensorbatterij: Normaal/);
     assert.match(await page.locator('#weather-measured').textContent(), /VPD: 7,5 hPa/);
     assert.equal(await page.locator('#zones .zone').count(),4);
     assert.equal(await page.locator('#zones .zone').last().locator('form').count(),0);
-    assert.match(await page.locator('#climate-readout-garage').textContent(),/Temperatuur 16 �C/);
+    assert.match(await page.locator('#climate-readout-garage').textContent(),/Temperatuur 16 °C/);
     const zoneText=await page.locator('#zones').textContent();
-    assert.match(zoneText,/11,5 �C/);assert.match(zoneText,/12,5 �C/);assert.match(zoneText,/14,5 �C/);
+    assert.match(zoneText,/11,5 °C/);assert.match(zoneText,/12,5 °C/);assert.match(zoneText,/14,5 °C/);
     assert.match(zoneText,/SensorbatterijNiet van toepassing/);
     assert.match(zoneText,/SensorbatterijBatterij bijna leeg/);
     assert.match(zoneText,/SensorbatterijNiet beschikbaar/);
     assert.equal(await page.locator('#zones .battery-low').count(),1);
     assert.equal(await page.locator('.zone-climate-panel canvas').count(),4);
-    assert.match(await page.locator('#climate-readout-beneden').textContent(),/Temperatuur 19 �C/);
-    assert.match(await page.locator('#climate-readout-beneden').textContent(),/Dauwpunt 11,5 �C/);
+    assert.match(await page.locator('#climate-readout-beneden').textContent(),/Temperatuur 19 °C/);
+    assert.match(await page.locator('#climate-readout-beneden').textContent(),/Dauwpunt 11,5 °C/);
     assert.match(await page.locator('#climate-readout-beneden').textContent(),/Luchtvochtigheid Niet beschikbaar/);
-    assert.match(await page.locator('#climate-readout-boven').textContent(),/Dauwpunt 12,5 �C/);
-    assert.match(await page.locator('#climate-readout-badkamer').textContent(),/Dauwpunt 14,5 �C/);
+    assert.match(await page.locator('#climate-readout-boven').textContent(),/Dauwpunt 12,5 °C/);
+    assert.match(await page.locator('#climate-readout-badkamer').textContent(),/Dauwpunt 14,5 °C/);
     assert.match(await page.locator('#climate-readout-boven').textContent(),/Luchtvochtigheid 70 %/);
     const climateCanvas=page.locator('#climate-beneden');
     await climateCanvas.focus();await page.keyboard.press('ArrowLeft');
-    assert.match(await page.locator('#climate-readout-beneden').textContent(),/Temperatuur 19 �C/);
+    assert.match(await page.locator('#climate-readout-beneden').textContent(),/Temperatuur 19 °C/);
     await climateCanvas.click({position:{x:100,y:100}});
     assert.equal(await page.evaluate(()=>document.querySelector('#climate-beneden').userSelected),true);
     assert.match(await page.locator('#building-status').textContent(),/Registratie loopt/);
     assert.match(await page.locator('#building-retention').textContent(),/90 dagen/);
-    assert.match(await page.locator('#zones .zone').first().textContent(),/Binnen - buiten9 �C/);
+    assert.match(await page.locator('#zones .zone').first().textContent(),/Binnen − buiten9 °C/);
     assert.match(await page.locator('#zones .zone').first().textContent(),/AchterdeurOpen/);
     const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:'Meetgegevens downloaden'}).click()]);
     const archive=gunzipSync(readFileSync(await download.path())).toString();
@@ -122,7 +122,7 @@ const {gunzipSync} = require('node:zlib');
     assert.equal(measurements.at(-1).building.zones[0].delta_t_k,9);
     assert.equal(deviceCalls.length,0);
     assert.match(await page.locator('#weather-current').textContent(), /Bewolkt/);
-    assert.match(await page.locator('#weather-current').textContent(), /20,7 �C/);
+    assert.match(await page.locator('#weather-current').textContent(), /20,7 °C/);
     assert.doesNotMatch(await page.locator('#weather-forecast').textContent(), /Neerslag | mm|bron voorspelt regen/);
     assert.match(await page.locator('.forecast-day').first().textContent(), /Regen/);
     assert.match(await page.locator('#price-description').textContent(), /Bevestigd elektriciteitstarief/);
@@ -161,23 +161,23 @@ const {gunzipSync} = require('node:zlib');
     assert.equal(deviceCalls[0].payload.hvac_mode,'heat');
     await source.locator('input').fill('21.5');
     await source.getByRole('button',{name:'Temperatuur toepassen',exact:true}).click();
-    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd � 21.5 �C'));
+    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd · 21.5 °C'));
     assert.equal(deviceCalls.length,2);
     assert.equal(deviceCalls[1].payload.temperature,21.5);
     await source.getByRole('button',{name:'Uit',exact:true}).click();
-    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd � Uit'));
+    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd · Uit'));
     assert.equal(deviceCalls.length,3);
     await page.reload();
     await page.locator('.source-control').first().waitFor();
     assert.equal(deviceCalls.length,3,'Reload must not replay commands');
-    const cvCard=page.locator('.source-control').filter({has:page.getByRole('heading',{name:'Cv � beneden en boven',exact:true})});
+    const cvCard=page.locator('.source-control').filter({has:page.getByRole('heading',{name:'Cv · beneden en boven',exact:true})});
     await cvCard.locator('select').selectOption('auto');
     await cvCard.getByRole('button',{name:'Modus toepassen',exact:true}).click();
-    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd � Automatisch'));
+    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd · Automatisch'));
     assert.equal(await cvCard.locator('input').getAttribute('step'),'0.5');
     await cvCard.locator('input').fill('19.5');
     await cvCard.getByRole('button',{name:'Temperatuur toepassen',exact:true}).click();
-    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd � 19.5 �C'));
+    await page.waitForFunction(()=>document.querySelector('#command-history').textContent.includes('Instelling bevestigd · 19.5 °C'));
     assert.equal(deviceCalls.length,5);
     assert.deepEqual(deviceCalls[4],{path:'/api/services/climate/set_temperature',payload:{entity_id:'climate.huiskamer',temperature:19.5}});
     const schedule=page.locator('.schedule-form');
@@ -195,7 +195,7 @@ const {gunzipSync} = require('node:zlib');
     await evening.locator('[name=hard]').check();
     await evening.getByRole('button',{name:'Dupliceren',exact:true}).click();
     const night=schedule.locator('.schedule-row').last();
-    await night.getByRole('button',{name:'Ma-vr',exact:true}).click();
+    await night.getByRole('button',{name:'Ma–vr',exact:true}).click();
     await night.locator('[name=start]').fill('22:00');
     await night.locator('[name=end]').fill('06:00');
     await night.locator('[name=target]').fill('17');
@@ -220,7 +220,7 @@ const {gunzipSync} = require('node:zlib');
     assert.equal(deviceCalls.length,5,'Enabling a comfort schedule must not choose or dispatch a source');
     cv.attributes.temperature=18.5;cv.last_updated=new Date().toISOString();
     await page.waitForFunction(()=>current?.schedule?.overrides?.some(h=>h.source==='cv'&&h.temperature===18.5&&h.status==='observed'),null,{timeout:45000});
-    assert.match(await page.locator('#forced-sources').textContent(),/Gedwongen bron: 18.5 �C/);
+    assert.match(await page.locator('#forced-sources').textContent(),/Gedwongen bron: 18.5 °C/);
     assert.equal(deviceCalls.length,5);
     await cvCard.locator('input').fill('20.5');
     await cvCard.getByRole('button',{name:'Temperatuur toepassen',exact:true}).click();
@@ -246,7 +246,7 @@ const {gunzipSync} = require('node:zlib');
     for(const device of deviceStates.filter(d=>d.entity_id.startsWith('climate.')||d.entity_id.startsWith('switch.')))device.state='off';
     for(const zone of options.zones){
       let sensor=deviceStates.find(d=>d.entity_id===zone.temperature);
-      if(!sensor){sensor={entity_id:zone.temperature,attributes:{unit_of_measurement:'�C'}};deviceStates.push(sensor);}
+      if(!sensor){sensor={entity_id:zone.temperature,attributes:{unit_of_measurement:'°C'}};deviceStates.push(sensor);}
       // Reproduce HA's cached REST report while direct template data remains fresh.
       sensor.state='18';sensor.last_reported=new Date(Date.now()-3600000).toISOString();
       sensor.actual_reported=new Date().toISOString();

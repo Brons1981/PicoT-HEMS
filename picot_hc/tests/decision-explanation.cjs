@@ -14,7 +14,7 @@ const d={basis:'cv_cheaper',selected:['cv'],room_temperature_c:17.3,room_target_
 module.exports=structuredClone(d);
 let panel=el('section');context.renderHeatDecision(panel,d);context.renderHeatPrices(panel,d);
 let output=text(panel);
-for(const expected of ['CV gekozen omdat','17,3 �C','1,7 �C hoger','apparaat uit','wachten op bevestiging','0,679/kWh','1,420/m�','COP 3,72','90% rendement','0,601/kWh','totale kosten','HEMS-energieadvies'])assert.ok(output.includes(expected),expected);
+for(const expected of ['CV gekozen omdat','17,3 °C','1,7 °C hoger','apparaat uit','wachten op bevestiging','0,679/kWh','1,420/m³','COP 3,72','90% rendement','0,601/kWh','totale kosten','HEMS-energieadvies'])assert.ok(output.includes(expected),expected);
 assert.ok(!output.includes('verwarming gemeld'));
 d.execution.cv.command_field='mode';
 d.execution.cv.command_value='heat';

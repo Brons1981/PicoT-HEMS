@@ -178,7 +178,7 @@ class Heating:
         from .thermal_weather import observed
         zone = next(z for z in config['zones'] if z['id'] == 'beneden')
         def temperature(entity):
-            sample = observation(entity, self.control.states, now, True, '°C')
+            sample = observation(entity, self.control.states, now, True, '�C')
             try:
                 age = now-timestamp(sample.get('source_reported') or sample.get('source_updated'))
             except (TypeError, ValueError, OverflowError):
@@ -273,7 +273,7 @@ class Heating:
                     learning.update(phase='unsupported_target', target=None, preheating=False)
             if zid == 'badkamer' and self.timer_active(now):
                 goal = {'target': self.data['timer']['temperature']}
-            sample = observation(zone['temperature'], self.control.states, now, True, '°C')
+            sample = observation(zone['temperature'], self.control.states, now, True, '�C')
             temp = sample['value']
             reason = None
             try:
@@ -322,7 +322,8 @@ class Heating:
                 zones[zid]['reason'] = ('Ondergrens bewaken; airco gebruikt minimaal 18 \u00b0C.' if on else
                     'Natuurlijk afkoelen; airco uit tot de kamerondergrens is bereikt.')
         rows, warnings = prices(self.control.states.get(config['price_entity']), config, now)
-        price = next((p['value'] for p in rows if p['start'] <= now < p['end']), None)
+        price_interval = next((p for p in rows if p['start'] <= now < p['end']), None)
+        price = price_interval['value'] if price_interval else None
         if not tariff_confirmed(config) or warnings:
             price = None
         gas = numeric(config.get('gas_price'))
@@ -349,21 +350,36 @@ class Heating:
             and down_command.get('status') in ('confirmed', 'already_set')
             and down_command.get('value') != 'off')
 
-        def eligible(source, target):
+        def ineligible_reason(source, target):
             s = sources[source]
             if source in manual_sources or (source == 'cv' and cv_idle and source not in owned):
-                return False
-            if not s['available'] or source in self.data['faults'] or any(z in blocked for z in COVERAGE[source]):
-                return False
+                return 'Handmatige bronkeuze of ruststand heeft voorrang.'
+            if not s['available']:
+                return s['reason'] or 'Geen actuele apparaatmelding.'
+            if source in self.data['faults']:
+                return self.data['faults'][source]
+            if any(z in blocked for z in COVERAGE[source]):
+                return 'Handmatige of gedeelde bron blokkeert deze ruimte.'
+            if (source in ('beneden', 'boven') and 'cv' in owned and 'cv' in self.data['faults']
+                    and not self.cv_handover_ready(sources, records)):
+                return 'CV-opdracht mislukt; wachten op actuele bevestiging dat CV uit of veilig in rust staat.'
             if source == 'badkamer':
-                return True
+                return None
             if not s['temperature_supported'] or 'heat' not in s['modes'] or 'off' not in s['modes']:
-                return False
+                return 'Verwarmingsmodus of temperatuurgrenzen niet bevestigd.'
+            if target is None:
+                return 'Geen temperatuurdoel.'
             steps = (target-s['minimum'])/s['step']
-            return s['minimum'] <= target <= s['maximum'] and math.isclose(steps, round(steps), abs_tol=.00001)
+            if not (s['minimum'] <= target <= s['maximum'] and math.isclose(steps, round(steps), abs_tol=.00001)):
+                return 'Temperatuurdoel past niet bij apparaatgrenzen of stapgrootte.'
+            return None
+
+        def eligible(source, target):
+            return ineligible_reason(source, target) is None
 
         desired = {}
         direct_desired = {}
+        decision_basis = 'no_source'
         enabled = settings['enabled'] and self.armed
         if enabled and price is not None:
             for zid in ('beneden', 'boven', 'badkamer'):
@@ -378,13 +394,18 @@ class Heating:
                     else:
                         desired[zid] = target
             direct_desired = dict(desired)
+            if 'beneden' in desired:
+                decision_basis = 'room_floor' if floor_mode else 'airco_preferred'
             down = zones['beneden']
             # The room thermostat is downstairs: it cannot independently heat upstairs.
             # The currently physically disabled CV is not a fallback for this
             # below-device-minimum floor policy. Comfort source choice is unchanged.
             cv_ok = (not floor_mode and demand['beneden'] and eligible('cv', down['target'])
                      and costs['cv'] is not None)
+            if 'beneden' in desired and not floor_mode and not cv_ok:
+                decision_basis = 'airco_available'
             if cv_ok and ('beneden' not in desired or costs['cv'] < costs['beneden']):
+                decision_basis = 'cv_cheaper' if 'beneden' in desired else 'cv_fallback'
                 desired.pop('beneden', None)
                 desired.pop('boven', None)
                 desired['cv'] = down['target']
@@ -396,6 +417,8 @@ class Heating:
                 viable = (cv_ok if source == 'cv' else demand[source] and eligible(source, zones[source]['target'])
                           and (source != 'beneden' or door_start or door_continue or door_pending))
                 if viable:
+                    if source in ('cv', 'beneden'):
+                        decision_basis = 'minimum_run'
                     for other in list(desired):
                         if set(COVERAGE[source]) & set(COVERAGE[other]):
                             del desired[other]
@@ -416,11 +439,31 @@ class Heating:
                     estimate=True, strategy='current_heat_cost', preheating=learning['preheating'], learning=learning['enabled'], learning_status=learning, learning_context=context)
         result['cv_handover_seconds'] = max(60, 2 * config.get('poll_seconds', 30))
         result['room_floor_mode'] = floor_mode
+        candidates = {}
+        for source in ('beneden', 'cv'):
+            target = zones['beneden']['target']
+            if source == 'beneden' and target is not None and sources[source].get('heating_minimum') is not None:
+                target = max(target, sources[source]['heating_minimum'])
+            reason = ineligible_reason(source, target)
+            if not reason and source == 'beneden' and not (door_start or door_continue or door_pending):
+                reason = 'Airco wacht op gesloten achterdeur en herstelvertraging.'
+            if not reason and source == 'cv' and floor_mode:
+                reason = 'Kamerondergrens wordt door de airco bewaakt.'
+            if not reason and source == 'cv' and costs['cv'] is None:
+                reason = 'Geen geldig gastarief voor de kostenvergelijking.'
+            candidates[source] = dict(eligible=reason is None, reason=reason)
+        result['decision_inputs'] = dict(basis=decision_basis, candidates=candidates,
+            prices=dict(electricity_eur_kwh=price, electricity_entity=config['price_entity'],
+                interval=price_interval, confirmed=tariff_confirmed(config), warnings=warnings,
+                gas_eur_m3=gas, gas_valid=bool(gas_valid and gas is not None and gas >= 0),
+                gas_valid_until=config.get('gas_valid_until')))
         if hasattr(self, 'hourly_weather'):
             result['hourly_weather'] = self.hourly_weather(now)
         # A scheduled energy recipe must not replace an explicit room goal.
         if self.energy_start is not None and not view.get('temporary_temperature') and not floor_mode:
             result = self.energy_start.apply(result, config, now, direct_desired)
+            if result.get('energy_start'):
+                result['decision_inputs']['basis'] = 'energy_start'
         # A brief telemetry gap must not cycle an already confirmed airco. Keep
         # its existing device state only: no fresh start, target write or source
         # switch is authorized by this grace period. Persist the deadline so an
@@ -466,6 +509,12 @@ class Heating:
                 continue  # Includes failed/uncertain stops: never replay automatically.
             if source not in plan['desired'] and plan['sources'][source]['available']:
                 if source == 'cv':
+                    if self.cv_handover_ready(plan['sources'], records):
+                        continue
+                    if plan['sources'][source]['pending']:
+                        continue
+                    if plan['sources'][source]['state'] != 'heat':
+                        return source, 'mode', 'heat'
                     return source, 'heating', 15
                 return source, 'state' if source == 'badkamer' else 'mode', 'off'
         desired = list(plan['desired'].items())
@@ -477,11 +526,7 @@ class Heating:
             s = plan['sources'][source]
             if s['pending'] or source in self.data['faults']:
                 continue
-            conflict = any(other != source and set(COVERAGE[source]) & set(COVERAGE[other])
-                           and not (other == 'cv' and own.get('standby')
-                                    and records.get(own['command'], {}).get('status') in ('confirmed', 'already_set')
-                                    and passive_idle(plan['sources'][other]))
-                           for other, own in self.data['owned'].items())
+            conflict = self.conflicting_sources(plan, source, records)
             if conflict:
                 continue
             if (source not in self.data['owned'] or self.data['owned'][source].get('standby')) and now-self.data['changed'].get(source, -1e20) < 180:
@@ -490,8 +535,28 @@ class Heating:
                 if s['state'] != 'on':
                     return source, 'state', 'on'
             elif s['state'] != 'heat' or not self.control.matches(s['temperature'], target):
+                if source == 'cv' and s['state'] != 'heat':
+                    return source, 'mode', 'heat'
                 return source, 'heating', target
         return None
+
+    def conflicting_sources(self, plan, source, records):
+        return [other for other, own in self.data['owned'].items()
+                if other != source and set(COVERAGE[source]) & set(COVERAGE[other])
+                and not (other == 'cv' and self.cv_handover_ready(plan['sources'], records))]
+
+    def cv_handover_ready(self, sources, records):
+        """Release competing heat without erasing a failed CV command or replaying it."""
+        own = self.data['owned'].get('cv', {})
+        command = records.get(own.get('command'), {})
+        cv = sources.get('cv', {})
+        if not cv.get('available') or cv.get('pending'):
+            return False
+        if command.get('status') in FAILURES and cv.get('state') == 'off':
+            return True
+        return bool(own.get('standby')
+                    and command.get('status') in ('confirmed', 'already_set')
+                    and passive_idle(cv))
 
     def tick(self, config, now=None):
         now = time.time() if now is None else now
@@ -501,6 +566,8 @@ class Heating:
         plan = self.plan(config, now)
         self.learning.observe(self.schedule.view(now), plan, now, max(180, 3*config.get('poll_seconds', 30)), plan['learning_context'])
         self.data['demand'] = plan['demand']
+        from .decision import explain
+        self.data['last_decision'] = explain(self, config, plan, now)
         self.save()  # Storage failure must precede all device writes.
         # One write per poll, prioritising stops; remaining independent sources follow.
         chosen = self.action(plan, now)
@@ -519,16 +586,20 @@ class Heating:
             previous = copy.deepcopy(self.data)
             self.data['owned'][source] = dict(command=request_id,
                 since=self.data['owned'].get(source, {}).get('since', moment))
-            if source == 'cv' and source not in current['desired']:
+            if source == 'cv' and source not in current['desired'] and field == 'heating':
                 # Keep ownership to allow later CV demand, but do not count the
                 # standby setpoint as a continuing comfort heat request.
                 self.data['owned'][source].update(standby=True, released=True)
             if source == 'beneden' and field == 'heating' and current.get('room_floor_mode'):
                 self.data['owned'][source]['floor_run'] = True
-            if (field == 'heating' and source in current['desired'] and current.get('energy_start')
+            if ((field == 'heating' or source == 'cv' and field == 'mode' and value == 'heat')
+                    and source in current['desired'] and current.get('energy_start')
                     and source == current['energy_start'].get('source', 'beneden')):
                 self.data['owned'][source]['energy_start'] = copy.deepcopy(current['energy_start'])
             self.data['changed'][source] = moment
+            from .decision import explain
+            self.data['last_command_decision'] = dict(explain(self, config, current, moment),
+                command_id=request_id, command_source=source, command_field=field, command_value=value)
             try:
                 self.save()
             except Exception:
@@ -544,6 +615,9 @@ class Heating:
 
     def view(self, config, now):
         result = self.plan(config, now)
+        from .decision import explain
+        result['decision'] = explain(self, config, result, now)
+        self.last_decision = copy.deepcopy(result['decision'])
         result['door_fan'] = self.door_fan.view(config, now, result)
         result.update(settings=copy.deepcopy(self.data['settings']), revision=self.data['revision'],
                       faults=copy.deepcopy(self.data['faults']), owned=copy.deepcopy(self.data['owned']))

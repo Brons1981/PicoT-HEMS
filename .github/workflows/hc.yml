@@ -38,6 +38,7 @@ jobs:
           node --check picot_hc/picot_hc/web/tablet.js
           node tests/tablet-ui.cjs
           node picot_hc/tests/climate-charts.cjs
+          node picot_hc/tests/decision-explanation.cjs
       - name: Build independent app container
         run: docker build --tag picot-hc:test picot_hc
       - name: Verify container package and assets
@@ -49,4 +50,6 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/hc-browser" playwright@1.62.1
           node "$RUNNER_TEMP/hc-browser/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Dashboard interaction test
-        run: NODE_PATH="$RUNNER_TEMP/hc-browser/node_modules" node picot_hc/tests/dashboard.cjs
+        run: |
+          NODE_PATH="$RUNNER_TEMP/hc-browser/node_modules" node picot_hc/tests/dashboard.cjs
+          NODE_PATH="$RUNNER_TEMP/hc-browser/node_modules" node picot_hc/tests/decision-layout.cjs

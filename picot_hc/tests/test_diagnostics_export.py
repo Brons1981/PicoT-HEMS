@@ -82,3 +82,14 @@ def test_download_includes_cooling_records_without_mutating(tmp_path):
     data=json.loads(gzip.decompress(response.wfile.getvalue()))
     assert data['learning_models']['cooling']['records']==samples
     assert rt.heating.learning.cooling.samples==samples
+
+
+def test_export_keeps_decision_timestamp_and_does_not_replan(tmp_path):
+    rt = runtime(tmp_path)
+    rt.heating.last_decision = {'evaluated_at': 123, 'basis': 'cv_cheaper'}
+    rt.heating.data['last_command_decision'] = {'command_id': '24', 'evaluated_at': 120}
+    rt.heating.view = lambda *args: (_ for _ in ()).throw(AssertionError('Export must not replan'))
+    response = request(rt)
+    exported = json.loads(gzip.decompress(response.wfile.getvalue()))
+    assert exported['current_decision'] == rt.heating.last_decision
+    assert exported['last_command_decision']['command_id'] == '24'

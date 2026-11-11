@@ -18,7 +18,7 @@ def collect(runtime):
             states[entity] = {key: item.get(key) for key in
                               ('state', 'last_updated', 'last_changed', 'last_reported')}
             states[entity]['attributes'] = {key: attrs.get(key) for key in
-                ('temperature', 'hvac_action', 'hvac_modes', 'target_temp_step', 'options')}
+                ('temperature', 'current_temperature', 'preset_mode', 'hvac_action', 'hvac_modes', 'target_temp_step', 'options')}
         learning_models = {}
         for name, model in (("warmup", getattr(runtime, 'warmup_energy', None)),
                             ("startup", getattr(getattr(runtime, 'startup_energy', None), 'model', None)),
@@ -37,6 +37,8 @@ def collect(runtime):
             stale_seconds=runtime.config['stale_seconds'],
             connected=control.connected, last_received=control.received,
             commands=control.records(), heating=runtime.heating.data,
+            current_decision=getattr(runtime.heating, 'last_decision', runtime.heating.data.get('last_decision')),
+            last_command_decision=runtime.heating.data.get('last_command_decision'),
             schedule=runtime.schedule.data, door_fan=runtime.heating.door_fan.data,
             reported_states=states, learning_models=learning_models,
             strategy_readiness=getattr(runtime, 'strategy_readiness', None),

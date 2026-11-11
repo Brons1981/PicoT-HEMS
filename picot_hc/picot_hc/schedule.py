@@ -45,11 +45,11 @@ def validate_settings(value):
         temperature = value[key]
         if temperature is not None and (type(temperature) not in (int, float)
                 or not math.isfinite(temperature) or not 5 <= temperature <= 35):
-            raise ValueError('Temperatuur moet tussen 5 en 35 °C liggen, of niet ingesteld zijn.')
+            raise ValueError('Temperatuur moet tussen 5 en 35 �C liggen, of niet ingesteld zijn.')
     if value['enabled'] and value['setback_temperature'] is None:
         raise ValueError('Stel een minimumtemperatuur buiten de comfortvensters in.')
     if type(band) not in (int, float) or not math.isfinite(band) or not 0 <= band <= 5:
-        raise ValueError('Optimalisatieband moet tussen 0 en 5 °C liggen (±).')
+        raise ValueError('Optimalisatieband moet tussen 0 en 5 �C liggen (�).')
     for key in ('door_open_seconds', 'door_close_seconds'):
         if type(value[key]) is not int or not 0 <= value[key] <= 1800:
             raise ValueError('Deurvertraging moet tussen 0 en 1800 seconden liggen.')
@@ -66,12 +66,12 @@ def validate_settings(value):
             raise ValueError('Ongeldige weekdag of harde grens.')
         start, end = minutes(window['start']), minutes(window['end'], end=True)
         if start == end:
-            raise ValueError('Begin en einde zijn gelijk; gebruik 00:00–24:00 voor een hele dag.')
+            raise ValueError('Begin en einde zijn gelijk; gebruik 00:00-24:00 voor een hele dag.')
         if end < start:
             end += 1440
         target = window['target']
         if type(target) not in (int, float) or not math.isfinite(target) or not 5 <= target <= 35:
-            raise ValueError('Temperatuur moet tussen 5 en 35 °C liggen.')
+            raise ValueError('Temperatuur moet tussen 5 en 35 �C liggen.')
         begin, finish = window['day'] * 1440 + start, window['day'] * 1440 + end
         spans.append((begin, min(finish, WEEK)))
         if finish > WEEK:
@@ -173,7 +173,7 @@ class Schedule:
                 del window['minimum'], window['maximum']
             if changed:
                 settings['enabled'] = False
-                self.data['migration'] = 'Controleer de centrale optimalisatieband (±1 °C) en comfortkeuzes; oude grenzen zijn veranderd. Schakel daarna het schema opnieuw in.'
+                self.data['migration'] = 'Controleer de centrale optimalisatieband (�1 �C) en comfortkeuzes; oude grenzen zijn veranderd. Schakel daarna het schema opnieuw in.'
             self.data.update(format=3, revision=old['revision']+1)
             with store.connect() as db:
                 db.execute('CREATE TABLE IF NOT EXISTS hc_schedule_archive (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
@@ -312,8 +312,17 @@ class Schedule:
             previous = self.data['baseline'].get(entity)
             changes = []
             if previous:
+                latest = next((c for c in records if c['entity_id'] == entity), {})
+                cv_mode_confirmed = (source == 'cv' and latest.get('origin') == 'schedule'
+                    and latest.get('field') == 'mode' and latest.get('value') == 'heat'
+                    and latest.get('status') == 'confirmed' and latest.get('finished') == now
+                    and previous['mode'] != 'heat' and current['mode'] == 'heat')
                 for field, value in current.items():
                     if value is None or previous.get(field) is None or value == previous[field]:
+                        continue
+                    if field == 'temperature' and cv_mode_confirmed:
+                        # eTwist restores its own setpoint when leaving frost/auto mode.
+                        # Only this confirmed mode transition is HC-owned, not later edits.
                         continue
                     own = next((c for c in records if c['entity_id'] == entity and c.get('sent')
                                 and (c['sent'] <= now <= c['deadline'] or c.get('recovered_at') == now)

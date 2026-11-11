@@ -8,7 +8,7 @@ from picot_hc.cv_warmup import CvWarmupEvidence
 NOW = 1792692000.0
 
 
-def run(model, fault=None, electricity=None, gas_screening=None, auxiliary=None):
+def run(model, fault=None, electricity=None, gas_screening=None, auxiliary=None, mode_start=False):
     view = dict(
         revision=1,
         settings=dict(enabled=True, learning_enabled=True),
@@ -28,24 +28,33 @@ def run(model, fault=None, electricity=None, gas_screening=None, auxiliary=None)
         first["gas_screening"] = gas_screening(0)
     if electricity:
         first["electricity"] = electricity(0)
-    model.prepare(first, view, plan, ("cv", "heating", 20), NOW)
+    model.prepare(first, view, plan, ("cv", "mode", "heat") if mode_start else ("cv", "heating", 20), NOW)
     command = dict(
         id="cv-start",
         source="cv",
-        field="heating",
+        field="mode" if mode_start else "heating",
         origin="schedule",
         before=dict(mode="off"),
-        value=20,
+        value="heat" if mode_start else 20,
         created=NOW,
         sent=NOW,
         status="awaiting_feedback",
     )
     plan["owned"]["cv"] = dict(command=command["id"])
+    commands = [command]
     for minute in range(26):
         now = NOW + minute * 60
         if minute:
             command["status"] = "confirmed"
             plan["sources"]["cv"]["state"] = "heat"
+        if mode_start:
+            plan["sources"]["cv"]["temperature"] = 6 if minute < 3 else 20
+            if minute == 2:
+                command = dict(command, id="cv-target", field="heating", value=20,
+                               before=dict(mode="heat"), created=now, sent=now,
+                               status="awaiting_feedback")
+                commands.insert(0, command)
+                plan["owned"]["cv"]["command"] = command["id"]
         point = dict(
             first,
             indoor=min(20, 18 + minute / 10),
@@ -75,7 +84,7 @@ def run(model, fault=None, electricity=None, gas_screening=None, auxiliary=None)
                 now += 600
             elif fault == "restart":
                 model = CvWarmupEvidence(model.store)
-        model.observe(point, view, plan, [command], now)
+        model.observe(point, view, plan, commands, now)
     return model
 
 
@@ -95,6 +104,17 @@ def test_cv_trajectory_records_gas_separately_without_claiming_comparable_energy
     assert CvWarmupEvidence(model.store).view(NOW + 1500)["latest"] == record
     run(model)
     assert len(model.records) == 1
+
+
+@pytest.mark.parametrize("fault", [None, "manual", "missing", "schema", "restart"])
+def test_two_step_cv_start_preserves_original_baseline_and_validity(tmp_path, fault):
+    model = run(CvWarmupEvidence(Store(tmp_path / "hc.sqlite")), fault, mode_start=True)
+    assert len(model.records) == (0 if fault else 1)
+    if not fault:
+        record = model.records[0]
+        assert record["start"] == NOW
+        assert record["confirmation_delay_seconds"] == 180
+        assert record["household_gas_delta_m3"] == pytest.approx(0.5)
 
 
 @pytest.mark.parametrize(

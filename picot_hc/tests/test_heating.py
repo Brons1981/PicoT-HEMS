@@ -148,8 +148,9 @@ class HeatingTests(ControlFixture):
         for z in self.config['zones'][:2]: self.states[z['device']]['state']='off'
         self.apply = True
         self.poll()
-        self.assertEqual(self.calls[-1][1], {'entity_id':self.config['cv'],'temperature':20,'hvac_mode':'heat'})
+        self.assertEqual(self.calls[-1][1], {'entity_id':self.config['cv'],'hvac_mode':'heat'})
         self.poll()
+        self.assertEqual(self.states[self.config['cv']]['attributes']['temperature'],20)
         self.assertEqual(self.runtime.schedule.view(self.at)['overrides'], [])
 
     def test_cv_uses_downstairs_target_and_cannot_heat_upstairs_alone(self):
@@ -157,8 +158,10 @@ class HeatingTests(ControlFixture):
         self.temperature('boven',16)
         self.temperature('badkamer',22)
         self.price(.90); self.enable(); self.poll(NOW+121)
-        self.assertEqual(self.calls[-1][1]['temperature'],20)
+        self.assertEqual(self.calls[-1][1]['hvac_mode'],'heat')
         self.assertEqual(self.calls[-1][1]['entity_id'],self.config['cv'])
+        self.poll()
+        self.assertEqual(self.states[self.config['cv']]['attributes']['temperature'],20)
         self.temperature('beneden',20)
         self.poll(); self.poll(); self.poll()
         self.assertEqual(self.heat.view(self.config,self.at)['desired'], {'cv':20})

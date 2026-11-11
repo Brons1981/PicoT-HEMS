@@ -1,3 +1,9 @@
+# 0.1.0-dev.35
+
+- Schakel de CV eerst naar verwarmingsmodus en wacht op bevestiging voordat HC het temperatuurdoel instelt. Respecteer handmatige bediening en voorkom herhaling van onzekere opdrachten.
+- Laat de airco overnemen na een mislukte CV-opdracht als actuele terugmelding bevestigt dat de CV uit staat. Bewaar de fout en verwerk een eventuele late CV-bevestiging veilig.
+- Toon waarom HC een warmtebron kiest, de gebruikte stroom- en gasprijzen, COP/rendement en geschatte kosten per kWh warmte. Maak gekozen bron, werkelijke apparaatstand en wachtreden afzonderlijk zichtbaar.
+- Toon de kamer- en thermostaattemperatuur naast elkaar en neem de beslisonderbouwing op in de diagnose. Bestaande temperatuurkalibratie en HEMS-afspraken blijven ongewijzigd.
 # 0.1.0-dev.34
 
 - Zet de CV na automatische warmtevraag op 15 graden in verwarmingsmodus. Respecteer handmatige bediening tot het volgende comfortschemamoment.

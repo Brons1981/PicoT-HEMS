@@ -9,6 +9,7 @@ function renderHeating(data) {
     ? 'HC regelt op de actuele temperatuurdoelen. Handmatige keuzes blijven leidend.'
     : 'Automatische verwarming staat uit. De gekozen instelling blijft bij een herstart bewaard.';
   const decisions = $('heating-decisions'); decisions.replaceChildren();
+  if (data.decision) renderHeatDecision(decisions, data.decision);
   for (const [zone, state] of Object.entries(data.zones)) {
     const selected = Object.keys(data.desired).filter(s => s === zone || s === 'cv' && zone !== 'badkamer');
     decisions.append(el('p', zone + ': ' + state.reason + (selected.length ? ' Gekozen: ' + selected.map(s=>names[s]).join(', ') + '.' : '')));
@@ -25,6 +26,7 @@ function renderHeating(data) {
     }
   }
   const costs = $('heating-costs'); costs.replaceChildren();
+  if (data.decision) renderHeatPrices(costs, data.decision);
   for (const [key, name] of Object.entries(names)) {
     const cost = data.costs[key];
     costs.append(el('p', name + ': ' + (typeof cost === 'number' ? '€ ' + cost.toLocaleString('nl-NL',{minimumFractionDigits:3,maximumFractionDigits:3}) + '/kWh warmte (schatting)' : 'geen geldige kostenbasis')));
@@ -84,6 +86,62 @@ function renderHeating(data) {
     heatingForm=form;
   }
   heatingForm.sync(data);
+}
+
+function heatNumber(value, digits=1) {
+  return Number.isFinite(value) ? value.toLocaleString('nl-NL', {minimumFractionDigits:digits,maximumFractionDigits:digits}) : 'onbekend';
+}
+
+function renderHeatDecision(panel, d) {
+  const names={beneden:'Airco beneden',cv:'CV'};
+  const reasons={
+    cv_cheaper:'CV gekozen omdat de geraamde kosten per kWh warmte lager zijn dan bij de airco.',
+    cv_fallback:'CV gekozen omdat de airco op dit moment niet inzetbaar is.',
+    airco_preferred:'Airco gekozen: bij gelijke of lagere geraamde warmtekosten heeft de airco voorrang, mits inzetbaar.',
+    airco_available:'Airco gekozen omdat CV op dit moment niet voor de bronkeuze beschikbaar is.',
+    minimum_run:'Bestaande warmtebron behouden gedurende de minimale looptijd van vijf minuten.',
+    room_floor:'Airco gekozen om de kamerondergrens te bewaken; het apparaat gebruikt minimaal 18 °C.',
+    energy_start:'Een actief verwarmingsstartplan bepaalt de bron en het startmoment.',
+    disabled:'Automatische verwarming staat uit.',
+    no_demand:'Geen warmtebron nodig bij het huidige temperatuurdoel.',
+    blocked:'Er is warmtevraag, maar op dit moment geen inzetbare bron gekozen.'
+  };
+  panel.append(el('h3','Waarom deze warmtebron?'),el('p',reasons[d.basis] || d.room_reason));
+  if(Number.isFinite(d.costs?.cv) && Number.isFinite(d.costs?.beneden))
+    panel.append(el('p','Actuele raming: CV € '+heatNumber(d.costs.cv,3)+' tegenover airco € '+heatNumber(d.costs.beneden,3)+'/kWh warmte; verschil € '+heatNumber(Math.abs(d.costs.cv-d.costs.beneden),3)+'/kWh warmte.'));
+  panel.append(el('p','Kamer: '+heatNumber(d.room_temperature_c)+' °C · HC-doel: '+heatNumber(d.room_target_c)+' °C · eTwist/CV-thermostaat: '+heatNumber(d.thermostat_temperature_c)+' °C.'));
+  if(Number.isFinite(d.temperature_difference_c) && Math.abs(d.temperature_difference_c)>=.5)
+    panel.append(el('p','De thermostaat meet '+heatNumber(Math.abs(d.temperature_difference_c))+' °C '+(d.temperature_difference_c>0?'hoger':'lager')+' dan de kamersensor. Dit kan de warmtelevering beïnvloeden; HC corrigeert dit verschil niet automatisch.'));
+  for(const [source,candidate] of Object.entries(d.candidates))
+    if(candidate.reason) panel.append(el('p',names[source]+': '+candidate.reason));
+  for(const [source,state] of Object.entries(d.execution)) {
+    if(!d.selected.includes(source) && !state.fault && !state.pending)continue;
+    const mode=state.available ? ({off:'uit',heat:'verwarmen',auto:'automatisch'}[state.mode]||state.mode||'onbekend') : 'niet actueel';
+    const activity=state.available ? ({heating:'verwarming gemeld',idle:'rust gemeld',off:'uit gemeld'}[state.activity]||'warmtelevering onbekend') : 'warmtelevering onbekend';
+    panel.append(el('p',names[source]+' · '+(d.selected.includes(source)?'gekozen':'niet gekozen')+' · apparaat '+mode+' · instelling '+heatNumber(state.target_c)+' °C · '+activity+'.'));
+    if(state.fault)panel.append(el('p',names[source]+' storing: '+state.fault));
+    if(state.pending)panel.append(el('p',names[source]+': wachten op bevestiging van '+(source==='cv' && state.command_field==='mode' && state.command_value==='heat'?'de verwarmingsmodus; daarna wordt het temperatuurdoel ingesteld.':'de opdracht.')));
+    if(d.selected.includes(source) && state.conflicts.length)panel.append(el('p','Overname wacht op vrijgave van '+state.conflicts.map(s=>names[s]||s).join(', ')+'.'));
+    if(d.selected.includes(source) && state.restart_wait_seconds>0)panel.append(el('p','Herstartvertraging: nog '+Math.ceil(state.restart_wait_seconds)+' seconden.'));
+  }
+  const advice=d.hems_advice;
+  panel.append(el('p','HEMS-energieadvies: '+advice.reason+' Dit advies is apart van de HC-bronkeuze; comfort wordt door HC geregeld.'));
+}
+
+function renderHeatPrices(panel, d) {
+  const p=d.prices, a=d.assumptions;
+  panel.append(el('h3',d.basis==='energy_start'?'Actuele referentieprijzen':'Prijzen en aannames voor deze keuze'));
+  if(d.basis==='energy_start')panel.append(el('p','Een actief startplan bepaalt deze keuze. Onderstaande actuele prijzen zijn referentieprijzen en vormen niet de volledige kostenvergelijking van dat plan.'));
+  const interval=p.interval;
+  const time=t=>new Date(t*1000).toLocaleTimeString('nl-NL',{timeZone:'Europe/Amsterdam',hour:'2-digit',minute:'2-digit'});
+  panel.append(el('p','Stroom: € '+heatNumber(p.electricity_eur_kwh,3)+'/kWh'+(interval?' · tijdvak '+time(interval.start)+'–'+time(interval.end):'')+'.'));
+  panel.append(el('p',p.confirmed?'Tariefbasis bevestigd in HC; de prijs wordt overgenomen uit HA, zonder hier extra belastingen of opslagen toe te voegen.':'Tariefbasis niet bevestigd; deze bronprijs mag nog niet voor automatische bronkeuze worden gebruikt.'));
+  panel.append(el('p','Gas: € '+heatNumber(p.gas_eur_m3,3)+'/m³ · '+(p.gas_valid?'geldig tot en met ':'niet geldig; ingestelde einddatum ')+(p.gas_valid_until||'onbekend')+'.'));
+  for(const warning of p.warnings)panel.append(el('p',warning));
+  panel.append(el('p','Airco beneden: stroomprijs ÷ COP '+heatNumber(a.cop_beneden,2)+'. Airco boven: COP '+heatNumber(a.cop_boven,2)+'.'));
+  panel.append(el('p','CV: gasprijs ÷ ('+heatNumber(a.gas_kwh_m3,3)+' kWh/m³ × '+heatNumber(a.cv_efficiency*100,0)+'% rendement).'));
+  if(Number.isFinite(d.electricity_break_even_eur_kwh))panel.append(el('p','Bij deze aannames is CV goedkoper boven € '+heatNumber(d.electricity_break_even_eur_kwh,3)+'/kWh stroom, als beide bronnen inzetbaar zijn.'));
+  panel.append(el('p','Dit zijn schattingen per kWh warmte met ingestelde rendementen. Opwarmduur, restwarmte, CV-hulpstroom en de totale kosten van de verwarmingsperiode zitten niet in deze vergelijking. Batterij- en PV-kosten worden hierin niet afzonderlijk verrekend.'));
 }
 
 let bathroomTimerForm = null;

@@ -312,8 +312,17 @@ class Schedule:
             previous = self.data['baseline'].get(entity)
             changes = []
             if previous:
+                latest = next((c for c in records if c['entity_id'] == entity), {})
+                cv_mode_confirmed = (source == 'cv' and latest.get('origin') == 'schedule'
+                    and latest.get('field') == 'mode' and latest.get('value') == 'heat'
+                    and latest.get('status') == 'confirmed' and latest.get('finished') == now
+                    and previous['mode'] != 'heat' and current['mode'] == 'heat')
                 for field, value in current.items():
                     if value is None or previous.get(field) is None or value == previous[field]:
+                        continue
+                    if field == 'temperature' and cv_mode_confirmed:
+                        # eTwist restores its own setpoint when leaving frost/auto mode.
+                        # Only this confirmed mode transition is HC-owned, not later edits.
                         continue
                     own = next((c for c in records if c['entity_id'] == entity and c.get('sent')
                                 and (c['sent'] <= now <= c['deadline'] or c.get('recovered_at') == now)

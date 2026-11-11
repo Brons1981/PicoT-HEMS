@@ -139,7 +139,7 @@ class CvWarmupEvidence:
             or abs(window["target"] - sample["target"]) > 0.05
             or sample["target"] - sample["indoor"] < 0.5
             or plan["sources"]["cv"]["state"] != "off"
-            or action != ("cv", "heating", sample["target"])
+            or action not in (("cv", "heating", sample["target"]), ("cv", "mode", "heat"))
         ):
             return
         self.baseline = dict(sample=copy.deepcopy(sample), revision=view["revision"], time=now)
@@ -150,6 +150,20 @@ class CvWarmupEvidence:
         own = plan.get("owned", {}).get("cv", {})
         command = next((c for c in commands if c["id"] == own.get("command")), None)
         cv = plan.get("sources", {}).get("cv", {})
+        mode_start = bool(command and command.get("field") == "mode"
+                          and command.get("value") == "heat"
+                          and command.get("before", {}).get("mode") == "off")
+        previous = next((c for c in commands if self.session
+                         and c["id"] == self.session["command_id"]), {})
+        target_step = bool(command and sample and self.session
+                           and command.get("field") == "heating"
+                           and command.get("before", {}).get("mode") == "heat"
+                           and previous.get("field") == "mode"
+                           and previous.get("status") == "confirmed"
+                           and finite(command.get("sent"))
+                           and command["sent"] >= previous.get("sent", now)
+                           and sample["target"] == self.session["sample"]["target"])
+        same_step = bool(command and self.session and command["id"] == self.session["command_id"])
         if (
             sample is None
             or not plan.get("enabled")
@@ -159,11 +173,11 @@ class CvWarmupEvidence:
             or not command
             or command.get("origin") != "schedule"
             or command.get("source") != "cv"
-            or command.get("field") != "heating"
-            or command.get("before", {}).get("mode") != "off"
+            or not (mode_start or command.get("field") == "heating")
+            or not (command.get("before", {}).get("mode") == "off" or target_step or same_step)
             or command.get("status") not in ("awaiting_feedback", "confirmed")
-            or not finite(command.get("value"))
-            or abs(command["value"] - sample["target"]) > 0.05
+            or not mode_start and (not finite(command.get("value"))
+                                   or abs(command["value"] - sample["target"]) > 0.05)
             or cv.get("state") not in ("off", "heat")
             or plan.get("desired", {}).get("cv") != sample["target"]
         ):
@@ -195,6 +209,8 @@ class CvWarmupEvidence:
                 auxiliary_valid=True,
             )
         s = self.session
+        if target_step:
+            s["command_id"] = command["id"]
         if (
             command["id"] != s["command_id"]
             or view["revision"] != s["revision"]

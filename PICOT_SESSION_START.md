@@ -1,3 +1,10 @@
+## Release ED dev.17 - 17 november 2026
+
+Herstel SOC-geldigheid binnen dezelfde aansluiting en ruim het EV-dashboard op.
+Behoud HEMS dev.340 en HC dev.35; alleen ED gewijzigd. Publicatie op expliciet
+verzoek via PR en groene CI. Geen live installatie of reset van instellingen.
+Zie docs/development_log/2026-11-17-ed-soc-dashboard.md.
+
 ## Release ED dev.16 - 17 november 2026
 
 Eenvoudige EV-laadopdrachten, automatisch bij aansluiten, vaste starttijd,

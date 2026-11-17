@@ -47,7 +47,7 @@ def exchange_loop(manager: EVSessionManager, client: HomeAssistantClient,
                     manager.observe_soc(soc.get("state"),
                                         soc.get("last_reported") or soc.get("last_updated"))
                 except (OSError, ValueError):
-                    manager.observe_soc(None, None)
+                    manager.observe_soc(None, None, error="read_failed")
             if manager.plug_entity:
                 try:
                     plug = client.state(manager.plug_entity)

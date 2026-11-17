@@ -209,6 +209,7 @@ class MaterialReplanningObservationProducer:
             RuntimeObservationKind.USER_RULES_CHANGED: (
                 snapshot.user_objective_profile,
                 snapshot.market_user_rule, snapshot.household_unexpected_reserve_fraction,
+                snapshot.user_rule_revision, snapshot.user_strategy_setting,
             ),
             RuntimeObservationKind.CAPABILITY_MAPPING_CHANGED: (
                 capabilities.mapping_version if capabilities else None,

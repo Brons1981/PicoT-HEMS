@@ -1600,6 +1600,39 @@ class PlanningResetBarrier:
             return self._generation, result
 
 
+def _update_user_rules_and_replan(
+    *, store: UserRuleStore, barrier: PlanningResetBarrier,
+    replan_requested: Event, web_view_store: WebViewStore,
+    payload: dict[str, object], activate_profile: Callable[[UserRuleProfile], None],
+) -> dict[str, object]:
+    """Activate one settings revision between complete canonical planner cycles."""
+    def persist() -> dict[str, object]:
+        profile = store.update(
+            preserve_pv_during_grid_charge=payload.get("preserve_pv_during_grid_charge", ...),
+            maximum_trading_soc_percent=payload.get("maximum_trading_soc_percent", ...),
+            strategy_position=payload.get("strategy_position", ...),
+            strategy_trade_ceiling_percent=payload.get("strategy_trade_ceiling_percent", ...),
+            saldering_energy_tax_credit_enabled=payload.get("saldering_energy_tax_credit_enabled"),
+            market_minimum_spread_eur_per_kwh=payload.get("market_minimum_spread_eur_per_kwh", ...),
+            market_recovery_required=payload.get("market_recovery_required", ...),
+            market_minimum_net_margin_eur_per_kwh=payload.get(
+                "market_minimum_net_margin_eur_per_kwh", ...,
+            ),
+            market_wear_eur_per_kwh=payload.get("market_wear_eur_per_kwh", ...),
+            solar_export_bonus=payload.get("solar_export_bonus", ...),
+        )
+        activate_profile(profile)
+        web_view_store.publish_user_rules(profile.as_public_dict())
+        replan_requested.set()
+        return {
+            "status": "user_rules_updated", "user_rules": profile.as_public_dict(),
+            "user_rule_revision": profile.revision, "replan_requested": True,
+        }
+
+    generation, result = barrier.reset(persist)
+    return {**result, "reset_generation": generation}
+
+
 def _request_route_choice_and_replan(
     *, store: ActivePlanCommitmentStore, barrier: PlanningResetBarrier,
     replan_requested: Event, web_view_store: WebViewStore,
@@ -2750,6 +2783,8 @@ def main() -> None:
         migrated_trading_soc_percent=float(
             options.get("market_daily_maximum_trading_soc_percent", 25.0)
         ),
+        migrated_wear_eur_per_kwh=float(options.get("market_daily_wear_eur_per_kwh", 0.05)),
+        local_timezone_name=str(options.get("pv_local_timezone", "Europe/Amsterdam")),
     )
     price_config = _price_opportunity_config(options)
     household_objective_profile = _household_objective_profile(options)
@@ -2834,14 +2869,12 @@ def main() -> None:
                 float(options.get("market_daily_trading_margin_percent", 10.0))
                 / 100.0
             ),
-            wear_eur_per_export_kwh=float(
-                options.get("market_daily_wear_eur_per_kwh", 0.05)
-            ),
+            wear_eur_per_export_kwh=profile.market_wear_eur_per_kwh,
             maximum_trading_soc_fraction=(
                 profile.maximum_trading_soc_percent / 100.0
             ),
             additional_reserve_fraction=0.10,
-            market_routes_enabled=True,
+            market_routes_enabled=profile.maximum_trading_soc_percent > 0,
             preserve_pv_during_grid_charge=(
                 profile.preserve_pv_during_grid_charge
             ),
@@ -2861,6 +2894,10 @@ def main() -> None:
         charge_efficiency=market_daily_conversion_model.charge_efficiency,
         discharge_efficiency=market_daily_conversion_model.discharge_efficiency,
         local_timezone_name=str(options.get("pv_local_timezone", "Europe/Amsterdam")),
+    )
+    financial_result_ledger.configure_solar_export_bonus(user_rule_store.current().solar_export_bonus)
+    financial_result_ledger.configure_wear(
+        user_rule_store.current().market_wear_eur_per_kwh, user_rule_store.current().updated_at
     )
 
     market_daily_planner_runtime = MarketDailyPlannerRuntime(
@@ -2972,24 +3009,18 @@ def main() -> None:
     route_notifier.start()
 
     def update_user_rules(payload: dict[str, object]) -> dict[str, object]:
-        profile = user_rule_store.update(
-            preserve_pv_during_grid_charge=payload.get("preserve_pv_during_grid_charge"),
-            maximum_trading_soc_percent=payload.get("maximum_trading_soc_percent"),
-            saldering_energy_tax_credit_enabled=payload.get("saldering_energy_tax_credit_enabled"),
-            market_minimum_spread_eur_per_kwh=payload.get("market_minimum_spread_eur_per_kwh", ...),
-            market_recovery_required=payload.get("market_recovery_required", ...),
-            market_minimum_net_margin_eur_per_kwh=payload.get(
-                "market_minimum_net_margin_eur_per_kwh",
-                ...,
-            ),
+        def activate(profile: UserRuleProfile) -> None:
+            market_daily_planner_runtime.set_trading_policy(trading_policy(profile))
+            financial_result_ledger.configure_wear(
+                profile.market_wear_eur_per_kwh, profile.updated_at,
+            )
+            financial_result_ledger.configure_solar_export_bonus(profile.solar_export_bonus)
+
+        return _update_user_rules_and_replan(
+            store=user_rule_store, barrier=planning_reset_barrier,
+            replan_requested=planning_reset_requested, web_view_store=web_view_store,
+            payload=payload, activate_profile=activate,
         )
-        market_daily_planner_runtime.set_trading_policy(trading_policy(profile))
-        web_view_store.publish_user_rules(profile.as_public_dict())
-        planning_reset_requested.set()
-        return {
-            "status": "user_rules_updated",
-            "user_rules": profile.as_public_dict(),
-        }
 
     web_view_store.set_user_rule_update(update_user_rules)
     web_view_store.publish_user_rules(user_rule_store.current().as_public_dict())
@@ -3048,6 +3079,7 @@ def main() -> None:
         charge_efficiency=market_daily_conversion_model.charge_efficiency,
         discharge_efficiency=market_daily_conversion_model.discharge_efficiency,
         wear_eur_per_kwh=market_daily_trading_policy.wear_eur_per_export_kwh,
+        wear_provider=lambda: user_rule_store.current().market_wear_eur_per_kwh,
         timezone=str(options.get("pv_local_timezone", "Europe/Amsterdam")),
         financial_review=FinancialMeasurementObserver(
             ledger=financial_result_ledger,
@@ -3226,12 +3258,23 @@ def main() -> None:
                     "scope_id": storage.execution_scope_id,
                 }), flush=True)
         startup.enter("prepare_commitments", "Vastgelegde dagplannen laden", 30)
+        user_profile = user_rule_store.current()
         bundle = replace(
             bundle,
             snapshot=_restore_active_plan_commitments(
                 _restore_daily_charge_context(
                     replace(
-                        bundle.snapshot, market_user_rule=user_rule_store.current().market_rule()
+                        bundle.snapshot, market_user_rule=user_profile.market_rule(),
+                        user_rule_revision=user_profile.revision,
+                        user_strategy_setting=user_profile.strategy_setting(),
+                        solar_export_bonus=financial_result_ledger.solar_export_bonus_context(
+                            bundle.snapshot.captured_at,
+                            maximum_unobserved_export_power_w=(
+                                float(options.get("financial_pv_maximum_power_w", 4200.0))
+                                + sum(limit.maximum_discharge_output_power_w
+                                      for limit in bundle.snapshot.storage_physical_limits)
+                            ),
+                        ),
                     ),
                     active_plan_commitment_store,
                     local_timezone=pv_sunset_timezone,
@@ -3340,6 +3383,13 @@ def main() -> None:
             starts_at=history_starts_at - FINANCIAL_ANCHOR_LOOKBACK,
             ends_at=captured_at,
         )
+        # Raw source evidence only; before numeric filtering or observer inference.
+        # Bonus quota is factual input, never derived from financial dashboard amounts.
+        try:
+            financial_result_ledger.observe_solar_export_bonus(power_history)
+        except (ValueError, OSError) as exc:
+            print(json.dumps({"event": "picot_solar_bonus_evidence_unavailable",
+                              "error": type(exc).__name__}), flush=True)
         measurement_history = rebase_power_history(power_history, starts_at=history_starts_at)
         power_history = rebase_power_history(
             numeric_power_history(power_history), starts_at=history_starts_at,

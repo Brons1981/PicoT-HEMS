@@ -1193,12 +1193,46 @@ DASHBOARD_HTML = """<!doctype html>
     <section
       id="tab-strategy" class="tab-panel" data-tab-panel="strategy" hidden
     >
-      <h2>Gebruikersregels</h2>
+      <h2>Instellingen</h2>
       <p class="muted">
         Deze regels begrenzen eerst de geldige plannen. Daarna kiest PicoT het
         financieel beste plan binnen die grenzen.
       </p>
+      <div role="tablist" aria-label="Instellingen">
+        <button type="button" role="tab" id="settings-basic-tab"
+          aria-controls="settings-basic" aria-selected="true"
+          data-settings-tab="basic">Algemeen</button>
+        <button type="button" role="tab" id="settings-advanced-tab"
+          aria-controls="settings-advanced" aria-selected="false"
+          data-settings-tab="advanced">Geavanceerd</button>
+      </div>
       <form id="user-rules-form" class="strategy-rules">
+        <div id="settings-basic" role="tabpanel" aria-labelledby="settings-basic-tab"
+          class="strategy-rules">
+        <fieldset class="strategy-rule">
+          <legend>Werking van HEMS</legend>
+          <label for="rule-strategy-position">Voorkeur: <strong id="strategy-position-label">
+            Wachten op instellingen</strong></label>
+          <input id="rule-strategy-position" type="range" min="0" max="3" step="1"
+            value="2" list="strategy-stops" disabled
+            aria-describedby="strategy-parameters strategy-status">
+          <datalist id="strategy-stops">
+            <option value="0" label="Zelfverbruik"></option>
+            <option value="1" label="Meer zelfverbruik"></option>
+            <option value="2" label="Gebalanceerd"></option>
+            <option value="3" label="Meer handel"></option>
+          </datalist>
+          <span class="muted">Zelfverbruik · Meer zelfverbruik · Gebalanceerd · Meer handel</span>
+          <button type="button" id="strategy-trade-only" disabled
+            aria-describedby="strategy-trade-only-reason">5. Handel — later beschikbaar</button>
+          <span id="strategy-trade-only-reason" class="muted">Uitsluitend handel vraagt een
+            afzonderlijke handelsstrategie en is nog niet selecteerbaar.</span>
+          <p id="strategy-parameters" class="muted"></p>
+          <p class="muted">Een andere stand wordt direct opgeslagen en laat HEMS opnieuw
+            rekenen. De PV-prognose, slijtage en prijsdrempels blijven zoals ingesteld.
+            Vastgelegde opdrachten houden hun bestaande voorwaarden.</p>
+          <p id="strategy-status" class="muted" aria-live="polite"></p>
+        </fieldset>
         <label class="strategy-rule">
           <span class="strategy-rule-line">
             <strong>Beschikbare PV behouden bij netladen</strong>
@@ -1220,14 +1254,20 @@ DASHBOARD_HTML = """<!doctype html>
             dezelfde begrensde kandidaten opnieuw financieel beoordelen.
           </span>
         </label>
+        </div>
+        <div id="settings-advanced" role="tabpanel" aria-labelledby="settings-advanced-tab"
+          class="strategy-rules" hidden>
         <label class="strategy-rule">
           <span class="strategy-rule-line">
-            <strong>Batterijcapaciteit voor handel per leveringsdag</strong>
-            <span><input id="rule-trading-soc" type="number" min="0" max="100" step="1"> %</span>
+            <strong>Bovengrens voor de standenregeling (% batterijcapaciteit)</strong>
+            <span><input id="rule-trading-soc" type="number" min="0" max="100" step="any"> %</span>
           </span>
           <span id="rule-trading-limit" class="muted">
-            Percentagepunten van de bruikbare batterijcapaciteit. Bij onvoldoende
-            SOC wordt de opdracht overgeslagen. 0% schakelt nieuwe handel uit.
+            Bovengrens in procentpunten van de bruikbare batterijcapaciteit.
+            De vier standen gebruiken 0, een derde, twee derde en deze volledige bovengrens.
+            PicoT vergelijkt ook kleinere hoeveelheden en kan handel overslaan.
+            0% schakelt nieuwe handel uit. Bestaande vastgelegde opdrachten behouden
+            hun eigen voorwaarden; wijzigen geeft geen nieuw dagbudget.
           </span>
         </label>
         <label class="strategy-rule">
@@ -1246,6 +1286,31 @@ DASHBOARD_HTML = """<!doctype html>
           <strong>Minimale nettowinst bij herstel (€/export-kWh)</strong>
           <input id="rule-market-margin" type="number" min="0" step="0.001" value="0.05">
         </label>
+        <label class="strategy-rule">
+          <strong>Slijtagekosten (EUR/kWh batterij-ontlading)</strong>
+          <input id="rule-market-wear" type="number" min="0" max="1" step="any">
+          <span class="muted">Voor nieuwe berekeningen. 0 laat slijtagekosten buiten
+            de vergelijking. Eerder gemeten perioden houden hun toenmalige waarde.</span>
+        </label>
+        <label class="strategy-rule">
+          <span><input id="rule-solar-bonus-enabled" type="checkbox">Zonneplan 10% zonnebonus</span>
+          <span class="muted">Op positieve terugleververgoeding tussen zonsopkomst en
+            zonsondergang, tot 7.500 kWh teruglevering per kalenderjaar.
+            Vul de locatie en een bekende jaarstand in om de bonus mee te rekenen.</span>
+        </label>
+        <label class="strategy-rule"><strong>Breedtegraad installatie</strong>
+          <input id="rule-solar-latitude" type="number" min="-90" max="90" step="any"></label>
+        <label class="strategy-rule"><strong>Lengtegraad installatie</strong>
+          <input id="rule-solar-longitude" type="number" min="-180" max="180" step="any"></label>
+        <label class="strategy-rule"><strong>Reeds teruggeleverd dit kalenderjaar (kWh)</strong>
+          <input id="rule-solar-annual-export" type="number" min="0" step="any">
+          <span class="muted">Totale teruglevering, niet het saldeersaldo.
+            PicoT telt betrouwbare nieuwe teruglevermetingen vanaf deze bevestiging erbij op.
+            Zonder voldoende meetdekking blijft de bonus als onbekend zichtbaar.</span></label>
+        <label class="strategy-rule"><span><input id="rule-solar-confirm-annual" type="checkbox">
+          Deze jaarstand opnieuw bevestigen op het moment van opslaan</span></label>
+        <p id="solar-bonus-settings-status" class="muted" aria-live="polite"></p>
+        </div>
         <button id="save-user-rules" type="submit">Regels toepassen</button>
         <span id="user-rules-status" class="muted" aria-live="polite"></span>
       </form>
@@ -5016,13 +5081,20 @@ DASHBOARD_HTML = """<!doctype html>
         "Elk bedrag heeft een eigen meetcontrole. Netresultaat is gebaseerd op " +
         "netinkoop en teruglevering; batterij- en PicoT-voordeel vragen " +
         "aanvullende bronmetingen. " +
-        "Historische bedragen zijn niet opnieuw beoordeeld. Exclusief Zonneplan-zonnebonus.",
+        "Historische bedragen zijn niet opnieuw beoordeeld. De verwerking van de " +
+        "Zonneplan-zonnebonus staat per dag vermeld.",
         "muted"));
       const evidenceByDay = new Map();
       for (const row of rows.filter(row => !row.future)) {
         const detail = node("section");
         financialDisclosure(detail, `day:${row.date}`);
         detail.append(node("h3", dateLabel(row.date)));
+        const bonusStatus = row.record?.solar_export_bonus_status;
+        detail.append(node("p", bonusStatus === "available"
+          ? `Zonnebonus verwerkt: ${formatCurrency(row.record.solar_export_bonus_eur)}.`
+          : bonusStatus === "unavailable"
+            ? "Zonnebonus niet volledig onderbouwd: controleer de jaarstand en meetdekking."
+            : "Voor deze periode is geen actieve zonnebonus vastgelegd.", "muted"));
         for (const [label, name, sign] of financialColumns) {
           const value = financialMetric(row.record, name, sign);
           detail.append(node("p",
@@ -5184,7 +5256,8 @@ DASHBOARD_HTML = """<!doctype html>
         "Een kortere of onbekende meetperiode blokkeert de schatting. " +
         "Vandaag telt niet mee; ontbrekende dagen worden niet als nul of als " +
         "gemiddelde ingevuld. " +
-        "De prognose houdt geen rekening met seizoenen, toekomstige tarieven of de zonnebonus. " +
+        "De prognose voorspelt geen seizoenen, toekomstige tarieven " +
+        "of toekomstige bonusvoorwaarden. " +
         "Dit is een schatting, geen garantie." +
         (estimate.daily !== undefined ?
           ` Gebruikt daggemiddelde: ${formatCurrency(estimate.daily)}.` : "") +
@@ -5670,19 +5743,102 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
+    const strategyControl = {rules: null, requested: null, running: null};
+    const strategyLabels = ["Zelfverbruik", "Meer zelfverbruik", "Gebalanceerd", "Meer handel"];
+
+    function renderStrategyControl(rules) {
+      const position = rules.strategy_position;
+      if (!Number.isInteger(position) || position < 0 || position > 3) return;
+      if (Number(rules.revision ?? 0) < Number(strategyControl.rules?.revision ?? 0)) return;
+      strategyControl.rules = rules;
+      const control = element("rule-strategy-position");
+      control.disabled = false;
+      if (strategyControl.running === null && strategyControl.requested === null) {
+        control.value = position;
+        element("strategy-position-label").textContent = strategyLabels[position];
+      }
+      const mapping = rules.strategy_mapping;
+      if (mapping) {
+        element("strategy-parameters").textContent =
+          `Actief: ${mapping.label}. Handelsmaximum: ${mapping.effective_trading_soc_percent}%. ` +
+          `Ingestelde bovengrens: ${mapping.trade_ceiling_percent}%. ` +
+          `Factor: ${mapping.capacity_factor}. Revisie ${rules.revision}.`;
+      }
+    }
+
+    function changeStrategyPosition() {
+      const position = Number(element("rule-strategy-position").value);
+      if (!strategyControl.rules || !Number.isInteger(position) || position < 0 || position > 3) {
+        return Promise.resolve();
+      }
+      strategyControl.requested = position;
+      element("strategy-position-label").textContent = strategyLabels[position];
+      element("strategy-status").textContent =
+        "Voorkeur opslaan; daarna wordt het plan opnieuw beoordeeld.";
+      if (strategyControl.running !== null) return strategyControl.running;
+      // One request at a time. Further movements replace the queued preference,
+      // and never submit unsaved advanced settings along with the slider.
+      strategyControl.running = Promise.resolve().then(async () => {
+        try {
+          while (strategyControl.requested !== null) {
+            const requested = strategyControl.requested;
+            strategyControl.requested = null;
+            const response = await fetch("api/user-rules", {
+              method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({strategy_position: requested}),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const result = await response.json();
+            if (!Number.isInteger(result.user_rules?.strategy_position)
+                || result.user_rules.strategy_position < 0
+                || result.user_rules.strategy_position > 3) {
+              throw new Error("Geen bevestigde voorkeur ontvangen");
+            }
+            renderStrategyControl(result.user_rules);
+          }
+          element("strategy-status").textContent =
+            "Voorkeur opgeslagen; HEMS beoordeelt het plan opnieuw. " +
+            "Vastgelegde opdrachten blijven behouden.";
+        } catch (error) {
+          strategyControl.requested = null;
+          element("strategy-status").textContent =
+            `Voorkeur niet bevestigd: ${error.message}. De laatst bevestigde stand wordt getoond.`;
+        } finally {
+          strategyControl.running = null;
+          if (strategyControl.rules) renderStrategyControl(strategyControl.rules);
+        }
+      });
+      return strategyControl.running;
+    }
+
     function renderUserRules(rules) {
+      renderStrategyControl(rules);
+      if (Number(rules.revision ?? 0) < Number(strategyControl.rules?.revision ?? 0)) return;
       const form = element("user-rules-form");
       if (form.dataset.dirty === "true" || form.contains(document.activeElement)) return;
       element("rule-preserve-pv").checked =
         rules.preserve_pv_during_grid_charge !== false;
       element("rule-trading-soc").value = Number.isFinite(
-        Number(rules.maximum_trading_soc_percent)
-      ) ? Number(rules.maximum_trading_soc_percent) : 25;
+        Number(rules.strategy_trade_ceiling_percent)
+      ) ? Number(rules.strategy_trade_ceiling_percent) : "";
       element("rule-saldering-tax").checked =
         rules.saldering_energy_tax_credit_enabled !== false;
       element("rule-market-spread").value = rules.market_minimum_spread_eur_per_kwh ?? "";
       element("rule-market-recovery").checked = rules.market_recovery_required === true;
       element("rule-market-margin").value = rules.market_minimum_net_margin_eur_per_kwh ?? 0.05;
+      element("rule-market-wear").value = rules.market_wear_eur_per_kwh ?? 0.05;
+      const bonus = rules.solar_export_bonus ?? {};
+      element("rule-solar-bonus-enabled").checked = bonus.enabled === true;
+      element("rule-solar-latitude").value = bonus.latitude ?? "";
+      element("rule-solar-longitude").value = bonus.longitude ?? "";
+      element("rule-solar-annual-export").value = bonus.annual_exported_kwh ?? "";
+      element("rule-solar-confirm-annual").checked = false;
+      element("solar-bonus-settings-status").textContent = bonus.enabled
+        ? (bonus.annual_exported_at
+          ? `Jaarstand bevestigd op ${formatTimestamp(bonus.annual_exported_at)}. ` +
+            "Meetdekking en resterende bonusruimte staan in de financiële onderbouwing."
+          : "Jaarstand ontbreekt; de bonus is nog niet onderbouwd.")
+        : "Zonnebonus staat uit.";
       element("user-rules-status").textContent = rules.revision
         ? `Actieve revisie ${rules.revision}`
         : "Wachten op de actieve gebruikersregels…";
@@ -5708,17 +5864,29 @@ DASHBOARD_HTML = """<!doctype html>
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({
             preserve_pv_during_grid_charge: element("rule-preserve-pv").checked,
-            maximum_trading_soc_percent: maximumTradingSoc,
+            strategy_trade_ceiling_percent: maximumTradingSoc,
             market_minimum_spread_eur_per_kwh: element("rule-market-spread").value === ""
               ? null : Number(element("rule-market-spread").value),
             market_recovery_required: element("rule-market-recovery").checked,
             market_minimum_net_margin_eur_per_kwh: Number(element("rule-market-margin").value),
+            market_wear_eur_per_kwh: Number(element("rule-market-wear").value),
+            solar_export_bonus: {
+              enabled: element("rule-solar-bonus-enabled").checked,
+              latitude: element("rule-solar-latitude").value === "" ? null
+                : Number(element("rule-solar-latitude").value),
+              longitude: element("rule-solar-longitude").value === "" ? null
+                : Number(element("rule-solar-longitude").value),
+              annual_exported_kwh: element("rule-solar-annual-export").value === "" ? null
+                : Number(element("rule-solar-annual-export").value),
+              confirm_annual_export: element("rule-solar-confirm-annual").checked,
+            },
             saldering_energy_tax_credit_enabled:
               element("rule-saldering-tax").checked,
           }),
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const result = await response.json();
+        renderStrategyControl(result.user_rules ?? {});
         if ((form.dataset.editRevision ?? "0") === submittedRevision) {
           form.dataset.dirty = "false";
           renderUserRules(result.user_rules ?? {});
@@ -6317,19 +6485,30 @@ DASHBOARD_HTML = """<!doctype html>
     }
     document.addEventListener("selectionchange", flushPendingView);
     document.addEventListener("focusout", () => setTimeout(flushPendingView, 0));
-    function markUserRulesEdited() {
+    function markUserRulesEdited(event) {
+      if (event?.target?.id === "rule-strategy-position") return;
       const form = element("user-rules-form");
       form.dataset.dirty = "true";
       form.dataset.editRevision = String(Number(form.dataset.editRevision ?? 0) + 1);
     }
     element("user-rules-form").addEventListener("input", markUserRulesEdited);
     element("user-rules-form").addEventListener("change", markUserRulesEdited);
+    element("rule-strategy-position").addEventListener("change", changeStrategyPosition);
 
     element("reset-storage-mode-override").addEventListener(
       "click",
       resetStorageModeOverride
     );
     element("reset-planning").addEventListener("click", resetPlanning);
+    document.querySelectorAll("[data-settings-tab]").forEach(button => {
+      button.addEventListener("click", () => {
+        const selected = button.dataset.settingsTab;
+        ["basic", "advanced"].forEach(name => {
+          element(`settings-${name}`).hidden = name !== selected;
+          element(`settings-${name}-tab`).setAttribute("aria-selected", String(name === selected));
+        });
+      });
+    });
     element("user-rules-form").addEventListener("submit", saveUserRules);
     element("energy-device-placement-form").addEventListener(
       "submit", addEnergyDevicePlacement

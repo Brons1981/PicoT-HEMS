@@ -112,7 +112,7 @@ def test_native_input_and_text_selection_defer_refresh_behavior():
 
 
 def test_dirty_form_is_preserved_after_focus_leaves_it():
-    start = DASHBOARD_HTML.index("    function renderUserRules(")
+    start = DASHBOARD_HTML.index("    const strategyControl =")
     end = DASHBOARD_HTML.index("    async function saveUserRules(", start)
     script = """
       const form = {dataset:{dirty:'true'}, contains: () => false};
@@ -130,7 +130,7 @@ def test_dirty_form_is_preserved_after_focus_leaves_it():
 
 @pytest.mark.parametrize("outcome", ["success", "failure", "edited"])
 def test_save_reply_only_acknowledges_submitted_draft(outcome):
-    start = DASHBOARD_HTML.index("    function renderUserRules(")
+    start = DASHBOARD_HTML.index("    const strategyControl =")
     end = DASHBOARD_HTML.index("    function renderEnergyDevices(", start)
     harness = """
       const nodes = {};

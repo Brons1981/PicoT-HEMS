@@ -21,6 +21,8 @@ from picot.domain.daily_reference_tariff import (
     DailyReferenceTariffInterval,
     DailyReferenceTariffSchedule,
 )
+from picot.domain.solar_export_bonus import SolarExportBonusContext
+from picot.planner.solar_export_bonus import SolarBonusAllowance
 
 METHOD_VERSION = "independent-daily-financial-settlement:v2"
 
@@ -30,11 +32,22 @@ class IndependentDailyFinancialSettlement:
 
     @staticmethod
     def storage_discharge_cost(
-        projection: DailyPlanningProjection, rate: float, *, horizon_end: datetime,
+        projection: DailyPlanningProjection,
+        rate: float,
+        *,
+        horizon_end: datetime,
     ) -> float:
-        return sum(i.storage_to_household_output_wh + i.storage_to_grid_output_wh
-                   + i.storage_discharge_loss_wh for i in projection.intervals
-                   if i.ends_at <= horizon_end) * rate / 1000
+        return (
+            sum(
+                i.storage_to_household_output_wh
+                + i.storage_to_grid_output_wh
+                + i.storage_discharge_loss_wh
+                for i in projection.intervals
+                if i.ends_at <= horizon_end
+            )
+            * rate
+            / 1000
+        )
 
     def settle(
         self,
@@ -81,10 +94,12 @@ class IndependentDailyFinancialSettlement:
         ):
             raise ValueError("Daily tariff must cover the exact trajectory horizon.")
         intervals = self._settle_intervals(
-            trajectory.intervals, tariffs_by_physical_interval=tariffs_by_physical_interval)
+            trajectory.intervals,
+            tariffs_by_physical_interval=tariffs_by_physical_interval,
+            solar_export_bonus=tariffs.solar_export_bonus,
+        )
         duration_hours = tuple(
-            (item.ends_at - item.starts_at).total_seconds() / 3600.0
-            for item in tariffs.intervals
+            (item.ends_at - item.starts_at).total_seconds() / 3600.0 for item in tariffs.intervals
         )
         total_hours = sum(duration_hours)
         evidence_ids = tuple(
@@ -92,11 +107,7 @@ class IndependentDailyFinancialSettlement:
                 (
                     trajectory.trajectory_id,
                     tariffs.schedule_id,
-                    *(
-                        evidence
-                        for interval in intervals
-                        for evidence in interval.evidence_ids
-                    ),
+                    *(evidence for interval in intervals for evidence in interval.evidence_ids),
                 )
             )
         )
@@ -117,21 +128,13 @@ class IndependentDailyFinancialSettlement:
             )
             / total_hours,
             grid_import_cost_eur=sum(item.grid_import_cost_eur for item in intervals),
-            grid_export_result_eur=sum(
-                item.grid_export_result_eur for item in intervals
-            ),
-            avoided_import_value_eur=sum(
-                item.avoided_import_value_eur for item in intervals
-            ),
+            grid_export_result_eur=sum(item.grid_export_result_eur for item in intervals),
+            avoided_import_value_eur=sum(item.avoided_import_value_eur for item in intervals),
             pv_storage_opportunity_cost_eur=sum(
                 item.pv_storage_opportunity_cost_eur for item in intervals
             ),
-            conversion_loss_value_eur=sum(
-                item.conversion_loss_value_eur for item in intervals
-            ),
-            net_financial_result_eur=sum(
-                item.net_financial_result_eur for item in intervals
-            ),
+            conversion_loss_value_eur=sum(item.conversion_loss_value_eur for item in intervals),
+            net_financial_result_eur=sum(item.net_financial_result_eur for item in intervals),
             confidence=min(item.confidence for item in intervals),
             intervals=intervals,
             evidence_ids=evidence_ids,
@@ -162,22 +165,34 @@ class IndependentDailyFinancialSettlement:
             projection = replace(
                 projection,
                 basis_timeline=replace(
-                    projection.basis_timeline, horizon_end=horizon_end,
-                    intervals=tuple(i for i in projection.basis_timeline.intervals
-                                    if i.ends_at <= horizon_end),
+                    projection.basis_timeline,
+                    horizon_end=horizon_end,
+                    intervals=tuple(
+                        i for i in projection.basis_timeline.intervals if i.ends_at <= horizon_end
+                    ),
                 ),
                 intervals=tuple(i for i in projection.intervals if i.ends_at <= horizon_end),
             )
-            tariffs = replace(tariffs, horizon_end=horizon_end, intervals=tuple(
-                replace(i, ends_at=min(i.ends_at, horizon_end))
-                for i in tariffs.intervals if i.starts_at < horizon_end
-            ))
+            tariffs = replace(
+                tariffs,
+                horizon_end=horizon_end,
+                intervals=tuple(
+                    replace(i, ends_at=min(i.ends_at, horizon_end))
+                    for i in tariffs.intervals
+                    if i.starts_at < horizon_end
+                ),
+            )
             if main_intervals is not None:
-                main_intervals = tuple((start, min(end, horizon_end))
-                                       for start, end in main_intervals if start < horizon_end)
+                main_intervals = tuple(
+                    (start, min(end, horizon_end))
+                    for start, end in main_intervals
+                    if start < horizon_end
+                )
         indexed = self._index_tariffs(projection.intervals, tariffs)
         intervals = self._settle_intervals(
-            projection.intervals, tariffs_by_physical_interval=indexed
+            projection.intervals,
+            tariffs_by_physical_interval=indexed,
+            solar_export_bonus=tariffs.solar_export_bonus,
         )
         owned = (
             main_intervals
@@ -194,17 +209,18 @@ class IndependentDailyFinancialSettlement:
         if any(a[1] > b[0] for a, b in zip(owned, owned[1:], strict=False)):
             raise ValueError("main acquisition intervals must be ordered and non-overlapping")
         input_wh = stored_wh = cost_eur = 0.0
+        acquisition_allowance = SolarBonusAllowance(tariffs.solar_export_bonus)
         for physical in projection.intervals:
-            if not any(
+            is_owned = any(
                 start <= physical.starts_at and physical.ends_at <= end for start, end in owned
-            ):
-                continue
-            input_wh += physical.pv_to_storage_input_wh + physical.grid_to_storage_input_wh
-            stored_wh += (
-                physical.pv_to_storage_input_wh
-                + physical.grid_to_storage_input_wh
-                - physical.storage_charge_loss_wh
             )
+            if is_owned:
+                input_wh += physical.pv_to_storage_input_wh + physical.grid_to_storage_input_wh
+                stored_wh += (
+                    physical.pv_to_storage_input_wh
+                    + physical.grid_to_storage_input_wh
+                    - physical.storage_charge_loss_wh
+                )
             for tariff in indexed[(physical.starts_at, physical.ends_at)]:
                 part = self._physical_segment(
                     physical,
@@ -213,10 +229,26 @@ class IndependentDailyFinancialSettlement:
                 )
                 # PV's published export value is its acquisition opportunity
                 # cost. Conversion loss is accounted once in stored Wh.
+                acquisition_allowance.value(
+                    part.starts_at,
+                    part.ends_at,
+                    self._grid_export_wh(part) / 1000,
+                    tariff.solar_bonus_eur_per_kwh,
+                )
+                potential_bonus = acquisition_allowance.value(
+                    part.starts_at,
+                    part.ends_at,
+                    part.pv_to_storage_input_wh / 1000,
+                    tariff.solar_bonus_eur_per_kwh,
+                )
+                if not is_owned:
+                    continue
                 cost_eur += (
                     part.grid_to_storage_input_wh * tariff.import_eur_per_kwh
-                    + part.pv_to_storage_input_wh * tariff.export_eur_per_kwh
+                    + part.pv_to_storage_input_wh
+                    * (tariff.export_eur_per_kwh - tariff.solar_bonus_eur_per_kwh)
                 ) / 1000
+                cost_eur += potential_bonus
         return DailyPlanningFinancialResult(
             projection.snapshot_id,
             projection.intent_schedule_id,
@@ -236,6 +268,7 @@ class IndependentDailyFinancialSettlement:
         tariffs_by_physical_interval: dict[
             tuple[datetime, datetime], tuple[DailyReferenceTariffInterval, ...]
         ],
+        solar_export_bonus: SolarExportBonusContext | None = None,
     ) -> tuple[DailyReferenceFinancialInterval, ...]:
         physical_segments: list[tuple[DailyReferenceInterval, DailyReferenceTariffInterval]] = []
         for physical in physical_intervals:
@@ -267,6 +300,8 @@ class IndependentDailyFinancialSettlement:
         )
         remaining_saldering_wh = min(saldering_import_wh, saldering_export_wh)
         settled: list[DailyReferenceFinancialInterval] = []
+        allowance = SolarBonusAllowance(solar_export_bonus)
+        opportunity_allowance = SolarBonusAllowance(solar_export_bonus)
         for physical, tariff in physical_segments:
             interval_export_wh = max(
                 0.0,
@@ -277,11 +312,31 @@ class IndependentDailyFinancialSettlement:
                 if tariff.saldering_tax_eur_per_kwh > 0.0
                 else 0.0
             )
+            actual_bonus = allowance.value(
+                physical.starts_at,
+                physical.ends_at,
+                self._grid_export_wh(physical) / 1000,
+                tariff.solar_bonus_eur_per_kwh,
+            )
+            opportunity_allowance.value(
+                physical.starts_at,
+                physical.ends_at,
+                self._grid_export_wh(physical) / 1000,
+                tariff.solar_bonus_eur_per_kwh,
+            )
+            potential_bonus = opportunity_allowance.value(
+                physical.starts_at,
+                physical.ends_at,
+                physical.pv_to_storage_input_wh / 1000,
+                tariff.solar_bonus_eur_per_kwh,
+            )
             settled.append(
                 self._settle_interval(
                     physical,
                     tariff,
                     saldering_export_wh=interval_saldering_wh,
+                    solar_bonus_result_eur=actual_bonus,
+                    pv_bonus_opportunity_eur=potential_bonus,
                 )
             )
             remaining_saldering_wh -= interval_saldering_wh
@@ -293,9 +348,7 @@ class IndependentDailyFinancialSettlement:
         physical_intervals: tuple[DailyReferenceInterval, ...],
         tariffs: DailyReferenceTariffSchedule,
     ) -> dict[tuple[datetime, datetime], tuple[DailyReferenceTariffInterval, ...]]:
-        result: dict[
-            tuple[datetime, datetime], tuple[DailyReferenceTariffInterval, ...]
-        ] = {}
+        result: dict[tuple[datetime, datetime], tuple[DailyReferenceTariffInterval, ...]] = {}
         tariff_index = 0
         for physical in physical_intervals:
             while (
@@ -314,9 +367,7 @@ class IndependentDailyFinancialSettlement:
                 segment_start = max(physical.starts_at, tariff.starts_at)
                 segment_end = min(physical.ends_at, tariff.ends_at)
                 if segment_start != cursor or segment_end <= segment_start:
-                    raise ValueError(
-                        "Daily settlement requires complete interval tariff coverage."
-                    )
+                    raise ValueError("Daily settlement requires complete interval tariff coverage.")
                 overlapping.append(tariff)
                 cursor = segment_end
                 if tariff.ends_at <= physical.ends_at:
@@ -324,9 +375,7 @@ class IndependentDailyFinancialSettlement:
                 else:
                     break
             if cursor != physical.ends_at:
-                raise ValueError(
-                    "Daily settlement requires complete interval tariff coverage."
-                )
+                raise ValueError("Daily settlement requires complete interval tariff coverage.")
             result[(physical.starts_at, physical.ends_at)] = tuple(overlapping)
         return result
 
@@ -340,14 +389,9 @@ class IndependentDailyFinancialSettlement:
         if (starts_at, ends_at) == (physical.starts_at, physical.ends_at):
             return physical
         total_seconds = (physical.ends_at - physical.starts_at).total_seconds()
-        offset_fraction = (
-            (starts_at - physical.starts_at).total_seconds() / total_seconds
-        )
+        offset_fraction = (starts_at - physical.starts_at).total_seconds() / total_seconds
         fraction = (ends_at - starts_at).total_seconds() / total_seconds
-        storage_delta_wh = (
-            physical.storage_energy_at_end_wh
-            - physical.storage_energy_at_start_wh
-        )
+        storage_delta_wh = physical.storage_energy_at_end_wh - physical.storage_energy_at_start_wh
         energy_fields = (
             "household_demand_wh",
             "battery_excluded_demand_wh",
@@ -367,17 +411,13 @@ class IndependentDailyFinancialSettlement:
             starts_at=starts_at,
             ends_at=ends_at,
             storage_energy_at_start_wh=(
-                physical.storage_energy_at_start_wh
-                + storage_delta_wh * offset_fraction
+                physical.storage_energy_at_start_wh + storage_delta_wh * offset_fraction
             ),
             storage_energy_at_end_wh=(
                 physical.storage_energy_at_start_wh
                 + storage_delta_wh * (offset_fraction + fraction)
             ),
-            **{
-                field: getattr(physical, field) * fraction
-                for field in energy_fields
-            },
+            **{field: getattr(physical, field) * fraction for field in energy_fields},
         )
 
     @staticmethod
@@ -394,14 +434,25 @@ class IndependentDailyFinancialSettlement:
         tariff: DailyReferenceTariffInterval,
         *,
         saldering_export_wh: float = 0.0,
+        solar_bonus_result_eur: float = 0.0,
+        pv_bonus_opportunity_eur: float = 0.0,
     ) -> DailyReferenceFinancialInterval:
+        # Published rates include the marginal bonus. Settle the quantity-limited
+        # bonus once, separately from 2026 netting and energy-tax allocation.
+        tariff = replace(
+            tariff,
+            export_eur_per_kwh=tariff.export_eur_per_kwh - tariff.solar_bonus_eur_per_kwh,
+            cross_interval_export_eur_per_kwh=(
+                tariff.cross_interval_export_eur_per_kwh - tariff.solar_bonus_eur_per_kwh
+                if tariff.cross_interval_export_eur_per_kwh is not None
+                else None
+            ),
+        )
         grid_import_wh = IndependentDailyFinancialSettlement._grid_import_wh(physical)
         grid_export_wh = IndependentDailyFinancialSettlement._grid_export_wh(physical)
         grid_import_cost_eur = grid_import_wh * tariff.import_eur_per_kwh / 1000.0
         if tariff.cross_interval_export_eur_per_kwh is None:
-            grid_export_result_eur = (
-                grid_export_wh * tariff.export_eur_per_kwh / 1000.0
-            )
+            grid_export_result_eur = grid_export_wh * tariff.export_eur_per_kwh / 1000.0
         else:
             same_interval_wh = (
                 min(grid_import_wh, grid_export_wh)
@@ -416,26 +467,20 @@ class IndependentDailyFinancialSettlement:
                     if tariff.same_interval_offset_eur_per_kwh is not None
                     else 0.0
                 )
-                + cross_interval_export_wh
-                * tariff.cross_interval_export_eur_per_kwh
+                + cross_interval_export_wh * tariff.cross_interval_export_eur_per_kwh
                 + min(saldering_export_wh, cross_interval_export_wh)
                 * tariff.saldering_tax_eur_per_kwh
             ) / 1000.0
+        grid_export_result_eur += solar_bonus_result_eur
         avoided_import_value_eur = (
-            physical.storage_to_household_output_wh
-            * tariff.import_eur_per_kwh
-            / 1000.0
+            physical.storage_to_household_output_wh * tariff.import_eur_per_kwh / 1000.0
         )
         opportunity_cost_eur = (
             physical.pv_to_storage_input_wh * tariff.export_eur_per_kwh / 1000.0
-        )
-        charge_input_wh = (
-            physical.pv_to_storage_input_wh + physical.grid_to_storage_input_wh
-        )
+        ) + pv_bonus_opportunity_eur
+        charge_input_wh = physical.pv_to_storage_input_wh + physical.grid_to_storage_input_wh
         pv_charge_share = (
-            physical.pv_to_storage_input_wh / charge_input_wh
-            if charge_input_wh > 0.0
-            else 0.0
+            physical.pv_to_storage_input_wh / charge_input_wh if charge_input_wh > 0.0 else 0.0
         )
         grid_charge_share = 1.0 - pv_charge_share if charge_input_wh > 0.0 else 0.0
         conversion_loss_value_eur = (
@@ -446,11 +491,14 @@ class IndependentDailyFinancialSettlement:
             )
             + physical.storage_discharge_loss_wh * tariff.import_eur_per_kwh
         ) / 1000.0
-        net_result_eur = (
-            grid_export_result_eur
-            + avoided_import_value_eur
-            - grid_import_cost_eur
-        )
+        if physical.pv_to_storage_input_wh > 0:
+            conversion_loss_value_eur += (
+                physical.storage_charge_loss_wh
+                * pv_charge_share
+                / physical.pv_to_storage_input_wh
+                * pv_bonus_opportunity_eur
+            )
+        net_result_eur = grid_export_result_eur + avoided_import_value_eur - grid_import_cost_eur
         return DailyReferenceFinancialInterval(
             starts_at=physical.starts_at,
             ends_at=physical.ends_at,

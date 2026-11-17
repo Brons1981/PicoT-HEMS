@@ -5,15 +5,18 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from math import isfinite
 from pathlib import Path
 from threading import Lock
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from picot.domain.solar_export_bonus import SolarExportBonusContext, SolarExportBonusPolicy
 from picot.domain.storage_energy_inventory import (
     StorageEnergyInventory,
     StorageEnergyLot,
 )
+from picot.planner.solar_export_bonus import SolarBonusAllowance, bonus_boundaries, bonus_rate
 from picot.v2.contracts import (
     CurrentStorageState,
     PlanningInputSnapshot,
@@ -29,18 +32,21 @@ from picot.v2.independent_daily_tariff_adapter import (
     VAT_FACTOR,
 )
 from picot.v2.power_history import PowerHistorySeries, PowerHistorySnapshot
+from picot.v2.solar_export_bonus_evidence import SolarExportBonusEvidence
 from picot.v2.stored_energy_value import estimated_stored_energy_value
 
 SCHEMA_VERSION = 1
 METHOD_VERSION = "financial-result-ledger:v1"
-REQUIRED_ROLES = frozenset({
-    "pv_generation",
-    "household_load",
-    "grid_import",
-    "grid_export",
-    "battery_charge",
-    "battery_discharge",
-})
+REQUIRED_ROLES = frozenset(
+    {
+        "pv_generation",
+        "household_load",
+        "grid_import",
+        "grid_export",
+        "battery_charge",
+        "battery_discharge",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -88,6 +94,165 @@ class FinancialResultLedger:
         self.local_timezone = ZoneInfo(local_timezone_name)
         self._lock = Lock()
         self._state = self._load()
+        self._solar_bonus = SolarExportBonusEvidence(state_path.with_suffix(".solar-bonus.json"))
+        self._state.setdefault(
+            "wear_schedule",
+            [{"at": datetime.min.replace(tzinfo=UTC).isoformat(), "rate": self.wear_rate}],
+        )
+
+    def configure_solar_export_bonus(self, policy: SolarExportBonusPolicy | None) -> None:
+        self._solar_bonus.configure(policy)
+
+    def observe_solar_export_bonus(self, history: PowerHistorySnapshot) -> None:
+        self._solar_bonus.observe(history)
+
+    def solar_export_bonus_context(
+        self,
+        at: datetime,
+        history: PowerHistorySnapshot | None = None,
+        maximum_unobserved_export_power_w: float | None = None,
+    ) -> SolarExportBonusContext | None:
+        return self._solar_bonus.context(at, history, maximum_unobserved_export_power_w)
+
+    def configure_wear(self, rate: float, effective_at: datetime) -> None:
+        if not isfinite(rate) or rate < 0 or effective_at.utcoffset() is None:
+            raise ValueError("wear requires a finite nonnegative rate and aware activation")
+        with self._lock:
+            schedule = self._state["wear_schedule"]
+            if rate != float(schedule[-1]["rate"]):
+                if effective_at < datetime.fromisoformat(schedule[-1]["at"]):
+                    raise ValueError("wear activation may not rewrite past rates")
+                schedule.append({"at": effective_at.isoformat(), "rate": rate})
+                self._save()
+            self.wear_rate = rate
+
+    def wear_segments(
+        self,
+        start: datetime,
+        end: datetime,
+    ) -> list[tuple[datetime, datetime, float, float]]:
+        bounds = sorted(
+            {
+                start,
+                end,
+                *(
+                    datetime.fromisoformat(row["at"])
+                    for row in self._state["wear_schedule"]
+                    if start < datetime.fromisoformat(row["at"]) < end
+                ),
+            }
+        )
+        return [
+            (a, b, self._wear_rate_at(a), self._wear_rate_at(a))
+            for a, b in zip(bounds, bounds[1:], strict=False)
+        ]
+
+    def _wear_rate_at(self, at: datetime) -> float:
+        return float(
+            next(
+                row["rate"]
+                for row in reversed(self._state["wear_schedule"])
+                if datetime.fromisoformat(row["at"]) <= at
+            )
+        )
+
+    def _bonus_contexts(
+        self,
+        start: datetime,
+        end: datetime,
+    ) -> list[tuple[datetime, SolarExportBonusContext]]:
+        result = []
+        for at in (start, *self._solar_bonus.policy_boundaries(start, end)):
+            context = self.solar_export_bonus_context(at)
+            if context is not None:
+                result.append((at, context))
+        return result
+
+    def _settlement_segments(
+        self,
+        points: tuple[PriceForecastPoint, ...],
+        start: datetime,
+        end: datetime,
+    ) -> list[tuple[datetime, datetime, float, float]]:
+        original = self._price_segments(points, start, end)
+        bounds = {
+            start,
+            end,
+            *(at for a, b, _, _ in self.wear_segments(start, end) for at in (a, b)),
+        }
+        for at, context in self._bonus_contexts(start, end):
+            bounds.add(at)
+            bounds.update(bonus_boundaries(context, start, end))
+        result: list[tuple[datetime, datetime, float, float]] = []
+        for a, b, import_rate, export_rate in original:
+            split = sorted({a, b, *(x for x in bounds if a < x < b)})
+            result.extend(
+                (left, right, import_rate, export_rate)
+                for left, right in zip(split, split[1:], strict=False)
+            )
+        return result
+
+    def _bonus_evaluators(
+        self,
+        start: datetime,
+        end: datetime,
+    ) -> list[tuple[datetime, SolarExportBonusContext, SolarBonusAllowance]]:
+        return [
+            (at, context, SolarBonusAllowance(context))
+            for at, context in self._bonus_contexts(start, end)
+        ]
+
+    @staticmethod
+    def _bonus_value(
+        evaluators: list[tuple[datetime, SolarExportBonusContext, SolarBonusAllowance]],
+        start: datetime,
+        end: datetime,
+        import_rate: float,
+        exported_kwh: float,
+        *,
+        consume: bool = True,
+    ) -> float:
+        selected = next((row for row in reversed(evaluators) if row[0] <= start), None)
+        if selected is None:
+            return 0.0
+        _, context, allowance = selected
+        base_export = (
+            import_rate
+            - (ENERGY_TAX_EX_VAT_EUR_PER_KWH + SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH) * VAT_FACTOR
+            + EXPORT_ADDITION_EUR_PER_KWH
+        )
+        value = allowance.value if consume else allowance.potential_value
+        return value(start, end, exported_kwh, bonus_rate(context, start, end, base_export))
+
+    def measured_price_segments(
+        self,
+        points: tuple[PriceForecastPoint, ...],
+        history: PowerHistorySnapshot,
+    ) -> list[tuple[datetime, datetime, float, float]]:
+        segments = self._settlement_segments(points, history.starts_at, history.ends_at)
+        source = next((s for s in history.series if s.role == "grid_export"), None)
+        evaluators = self._bonus_evaluators(history.starts_at, history.ends_at)
+        if source is None or not evaluators:
+            return segments
+        result = []
+        for start, end, imported, exported in segments:
+            energy = self._integrate(source, start, end)
+            extra = (
+                self._bonus_value(evaluators, start, end, imported, energy / 1000)
+                if energy is not None
+                else 0.0
+            )
+            result.append(
+                (
+                    start,
+                    end,
+                    imported,
+                    exported + extra * 1000 / energy
+                    if energy is not None and energy > 0
+                    else exported,
+                )
+            )
+        return result
 
     def _load(self) -> dict[str, Any]:
         if not self.state_path.is_file():
@@ -121,11 +286,12 @@ class FinancialResultLedger:
             result["financial_metrics"] = build_financial_metrics(
                 history=measurement_history if measurement_history is not None else history,
                 settlement=result,
-                price_segments=self._price_segments(
+                price_segments=self.measured_price_segments(
                     snapshot.price_points if price_points is None else price_points,
-                    history.starts_at, history.ends_at,
+                    measurement_history if measurement_history is not None else history,
                 ),
                 wear_rate=self.wear_rate,
+                wear_segments=self.wear_segments(history.starts_at, history.ends_at),
                 expected_starts_at=history.starts_at,
                 expected_ends_at=snapshot.captured_at,
             )
@@ -134,14 +300,18 @@ class FinancialResultLedger:
             # update consumed by planning. Retain explicit evidence of its failure.
             result["financial_metrics"] = {
                 "method_version": "financial-metric-availability:v1",
-                "status": "incomplete", "reason": "financial_metric_evaluation_failed",
-                "error_type": type(exc).__name__, "values": {},
-                "observer_only": True, "selection_permitted": False,
+                "status": "incomplete",
+                "reason": "financial_metric_evaluation_failed",
+                "error_type": type(exc).__name__,
+                "values": {},
+                "observer_only": True,
+                "selection_permitted": False,
             }
         # Optional display evidence must never interrupt existing settlement or inventory.
         try:
             result["estimated_battery_value"] = estimated_stored_energy_value(
-                snapshot, self.discharge_efficiency,
+                snapshot,
+                self.discharge_efficiency,
             )
         except Exception:
             result["estimated_battery_value"] = {"status": "unavailable", "value_eur": None}
@@ -162,14 +332,19 @@ class FinancialResultLedger:
             return self._dashboard_view_locked()
 
     def evaluate_display_history(
-        self, context: FinancialPhysicalContext, history: PowerHistorySnapshot,
+        self,
+        context: FinancialPhysicalContext,
+        history: PowerHistorySnapshot,
         price_points: tuple[PriceForecastPoint, ...],
     ) -> dict[str, object]:
         """Reuse financial formulas without storing a derived inventory or snapshot."""
         return self._evaluate(context, history, price_points=price_points)
 
     def store_financial_estimate(
-        self, day: str, metrics: dict[str, Any], context: dict[str, Any],
+        self,
+        day: str,
+        metrics: dict[str, Any],
+        context: dict[str, Any],
     ) -> None:
         """Attach optional display evidence; original day fields remain authoritative."""
         with self._lock:
@@ -185,7 +360,8 @@ class FinancialResultLedger:
                 return
             record["financial_estimate"] = metrics
             record["financial_inference_status"] = {
-                "status": "available", "attempted_at": context["attempted_at"],
+                "status": "available",
+                "attempted_at": context["attempted_at"],
             }
             contexts = self._state.setdefault("financial_measurement_context", {})
             contexts[day] = context
@@ -198,7 +374,9 @@ class FinancialResultLedger:
             record = self._state.get("days", {}).get(day)
             if isinstance(record, dict):
                 record["financial_inference_status"] = {
-                    "status": "unavailable", "attempted_at": at.isoformat(), "reason": reason,
+                    "status": "unavailable",
+                    "attempted_at": at.isoformat(),
+                    "reason": reason,
                 }
                 self._save()
 
@@ -209,26 +387,30 @@ class FinancialResultLedger:
         raw = day.get("financial_metrics", {})
         if not isinstance(estimate, dict) or not estimate.get("ends_at"):
             return result
-        lag = (datetime.fromisoformat(day["ends_at"])
-               - datetime.fromisoformat(estimate["ends_at"])).total_seconds()
+        lag = (
+            datetime.fromisoformat(day["ends_at"]) - datetime.fromisoformat(estimate["ends_at"])
+        ).total_seconds()
         if lag > 900:
             result["financial_inference_status"] = {
                 **day.get("financial_inference_status", {}),
-                "status": "unavailable", "reason": "financial_inference_stale",
+                "status": "unavailable",
+                "reason": "financial_inference_stale",
             }
             return result
-        if (datetime.fromisoformat(estimate["starts_at"])
-                != datetime.fromisoformat(day["starts_at"])):
+        if datetime.fromisoformat(estimate["starts_at"]) != datetime.fromisoformat(
+            day["starts_at"]
+        ):
             return result
 
         def count(values: dict[str, Any]) -> int:
-            return sum(item.get("status") in {"available", "estimated"}
-                       for item in values.get("values", {}).values())
+            return sum(
+                item.get("status") in {"available", "estimated"}
+                for item in values.get("values", {}).values()
+            )
+
         # Keep the same period for all amounts; disclose the observer's timestamp.
         # A new raw result with equal/better coverage takes precedence.
-        if count(estimate) > count(raw) or (
-            count(estimate) == count(raw) and lag <= 0
-        ):
+        if count(estimate) > count(raw) or (count(estimate) == count(raw) and lag <= 0):
             result["financial_metrics"] = estimate
             if "household_energy_sources" in estimate:
                 result["household_energy_sources"] = estimate["household_energy_sources"]
@@ -259,12 +441,16 @@ class FinancialResultLedger:
             if isinstance(days, dict)
             else []
         )
-        battery_values = [value for item in day_values
-                          if (value := financial_metric_value(item, "net_battery_value_eur"))
-                          is not None]
-        picot_values = [value for item in day_values
-                       if (value := financial_metric_value(item, "net_picot_value_eur"))
-                       is not None]
+        battery_values = [
+            value
+            for item in day_values
+            if (value := financial_metric_value(item, "net_battery_value_eur")) is not None
+        ]
+        picot_values = [
+            value
+            for item in day_values
+            if (value := financial_metric_value(item, "net_picot_value_eur")) is not None
+        ]
         cumulative_battery = sum(battery_values)
         cumulative_picot = sum(picot_values)
         latest = max(day_values, key=lambda item: str(item.get("day", "")), default=None)
@@ -284,14 +470,20 @@ class FinancialResultLedger:
                 "included_picot_days": len(picot_values),
                 "excluded_picot_days": len(day_values) - len(picot_values),
                 "estimated_battery_days": sum(
-                    item.get("financial_metrics", {}).get("values", {}).get(
-                        "net_battery_value_eur", {}
-                    ).get("status") == "estimated" for item in day_values
+                    item.get("financial_metrics", {})
+                    .get("values", {})
+                    .get("net_battery_value_eur", {})
+                    .get("status")
+                    == "estimated"
+                    for item in day_values
                 ),
                 "estimated_picot_days": sum(
-                    item.get("financial_metrics", {}).get("values", {}).get(
-                        "net_picot_value_eur", {}
-                    ).get("status") == "estimated" for item in day_values
+                    item.get("financial_metrics", {})
+                    .get("values", {})
+                    .get("net_picot_value_eur", {})
+                    .get("status")
+                    == "estimated"
+                    for item in day_values
                 ),
             },
             "wear_eur_per_discharge_kwh": self.wear_rate,
@@ -332,7 +524,7 @@ class FinancialResultLedger:
         if not states or not limits:
             result["reason"] = "storage_physical_state_missing"
             return result
-        segments = self._price_segments(
+        segments = self._settlement_segments(
             price_points,
             history.starts_at,
             history.ends_at,
@@ -363,31 +555,40 @@ class FinancialResultLedger:
             "battery": 0.0,
             "grid": 0.0,
         }
-        inventory_segments: list[
-            tuple[datetime, datetime, float, float, dict[str, float]]
-        ] = []
+        inventory_segments: list[tuple[datetime, datetime, float, float, dict[str, float]]] = []
+        actual_bonus = self._bonus_evaluators(history.starts_at, history.ends_at)
+        inventory_bonus = self._bonus_evaluators(history.starts_at, history.ends_at)
+        no_battery_bonus = self._bonus_evaluators(history.starts_at, history.ends_at)
+        bonus_total = 0.0
         for start, end, import_rate, export_rate in segments:
             values = {role: self._integrate(series, start, end) for role, series in by_role.items()}
             if any(value is None for value in values.values()):
                 result["reason"] = "measurement_coverage_incomplete"
                 return result
-            complete_values = {
-                role: value for role, value in values.items() if value is not None
-            }
-            inventory_segments.append(
-                (start, end, import_rate, export_rate, complete_values)
+            complete_values = {role: value for role, value in values.items() if value is not None}
+            interval_import_cost = complete_values["grid_import"] * import_rate / 1000.0
+            interval_export_revenue = complete_values["grid_export"] * export_rate / 1000.0
+            extra = self._bonus_value(
+                actual_bonus, start, end, import_rate, complete_values["grid_export"] / 1000
             )
-            interval_import_cost = (
-                complete_values["grid_import"] * import_rate / 1000.0
-            )
-            interval_export_revenue = (
-                complete_values["grid_export"] * export_rate / 1000.0
-            )
+            interval_export_revenue += extra
+            bonus_total += extra
             actual_import_cost += interval_import_cost
             actual_export_revenue += interval_export_revenue
             actual_cost += interval_import_cost - interval_export_revenue
             pv = complete_values["pv_generation"]
             load = complete_values["household_load"]
+            pv_charge = min(complete_values["battery_charge"], max(0.0, pv - load))
+            self._bonus_value(
+                inventory_bonus, start, end, import_rate, complete_values["grid_export"] / 1000
+            )
+            pv_bonus_cost = self._bonus_value(
+                inventory_bonus, start, end, import_rate, pv_charge / 1000
+            )
+            inventory_rate = (
+                export_rate + pv_bonus_cost * 1000 / pv_charge if pv_charge > 0 else export_rate
+            )
+            inventory_segments.append((start, end, import_rate, inventory_rate, complete_values))
             direct_pv = min(pv, load)
             remaining_load = max(0.0, load - direct_pv)
             battery_to_load = min(
@@ -402,22 +603,18 @@ class FinancialResultLedger:
             }
             for source, energy_wh in source_energy.items():
                 household_source_wh[source] += energy_wh
-                household_source_value_eur[source] += (
-                    energy_wh * import_rate / 1000.0
-                )
+                household_source_value_eur[source] += energy_wh * import_rate / 1000.0
             no_battery_cost += (
-                max(0.0, load - pv) * import_rate
-                - max(0.0, pv - load) * export_rate
+                max(0.0, load - pv) * import_rate - max(0.0, pv - load) * export_rate
             ) / 1000.0
+            no_battery_cost -= self._bonus_value(
+                no_battery_bonus, start, end, import_rate, max(0.0, pv - load) / 1000
+            )
             load_only_cost += load * import_rate / 1000.0
 
         state = states[0]
         limit = next(
-            (
-                item
-                for item in limits
-                if item.execution_scope_id == state.execution_scope_id
-            ),
+            (item for item in limits if item.execution_scope_id == state.execution_scope_id),
             limits[0],
         )
         complete_energy_by_role = {
@@ -441,9 +638,13 @@ class FinancialResultLedger:
             initial_stored_energy_wh=initial_energy,
             starts_at=history.starts_at,
             segments=inventory_segments,
-            opening_inventory=(None if isinstance(snapshot, FinancialPhysicalContext)
-                               else self._prior_storage_inventory(local_day)),
+            opening_inventory=(
+                None
+                if isinstance(snapshot, FinancialPhysicalContext)
+                else self._prior_storage_inventory(local_day)
+            ),
         )
+        nom_wear_values: list[float] = []
         nom_cost, nom_discharge = self._simulate_nom(
             by_role=by_role,
             segments=segments,
@@ -452,9 +653,13 @@ class FinancialResultLedger:
             maximum_energy_wh=state.usable_capacity_wh * limit.maximum_soc,
             maximum_charge_power_w=limit.maximum_charge_input_power_w,
             maximum_discharge_power_w=limit.maximum_discharge_output_power_w,
+            wear_cost_out=nom_wear_values,
         )
-        actual_wear = actual_discharge / 1000.0 * self.wear_rate
-        nom_wear = nom_discharge / 1000.0 * self.wear_rate
+        actual_wear = sum(
+            float(self._integrate(by_role["battery_discharge"], a, b) or 0) / 1000 * rate
+            for a, b, rate, _ in self.wear_segments(history.starts_at, history.ends_at)
+        )
+        nom_wear = nom_wear_values[0]
         gross_battery = no_battery_cost - actual_cost
         net_battery = gross_battery - actual_wear
         gross_total_energy = load_only_cost - actual_cost
@@ -467,51 +672,59 @@ class FinancialResultLedger:
             "battery": "avoided_grid_import_gross",
             "grid": "energy_cost",
         }
-        result.update({
-            "status": "available",
-            "reason": None,
-            "actual_energy_cost_eur": round(actual_cost, 4),
-            "grid_import_cost_eur": round(actual_import_cost, 4),
-            "grid_export_revenue_eur": round(actual_export_revenue, 4),
-            "load_only_energy_cost_eur": round(load_only_cost, 4),
-            "gross_total_energy_value_eur": round(gross_total_energy, 4),
-            "net_total_energy_value_eur": round(net_total_energy, 4),
-            "no_battery_energy_cost_eur": round(no_battery_cost, 4),
-            "nom_energy_cost_eur": round(nom_cost, 4),
-            "grid_import_cost_and_export_net_eur": round(actual_cost, 4),
-            "gross_battery_value_eur": round(gross_battery, 4),
-            "battery_wear_eur": round(actual_wear, 4),
-            "net_battery_value_eur": round(net_battery, 4),
-            "gross_picot_value_eur": round(gross_picot, 4),
-            "nom_wear_eur": round(nom_wear, 4),
-            "net_picot_value_eur": round(net_picot, 4),
-            "energy_kwh": {
-                key: round(value / 1000.0, 4)
-                for key, value in complete_energy_by_role.items()
-            },
-            "storage_energy_inventory": self._inventory_view(inventory),
-            "household_energy_sources": {
-                "household_load_kwh": round(household_load_wh / 1000.0, 4),
-                "sources": [
-                    {
-                        "source": source,
-                        "energy_kwh": round(household_source_wh[source] / 1000.0, 4),
-                        "share": round(
-                            household_source_wh[source] / household_load_wh,
-                            6,
-                        ) if household_load_wh > 0.0 else 0.0,
-                        "value_eur": round(household_source_value_eur[source], 4),
-                        "value_kind": source_value_kinds[source],
-                    }
-                    for source in ("pv_direct", "battery", "grid")
-                ],
-            },
-            "baseline": "same_measured_pv_and_household_with_nom_battery_control",
-            "coverage_by_role": self._coverage_by_role(
-                by_role,
-                starts_at=history.starts_at,
-            ),
-        })
+        result.update(
+            {
+                "status": "available",
+                "reason": None,
+                "actual_energy_cost_eur": round(actual_cost, 4),
+                "grid_import_cost_eur": round(actual_import_cost, 4),
+                "grid_export_revenue_eur": round(actual_export_revenue, 4),
+                "solar_export_bonus_eur": round(bonus_total, 4),
+                "solar_export_bonus_status": (
+                    actual_bonus[-1][1].status if actual_bonus else "disabled"
+                ),
+                "solar_export_bonus_reason": (actual_bonus[-1][1].reason if actual_bonus else None),
+                "load_only_energy_cost_eur": round(load_only_cost, 4),
+                "gross_total_energy_value_eur": round(gross_total_energy, 4),
+                "net_total_energy_value_eur": round(net_total_energy, 4),
+                "no_battery_energy_cost_eur": round(no_battery_cost, 4),
+                "nom_energy_cost_eur": round(nom_cost, 4),
+                "grid_import_cost_and_export_net_eur": round(actual_cost, 4),
+                "gross_battery_value_eur": round(gross_battery, 4),
+                "battery_wear_eur": round(actual_wear, 4),
+                "net_battery_value_eur": round(net_battery, 4),
+                "gross_picot_value_eur": round(gross_picot, 4),
+                "nom_wear_eur": round(nom_wear, 4),
+                "net_picot_value_eur": round(net_picot, 4),
+                "energy_kwh": {
+                    key: round(value / 1000.0, 4) for key, value in complete_energy_by_role.items()
+                },
+                "storage_energy_inventory": self._inventory_view(inventory),
+                "household_energy_sources": {
+                    "household_load_kwh": round(household_load_wh / 1000.0, 4),
+                    "sources": [
+                        {
+                            "source": source,
+                            "energy_kwh": round(household_source_wh[source] / 1000.0, 4),
+                            "share": round(
+                                household_source_wh[source] / household_load_wh,
+                                6,
+                            )
+                            if household_load_wh > 0.0
+                            else 0.0,
+                            "value_eur": round(household_source_value_eur[source], 4),
+                            "value_kind": source_value_kinds[source],
+                        }
+                        for source in ("pv_direct", "battery", "grid")
+                    ],
+                },
+                "baseline": "same_measured_pv_and_household_with_nom_battery_control",
+                "coverage_by_role": self._coverage_by_role(
+                    by_role,
+                    starts_at=history.starts_at,
+                ),
+            }
+        )
         return result
 
     def _build_storage_inventory(
@@ -522,9 +735,7 @@ class FinancialResultLedger:
         measured_stored_energy_wh: float,
         initial_stored_energy_wh: float,
         starts_at: datetime,
-        segments: list[
-            tuple[datetime, datetime, float, float, dict[str, float]]
-        ],
+        segments: list[tuple[datetime, datetime, float, float, dict[str, float]]],
         opening_inventory: StorageEnergyInventory | None,
     ) -> StorageEnergyInventory:
         """Replay measured flows into auditable source-and-cost lots.
@@ -560,19 +771,19 @@ class FinancialResultLedger:
                 if lot.stored_energy_wh <= 1e-9:
                     lots.pop(0)
 
-        opening_delta_wh = initial_stored_energy_wh - sum(
-            item.stored_energy_wh for item in lots
-        )
+        opening_delta_wh = initial_stored_energy_wh - sum(item.stored_energy_wh for item in lots)
         if opening_delta_wh < -1.0:
             consume(-opening_delta_wh)
         elif opening_delta_wh > 1.0:
-            lots.append(_MutableStorageEnergyLot(
-                source="unknown",
-                stored_energy_wh=opening_delta_wh,
-                acquisition_cost_eur=None,
-                acquired_at=starts_at,
-                evidence_ids=("opening-storage-balance",),
-            ))
+            lots.append(
+                _MutableStorageEnergyLot(
+                    source="unknown",
+                    stored_energy_wh=opening_delta_wh,
+                    acquisition_cost_eur=None,
+                    acquired_at=starts_at,
+                    evidence_ids=("opening-storage-balance",),
+                )
+            )
 
         for start, end, import_rate, export_rate, values in segments:
             consume(values["battery_discharge"] / self.discharge_efficiency)
@@ -594,26 +805,30 @@ class FinancialResultLedger:
                 stored_wh = input_wh * self.charge_efficiency
                 if stored_wh <= 1e-9:
                     continue
-                lots.append(_MutableStorageEnergyLot(
-                    source=source,
-                    stored_energy_wh=stored_wh,
-                    acquisition_cost_eur=input_wh * rate / 1000.0,
-                    acquired_at=end,
-                    evidence_ids=evidence,
-                ))
+                lots.append(
+                    _MutableStorageEnergyLot(
+                        source=source,
+                        stored_energy_wh=stored_wh,
+                        acquisition_cost_eur=input_wh * rate / 1000.0,
+                        acquired_at=end,
+                        evidence_ids=evidence,
+                    )
+                )
 
         accounted_wh = sum(item.stored_energy_wh for item in lots)
         delta_wh = measured_stored_energy_wh - accounted_wh
         if delta_wh < -1.0:
             consume(-delta_wh)
         elif delta_wh > 1.0:
-            lots.append(_MutableStorageEnergyLot(
-                source="unknown",
-                stored_energy_wh=delta_wh,
-                acquisition_cost_eur=None,
-                acquired_at=captured_at,
-                evidence_ids=("measured-storage-reconciliation",),
-            ))
+            lots.append(
+                _MutableStorageEnergyLot(
+                    source="unknown",
+                    stored_energy_wh=delta_wh,
+                    acquisition_cost_eur=None,
+                    acquired_at=captured_at,
+                    evidence_ids=("measured-storage-reconciliation",),
+                )
+            )
         reconciled_wh = sum(item.stored_energy_wh for item in lots)
         final_delta_wh = measured_stored_energy_wh - reconciled_wh
         if abs(final_delta_wh) > 1e-9 and lots:
@@ -701,13 +916,10 @@ class FinancialResultLedger:
         return {
             "execution_scope_id": inventory.execution_scope_id,
             "captured_at": inventory.captured_at.isoformat(),
-            "measured_stored_energy_wh": round(
-                inventory.measured_stored_energy_wh, 6
-            ),
+            "measured_stored_energy_wh": round(inventory.measured_stored_energy_wh, 6),
             "known_stored_energy_wh": round(inventory.known_stored_energy_wh, 6),
             "unknown_stored_energy_wh": round(
-                inventory.measured_stored_energy_wh
-                - inventory.known_stored_energy_wh,
+                inventory.measured_stored_energy_wh - inventory.known_stored_energy_wh,
                 6,
             ),
             "known_acquisition_cost_eur": round(known_cost_eur, 6),
@@ -743,16 +955,12 @@ class FinancialResultLedger:
             role: {
                 "point_count": len(series.points),
                 "first_point_at": (
-                    min(point.sampled_at for point in series.points)
-                    .astimezone(UTC)
-                    .isoformat()
+                    min(point.sampled_at for point in series.points).astimezone(UTC).isoformat()
                     if series.points
                     else None
                 ),
                 "last_point_at": (
-                    max(point.sampled_at for point in series.points)
-                    .astimezone(UTC)
-                    .isoformat()
+                    max(point.sampled_at for point in series.points).astimezone(UTC).isoformat()
                     if series.points
                     else None
                 ),
@@ -778,9 +986,12 @@ class FinancialResultLedger:
             import_rate = point.value_eur_per_kwh
             export_rate = import_rate
             if start >= EXPORT_TAX_TRANSITION:
-                export_rate = import_rate - (
-                    ENERGY_TAX_EX_VAT_EUR_PER_KWH + SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH
-                ) * VAT_FACTOR + EXPORT_ADDITION_EUR_PER_KWH
+                export_rate = (
+                    import_rate
+                    - (ENERGY_TAX_EX_VAT_EUR_PER_KWH + SUPPLIER_ADDITION_EX_VAT_EUR_PER_KWH)
+                    * VAT_FACTOR
+                    + EXPORT_ADDITION_EUR_PER_KWH
+                )
             result.append((start, end, import_rate, export_rate))
             cursor = end
         return result if cursor == ends_at else []
@@ -819,10 +1030,13 @@ class FinancialResultLedger:
         maximum_energy_wh: float,
         maximum_charge_power_w: float,
         maximum_discharge_power_w: float,
+        wear_cost_out: list[float] | None = None,
     ) -> tuple[float, float]:
         energy = initial_energy_wh
         total_cost = 0.0
         total_discharge = 0.0
+        total_wear = 0.0
+        bonus = self._bonus_evaluators(segments[0][0], segments[-1][1]) if segments else []
         for start, end, import_rate, export_rate in segments:
             pv = float(self._integrate(by_role["pv_generation"], start, end) or 0.0)
             load = float(self._integrate(by_role["household_load"], start, end) or 0.0)
@@ -844,5 +1058,9 @@ class FinancialResultLedger:
             energy += charge * self.charge_efficiency
             surplus -= charge
             total_discharge += discharge
+            total_wear += discharge / 1000 * self._wear_rate_at(start)
             total_cost += (deficit * import_rate - surplus * export_rate) / 1000.0
+            total_cost -= self._bonus_value(bonus, start, end, import_rate, surplus / 1000)
+        if wear_cost_out is not None:
+            wear_cost_out.append(total_wear)
         return total_cost, total_discharge

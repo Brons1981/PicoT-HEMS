@@ -24,6 +24,7 @@ from picot.domain.market_execution import MarketExecutionProgress
 from picot.domain.market_plan_binding import MarketPlanBinding
 from picot.domain.market_revision_comparison import MarketRevisionCandidateEvidence
 from picot.domain.market_user_rule import MarketUserRule
+from picot.domain.solar_export_bonus import SolarExportBonusContext
 from picot.domain.supplemental_charge import SupplementalChargeAssignment
 from picot.v2.daily_bridge import DailyBridgeAssessment, DailyBridgeState
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
@@ -40,6 +41,7 @@ from picot.v2.household_planning_regime import (
 from picot.v2.plan_commitment_store import ActivePlanCommitment
 from picot.v2.power_history import PowerHistorySnapshot
 from picot.v2.route_choice_input import RouteChoiceInput
+from picot.v2.strategy_settings import StrategySetting
 
 if TYPE_CHECKING:
     from picot.v2.household_load_guard import HouseholdLoadGuardAssessment
@@ -802,8 +804,17 @@ class PlanningInputSnapshot:
     solcast_planning_basis: str = "mean-lower-central"
     storage_reserve_checkpoints: tuple[tuple[str, datetime, float], ...] = ()
     external_load_facts: tuple[ExternalLoadFact, ...] = ()
+    solar_export_bonus: SolarExportBonusContext | None = None
+    user_rule_revision: int | None = None
+    user_strategy_setting: StrategySetting | None = None
 
     def __post_init__(self) -> None:
+        if self.user_rule_revision is not None and (
+            type(self.user_rule_revision) is not int or self.user_rule_revision < 1
+        ):
+            raise ValueError("User rule revision must be a positive integer")
+        if (self.user_rule_revision is None) != (self.user_strategy_setting is None):
+            raise ValueError("User strategy setting requires its exact rule revision")
         if self.solcast_planning_basis not in {"lower", "mean-lower-central", "central", "upper"}:
             raise ValueError("invalid Solcast planning basis")
         for scope, at, energy in self.storage_reserve_checkpoints:

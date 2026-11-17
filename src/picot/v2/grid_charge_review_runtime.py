@@ -42,6 +42,7 @@ class GridChargeReviewObserver:
         charge_efficiency: float,
         discharge_efficiency: float,
         wear_eur_per_kwh: float,
+        wear_provider: Callable[[], float] | None = None,
         timezone: str = "Europe/Amsterdam",
         financial_review: Callable[
             [PlanningInputSnapshot, PowerHistorySnapshot, tuple[PriceForecastPoint, ...],
@@ -67,6 +68,7 @@ class GridChargeReviewObserver:
         self.charge_efficiency = charge_efficiency
         self.discharge_efficiency = discharge_efficiency
         self.wear = wear_eur_per_kwh
+        self.wear_provider = wear_provider
         self.financial_review = financial_review
         self.lock = Lock()
         self.last_attempt: datetime | None = None
@@ -159,7 +161,7 @@ class GridChargeReviewObserver:
             limit.maximum_discharge_output_power_w,
             self.charge_efficiency,
             self.discharge_efficiency,
-            self.wear,
+            self.wear_provider() if self.wear_provider is not None else self.wear,
         )
         inputs = self.state["inputs"]
         context = inputs.setdefault(
@@ -168,7 +170,13 @@ class GridChargeReviewObserver:
                 "settings": asdict(settings),
                 "prices": {},
                 "settings_changed": False,
+                "physical_settings_changed": False,
             },
+        )
+        context.setdefault("physical_settings_changed", bool(context["settings_changed"]))
+        context["physical_settings_changed"] |= any(
+            value != context["settings"].get(key)
+            for key, value in asdict(settings).items() if key != "wear_eur_per_kwh"
         )
         context["settings_changed"] |= context["settings"] != asdict(settings)
         # Save published prices before they disappear from tomorrow's HA entity.
@@ -240,7 +248,7 @@ class GridChargeReviewObserver:
                 try:
                     self.financial_review(
                         snapshot, history, known_prices, ReviewSettings(**ctx["settings"]),
-                        bool(ctx["settings_changed"]),
+                        bool(ctx.get("physical_settings_changed", ctx["settings_changed"])),
                     )
                 except Exception as exc:
                     # An auxiliary financial failure must not suppress strict review/SOC.

@@ -2,11 +2,15 @@
 
 Eenvoudige EV-laadopdrachten, automatisch bij aansluiten, vaste starttijd,
 instelbaar geschat SOC-doel en eenmalig 100%. Basis main 68503d888892a132febd1faa936809700e10466a.
-Alleen ED en tests/documentatie; HC dev.35 en HEMS dev.339 behouden.
+Alleen ED en tests/documentatie; HC dev.35 en HEMS dev.340 behouden.
 Publicatie op expliciet verzoek via PR en groene CI. Geen live installatie.
 Na installatie automatisch aansluiten en 80%-doel opslaan; 11,7 kWh is de voorlopige
 AC-rekenbasis. Bestaande vastgezette sessie eerst annuleren voor een eigen starttijd.
 Zie docs/development_log/2026-11-17-ed-simple-charging.md.
+
+## HEMS dev.340 - 17 november 2026
+
+Vier strategie-instellingen met onmiddellijke herbeoordeling, instelbare maximale handelsruimte en slijtagekosten, kleinere marktroutes en optionele zonnebonus. Zie V2ADR-071 en V2ADR-072. De vijfde stand Handel staat uit. Dev.339 is de terugvalbasis.
 
 ## Release HEMS dev.339 en ED dev.15 - 10 november 2026
 
@@ -1053,4 +1057,3 @@ akkoord gegeven op publicatie van de geïsoleerde planovergangenreparatie via PR
 en CI. Zie `docs/development_log/2026-09-27-retained-plan-boundaries.md`.
 Financiële meetverwerking, planuitleg en NOM-vervanging blijven vervolgstappen.
 Installatie en livecontrole volgen na publicatie.
-

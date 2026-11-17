@@ -7,6 +7,21 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import isfinite
 
+MARKET_VOLUME_STEPS = 5
+
+
+def export_volume_targets(maximum_wh: float) -> tuple[float, ...]:
+    """Bounded unranked search: five equal subdivisions including the exact cap.
+
+    These are alternative complete actions, not execution-time curtailment.
+    No candidate selection or claim of a continuous global optimum happens here.
+    """
+    if not isfinite(maximum_wh) or maximum_wh < 0:
+        raise ValueError("market export maximum must be finite and nonnegative")
+    return tuple(maximum_wh * step / MARKET_VOLUME_STEPS
+                 for step in range(1, MARKET_VOLUME_STEPS + 1)
+                 if maximum_wh * step / MARKET_VOLUME_STEPS > 1e-6)
+
 
 @dataclass(frozen=True, slots=True)
 class ExportCapacityPart:

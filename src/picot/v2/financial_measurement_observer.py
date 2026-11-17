@@ -89,8 +89,7 @@ class FinancialMeasurementObserver:
         settings_changed: bool, day: str, *, pending_until: datetime | None = None,
     ) -> None:
         if (settings_changed or settings.charge_efficiency != self.ledger.charge_efficiency
-                or settings.discharge_efficiency != self.ledger.discharge_efficiency
-                or settings.wear_eur_per_kwh != self.ledger.wear_rate):
+                or settings.discharge_efficiency != self.ledger.discharge_efficiency):
             raise ValueError("financial_settings_changed_during_day")
         if history.status != "available" or history.error:
             raise ValueError("measurement_history_unavailable")
@@ -169,7 +168,7 @@ class FinancialMeasurementObserver:
         energy_history = replace(prepared.history, series=tuple(
             s for s in prepared.history.series if s.role != "storage_soc"
         ))
-        segments = self.ledger._price_segments(prices, history.starts_at, history.ends_at)
+        segments = self.ledger.measured_price_segments(prices, energy_history)
         coverage = financial_measurement_coverage(energy_history)
         settlement = (
             self.ledger.evaluate_display_history(
@@ -181,6 +180,7 @@ class FinancialMeasurementObserver:
         metrics = build_financial_metrics(
             history=energy_history, settlement=settlement,
             price_segments=segments,
+            wear_segments=self.ledger.wear_segments(history.starts_at, history.ends_at),
             wear_rate=self.ledger.wear_rate, expected_starts_at=history.starts_at,
             expected_ends_at=history.ends_at,
         )

@@ -20,6 +20,7 @@ from picot.domain.daily_reference_charge_window import (
 )
 from picot.domain.daily_reference_intent import DailyStorageIntent
 from picot.domain.daily_reference_simulation import DailyPlanningProjection
+from picot.domain.daily_reference_tariff import DailyReferenceTariffSchedule
 from picot.domain.energy_path import (
     EnergyPath,
     PathSegment,
@@ -43,7 +44,12 @@ from picot.planner.evaluation_engine import EvaluationEngine
 from picot.planner.independent_daily_charge_window_discoverer import (
     IndependentDailyChargeWindowDiscoverer,
 )
-from picot.planner.market_export_windows import ExportCapacityPart, export_windows
+from picot.planner.market_export_windows import (
+    MARKET_VOLUME_STEPS,
+    ExportCapacityPart,
+    export_volume_targets,
+    export_windows,
+)
 from picot.planner.market_price_windows import market_price_alternatives
 from picot.planner.market_route_admission import (
     MarketAdmission,
@@ -53,13 +59,57 @@ from picot.planner.market_route_admission import (
 from picot.planner.mep_candidate_outcomes import (
     MainChargeComparablePortfolio,
     _main_charge_energy_path,
+    _main_charge_segment_invalidity,
     _strategy,
     produce_main_charge_portfolio,
 )
+from picot.planner.solar_export_bonus import SolarBonusAllowance
 from picot.v2.contracts import PlanningInputSnapshot
 from picot.v2.daily_charge_assignment import DailyChargeAssignment, DailyMainShortfallTrigger
 from picot.v2.independent_daily_reference_adapter import IndependentDailyReferenceAdapter
 from picot.v2.independent_daily_tariff_adapter import IndependentDailyTariffAdapter
+
+SMALLER_VOLUME_WINDOW_LIMIT = 3
+
+
+def _quantity_aware_spread(
+    spread: MarketSpreadEvidence,
+    projection: DailyPlanningProjection,
+    tariffs: DailyReferenceTariffSchedule,
+) -> MarketSpreadEvidence:
+    """Use this complete path's remaining bonus allowance for the price evidence.
+
+    Preceding PV export consumes the same annual allowance. Within an interval
+    the effective bonus per exported kWh is shared by PV and storage; no bonus
+    is assigned twice. The actual financial result remains settlement-owned.
+    """
+    if tariffs.solar_export_bonus is None:
+        return spread
+    allowance = SolarBonusAllowance(tariffs.solar_export_bonus)
+    parts = []
+    for interval in projection.intervals:
+        if interval.starts_at >= spread.export_window.ends_at:
+            break
+        duration = (interval.ends_at - interval.starts_at).total_seconds()
+        exported_kwh = (interval.pv_to_grid_wh + interval.storage_to_grid_output_wh) / 1000
+        for tariff in tariffs.intervals:
+            left = max(interval.starts_at, tariff.starts_at)
+            right = min(interval.ends_at, tariff.ends_at)
+            if left >= right:
+                continue
+            quantity = exported_kwh * (right - left).total_seconds() / duration
+            earned = allowance.value(left, right, quantity, tariff.solar_bonus_eur_per_kwh)
+            for part in spread.export_window.parts:
+                if part.starts_at <= left < right <= part.ends_at:
+                    parts.append(MarketPricePart(
+                        left, right,
+                        part.grid_energy_wh * (right - left).total_seconds()
+                        / (part.ends_at - part.starts_at).total_seconds(),
+                        part.price_eur_per_kwh - tariff.solar_bonus_eur_per_kwh
+                        + (earned / quantity if quantity > 0 else 0),
+                        part.evidence_ids,
+                    ))
+    return replace(spread, export_window=MarketPriceWindow(tuple(parts), False))
 
 
 def identity(kind: str, value: str) -> str:
@@ -96,6 +146,15 @@ def market_rule_portfolio(
     wear_eur_per_export_kwh: float = 0.0,
     saldering_energy_tax_credit_enabled: bool = True,
 ) -> MarketRulePortfolio:
+    effective_capacity_wh = assignment.battery_energy_wh
+    if (snapshot.market_user_rule is not None
+            and snapshot.market_user_rule.rule_id == assignment.rule.rule_id):
+        effective_capacity_wh = min(
+            effective_capacity_wh,
+            assignment.usable_capacity_wh * snapshot.market_user_rule.capacity_fraction,
+        )
+    if effective_capacity_wh <= 0 or maximum_export_wh == 0:
+        raise ValueError("market_disabled_by_zero_capacity")
     context = snapshot.daily_charge_context
     if context is None or context.status != "ready" or len(snapshot.current_storage_states) != 1:
         raise ValueError("market requires ready single-storage planning input")
@@ -132,19 +191,6 @@ def market_rule_portfolio(
         horizon_end=assignment.ends_at,
         saldering_energy_tax_credit_enabled=saldering_energy_tax_credit_enabled,
     )
-    seeds = market_price_alternatives(
-        rule=assignment.rule,
-        tariffs=prices,
-        delivery_start=assignment.starts_at,
-        delivery_end=assignment.ends_at,
-        earliest_export=max(snapshot.captured_at, export_start),
-        usable_capacity_wh=assignment.usable_capacity_wh,
-        charge_power_w=limits.maximum_charge_input_power_w,
-        discharge_power_w=limits.maximum_discharge_output_power_w,
-        conversion=conversion,
-    )
-    if not seeds:
-        raise ValueError("market_volume_does_not_fit_published_day")
     adapter = IndependentDailyReferenceAdapter()
     owner = next(
         a
@@ -195,15 +241,33 @@ def market_rule_portfolio(
                 left, right, max(0, limits.maximum_discharge_output_power_w - house_w)
             )
         )
-    windows = export_windows(
-        tuple(capacities), min(assignment.battery_energy_wh * conversion.discharge_efficiency,
-                               maximum_export_wh if maximum_export_wh is not None else float("inf"))
+    export_maximum = min(
+        effective_capacity_wh * conversion.discharge_efficiency,
+        maximum_export_wh if maximum_export_wh is not None else float("inf"),
     )
+    windows: list[tuple[tuple[ExportCapacityPart, ...], MarketSpreadEvidence]] = []
+    for target_wh in export_volume_targets(export_maximum):
+        seeds = market_price_alternatives(
+            rule=assignment.rule,
+            tariffs=prices,
+            delivery_start=assignment.starts_at,
+            delivery_end=assignment.ends_at,
+            earliest_export=max(snapshot.captured_at, export_start),
+            usable_capacity_wh=assignment.usable_capacity_wh,
+            charge_power_w=limits.maximum_charge_input_power_w,
+            discharge_power_w=limits.maximum_discharge_output_power_w,
+            conversion=conversion,
+            battery_energy_wh=target_wh / conversion.discharge_efficiency,
+        )
+        if seeds:
+            windows.extend((w, seeds[0]) for w in export_windows(tuple(capacities), target_wh))
     strategy = replace(
         _strategy(snapshot),
         objectives=(WeightedObjective(ObjectiveKind.FINANCIAL_RESULT, ObjectiveWeight(100)),),
     )
     candidates, paths, outcomes, evidence, reasons = [], [], [], [], []
+    if not windows:
+        reasons.append("market_volume_does_not_fit_published_day")
     exclusions: list[CandidateExclusion] = []
     recovery = tuple(
         MarketRecoverySegment(a.assignment_id, min(s.starts_at for s in a.main_segments),
@@ -267,11 +331,50 @@ def market_rule_portfolio(
     # Tariffs also split at rolling household forecast boundaries. Refine the
     # physical schedule at those cuts before assigning one tariff to each part.
     tariff_boundaries = tuple(t for p in prices.intervals for t in (p.starts_at, p.ends_at))
-    priced = sorted(((window_price(w), w) for w in windows), key=lambda item: -item[0])
-    for _, window in priced:
+    all_priced = sorted(((window_price(w), w, seed) for w, seed in windows),
+                        key=lambda item: (-item[0], item[1][0].starts_at,
+                                          item[1][-1].ends_at))
+    # Preserve every legacy maximum-volume timing. Additional smaller volumes
+    # use a bounded representative peak shortlist; all retained complete paths
+    # still reach Evaluation. This is controlled branching, not a global optimum.
+    counts: dict[float, int] = {}
+    priced = []
+    omitted_timings = 0
+    for item in all_priced:
+        energy = item[2].battery_energy_wh
+        is_maximum = abs(energy * conversion.discharge_efficiency - export_maximum) <= 1e-6
+        if not is_maximum and counts.get(energy, 0) >= SMALLER_VOLUME_WINDOW_LIMIT:
+            omitted_timings += 1
+            continue
+        counts[energy] = counts.get(energy, 0) + 1
+        priced.append(item)
+    for export_price, window, seed in priced:
         if planning_checkpoint is not None:
             planning_checkpoint()
+        # The exact same user spread condition can reject a timing/volume
+        # before its physical and recovery simulations. This is no ranking or
+        # economic winner selection; complete admitted outcomes still compete.
+        if export_price - seed.reference_window.average_eur_per_kwh < (
+            assignment.rule.minimum_spread_eur_per_kwh
+        ):
+            reasons.append("user_spread_not_met")
+            continue
         first, last = window[0].starts_at, window[-1].ends_at
+        start_interval = next(
+            i for i in base.intervals if i.starts_at <= first < i.ends_at
+        )
+        # Before this optional export the retained path is unchanged. The
+        # larger endpoint stock is a conservative upper bound within that
+        # linear interval. STORAGE_EXPORT cannot also charge the battery.
+        # Ignore household discharge here: this necessary condition only
+        # rejects export energy that cannot fit even without household use.
+        available_upper_bound = max(
+            start_interval.storage_energy_at_start_wh,
+            start_interval.storage_energy_at_end_wh,
+        ) - data.minimum_storage_energy_wh
+        if seed.battery_energy_wh > available_upper_bound + 1e-6:
+            reasons.append("requested_export_not_physically_deliverable")
+            continue
         if not any(r.starts_at >= last and r.ends_at <= plan.valid_until for r in recovery):
             reasons.append("future_owned_charge_does_not_prove_full_recovery")
             continue
@@ -335,10 +438,11 @@ def market_rule_portfolio(
             schedule, schedule_id=export_candidate_id, intervals=tuple(parts)
         )
         proposed = adapter._bridge_projection(snapshot, refined, proposed_schedule, conversion)
-        spread = replace(seeds[0], export_window=MarketPriceWindow(tuple(price_parts), False))
+        spread = replace(seed, export_window=MarketPriceWindow(tuple(price_parts), False))
         if not spread.meets_spread:
             reasons.append("user_spread_not_met")
             continue
+        window_spread = spread
         charge_windows: tuple[DailyMainChargeWindow | None, ...] = (None,)
         charge_trigger = None
 
@@ -494,6 +598,7 @@ def market_rule_portfolio(
                 )
                 proposed = charge_window.projection
                 proposed_schedule = charge_window.schedule
+            spread = _quantity_aware_spread(window_spread, proposed, actual_tariffs)
             recovery_for_candidate = (
                 recovery
                 if charge_window is None or charge_window.assignment_id not in {
@@ -672,7 +777,24 @@ def market_rule_portfolio(
                 f"market_recovery_assignment:{admission.recovery_assignment_id}",
                 f"market_recovery_ends_at:{admission.recovery_ends_at.isoformat()}",
                 "market_result:incremental_cash_after_wear",
+                f"market_capacity_maximum_wh:{effective_capacity_wh}",
+                f"market_selected_battery_energy_wh:{spread.battery_energy_wh}",
+                f"market_volume_search_steps:{MARKET_VOLUME_STEPS}",
+                f"market_smaller_volume_window_limit:{SMALLER_VOLUME_WINDOW_LIMIT}",
+                f"market_omitted_timing_count:{omitted_timings}",
             ))
+            invalid = _main_charge_segment_invalidity(
+                path.segments, capability, limits, incumbent=False,
+            )
+            if invalid:
+                reasons.extend(invalid)
+                exclusions.append(CandidateExclusion(
+                    CandidateFamily.MARKET_ROUTE,
+                    CandidateExclusionKind.HARD_BOUNDARY,
+                    ",".join(invalid),
+                    (candidate_id, assignment.assignment_id),
+                ))
+                continue
             candidates.append(
                 Candidate(
                     candidate_id,

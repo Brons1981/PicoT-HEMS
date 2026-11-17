@@ -17,9 +17,13 @@ def run(names, expression):
         encoding="utf-8", capture_output=True, check=True).stdout)
 
 
-def test_reset_is_directly_above_navigation_and_no_technical_disclosures():
+def test_dashboard_omits_manual_plan_reset_and_technical_disclosures():
     markup = DASHBOARD_HTML.split("<script>")[0]
-    assert markup.index('id="reset-planning"') < markup.index('class="dashboard-tabs"')
+    assert 'id="planning-reset"' not in markup
+    assert 'id="reset-planning"' not in DASHBOARD_HTML
+    assert 'fetch("api/planning/reset"' not in DASHBOARD_HTML
+    assert 'id="route-choice-panel"' not in markup
+    assert 'fetch("api/route-choice"' not in DASHBOARD_HTML
     assert "<details" not in markup
     for unwanted in ("planning-status", "pv-energy-timeline", "household-load-forecast",
                      "storage-energy-source-needs", "plan-explanation", "grid-charge-review"):
@@ -90,8 +94,6 @@ const document={createElement:tag=>new Element(tag),createElementNS:(ns,tag)=>ne
 const texts=node=>typeof node==='string'?node:
  [node.textContent,...node.children.map(texts)].join('|');
 const walk=node=>typeof node==='string'?[]:[node,...node.children.flatMap(walk)];
-let routeChoiceRequestPending=false;
-const submitRouteChoice=()=>{throw Error('render must not submit');};
 """
 
 
@@ -106,36 +108,29 @@ COMPARISON = ["comparisonSegments", "comparisonDifferences", "comparisonMode",
               "appendPlanComparison", "planHistoryTime", "createSvgElement", "appendSvgText"]
 
 
-def test_comparison_at_choice_has_shared_scale_real_modes_and_stale_actions_blocked():
-    result=dom_run(COMPARISON+["renderRouteChoices"], """
+def test_plan_comparison_has_shared_scale_and_real_modes():
+    result=dom_run(COMPARISON, """
 const seg=(a,b,intent)=>({starts_at:a,ends_at:b,intent});
 const start='2026-10-25T00:00Z',middle='2026-10-25T01:00Z',end='2026-10-25T02:00Z';
 const automatic={timeline:{segments:[seg(start,middle,'standby'),
  seg(middle,end,'grid_requirement')]}};
 const alternative={timeline:{segments:[seg(start,middle,'household_support_only'),
  seg(middle,end,'grid_requirement')]}};
-const choice={status:'offered',plan_id:'a',current_plan_id:'a',revision:1,current_revision:1,
- token:'private',expires_at:'2999-01-01T00:00Z',offer:{automatic,alternative}};
-const before=JSON.stringify(choice);
-renderRouteChoices({choices:[choice]});
-const card=element('route-choices');
+const before=JSON.stringify([automatic, alternative]);
+const card=element('comparison');
+appendPlanComparison(card, automatic, alternative, ['Historisch plan', 'Huidig plan']);
 const svg=walk(card).find(n=>n.tagName==='SVG');
 const bars=walk(svg).filter(n=>n.tagName==='RECT'&&n.attrs.fill==='#df5c57');
-const valid={text:texts(card),buttons:walk(card).filter(n=>n.type==='button').map(n=>n.textContent),
+console.log(JSON.stringify({valid:{text:texts(card),
  widths:bars.map(n=>n.attrs.width),positions:bars.map(n=>n.attrs.x),
- unchanged:before===JSON.stringify(choice)};
-renderRouteChoices({choices:[{...choice,current_plan_id:'new'}]});
-console.log(JSON.stringify({valid,stale:texts(element('route-choices')),
- staleButtons:walk(element('route-choices')).filter(n=>n.type==='button').length}));
+ unchanged:before===JSON.stringify([automatic, alternative])}}));
 """)
     assert result["valid"]["unchanged"]
     assert result["valid"]["widths"] == ["480","480"]
     assert result["valid"]["positions"] == ["500","500"]
-    assert result["valid"]["buttons"] == ["Kies PV-route", "Behoud automatisch plan"]
     assert "Stand-by → Slim ontladen" in result["valid"]["text"]
     assert "UTC+02:00" in result["valid"]["text"]
     assert "UTC+01:00" in result["valid"]["text"]
-    assert "ouder plan" in result["stale"] and result["staleButtons"] == 0
 
 
 def test_equal_export_rate_with_different_interval_boundaries_is_not_a_change():
@@ -193,20 +188,6 @@ console.log(JSON.stringify({text:texts(element('central-health')),
 """)
     assert result["visible"] and result["override"]
     assert "Actuele tarieven ontbreken" in result["text"]
-
-
-def test_no_alternative_offer_does_not_announce_an_alternative_or_broken_comparison():
-    result=dom_run(COMPARISON+["renderRouteChoices"], """
-const automatic={main_signature:[['2026-10-24T22:00Z','2026-10-24T23:00Z','grid_requirement']]};
-renderRouteChoices({choices:[{status:'offered',expires_at:'2999-01-01T00:00Z',
- offer:{automatic,alternative:null}}]});
-console.log(JSON.stringify({text:texts(element('route-choices')),
- charts:walk(element('route-choices')).filter(n=>n.tagName==='SVG').length}));
-""")
-    assert "geen haalbaar PV-alternatief" in result["text"]
-    assert "Tijdlijnvergelijking niet beschikbaar" not in result["text"]
-    assert result["charts"] == 1
-
 
 
 def test_hc_measurement_failure_is_named_without_blame_on_ed_service():

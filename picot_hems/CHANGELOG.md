@@ -1,3 +1,8 @@
+# 2.0.0-dev.341
+
+- Verwijder het blok voor handmatige PV-routekeuze, de keuzeberichten en de knop Maak een nieuw plan.
+- Sluit een eerder opgeslagen, openstaand keuzeverzoek af met behoud van het bestaande laadplan. De normale automatische laadplanning blijft beschikbaar.
+
 ## 2.0.0-dev.340
 
 - Kies uit vier standen, van Zelfverbruik tot Meer handel. Een wijziging vraagt direct een nieuwe planbeoordeling aan.

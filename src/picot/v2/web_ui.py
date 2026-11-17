@@ -1035,9 +1035,6 @@ DASHBOARD_HTML = """<!doctype html>
     .today-summary strong { display: block; font-size: 1.5rem; margin: 6px 0; }
     .today-summary small { display: block; color: #647588; }
     #central-health { padding: 10px 14px; border-radius: 10px; }
-    #planning-reset { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
-    #reset-planning { order:-1; background:#246b50; color:white;
-      font-weight:700; padding:12px 18px; }
     .comparison-scroll { overflow-x:auto; }
     .comparison-chart { width:100%; min-width:680px; display:block; }
     .comparison-legend { display:flex; flex-wrap:wrap; gap:12px; }
@@ -1060,15 +1057,6 @@ DASHBOARD_HTML = """<!doctype html>
     <p id="dashboard-status" class="planning-attention" role="status" hidden></p>
     <p id="ev-storage-warning" class="planning-attention" role="alert" hidden></p>
     <p id="soc-reserve-status" role="status" hidden></p>
-
-    <section id="planning-reset" class="status" aria-live="polite">
-      <span id="planning-reset-result">
-        Nieuwe planning maken vanaf actuele gegevens; oude plannen worden gearchiveerd.
-      </span>
-      <button id="reset-planning" type="button">
-        Maak een nieuw plan
-      </button>
-    </section>
 
     <nav class="dashboard-tabs" aria-label="Dashboardweergave">
       <button class="tab-button" type="button" data-tab="planning"
@@ -1102,11 +1090,6 @@ DASHBOARD_HTML = """<!doctype html>
     <div id="today-summary" class="today-summary" aria-live="polite"></div>
     <section id="plan-decision" class="timeline-panel" aria-live="polite">
       Nog geen planbeslissing vastgelegd.
-    </section>
-    <section id="route-choice-panel" class="timeline-panel" hidden>
-      <h2>Keuze voor deze laadopdracht</h2>
-      <div id="route-choices"></div>
-      <p id="route-choice-feedback" role="status" aria-live="polite"></p>
     </section>
     <section
       id="tab-overview" class="tab-panel" data-tab-panel="overview"
@@ -3939,68 +3922,6 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
-    function renderPlanningRecalculation(result) {
-      const status = result?.status ?? "idle";
-      if (result?.mode === "recovery_reset") {
-        element("planning-reset-result").textContent = status === "completed"
-          ? "Nieuw plan gemaakt. Oude plannen zijn gearchiveerd; historie blijft behouden."
-          : "Herstelverzoek opgeslagen. PicoT maakt een nieuw plan met actuele gegevens.";
-        element("reset-planning").disabled = false;
-        return;
-      }
-      const results = Object.values(result?.results ?? {});
-      const rebuilt = results.filter((item) => item.status === "replanned").length;
-      const messages = {
-        idle: "Nieuwe planning maken vanaf actuele gegevens; oude plannen worden gearchiveerd.",
-        pending: "Verzoek opgeslagen. PicoT berekent de open dagplannen opnieuw.",
-        completed: rebuilt > 0
-          ? `${rebuilt} dagplan(nen) opnieuw berekend. Dagdoelen en historie zijn behouden.`
-          : "Geen herberekening meer nodig: de aangevraagde dagdoelen zijn afgerond of verstreken.",
-        failed: rebuilt > 0
-          ? `${rebuilt} dagplan(nen) opnieuw berekend. ` +
-            "Niet voor alle dagplannen is een geldige vervanger gevonden."
-          : "Herberekening niet gelukt. Er is geen nieuw plan opgeslagen. " +
-            "Dagdoelen en historie zijn behouden.",
-        not_applicable: "Er is geen open vastgelegd dagplan om opnieuw te berekenen. " +
-          "Behaalde doelen blijven behouden.",
-      };
-      const unavailable = result?.reason === "recalculation_state_unavailable";
-      element("planning-reset-result").textContent = unavailable
-        ? "De status van de herberekening kan niet worden gelezen. Bekijk de diagnose."
-        : (messages[status] ?? "De status van de herberekening is onbekend.");
-      element("reset-planning").disabled = status === "pending";
-    }
-
-    async function resetPlanning() {
-      const resetButton = element("reset-planning");
-      const confirmed = globalThis.confirm(
-        "PicoT laat bestaande laad- en marktplannen los. " +
-        "Een nieuw plan wordt met actuele gegevens gemaakt. " +
-        "Historie en bewezen 100%-momenten blijven bewaard. " +
-        "Een onhaalbaar dagdoel wordt als gemist geregistreerd. " +
-        "Een handmatige modusoverride blijft apart actief. Doorgaan?"
-      );
-      if (!confirmed) return;
-      resetButton.disabled = true;
-      try {
-        const response = await fetch("api/planning/reset", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reset_id: storageModeResetId() })
-        });
-        if (!response.ok) {
-          throw new Error(`Herberekening geweigerd (${response.status})`);
-        }
-        const result = await response.json();
-        renderPlanningRecalculation(result);
-        await loadView();
-      } catch (error) {
-        element("planning-reset-result").textContent =
-          error instanceof Error ? error.message : "Herberekening mislukt.";
-        resetButton.disabled = false;
-      }
-    }
-
     function executionPlanActionLabel(primitive) {
       return {
         balance_discharge_only: "Huishouden ondersteunen",
@@ -5608,141 +5529,6 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
-    let routeChoiceRequestPending = false;
-
-    function renderRouteChoices(state) {
-      const choices = Array.isArray(state?.choices) ? state.choices : [];
-      const panel = element("route-choice-panel");
-      const container = element("route-choices");
-      panel.hidden = choices.length === 0;
-      container.replaceChildren();
-      const statuses = {
-        offered: "Alternatief met meer zonnestroom beschikbaar",
-        pending: "PicoT controleert je keuze; het huidige plan blijft actief.",
-        selected: "PV-route gekozen door gebruiker",
-        declined: "PicoT kiest de route automatisch.",
-        released: "PicoT heeft de regie terug; de route wordt opnieuw beoordeeld.",
-        rejected: "Je keuze kon niet worden toegepast. Het huidige plan blijft actief.",
-        expired: "Deze keuze is verlopen. Het huidige plan blijft actief.",
-        completed: "Deze laadopdracht is afgerond; je voorkeur is vervallen.",
-      };
-      const number = (value, digits = 2) => typeof value === "number" && Number.isFinite(value)
-        ? value.toLocaleString("nl-NL", {maximumFractionDigits: digits}) : "—";
-      for (const choice of choices) {
-        const card = document.createElement("div");
-        card.className = "strategy-rule";
-        const title = document.createElement("strong");
-        title.textContent = statuses[choice.status] ?? "Routekeuze wordt bijgewerkt.";
-        card.appendChild(title);
-        const offer = choice.offer ?? {};
-        if (choice.status === "offered" && !offer.alternative) {
-          title.textContent = "Automatisch laadplan; geen haalbaar PV-alternatief beschikbaar";
-        }
-        if (choice.last_notice?.message) {
-          const notice = document.createElement("p");
-          notice.textContent = choice.last_notice.message;
-          card.appendChild(notice);
-        }
-        const dateText = offer.delivery_date ?? choice.delivery_date;
-        if (dateText) {
-          const date = document.createElement("p");
-          date.textContent = `Laadopdracht ${dateText}`;
-          card.appendChild(date);
-        }
-        if (["offered", "pending", "selected"].includes(choice.status)) {
-          for (const [key, fallback] of [["automatic", "Automatische route"],
-                                         ["alternative", "PV-alternatief"]]) {
-            const route = offer[key];
-            if (!route) continue;
-            const summary = document.createElement("p");
-            summary.textContent = `${route.label || fallback}: ` +
-              `netinkoop ${number(route.grid_import_kwh)} kWh · ` +
-              `PV-opslag ${number(route.pv_storage_kwh)} kWh · ` +
-              `SOC einde ${number(route.terminal_soc, 1)}% · ` +
-              `vergelijkingsprijs € ${number(route.acquisition_eur_per_stored_kwh, 3)}` +
-              "/kWh opgeslagen";
-            card.appendChild(summary);
-          }
-          const note = document.createElement("p");
-          note.className = "muted";
-          note.textContent = "Verwachtingen bij het voorstel. De vergelijkingsprijs is geen " +
-            "totale besparing. Je voorkeur geldt alleen voor deze laadopdracht; " +
-            "noodzakelijk herstel blijft mogelijk.";
-          card.appendChild(note);
-        }
-        const obsolete = choice.status === "offered" && (
-          (choice.current_plan_id != null && choice.plan_id !== choice.current_plan_id) ||
-          (choice.current_revision != null && choice.revision !== choice.current_revision));
-        if (["offered", "pending", "selected"].includes(choice.status)) {
-          const comparison = document.createElement("section");
-          comparison.className = "route-comparison";
-          appendPlanComparison(comparison, offer.automatic, offer.alternative,
-            offer.alternative ? ["Automatisch plan bij voorstel", "PV-alternatief bij voorstel"]
-              : ["Automatisch plan bij voorstel"]);
-          card.appendChild(comparison);
-          if (obsolete) {
-            title.textContent = "Voorstel verouderd: het actieve plan is gewijzigd";
-            const warning = document.createElement("p");
-            warning.textContent = "Dit voorstel hoort bij een ouder plan. " +
-              "Het actieve plan is inmiddels " +
-              "gewijzigd; wacht op een nieuw voorstel. Deze keuze kan niet meer worden toegepast.";
-            card.appendChild(warning);
-          }
-        }
-        const action = (label, payload) => {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.textContent = label;
-          button.disabled = routeChoiceRequestPending;
-          button.addEventListener("click", () => submitRouteChoice(payload));
-          card.appendChild(button);
-        };
-        const expires = Date.parse(choice.expires_at);
-        if (choice.status === "offered" && !obsolete &&
-            Number.isFinite(expires) && expires > Date.now()) {
-          if (offer.alternative) {
-            action("Kies PV-route", {token: choice.token, action: "pv"});
-          } else {
-            const unavailable = document.createElement("p");
-            unavailable.textContent =
-              "Er is op dit moment geen haalbaar PV-alternatief beschikbaar.";
-            card.appendChild(unavailable);
-          }
-          action("Behoud automatisch plan", {token: choice.token, action: "automatic"});
-        } else if (choice.status === "selected") {
-          action("Laat PicoT weer kiezen",
-            {assignment_id: choice.assignment_id, action: "release"});
-        }
-        container.appendChild(card);
-      }
-    }
-
-    async function submitRouteChoice(payload) {
-      if (routeChoiceRequestPending) return;
-      routeChoiceRequestPending = true;
-      const feedback = element("route-choice-feedback");
-      feedback.textContent = "Keuze verzenden. Het huidige plan blijft actief tot bevestiging.";
-      element("route-choices").querySelectorAll("button").forEach(button => button.disabled = true);
-      try {
-        const response = await fetch("api/route-choice", {
-          method: "POST", headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({...payload, request_id: storageModeResetId()}),
-        });
-        if (!response.ok) throw new Error("Keuze niet beschikbaar of niet opgeslagen");
-        const result = await response.json();
-        if (result.route_choices) renderRouteChoices(result.route_choices);
-        feedback.textContent = "Verzoek ontvangen. De actuele status verschijnt zodra PicoT " +
-          "de keuze heeft verwerkt.";
-      } catch (_) {
-        feedback.textContent = "De keuze is niet bevestigd. Controleer de actuele status en " +
-          "probeer opnieuw als de optie nog beschikbaar is.";
-      } finally {
-        routeChoiceRequestPending = false;
-        element("route-choices").querySelectorAll("button")
-          .forEach(button => button.disabled = false);
-      }
-    }
-
     const strategyControl = {rules: null, requested: null, running: null};
     const strategyLabels = ["Zelfverbruik", "Meer zelfverbruik", "Gebalanceerd", "Meer handel"];
 
@@ -6252,7 +6038,6 @@ DASHBOARD_HTML = """<!doctype html>
       renderPlanDecision(view.planning_status?.plan_decision);
       renderDashboardFaults(view);
       renderDashboardStatus(view.dashboard_status);
-      renderPlanningRecalculation(view.planning_recalculation);
       element("version").textContent = displayValue(view.picot_version);
       element("run-id").textContent = displayValue(view.run_id);
       element("captured-at").textContent = displayValue(view.captured_at);
@@ -6306,7 +6091,6 @@ DASHBOARD_HTML = """<!doctype html>
       renderFinancialResults(view.financial_results ?? {});
 
       renderUserRules(view.user_rules ?? {});
-      renderRouteChoices(view.route_choices ?? {});
       renderEnergyDevices(
         view.energy_device_catalog ?? {},
         view.energy_device_placements ?? {},
@@ -6499,7 +6283,6 @@ DASHBOARD_HTML = """<!doctype html>
       "click",
       resetStorageModeOverride
     );
-    element("reset-planning").addEventListener("click", resetPlanning);
     document.querySelectorAll("[data-settings-tab]").forEach(button => {
       button.addEventListener("click", () => {
         const selected = button.dataset.settingsTab;
@@ -6711,8 +6494,6 @@ class WebViewStore:
         self._financial_results: dict[str, object] | None = None
         self._grid_charge_review: dict[str, object] | None = None
         self._user_rules: dict[str, object] | None = None
-        self._route_choices: dict[str, object] | None = None
-        self._update_route_choice: Callable[[dict[str, object]], dict[str, object]] | None = None
         self._planning_recalculation: dict[str, object] | None = None
         self._energy_device_catalog: dict[str, object] | None = None
         self._energy_device_placements: dict[str, object] | None = None
@@ -6789,8 +6570,6 @@ class WebViewStore:
             view["grid_charge_review"] = dict(self._grid_charge_review)
         if self._user_rules is not None:
             view["user_rules"] = dict(self._user_rules)
-        if self._route_choices is not None:
-            view["route_choices"] = dict(self._route_choices)
         if self._planning_recalculation is not None:
             view["planning_recalculation"] = dict(self._planning_recalculation)
         if self._energy_device_catalog is not None:
@@ -7174,27 +6953,6 @@ class WebViewStore:
             if self._latest_json is not None:
                 self._replace_latest_locked(json.loads(self._latest_json))
 
-    def publish_route_choices(self, status: dict[str, object]) -> None:
-        copied = json.loads(json.dumps(status))
-        if not isinstance(copied, dict) or not isinstance(copied.get("choices"), list):
-            raise ValueError("route choices require an explicit choices list")
-        with self._condition:
-            if copied == self._route_choices:
-                return
-            self._route_choices = copied
-            if self._latest_json is not None:
-                self._replace_latest_locked(json.loads(self._latest_json))
-
-    def set_route_choice_update(
-        self, update: Callable[[dict[str, object]], dict[str, object]],
-    ) -> None:
-        with self._lock:
-            self._update_route_choice = update
-
-    def route_choice_update(self) -> Callable[[dict[str, object]], dict[str, object]] | None:
-        with self._lock:
-            return self._update_route_choice
-
     def publish_user_rules(self, user_rules: dict[str, object]) -> None:
         copied = json.loads(json.dumps(user_rules))
         if not isinstance(copied, dict):
@@ -7551,42 +7309,9 @@ def create_web_server(
                 "/api/planning/reset",
                 "/api/planner-comparison/stress",
                 "/api/user-rules",
-                "/api/route-choice",
                 "/api/energy-device-placements",
             }:
                 self._reject_write()
-                return
-            if path == "/api/route-choice":
-                update = store.route_choice_update()
-                if update is None:
-                    self._send_json(HTTPStatus.CONFLICT, '{"status":"route_choice_unavailable"}')
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    if length <= 0 or length > 4096:
-                        raise ValueError
-                    payload = json.loads(self.rfile.read(length))
-                    if not isinstance(payload, dict):
-                        raise ValueError
-                    action = payload.get("action")
-                    required = (
-                        ("assignment_id", "request_id") if action == "release" else ("token",)
-                    )
-                    if action not in {"pv", "automatic", "release"} or any(
-                        not isinstance(payload.get(key), str) or not payload[key].strip()
-                        for key in required
-                    ):
-                        raise ValueError
-                    result = update(payload)
-                except (json.JSONDecodeError, TypeError, ValueError, KeyError):
-                    self._send_json(HTTPStatus.BAD_REQUEST,
-                                    '{"status":"route_choice_not_available"}')
-                    return
-                except OSError:
-                    self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
-                                    '{"status":"route_choice_not_saved"}')
-                    return
-                self._send_json(HTTPStatus.OK, json.dumps(result, separators=(",", ":")))
                 return
             if path == "/api/energy-device-placements":
                 update = store.energy_device_placement_update()

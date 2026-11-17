@@ -160,7 +160,6 @@ from picot.v2.pv_sunset_source import (
     SunsetReadResult,
 )
 from picot.v2.review_measurements import measurement_archive_paths
-from picot.v2.route_choice_input import RouteChoiceInput
 from picot.v2.soc_expectation import committed_soc_expectation
 from picot.v2.soc_history_recovery import HistoricalSOCRecovery
 from picot.v2.soc_projection_cache import SOCProjectionCache
@@ -900,7 +899,6 @@ def _planning_input_signature(
                     )
                     for s in daily_context.bridge_states
                 ],
-                "route_choices": [c.policy_record() for c in daily_context.route_choices],
                 "pv_comparison_states": [
                     (
                         state.assignment_id,
@@ -990,7 +988,6 @@ def _restore_daily_charge_context(
     active_main_plan_ids: list[str] = []
     status, reason = "ready", None
     recalculation_request = None
-    route_choices: tuple[RouteChoiceInput, ...] = ()
     scopes = {
         state.execution_scope_id for state in snapshot.current_storage_states
     } | {limits.execution_scope_id for limits in snapshot.storage_physical_limits}
@@ -1099,7 +1096,6 @@ def _restore_daily_charge_context(
             if (state := store.load_daily_bridge_state(a.assignment_id)) is not None
         )
         recalculation_request = store.load_daily_recalculation_request()
-        route_choices = store.planning_route_choices(assignments, snapshot.captured_at)
     except (ValueError, OSError) as exc:
         status, reason = "blocked", str(exc) or exc.__class__.__name__
     context = DailyChargePlanningContext(
@@ -1130,7 +1126,6 @@ def _restore_daily_charge_context(
         ),
         duration_ms=round((perf_counter() - started) * 1000, 3),
         recalculation_request=recalculation_request,
-        route_choices=route_choices,
     )
     return replace(snapshot, daily_charge_context=context)
 
@@ -1628,32 +1623,6 @@ def _update_user_rules_and_replan(
             "status": "user_rules_updated", "user_rules": profile.as_public_dict(),
             "user_rule_revision": profile.revision, "replan_requested": True,
         }
-
-    generation, result = barrier.reset(persist)
-    return {**result, "reset_generation": generation}
-
-
-def _request_route_choice_and_replan(
-    *, store: ActivePlanCommitmentStore, barrier: PlanningResetBarrier,
-    replan_requested: Event, web_view_store: WebViewStore,
-    payload: dict[str, Any], requested_at: datetime,
-) -> dict[str, Any]:
-    """Persist consent under the same barrier as planning, never dispatch directly."""
-    def persist() -> dict[str, Any]:
-        if payload.get("action") == "release":
-            result = store.release_route_choice(
-                assignment_id=payload["assignment_id"], request_id=payload["request_id"],
-                requested_at=requested_at,
-            )
-        else:
-            result = store.request_route_choice(
-                token=payload["token"], action=payload["action"], requested_at=requested_at,
-            )
-        view = store.route_choice_status(requested_at)
-        web_view_store.publish_route_choices(view)
-        if result["status"] in {"pending", "released"}:
-            replan_requested.set()
-        return {**result, "route_choices": view}
 
     generation, result = barrier.reset(persist)
     return {**result, "reset_generation": generation}
@@ -2980,34 +2949,6 @@ def main() -> None:
 
     web_view_store.set_planning_reset(reset_planning)
 
-    def update_route_choice(payload: dict[str, Any]) -> dict[str, Any]:
-        return _request_route_choice_and_replan(
-            store=active_plan_commitment_store, barrier=planning_reset_barrier,
-            replan_requested=planning_reset_requested, web_view_store=web_view_store,
-            payload=payload, requested_at=datetime.now(UTC),
-        )
-
-    from picot.v2.route_choice_notifications import RouteChoiceNotifier, publish_choice_status
-
-    def receive_route_choice(payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            return update_route_choice(payload)
-        except ValueError as exc:
-            route_notifier.publish(
-                "rejected:" + payload["token"] + ":" + payload["request_id"],
-                "Routekeuze niet overgenomen",
-                "De melding is niet meer geldig voor het huidige plan. " + str(exc),
-            )
-            return {"status": "rejected", "reason": str(exc)}
-
-    route_notifier = RouteChoiceNotifier(
-        token, Path("/data/picot_route_choice_notifications.json"),
-        mailbox_entity=str(options.get("route_choice_response_entity", "")).strip(),
-        on_choice=receive_route_choice,
-    )
-    web_view_store.set_route_choice_update(update_route_choice)
-    route_notifier.start()
-
     def update_user_rules(payload: dict[str, object]) -> dict[str, object]:
         def activate(profile: UserRuleProfile) -> None:
             market_daily_planner_runtime.set_trading_policy(trading_policy(profile))
@@ -3413,13 +3354,6 @@ def main() -> None:
         except (ValueError, OSError):
             status = {"status": "failed", "reason": "recalculation_state_unavailable"}
         web_view_store.publish_planning_recalculation(status)
-        try:
-            choices = active_plan_commitment_store.route_choice_status(datetime.now(UTC))
-            web_view_store.publish_route_choices(choices)
-            publish_choice_status(route_notifier, choices)
-        except (ValueError, OSError):
-            # Optional presentation/transport must not affect executable plans.
-            pass
 
     @startup.stage("source_publication", "Bronstatus en terugblik voorbereiden", 40)
     def publish_input_sources(bundle: PlanningInputBundle) -> bool | None:

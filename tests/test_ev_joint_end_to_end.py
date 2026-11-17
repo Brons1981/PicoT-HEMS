@@ -1,4 +1,4 @@
-"""Real advisor, canonical planner, durable Store and ED execution handshake."""
+"""Real independent advisor, unchanged battery ownership and durable ED execution."""
 
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -15,7 +15,7 @@ from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
 from picot_energy_devices.ev_sessions import EVSessionManager
 
 
-def test_real_joint_route_is_adopted_before_ev_starts_and_survives_restart(tmp_path):
+def test_independent_ev_slot_preserves_battery_plan_and_survives_restart(tmp_path):
     store, snapshot, original = scenario(tmp_path, soc=0.9)
     at = snapshot.captured_at
     snapshot = replace(snapshot, price_points=tuple(replace(
@@ -37,8 +37,9 @@ def test_real_joint_route_is_adopted_before_ev_starts_and_survives_restart(tmp_p
     advisor.refresh(snapshot)
     advice = rig.manager.view()["charging_advice"]
     assert advice["status"] == "ready", advice
-    assert advice["battery_route_changed"], advice
-    assert advice["savings_eur"] > 0
+    assert advice["battery_route_changed"] is False
+    assert advice["joint_acceptance_required"] is False
+    assert advice["estimated_ev_cost_eur"] > 0
     assert store._load_payload() == before
     assert rig.commands == []
     rig.manager.action({"action": "execute_advice", "session_id": advice["session_id"],
@@ -46,7 +47,7 @@ def test_real_joint_route_is_adopted_before_ev_starts_and_survives_restart(tmp_p
                         "generated_at": advice["generated_at"]})
     rig.tick(0, "off", seconds=0)
     assert rig.commands == []
-    assert rig.manager.snapshot()["session"]["confirmed"] is False
+    assert rig.manager.snapshot()["session"]["confirmed"] is True
     policy = read_session_demand(rig.manager.snapshot(), captured_at=at,
                                  execution_scope_id=original.execution_scope_id)
     assert policy is not None and policy.remaining_energy_wh == 1150
@@ -55,20 +56,14 @@ def test_real_joint_route_is_adopted_before_ev_starts_and_survives_restart(tmp_p
     assert abs(sum(i.battery_excluded_energy_wh for i in forecast.intervals) - 1150) < 0.01
     pending_snapshot = replace(snapshot, external_load_policy=policy,
                                household_load_forecast=forecast)
-    assert advisor.accept_pending(pending_snapshot)
-    receipt = store.load_joint_ev_receipt(advice["selection_id"])
-    assert receipt is not None
-    assert receipt["battery_plan_id"] != original.plan_id
-    assert store.load_active_daily_main_plan(original.execution_scope_id).plan_id == (
-        receipt["battery_plan_id"])
-    assert rig.manager.snapshot()["session"]["confirmed"] is True
-    assert rig.manager.view()["sessions"][-1]["joint_receipt"]["battery_plan_id"] == (
-        receipt["battery_plan_id"])
-    # Restart both durable owners after ACK; ED keeps exactly the accepted slot.
+    assert advisor.accept_pending(pending_snapshot) is False
+    assert store._load_payload() == before
+    assert not advice.get("selection_id")
+    # ED keeps the chosen slot across restart without any battery receipt.
     rig.manager = EVSessionManager(rig.manager.path, power_entity=POWER,
                                    switch_entity=SWITCH, now=lambda: rig.now)
-    restarted = JointEVAdopter(ActivePlanCommitmentStore(store._path), lambda _: conversion)
-    assert restarted.receipt(advice["selection_id"]) == receipt
+    restarted = ActivePlanCommitmentStore(store._path)
+    assert restarted.load_active_daily_main_plan(original.execution_scope_id) == original
     start = datetime.fromisoformat(advice["slots"][0]["starts_at"])
     end = datetime.fromisoformat(advice["slots"][0]["ends_at"])
     rig.now = start - timedelta(seconds=1)

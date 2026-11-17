@@ -239,7 +239,7 @@ DASHBOARD_HTML = """<!doctype html>
       renderChargingAdvice(ev);
       evSession=[...ev.sessions].reverse().find(s=>["recognized","planned","active","interrupted"].includes(s.state));
       const labels={recognized:"Herkend",planned:"Gepland",active:"Actief",interrupted:"Onderbroken",completed:"Voltooid",cancelled:"Geannuleerd"};
-      el("ev-status").textContent=evSession ? `${labels[evSession.state]} / ${evNumber(evSession.current_power_w,"W")} / ${evNumber(evSession.remaining_energy_wh/1000,"kWh resterend (schatting)")}` : "Geen open laadsessie";
+      el("ev-status").textContent=evSession ? `${evSession.joint_pending ? "Wacht op bevestiging" : labels[evSession.state]} / ${evNumber(evSession.current_power_w,"W")} / ${evNumber(evSession.remaining_energy_wh/1000,"kWh resterend (schatting)")}` : "Geen open laadsessie";
       el("ev-measurement-details").textContent=`Meetstatus: ${ev.recognition?.reason??"wachten op meting"} / ${evNumber(ev.recognition?.power_w,"W")} / meetleeftijd ${evNumber(ev.recognition?.measurement_age_seconds,"s")}`;
       el("ev-verify").disabled=ev.resume_verified;
       el("ev-now").disabled=evBusy || !!evSession || !ev.profile;
@@ -275,7 +275,7 @@ DASHBOARD_HTML = """<!doctype html>
       if(evSession?.planned_start && !el("ev-start").value){const d=new Date(evSession.planned_start);el("ev-start").value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
       const timeline=el("ev-timeline");timeline.replaceChildren();
       const completionLabels={vehicle_charging_ended:"BMW heeft laden gestopt (geen bewijs van 100%)",scheduled_deadline:"Gepland laadvenster afgelopen",measured_low_power:"Laden gestopt op basis van laag vermogen",cancelled:"Geannuleerd"};
-      for(const s of [...ev.sessions].reverse()) {const p=document.createElement("p");p.textContent=`${s.planned_start ? new Date(s.planned_start).toLocaleString("nl-NL") : new Date(s.recognized_at).toLocaleString("nl-NL")} - ${labels[s.state]}${s.completion_reason ? " - "+(completionLabels[s.completion_reason]??s.completion_reason) : ""}  ?  ${number(s.expected_power_w,"W")}  ?  ${number((s.expected_duration_seconds??0)/60,"min")}`;timeline.append(p);}
+      for(const s of [...ev.sessions].reverse()) {const p=document.createElement("p");p.textContent=`${s.planned_start ? new Date(s.planned_start).toLocaleString("nl-NL") : new Date(s.recognized_at).toLocaleString("nl-NL")} - ${s.joint_pending ? "Wacht op bevestiging" : labels[s.state]}${s.completion_reason ? " - "+(completionLabels[s.completion_reason]??s.completion_reason) : ""} / ${number(s.expected_power_w,"W")} / ${number((s.expected_duration_seconds??0)/60,"min")}`;timeline.append(p);}
     }
     function chargingAdviceExplanation(advice) {
       const money=value=>Number(value).toLocaleString("nl-NL",{style:"currency",currency:"EUR"});
@@ -284,7 +284,10 @@ DASHBOARD_HTML = """<!doctype html>
       const provisional=(advice.provisional_reasons??[]).map(reason=>reasonLabels[reason]??`Beperking: ${reason}`).join(". ");
       const status=advice.status==="provisional" ? `Voorlopig advies: ${provisional || "de reden voor de beperkte vergelijking is niet meegeleverd"}` : "";
       let cost="";
-      if(valid(advice.total_cost_eur)) {
+      if(valid(advice.estimated_ev_cost_eur)) {
+        cost=`Geschatte laadkosten auto: ${money(advice.estimated_ev_cost_eur)} (inclusief misgelopen teruglevering). PV-bijdrage: ${number((advice.estimated_pv_energy_wh??0)/1000,"kWh")}. Batterij levert niet aan de auto.`;
+        if(advice.pv_assessment!=="surplus_after_house_and_battery")cost+=" PV-overschot niet aangetoond; vergeleken op netprijzen.";
+      } else if(valid(advice.total_cost_eur)) {
         cost=`Geschatte totale kosten huis, auto en batterij: ${money(advice.total_cost_eur)}.`;
         if(valid(advice.baseline_total_cost_eur))cost+=` Met behoud van de bestaande batterijroute: ${money(advice.baseline_total_cost_eur)}.`;
         if(valid(advice.savings_eur))cost+=` Verwacht voordeel van de gezamenlijke route: ${money(advice.savings_eur)}.`;

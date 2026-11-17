@@ -56,6 +56,8 @@ ADVICE_FIELDS = {
     "selection_id", "execution_status", "joint_acceptance_required", "comparison_horizon_until",
     "committed_at", "committed_plan_id", "execution_plan_id",
     "execution_not_before", "earliest_executable_start", "terminal_storage_requirement_wh",
+    "estimated_ev_cost_eur", "estimated_pv_energy_wh", "pv_assessment",
+    "ev_cost_eur", "pv_energy_wh",
 }
 
 

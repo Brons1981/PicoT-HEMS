@@ -1,3 +1,10 @@
+# 0.4.0-dev.18
+
+- Herstel automatisch een laadopdracht die op oude marktrouteverwijzingen bleef wachten, door een nieuw advies aan te vragen.
+- Toon Wacht op bevestiging zolang een gezamenlijke opdracht niet is vrijgegeven.
+- Toon de geschatte EV-laadkosten en PV-bijdrage van de onafhankelijke HEMS-planning, inclusief uitleg bij ontbrekend bewijs voor PV-overschot.
+- Behoud bestaande laadinstellingen en batterij-uitsluiting. Gebruik samen met HEMS 2.0.0-dev.342.
+
 # 0.4.0-dev.17
 
 - Gebruik een ongewijzigde BMW-SOC langer dan 30 minuten zolang deze bij dezelfde aansluiting hoort, de kabelstatus actueel is en geen later laadvermogen is gemeten.

@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 from picot.domain.storage_conversion_model import StorageConversionModel
 from picot.v2.contracts import PlanningInputSnapshot
-from picot.v2.ev_deadline_advice import advise
+from picot.v2.ev_independent_advice import advise
 from picot.v2.ha_projection_sink import HomeAssistantProjectionSink
 from picot.v2.projection import Card
 
@@ -115,8 +115,12 @@ class EVDeadlineAdvisor:
         if not 0 <= (self.now() - snapshot.captured_at).total_seconds() <= 120:
             return
         selections: dict[str, Any] = {}
+        try:
+            conversion = self.configuration(snapshot)
+        except ValueError:
+            conversion = None
         advice = advise(
-            snapshot, request, self.configuration(snapshot), selections=selections,
+            snapshot, request, conversion, selections=selections,
             execution_not_before=lambda: self.now() + timedelta(seconds=60),
         )
         # Reject a changed/cancelled request before publishing an expensive result.

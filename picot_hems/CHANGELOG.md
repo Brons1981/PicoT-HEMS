@@ -1,3 +1,10 @@
+## 2.0.0-dev.340
+
+- Kies uit vier standen, van Zelfverbruik tot Meer handel. Een wijziging vraagt direct een nieuwe planbeoordeling aan.
+- Stel het handelsmaximum en de slijtagekosten apart in. Bestaande instellingen behouden bij overgang hun effectieve handelsmaximum.
+- Vergelijk kleinere marktroutes als de maximale omvang niet past of minder oplevert.
+- Ondersteun een optionele zonnebonus na expliciete configuratie.
+
 # 2.0.0-dev.339
 
 - Geef ED weer een laadvenster wanneer alleen de doorlopende batterijondersteuning voor het huis niet haalbaar is; het huis kan dan netstroom gebruiken.

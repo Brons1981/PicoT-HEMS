@@ -21,8 +21,8 @@ class MarketUserRule:
             raise ValueError("market rule requires an explicit identity and revision")
         if not isinstance(self.recovery_required, bool):
             raise ValueError("recovery choice must be boolean")
-        if not 0 < self.capacity_fraction <= 1:
-            raise ValueError("market amount must be a positive fraction of usable capacity")
+        if isinstance(self.capacity_fraction, bool) or not 0 <= self.capacity_fraction <= 1:
+            raise ValueError("market maximum must be a fraction of usable capacity including zero")
         for value in (self.minimum_spread_eur_per_kwh, self.minimum_net_margin_eur_per_export_kwh):
             if not isfinite(value) or value < 0:
                 raise ValueError("market thresholds must be finite nonnegative EUR/kWh")

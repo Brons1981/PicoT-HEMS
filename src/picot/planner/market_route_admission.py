@@ -125,8 +125,9 @@ def assess_market_route(
         assignment.rule.revision,
     ):
         raise ValueError("spread must belong to the frozen daily rule")
-    if abs(spread.battery_energy_wh - assignment.battery_energy_wh) > 1e-6:
-        raise ValueError("market volume must match the daily capacity allocation")
+    if (not isfinite(spread.battery_energy_wh) or spread.battery_energy_wh <= 0
+            or spread.battery_energy_wh > assignment.battery_energy_wh + 1e-6):
+        raise ValueError("market volume must fit the daily capacity maximum")
     if spread.minimum_spread_eur_per_kwh != assignment.rule.minimum_spread_eur_per_kwh:
         raise ValueError("spread threshold must match the frozen daily rule")
     if not baseline.intervals or not proposed.intervals:

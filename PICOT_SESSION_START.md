@@ -1,3 +1,7 @@
+## HEMS dev.340 - 17 november 2026
+
+Vier strategie-instellingen met onmiddellijke herbeoordeling, instelbare maximale handelsruimte en slijtagekosten, kleinere marktroutes en optionele zonnebonus. Zie V2ADR-071 en V2ADR-072. De vijfde stand Handel staat uit. Dev.339 is de terugvalbasis.
+
 ## Release HEMS dev.339 en ED dev.15 - 10 november 2026
 
 Herstel laadadvies bij normale netterugval voor het huis aan de batterijondergrens.

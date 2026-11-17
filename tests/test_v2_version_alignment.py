@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_339() -> None:
-    assert __version__ == "2.0.0-dev.339"
+def test_v2_release_version_is_dev_340() -> None:
+    assert __version__ == "2.0.0-dev.340"
 
 
 def test_mep_has_one_fallback_rte_configuration() -> None:
@@ -46,13 +46,13 @@ def test_mep_has_one_fallback_rte_configuration() -> None:
     assert "  battery_purchase_eur: float(0,)" in text
 
 
-def test_dev225_live_runtime_enables_only_bounded_market_routes() -> None:
+def test_live_runtime_enables_market_routes_only_with_positive_user_capacity() -> None:
     source_path = Path(__file__).parents[1] / "src" / "picot" / "v2" / "live_runtime.py"
     source = source_path.read_text(encoding="utf-8")
 
     assert 'options.get("market_daily_maximum_trading_soc_percent", 25.0)' in source
     assert "additional_reserve_fraction=0.10" in source
-    assert "market_routes_enabled=True" in source
+    assert "market_routes_enabled=profile.maximum_trading_soc_percent > 0" in source
 
 
 def test_v2_addon_defaults_to_detailed_solcast_today_forecast() -> None:

@@ -30,6 +30,7 @@ def market_price_alternatives(
     charge_power_w: float,
     discharge_power_w: float,
     conversion: StorageConversionModel,
+    battery_energy_wh: float | None = None,
 ) -> tuple[MarketSpreadEvidence, ...]:
     """Exact constant-power sliding windows on the published tariff steps.
 
@@ -49,7 +50,12 @@ def market_price_alternatives(
     for value in (usable_capacity_wh, charge_power_w, discharge_power_w):
         if isinstance(value, bool) or not isfinite(value) or value <= 0:
             raise ValueError("market capacity and configured powers must be finite positive values")
-    energy = usable_capacity_wh * rule.capacity_fraction
+    maximum = usable_capacity_wh * rule.capacity_fraction
+    energy = maximum if battery_energy_wh is None else battery_energy_wh
+    if not isfinite(energy) or energy < 0 or energy > maximum + 1e-6:
+        raise ValueError("market reference energy must fit the user capacity maximum")
+    if energy == 0:
+        return ()
     export_wh = energy * conversion.discharge_efficiency
     import_wh = energy / conversion.charge_efficiency
     export_duration = timedelta(hours=export_wh / discharge_power_w)

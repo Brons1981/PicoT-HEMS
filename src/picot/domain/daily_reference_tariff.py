@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from picot.domain.solar_export_bonus import SolarExportBonusContext
+
 
 def _aware(value: datetime, label: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
@@ -24,6 +26,7 @@ class DailyReferenceTariffInterval:
     same_interval_offset_eur_per_kwh: float | None = None
     cross_interval_export_eur_per_kwh: float | None = None
     saldering_tax_eur_per_kwh: float = 0.0
+    solar_bonus_eur_per_kwh: float = 0.0
 
     def __post_init__(self) -> None:
         _aware(self.starts_at, "Daily tariff start")
@@ -50,6 +53,7 @@ class DailyReferenceTariffSchedule:
     horizon_end: datetime
     intervals: tuple[DailyReferenceTariffInterval, ...]
     method_version: str
+    solar_export_bonus: SolarExportBonusContext | None = None
 
     def __post_init__(self) -> None:
         if not self.schedule_id.strip() or not self.snapshot_id.strip():

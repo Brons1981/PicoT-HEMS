@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 
 from picot.domain.daily_reference_tariff import (
     DailyReferenceTariffInterval,
     DailyReferenceTariffSchedule,
 )
+from picot.planner.solar_export_bonus import bonus_boundaries, bonus_rate
 from picot.v2.contracts import PlanningInputSnapshot, PriceForecastPoint
 
 METHOD_VERSION = "v2-daily-tariff-policy-nl-2026-quarter-netting:v3"
@@ -104,6 +106,8 @@ class IndependentDailyTariffAdapter:
             )
         if selected_horizon_start < EXPORT_TAX_TRANSITION < selected_horizon_end:
             boundaries.add(EXPORT_TAX_TRANSITION)
+        boundaries.update(bonus_boundaries(snapshot.solar_export_bonus,
+                                          selected_horizon_start, selected_horizon_end))
         ordered = tuple(sorted(boundaries))
         intervals = tuple(
             self._interval(
@@ -114,6 +118,22 @@ class IndependentDailyTariffAdapter:
             )
             for left, right in zip(ordered, ordered[1:], strict=False)
         )
+        if snapshot.solar_export_bonus is not None:
+            valued = []
+            for interval in intervals:
+                base = interval.cross_interval_export_eur_per_kwh
+                assert base is not None
+                extra = bonus_rate(snapshot.solar_export_bonus, interval.starts_at,
+                                   interval.ends_at, base)
+                valued.append(replace(
+                    interval, export_eur_per_kwh=interval.export_eur_per_kwh + extra,
+                    cross_interval_export_eur_per_kwh=base + extra,
+                    solar_bonus_eur_per_kwh=extra,
+                    evidence_ids=tuple(dict.fromkeys((*interval.evidence_ids,
+                        *snapshot.solar_export_bonus.evidence_ids,
+                        "solar-bonus:" + snapshot.solar_export_bonus.status))),
+                ))
+            intervals = tuple(valued)
         return DailyReferenceTariffSchedule(
             schedule_id=f"daily-tariffs:{snapshot.snapshot_id}"
             + (
@@ -126,6 +146,7 @@ class IndependentDailyTariffAdapter:
             horizon_end=selected_horizon_end,
             intervals=intervals,
             method_version=METHOD_VERSION,
+            solar_export_bonus=snapshot.solar_export_bonus,
         )
 
     @staticmethod

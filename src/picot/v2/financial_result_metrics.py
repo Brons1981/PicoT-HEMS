@@ -96,6 +96,7 @@ def build_financial_metrics(
     *, history: PowerHistorySnapshot, settlement: Mapping[str, Any],
     price_segments: PriceSegments, wear_rate: float,
     expected_starts_at: datetime, expected_ends_at: datetime,
+    wear_segments: PriceSegments | None = None,
 ) -> dict[str, Any]:
     """Gate each amount on its own sources, preserving the legacy inventory path."""
     coverage = {
@@ -120,7 +121,8 @@ def build_financial_metrics(
             if coverage[role]["gap_count"]:
                 continue
             segments = (
-                [(history.starts_at, history.ends_at, wear_rate, wear_rate)]
+                (wear_segments if wear_segments is not None else
+                 [(history.starts_at, history.ends_at, wear_rate, wear_rate)])
                 if name == "battery_wear_eur" else price_segments
             )
             if segments:

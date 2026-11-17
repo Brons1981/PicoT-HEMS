@@ -110,10 +110,15 @@ class JointEVAdopter:
             )
             assignments = tuple(bound if a.assignment_id == owner.assignment_id else a
                                 for a in assignments)
-        market_bindings = self.store.preview_retained_market_bindings(selection.plan)
+        restored_ids = {p.plan_id for p in context.main_plans} | {selection.plan.plan_id}
+        market_bindings = tuple(
+            b for b in self.store.preview_retained_market_bindings(selection.plan)
+            if b.plan_id in restored_ids)
         referenced = {a.route_plan_id for a in assignments}
         referenced.update(b.plan_id for b in market_bindings)
         referenced.update(context.reserve_plan_ids)
+        referenced.update(context.market_transition_plan_ids)
+        referenced.update(context.completed_route_plan_ids)
         virtual = replace(context, assignments=assignments, market_plan_bindings=market_bindings,
                           main_plans=tuple(p for p in context.main_plans
                                            if p.plan_id != selection.plan.plan_id

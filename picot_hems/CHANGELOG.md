@@ -1,3 +1,11 @@
+# 2.0.0-dev.342
+
+- Kies het gunstigste EV-laadblok op netprijzen en aantoonbaar PV-overschot na huis en Zendure; geen algemene afhankelijkheid van batterijplannen.
+- Vergelijk alle start- en eindgrenzen binnen de bekende prijshorizon, inclusief gedeeltelijke kwartieren. Ontbrekende prijzen blijven expliciet voorlopig.
+- Behoud het batterijplan en de uitsluiting van batterijlevering aan de auto. Nieuwe adviezen vereisen geen gezamenlijke batterijbevestiging.
+- Negeer niet-actieve historische marktrouteverwijzingen buiten de herstelde context bij oude gezamenlijke opdrachten; historie blijft behouden.
+- Samen met Energy Devices 0.4.0-dev.18 installeren voor automatisch herstel van de gemelde blokkade en de nieuwe kostenuitleg.
+
 # 2.0.0-dev.341
 
 - Verwijder het blok voor handmatige PV-routekeuze, de keuzeberichten en de knop Maak een nieuw plan.

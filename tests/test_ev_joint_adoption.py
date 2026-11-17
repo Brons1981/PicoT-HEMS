@@ -38,6 +38,19 @@ def test_acceptance_records_exact_plan_and_survives_restart(tmp_path):
     assert restarted.receipt(selected.selection_id) == receipt
 
 
+def test_historical_market_binding_is_not_added_to_current_context(tmp_path, monkeypatch):
+    store, snapshot, selected, adopter = setup(tmp_path)
+    current = store.preview_retained_market_bindings(selected.plan)
+    assert current
+    historical = replace(current[0], assignment_id="historical-market",
+                         plan_id="archived-plan")
+    monkeypatch.setattr(store, "preview_retained_market_bindings",
+                        lambda _: current + (historical,))
+    receipt = adopter.adopt(selected, snapshot)
+    assert receipt["execution_status"] == "committed"
+    assert receipt["battery_plan_id"] == selected.plan.plan_id
+
+
 def test_house_grid_fallback_does_not_block_fresh_acceptance(tmp_path):
     from test_market_revision_comparison import scenario as market_scenario
 

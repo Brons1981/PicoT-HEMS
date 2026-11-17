@@ -1,3 +1,12 @@
+## Release HEMS dev.342 en ED dev.18 - 17 november 2026
+
+EV-laadmoment op netprijzen en PV-overschot na huis en Zendure, zonder algemene
+blokkade door batterijplanning. Behoud uitsluiting van batterijlevering aan de BMW.
+ED herstelt de gemelde automatische aanvraag en verduidelijkt status en EV-kosten.
+HC dev.36 en eerdere HEMS-wijzigingen behouden. Publicatie op expliciet verzoek
+via PR en groene CI; geen live installatie. Beide add-ons bijwerken.
+Zie docs/development_log/2026-11-17-ev-independent-planning.md.
+
 ## Release ED dev.17 - 17 november 2026
 
 Herstel SOC-geldigheid binnen dezelfde aansluiting en ruim het EV-dashboard op.

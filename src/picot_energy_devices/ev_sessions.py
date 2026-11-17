@@ -264,6 +264,13 @@ class EVSessionManager:
         with self.lock:
             state = self.load()
             request = state.get("charging_request") or {}
+            session = self.current(state)
+            if (request.get("automatic_execution") and request.get("state") == "accepted"
+                    and session and session.get("joint_pending")
+                    and session.get("error") == "market binding requires its restored shared plan"):
+                self._renew_request(state, "Laadmoment opnieuw aanvragen zonder oude marktroutes")
+                self.save(state)
+                return
             if request.get("state") != "requested" or not request.get("automatic_execution"):
                 return
             now = self.now()

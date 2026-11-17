@@ -238,6 +238,20 @@ vaste doel als de regeling actief is; anders stopt HC zijn timerverwarming.
 regeling stopt de timer. Na herstart wordt een timer niet hervat; HC ruimt zijn
 eigen timerverwarming op zodra de bron bereikbaar is.
 
+### Badkamertimer starten met een iPhone-widget
+
+Importeer de [scriptblueprint](https://github.com/Brons1981/PicoT-HEMS/blob/main/blueprints/script/picot_hc/bathroom_timer.yaml)
+in Home Assistant. Maak daarmee het script **Badkamertimer starten** en vul het
+app-ID van PicoT Home Climate in. Dit is het laatste deel van de URL van de
+app-infopagina en eindigt op `_picot_hc`. Stel duur en doeltemperatuur in
+(standaard 30 minuten en 19 °C). Kies op de iPhone het Home Assistant-widget
+**Scripts** en selecteer dit script.
+
+Gebruik een Home Assistant-beheerdersaccount. Het script stuurt de instelling
+via Supervisor naar de lopende PicoT HC-app. In het HC-dashboard zie je de
+resterende tijd. Bij handmatige blokkering van de badkamer geeft **HC hervatten**
+de bron vrij voor een nieuwe timer. Geweigerde opdrachten staan in het HC-logboek.
+
 ## Configuratie, opslag en installatie
 
 Beneden gebruikt de instellingen in het comfortschema. Boven en badkamer hebben

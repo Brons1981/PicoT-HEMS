@@ -1,0 +1,44 @@
+blueprint:
+  name: PicoT HC – Badkamertimer starten
+  description: Start de badkamertimer van PicoT HC. Dit script kun je aan het Scripts-widget toevoegen.
+  domain: script
+  input:
+    app_slug:
+      name: App-ID van PicoT Home Climate
+      description: Het laatste deel van de URL van de app-infopagina in Home Assistant, eindigend op _picot_hc.
+      selector:
+        text: {}
+    minutes:
+      name: Duur
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 180
+          step: 1
+          mode: box
+          unit_of_measurement: min
+    temperature:
+      name: Doeltemperatuur
+      description: Kies een temperatuur binnen de badkamergrenzen in PicoT HC.
+      default: 19
+      selector:
+        number:
+          min: 5
+          max: 35
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°C"
+icon: mdi:timer-play-outline
+mode: single
+sequence:
+  - variables:
+      timer_minutes: !input minutes
+      timer_temperature: !input temperature
+  - action: hassio.addon_stdin
+    data:
+      addon: !input app_slug
+      input:
+        command: start_bathroom_timer
+        minutes: "{{ timer_minutes | int }}"
+        temperature: "{{ timer_temperature | float }}"

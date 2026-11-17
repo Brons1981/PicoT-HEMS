@@ -1,3 +1,7 @@
+# 0.1.0-dev.36
+
+- Start de badkamertimer vanuit een Home Assistant-script, bijvoorbeeld met het iPhone-widget Scripts. Duur en doeltemperatuur zijn instelbaar via de scriptblueprint.
+
 # 0.1.0-dev.35
 
 - Schakel de CV eerst naar verwarmingsmodus en wacht op bevestiging voordat HC het temperatuurdoel instelt. Respecteer handmatige bediening en voorkom herhaling van onzekere opdrachten.

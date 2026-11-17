@@ -409,6 +409,9 @@ def main() -> None:
                 options.get("ev_power_entity", "sensor.shellyplugsg3_d885ac1e8c94_vermogen")
             ),
             switch_entity=str(options.get("ev_switch_entity", "switch.shellyplugsg3_d885ac1e8c94")),
+            plug_entity=str(options.get("ev_plug_entity", "binary_sensor.330e_laadkabel") or ""),
+            soc_entity=str(options.get("ev_soc_entity",
+                "sensor.wba5x71010fj59919_state_of_charge_predicted_on_integration_side") or ""),
             vehicle_state_entity=str(options.get(
                 "ev_vehicle_state_entity", "sensor.wba5x71010fj59919_charging_ev_charging_state"
             ) or ""),

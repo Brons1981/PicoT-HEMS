@@ -9,9 +9,10 @@ from datetime import UTC, datetime, timedelta
 from math import isfinite
 from pathlib import Path
 from statistics import median
-from threading import RLock
+from threading import Event, RLock
 from typing import Any, cast
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 Payload = dict[str, Any]
 
@@ -39,6 +40,8 @@ class EVSessionManager:
         power_entity: str,
         switch_entity: str,
         vehicle_state_entity: str = "",
+        plug_entity: str = "binary_sensor.330e_laadkabel",
+        soc_entity: str = "sensor.wba5x71010fj59919_state_of_charge_predicted_on_integration_side",
         now: Callable[[], datetime] | None = None,
     ) -> None:
         if not power_entity.startswith("sensor.") or not switch_entity.startswith("switch."):
@@ -49,6 +52,13 @@ class EVSessionManager:
         if vehicle_state_entity and not vehicle_state_entity.startswith("sensor."):
             raise ValueError("Voertuigstatus vraagt een sensor")
         self.vehicle_state_entity = vehicle_state_entity
+        if plug_entity and not plug_entity.startswith("binary_sensor."):
+            raise ValueError("Aansluitstatus vraagt een binary_sensor")
+        self.plug_entity = plug_entity
+        if soc_entity and not soc_entity.startswith("sensor."):
+            raise ValueError("Auto-SOC vraagt een sensor")
+        self.soc_entity = soc_entity
+        self.exchange_wake = Event()
         self.now = now or (lambda: datetime.now(UTC))
         self.lock = RLock()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +116,130 @@ class EVSessionManager:
     def view(self) -> Payload:
         with self.lock:
             state = self.load()
-            return {**state, "power_entity": self.power_entity, "switch_entity": self.switch_entity}
+            return {**state, "power_entity": self.power_entity, "switch_entity": self.switch_entity,
+                    "plug_entity": self.plug_entity, "soc_entity": self.soc_entity}
+
+    def observe_soc(self, value: object, reported_at: object) -> None:
+        with self.lock:
+            state = self.load()
+            try:
+                soc = float(str(value))
+                stamp = instant(reported_at)
+                valid = isfinite(soc) and 0 <= soc <= 100 and (
+                    0 <= (self.now() - stamp).total_seconds() <= 1800)
+            except (TypeError, ValueError):
+                valid = False
+            state["vehicle_soc"] = ({"percent": soc, "reported_at": stamp.isoformat(),
+                                      "source": self.soc_entity} if valid else None)
+            self.save(state)
+
+    def _target_energy(self, state: Payload) -> float | None:
+        target = state.get("charge_target")
+        if not target or not target.get("enabled"):
+            return None
+        soc = state.get("vehicle_soc")
+        if (not soc or not 0 <= (self.now() - instant(soc["reported_at"])).total_seconds()
+                <= 1800):
+            raise ValueError("Wachten op een actueel SOC-percentage van de auto")
+        return float(max(0.0, target["percent"] - soc["percent"])
+                     * target["full_charge_kwh"] * 10)
+
+    def observe_plug(self, value: str, changed_at: object) -> None:
+        """One durable request per connection; missing data is not a disconnect."""
+        with self.lock:
+            state = self.load()
+            state["plug_state"] = value
+            state["plug_checked_at"] = self.now().isoformat()
+            policy = state.get("auto_charge") or {}
+            if value not in {"on", "off"} or changed_at is None:
+                self.save(state)
+                return
+            try:
+                stamp = instant(changed_at)
+                if stamp > self.now():
+                    return
+                previous = state.get("plug_observed_at")
+                if previous and stamp < instant(previous):
+                    return
+            except ValueError:
+                return
+            state["plug_observed_at"] = stamp.isoformat()
+            session = self.current(state)
+            request = state.get("charging_request") or {}
+            if value == "off":
+                state.pop("plug_connection", None)
+                if request.get("source") == "plug" and request.get("state") in {
+                    "requested", "accepted", "executing"
+                }:
+                    request["state"] = "cancelled"
+                    state["charging_advice"] = None
+                if session and session.get("request_source") == "plug":
+                    self.change(session, cancel_requested=True)
+                self.save(state)
+                return
+            token = self.plug_entity + ":" + stamp.isoformat()
+            if (not policy.get("enabled") or state.get("plug_connection") == token
+                    or session or request.get("state") in {"requested", "accepted", "executing"}
+                    or not state.get("profile")):
+                self.save(state)
+                return
+            now = self.now().astimezone(ZoneInfo(policy["timezone"]))
+            hour, minute = map(int, policy["ready_time"].split(":"))
+            ready = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if ready <= now:
+                ready += timedelta(days=1)
+            profile = state["profile"]
+            try:
+                energy = self._target_energy(state)
+            except ValueError as exc:
+                state["auto_charge_status"] = str(exc)
+                self.save(state)
+                return
+            if energy is not None and energy < profile["expected_power_w"] / 60:
+                state["plug_connection"] = token
+                state["auto_charge_status"] = "Laaddoel bereikt of minder dan één minuut nodig"
+                self.save(state)
+                return
+            self.save(state)
+            self.action({"action": "request_automatic", "source": "plug",
+                         "ready_by": ready.isoformat(),
+                         "required_energy_wh": energy if energy is not None else
+                         profile["expected_power_w"] * profile["expected_duration_seconds"] / 3600})
+            state = self.load()
+            state["plug_connection"] = token
+            state["auto_charge_status"] = "Laadmoment aanvragen"
+            self.save(state)
+
+    def refresh_automatic_request(self) -> None:
+        """Keep user intent while renewing expired advice, without authorising a stale plan."""
+        with self.lock:
+            state = self.load()
+            request = state.get("charging_request") or {}
+            if request.get("state") != "requested" or not request.get("automatic_execution"):
+                return
+            now = self.now()
+            if now >= instant(request["ready_by"]):
+                request.update(state="expired", status_reason="De eindtijd is verstreken")
+                state["charging_advice"] = None
+            elif (now - instant(request["evidence_at"])).total_seconds() >= 300:
+                self._renew_request(state, "Actueel laadmoment opnieuw aanvragen")
+            self.save(state)
+
+    def _renew_request(self, state: Payload, reason: str) -> None:
+        request = state["charging_request"]
+        session = self.current(state)
+        if session is not None:
+            # Only an uncommitted session can be superseded automatically.
+            if not session.get("joint_pending") or session.get("cancel_requested"):
+                return
+            self.change(session, state="cancelled", confirmed=False, joint_pending=False)
+        now = self.now()
+        request.update(state="requested" if now < instant(request["ready_by"]) else "expired",
+                       request_revision=request["request_revision"] + 1,
+                       available_from=now.isoformat(), evidence_at=now.isoformat(),
+                       status_reason=reason)
+        state["charging_advice"] = None
+        self.exchange_wake.set()
 
     @staticmethod
     def invalidate_advice(state: Payload) -> None:
@@ -141,6 +274,11 @@ class EVSessionManager:
                             "selection_id", "session_id", "request_revision"))):
                     return False
                 session["error"] = str(advice.get("reason", "joint_plan_not_confirmed"))[:240]
+                if request.get("automatic_execution") and advice.get("reason") in {
+                    "joint_selection_expired_request_new_advice", "joint_ev_selection_expired",
+                    "joint_ev_slot_requires_fresh_advice", "joint_ev_battery_owner_changed",
+                }:
+                    self._renew_request(state, "Advies vernieuwen na gewijzigde planning")
                 self.save(state)
                 return True
             if advice.get("execution_status") == "committed":
@@ -205,6 +343,16 @@ class EVSessionManager:
                 return False
             state["charging_advice"] = advice
             self.save(state)
+            if (request.get("automatic_execution") and advice.get("status") in {
+                    "ready", "provisional"} and len(advice.get("slots", [])) == 1):
+                try:
+                    self.action({"action": "execute_advice", **{
+                        key: advice[key] for key in (
+                            "session_id", "request_revision", "generated_at")}})
+                except ValueError:
+                    state = self.load()
+                    self._renew_request(state, "Laadblok verlopen; nieuw advies aanvragen")
+                    self.save(state)
             return True
 
     def action(self, payload: Payload) -> Payload:
@@ -212,7 +360,53 @@ class EVSessionManager:
             state = self.load()
             session = self.current(state)
             action = payload.get("action")
-            if action == "request_advice":
+            request_target = state.get("charge_target", {})
+            if action == "request_full_charge":
+                request_target = {"enabled": True, "percent": 100.0,
+                                  "full_charge_kwh": request_target.get("full_charge_kwh", 11.7)}
+                settings = state.get("auto_charge", {})
+                request_zone = ZoneInfo(settings.get("timezone", "Europe/Amsterdam"))
+                local_now = self.now().astimezone(request_zone)
+                clock = datetime.strptime(settings.get("ready_time", "07:00"), "%H:%M")
+                deadline = local_now.replace(hour=clock.hour, minute=clock.minute,
+                                             second=0, microsecond=0)
+                if deadline <= local_now:
+                    deadline += timedelta(days=1)
+                payload = {**payload, "ready_by": payload.get("ready_by") or deadline.isoformat()}
+                action = "request_automatic"
+            if action == "save_charge_target":
+                enabled = payload.get("enabled")
+                percent, full = payload.get("percent"), payload.get("full_charge_kwh")
+                if (type(enabled) is not bool or isinstance(percent, bool)
+                        or not isinstance(percent, (int, float)) or not isfinite(percent)
+                        or not 1 <= percent <= 100 or isinstance(full, bool)
+                        or not isinstance(full, (int, float)) or not isfinite(full)
+                        or not 1 <= full <= 150):
+                    raise ValueError("Kies een doel van 1–100% en geldige energie voor 0–100%")
+                state["charge_target"] = {"enabled": enabled, "percent": float(percent),
+                                           "full_charge_kwh": float(full)}
+            elif action == "save_auto_charge":
+                enabled = payload.get("enabled")
+                if type(enabled) is not bool:
+                    raise ValueError("Kies automatisch laden aan of uit")
+                ready_time = str(payload.get("ready_time", "07:00"))
+                try:
+                    parsed = datetime.strptime(ready_time, "%H:%M")
+                    zone = str(payload.get("timezone", "Europe/Amsterdam"))
+                    ZoneInfo(zone)
+                except (ValueError, KeyError) as exc:
+                    raise ValueError("Kies een geldige eindtijd en tijdzone") from exc
+                if enabled and (not state.get("profile") or not self.plug_entity):
+                    raise ValueError("Sla eerst het laadprofiel en de aansluitensor op")
+                state["auto_charge"] = {"enabled": enabled,
+                                        "ready_time": parsed.strftime("%H:%M"), "timezone": zone}
+            elif action in {"request_advice", "request_automatic"}:
+                if (action == "request_automatic" and session is not None
+                        and session.get("joint_pending") and not session.get("confirmed")):
+                    self.change(session, state="cancelled", joint_pending=False)
+                    if state.get("charging_request"):
+                        state["charging_request"]["state"] = "cancelled"
+                    session = None
                 if session is not None:
                     raise ValueError("Annuleer of voltooi eerst de bestaande laadsessie")
                 profile = state.get("profile")
@@ -223,6 +417,12 @@ class EVSessionManager:
                 if not now < deadline <= now + timedelta(days=7):
                     raise ValueError("Kies een eindtijd binnen de komende zeven dagen")
                 energy = payload.get("required_energy_wh")
+                if action == "request_automatic":
+                    estimated = self._target_energy({**state, "charge_target": request_target})
+                    if estimated is not None:
+                        if estimated < profile["expected_power_w"] / 60:
+                            raise ValueError("Laaddoel bereikt of minder dan één minuut nodig")
+                        energy = estimated
                 if (isinstance(energy, bool) or not isinstance(energy, (int, float))
                         or not isfinite(energy) or not 0 < energy <= 88320):
                     raise ValueError("Geef een geldige laadbehoefte in kWh op")
@@ -230,7 +430,11 @@ class EVSessionManager:
                 same = old.get("state") == "requested"
                 if (same and old["ready_by"] == deadline.isoformat()
                         and old["remaining_energy_wh"] == energy
-                        and old["fixed_power_w"] == profile["expected_power_w"]):
+                        and old["fixed_power_w"] == profile["expected_power_w"]
+                        and old.get("soc_target") == (request_target.get("percent")
+                            if request_target.get("enabled") else None)
+                        and bool(old.get("automatic_execution"))
+                        == (action == "request_automatic")):
                     return self.view()
                 state["charging_request"] = {
                     "contract": "energy-device-charging-request:v1",
@@ -241,6 +445,10 @@ class EVSessionManager:
                     "fixed_power_w": profile["expected_power_w"],
                     "evidence_source": "user_grid_energy_estimate",
                     "evidence_at": now.isoformat(), "charge_target": "requested_grid_energy",
+                    "automatic_execution": action == "request_automatic",
+                    "source": "plug" if payload.get("source") == "plug" else "user",
+                    "soc_target": (request_target["percent"]
+                                   if request_target.get("enabled") else None),
                 }
                 state["charging_advice"] = None
             elif action == "cancel_advice":
@@ -265,7 +473,7 @@ class EVSessionManager:
                 state["profile"] = {
                     "expected_power_w": power, "expected_duration_seconds": duration,
                 }
-            elif action in {"start_now", "execute_advice"}:
+            elif action in {"start_now", "start_at", "execute_advice"}:
                 accepted = None
                 request = state.get("charging_request") or {}
                 if action == "execute_advice":
@@ -301,14 +509,27 @@ class EVSessionManager:
                     raise ValueError("Sla eerst het laadprofiel op")
                 self.invalidate_advice(state)
                 now = self.now()
+                scheduled = instant(payload.get("planned_start")) if action == "start_at" else now
+                if action == "start_at" and not now < scheduled <= now + timedelta(days=7):
+                    raise ValueError("Kies een starttijd binnen de komende zeven dagen")
                 power = profile["expected_power_w"]
                 duration = profile["expected_duration_seconds"]
                 energy = power * duration / 3600
+                if action in {"start_now", "start_at"}:
+                    target_energy = self._target_energy(state)
+                    if target_energy is not None:
+                        if target_energy < power / 60:
+                            raise ValueError("Laaddoel bereikt of minder dan één minuut nodig")
+                        energy = target_energy
+                        duration = energy * 3600 / power
+                        if duration > 86400:
+                            raise ValueError("Geschatte laadduur is langer dan 24 uur")
                 session = {
                     "session_id": str(uuid4()), "version": 1, "state": "planned",
                     "recognized_at": now.isoformat(), "recognition_source": "user_start",
-                    "planned_start": now.isoformat(),
-                    "planned_end": (now + timedelta(seconds=duration)).isoformat(),
+                    "planned_start": scheduled.isoformat(),
+                    "planned_end": (scheduled + timedelta(seconds=duration)).isoformat(),
+                    "fixed_start": action == "start_at",
                     "expected_power_w": power, "expected_duration_seconds": duration,
                     "remaining_energy_wh": energy, "target_energy_wh": energy,
                     "delivered_energy_wh": 0.0, "planned_delivered_base_wh": 0.0,
@@ -319,6 +540,9 @@ class EVSessionManager:
                     "error": None, "duration_source": "saved_user_profile",
                     "energy_source": "integrated_power", "uncertainty": "user_estimate",
                     "recognition_samples": [],
+                    "soc_target": (state["charge_target"]["percent"]
+                                   if state.get("charge_target", {}).get("enabled") else None),
+                    "soc_at_request": (state.get("vehicle_soc") or {}).get("percent"),
                 }
                 if accepted is not None:
                     slot = accepted["slots"][0]
@@ -333,6 +557,8 @@ class EVSessionManager:
                         target_energy_wh=request["remaining_energy_wh"],
                         accepted_advice=accepted, duration_source="hems_advice",
                         start_status="waiting_for_schedule", ready_by=request["ready_by"],
+                        request_source=request.get("source", "user"),
+                        soc_target=request.get("soc_target"),
                     )
                     request.update(state="accepted", request_revision=accepted["request_revision"])
                     if accepted.get("selection_id"):
@@ -396,6 +622,7 @@ class EVSessionManager:
             else:
                 raise ValueError("Onbekende EV-actie")
             self.save(state)
+            self.exchange_wake.set()
             return self.view()
 
     def vehicle_auto_off(
@@ -504,7 +731,20 @@ class EVSessionManager:
                 and 0 <= (now - measured_at).total_seconds() <= 15
             )
             session = self.current(state)
-            if session is None:
+            request = state.get("charging_request") or {}
+            hold_for_advice = bool(request.get("automatic_execution") and (
+                request.get("state") == "requested" or session and session.get("joint_pending")))
+            if hold_for_advice and switch_state == "on":
+                last_hold = state.get("advice_hold_command_at")
+                if last_hold is None or (now - instant(last_hold)).total_seconds() >= 10:
+                    state["advice_hold_command_at"] = now.isoformat()
+                    self.save(state)
+                    try:
+                        set_switch(False)
+                        state.pop("advice_hold_error", None)
+                    except (OSError, ValueError) as exc:
+                        state["advice_hold_error"] = str(exc)[:240]
+            if session is None and not hold_for_advice:
                 age = (now - measured_at).total_seconds() if measured_at is not None else None
                 usable = (age is not None and 0 <= age <= RECOGNITION_MAX_AGE_SECONDS
                           and power_w is not None and isfinite(power_w) and power_w >= 0)
@@ -562,6 +802,17 @@ class EVSessionManager:
             ):
                 fresh = False
             if session is not None and not vehicle_handled:
+                soc = state.get("vehicle_soc")
+                if (session.get("soc_target") is not None and soc
+                        and 0 <= (now - instant(soc["reported_at"])).total_seconds() <= 1800
+                        and soc["percent"] >= session["soc_target"]):
+                    session["complete_requested"] = True
+                    session["soc_target_reached"] = True
+                    # Also cancel an uncommitted selection; never start it later.
+                    if session.get("joint_pending"):
+                        session["cancel_requested"] = True
+                        if state.get("charging_request"):
+                            state["charging_request"]["state"] = "cancelled"
                 if session.get("direct_start_authorized") and measured_at is not None:
                     if (measured_at < instant(session["recognized_at"])
                             or (switch_changed_at is not None
@@ -658,11 +909,19 @@ class EVSessionManager:
                         False
                         if stop
                         else False
-                        if session.get("accepted_advice") and now < start
+                        if (session.get("accepted_advice") or session.get("fixed_start"))
+                        and now < start
                         else True
                         if start <= now < end and not session.get("manual_pause")
                         else None
                     )
+                    if (desired is True and session.get("request_source") == "plug"
+                            and not session.get("charging_observed")):
+                        checked = state.get("plug_checked_at")
+                        if (state.get("plug_state") != "on" or not checked
+                                or not 0 <= (now - instant(checked)).total_seconds() <= 30):
+                            desired = False
+                            session["start_status"] = "waiting_for_connection"
                     if desired is not None:
                         if switch_state == ("on" if desired else "off"):
                             if not desired and not stop:
@@ -677,6 +936,8 @@ class EVSessionManager:
                                     command=None,
                                     completion_reason="cancelled"
                                     if session.get("cancel_requested")
+                                    else "soc_target_reached"
+                                    if session.get("soc_target_reached")
                                     else "vehicle_charging_ended"
                                     if session.get("vehicle_completion_at")
                                     else "measured_low_power"
@@ -693,7 +954,9 @@ class EVSessionManager:
                             and switch_state in {"on", "off"}
                         ):
                             last = session.get("last_command_at")
-                            if last is None or (now - instant(last)).total_seconds() >= 10:
+                            if (last is None or session.get("command") != (
+                                    "turn_on" if desired else "turn_off")
+                                    or (now - instant(last)).total_seconds() >= 10):
                                 session.update(
                                     command="turn_on" if desired else "turn_off",
                                     last_command_at=now.isoformat(),

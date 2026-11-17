@@ -1,9 +1,11 @@
 import argparse
 import copy
 import json
+import logging
 import os
 import secrets
 import sqlite3
+import sys
 import threading
 import time
 import zlib
@@ -583,6 +585,25 @@ def handler(runtime, ingress, tablet_only=False):
     return Handler
 
 
+def read_supervisor_commands(runtime, stream):
+    """Accept timer starts from Home Assistant's administrator-only stdin action."""
+    logger = logging.getLogger(__name__)
+    for line in stream:
+        try:
+            command = json.loads(line)
+            if (not isinstance(command, dict) or set(command) != {'command', 'minutes', 'temperature'}
+                    or command['command'] != 'start_bathroom_timer'):
+                raise ValueError('Onbekende PicoT HC-opdracht.')
+            with runtime.control.lock:
+                now = time.time()
+                payload = dict(action='start', revision=runtime.heating.data['timer_revision'],
+                               minutes=command['minutes'], temperature=command['temperature'])
+                runtime.heating.update_timer(payload, runtime.config, now)
+            runtime.poll_now.set()
+        except (ValueError, UnicodeError, OSError, sqlite3.Error) as exc:
+            logger.warning('Opdracht via Home Assistant geweigerd: %s', exc)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--config', default='/data/options.json')
@@ -602,6 +623,8 @@ def main():
                  'http://supervisor/core/api' if supervisor else os.environ.get('HC_HA_API', 'http://127.0.0.1:8123/api'),
                  supervisor or os.environ.get('HC_HA_TOKEN', ''))
     threading.Thread(target=rt.run, daemon=True).start()
+    if supervisor:
+        threading.Thread(target=read_supervisor_commands, args=(rt, sys.stdin.buffer), daemon=True).start()
     if tablet_enabled:
         threading.Thread(target=rt.tablet_energy.run, daemon=True).start()
     server = ThreadingHTTPServer(('0.0.0.0' if supervisor else '127.0.0.1', args.port), handler(rt, bool(supervisor)))

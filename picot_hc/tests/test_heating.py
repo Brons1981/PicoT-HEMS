@@ -1,5 +1,6 @@
 """Automatic heating at the real HA HTTP, SQLite and runtime seams."""
 import copy
+import io
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -8,7 +9,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from test_control import ControlFixture
-from picot_hc.__main__ import Runtime, handler
+from picot_hc.__main__ import Runtime, handler, read_supervisor_commands
 from picot_hc.schedule import DOOR
 
 NOW = datetime(2026, 9, 16, 12, tzinfo=timezone.utc).timestamp()
@@ -450,6 +451,33 @@ class HeatingTests(ControlFixture):
         self.assertFalse(view['timer']['active'])
         self.assertEqual(self.calls[-1][0],'/api/services/switch/turn_off')
         self.poll();self.assertEqual(len(self.calls),2)
+
+    def test_widget_starts_existing_timer_and_expires(self):
+        self.ctl.observe(self.states, NOW, NOW)
+        command = dict(command='start_bathroom_timer', minutes=1, temperature=19)
+        stream = io.BytesIO((json.dumps(command) + '\n').encode())
+        with patch('time.time', return_value=NOW):
+            read_supervisor_commands(self.runtime, stream)
+        self.assertTrue(self.runtime.poll_now.is_set())
+        view = self.poll(NOW+1)
+        self.assertTrue(view['timer']['active'])
+        self.assertEqual(view['zones']['badkamer']['target'], 19)
+        self.assertEqual(self.calls, [('/api/services/switch/turn_on',
+                                      {'entity_id': self.config['zones'][2]['device']})])
+        self.poll(NOW+31)
+        view = self.poll(NOW+60)
+        self.assertEqual(view['timer']['status'], 'expired')
+        self.assertEqual(self.calls[-1][0], '/api/services/switch/turn_off')
+
+    def test_widget_ignores_invalid_commands_and_keeps_reading(self):
+        valid = dict(command='start_bathroom_timer', minutes=15, temperature=19)
+        invalid = [dict(valid, command='unknown'), dict(valid, minutes=0), dict(valid, temperature=35)]
+        stream = io.BytesIO(('invalid JSON\n' + '\n'.join(map(json.dumps, [*invalid, valid])) + '\n').encode())
+        with self.assertLogs('picot_hc.__main__', level='WARNING') as logs, patch('time.time', return_value=NOW):
+            read_supervisor_commands(self.runtime, stream)
+        self.assertEqual(len(logs.records), 4)
+        self.assertEqual(self.heat.data['timer_revision'], 1)
+        self.assertEqual(self.heat.data['timer']['ends'], NOW+900)
 
     def test_timer_temperature_feedback_and_stale_measurement(self):
         self.timer();self.poll(NOW+1);self.poll()

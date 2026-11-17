@@ -1,3 +1,11 @@
+# 0.4.0-dev.17
+
+- Gebruik een ongewijzigde BMW-SOC langer dan 30 minuten zolang deze bij dezelfde aansluiting hoort, de kabelstatus actueel is en geen later laadvermogen is gemeten.
+- Weiger SOC van vóór de huidige aansluiting; controleer geldigheid opnieuw bij het maken van een laadopdracht.
+- Toon de SOC-bron, ontvangen waarde, meettijd en concrete reden wanneer plannen nog niet mogelijk is.
+- Overzichtelijker laadpaneel: status en acties bovenaan, instellingen en sensordetails inklapbaar, correct uitgelijnde selectievakken.
+- Bestaande instellingen en sessies blijven behouden. Het berekende eindpercentage blijft een benadering.
+
 # 0.4.0-dev.16
 
 - Kies een vaste starttijd zonder aansluitcontrole of herkenningsproef.

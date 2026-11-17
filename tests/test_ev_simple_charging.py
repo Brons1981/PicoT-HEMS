@@ -328,3 +328,99 @@ def test_full_charge_does_not_change_running_session(tmp_path):
     with pytest.raises(ValueError, match="bestaande laadsessie"):
         rig.manager.action({"action": "request_full_charge"})
     assert rig.manager.view() == before
+
+
+def test_soc_rejection_retains_value_and_explains_age(tmp_path):
+    rig = Rig(tmp_path / "ev")
+    target(rig)
+    stamp = (rig.now - timedelta(hours=2)).isoformat()
+    rig.manager.observe_soc("38", stamp)
+    observation = rig.manager.view()["soc_observation"]
+    assert observation["status"] == "stale"
+    assert observation["raw_state"] == "38"
+    assert observation["age_seconds"] == 7200
+    assert rig.manager.view()["vehicle_soc"] is None
+    with pytest.raises(ValueError, match="120 minuten oud"):
+        rig.manager.action({"action": "start_now"})
+    rig.manager.observe_soc("38", rig.now.isoformat())
+    assert rig.manager.view()["soc_observation"]["status"] == "ready"
+    assert rig.manager.view()["vehicle_soc"]["percent"] == 38
+
+
+@pytest.mark.parametrize("value,stamp,error,status", [
+    ("unavailable", None, None, "unavailable"),
+    ("38", None, None, "missing_timestamp"),
+    (None, None, "read_failed", "read_failed"),
+])
+def test_soc_failure_reasons_are_distinct(tmp_path, value, stamp, error, status):
+    rig = Rig(tmp_path / "ev")
+    rig.manager.observe_soc(value, stamp, error=error)
+    assert rig.manager.view()["soc_observation"]["status"] == status
+
+
+def test_unchanged_soc_after_connection_plans_eight_percent(tmp_path):
+    rig = Rig(tmp_path / "ev")
+    target(rig)
+    connected = (rig.now - timedelta(hours=4)).isoformat()
+    reported = (rig.now - timedelta(hours=2)).isoformat()
+    rig.manager.observe_plug("on", connected)
+    rig.manager.observe_soc("72.0", reported)
+    assert rig.manager.view()["vehicle_soc"]["percent"] == 72
+    rig.manager.action({"action": "save_auto_charge", "enabled": True})
+    rig.manager.observe_plug("on", connected)
+    request = rig.manager.view()["charging_request"]
+    assert request["remaining_energy_wh"] == pytest.approx(936)
+
+
+def test_old_soc_cannot_cross_reconnection_or_missing_plug(tmp_path):
+    rig = Rig(tmp_path / "ev")
+    target(rig)
+    reported = (rig.now - timedelta(hours=2)).isoformat()
+    rig.manager.observe_plug("on", (rig.now - timedelta(hours=4)).isoformat())
+    rig.manager.observe_soc("72", reported)
+    assert rig.manager.view()["vehicle_soc"]
+    rig.manager.observe_plug("off", rig.now.isoformat())
+    rig.now += timedelta(seconds=1)
+    rig.manager.observe_plug("on", rig.now.isoformat())
+    rig.manager.observe_soc("72", reported)
+    assert rig.manager.view()["vehicle_soc"] is None
+    with pytest.raises(ValueError, match="actueel SOC"):
+        rig.manager.action({"action": "start_now"})
+
+
+def test_connection_soc_rechecked_at_action_and_after_charging(tmp_path):
+    rig = Rig(tmp_path / "ev")
+    target(rig)
+    connected = (rig.now - timedelta(hours=4)).isoformat()
+    reported = (rig.now - timedelta(hours=2)).isoformat()
+    rig.manager.observe_plug("on", connected)
+    rig.manager.observe_soc("72", reported)
+    rig.now += timedelta(seconds=31)
+    with pytest.raises(ValueError, match="actueel SOC"):
+        rig.manager.action({"action": "start_now"})
+    rig.manager.observe_plug("on", connected)
+    rig.tick(2300, "on")
+    rig.manager.observe_soc("72", reported)
+    assert rig.manager.view()["vehicle_soc"] is None
+
+
+def test_recent_report_from_before_connection_is_not_starting_soc(tmp_path):
+    rig = Rig(tmp_path / "ev")
+    target(rig)
+    rig.manager.observe_plug("on", rig.now.isoformat())
+    rig.manager.observe_soc("72", (rig.now-timedelta(minutes=1)).isoformat())
+    assert rig.manager.view()["vehicle_soc"] is None
+
+
+def test_same_connection_soc_survives_restart_with_fresh_plug_check(tmp_path):
+    rig = Rig(tmp_path / "ev")
+    target(rig)
+    connected = (rig.now-timedelta(hours=4)).isoformat()
+    reported = (rig.now-timedelta(hours=2)).isoformat()
+    rig.manager.observe_plug("on", connected)
+    rig.manager.observe_soc("72", reported)
+    rig.manager = EVSessionManager(rig.manager.path, power_entity=POWER,
+                                   switch_entity=SWITCH, now=lambda: rig.now)
+    rig.manager.observe_plug("on", connected)
+    rig.manager.action({"action": "start_now"})
+    assert rig.manager.view()["sessions"][-1]["target_energy_wh"] == pytest.approx(936)

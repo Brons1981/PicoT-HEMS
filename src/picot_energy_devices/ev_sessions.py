@@ -119,18 +119,66 @@ class EVSessionManager:
             return {**state, "power_entity": self.power_entity, "switch_entity": self.switch_entity,
                     "plug_entity": self.plug_entity, "soc_entity": self.soc_entity}
 
-    def observe_soc(self, value: object, reported_at: object) -> None:
+    def _soc_usable(self, state: Payload, stamp: datetime) -> bool:
+        age = (self.now() - stamp).total_seconds()
+        if age < 0:
+            return False
+        if state.get("plug_state") == "on" and state.get("plug_observed_at"):
+            if stamp < instant(state["plug_observed_at"]):
+                return False
+        if age <= 1800:
+            return True
+        try:
+            return bool(
+                state.get("plug_state") == "on"
+                and 0 <= (self.now() - instant(state.get("plug_checked_at"))).total_seconds() <= 30
+                and instant(state.get("plug_observed_at")) <= stamp
+                and (not state.get("soc_charge_observed_at")
+                     or instant(state["soc_charge_observed_at"]) <= stamp)
+            )
+        except (TypeError, ValueError):
+            return False
+
+    def observe_soc(self, value: object, reported_at: object, *, error: str | None = None) -> None:
         with self.lock:
             state = self.load()
+            percent = None
+            stamp = None
+            age = None
+            status, reason = "ready", "SOC beschikbaar"
             try:
-                soc = float(str(value))
-                stamp = instant(reported_at)
-                valid = isfinite(soc) and 0 <= soc <= 100 and (
-                    0 <= (self.now() - stamp).total_seconds() <= 1800)
+                percent = float(str(value))
+                if not isfinite(percent) or not 0 <= percent <= 100:
+                    raise ValueError("invalid percent")
             except (TypeError, ValueError):
-                valid = False
-            state["vehicle_soc"] = ({"percent": soc, "reported_at": stamp.isoformat(),
-                                      "source": self.soc_entity} if valid else None)
+                status, reason = "unavailable", "Auto-SOC ontbreekt of is geen geldig percentage"
+            if status == "ready":
+                try:
+                    stamp = instant(reported_at)
+                    age = (self.now() - stamp).total_seconds()
+                    if age < 0:
+                        status, reason = "future", "SOC-rapporttijd ligt in de toekomst"
+                    elif age > 1800 or not self._soc_usable(state, stamp):
+                        if self._soc_usable(state, stamp):
+                            reason = "SOC van deze aansluiting; geen later laadvermogen gemeten"
+                        else:
+                            status = "stale"
+                            reason = (f"Auto-SOC is {age / 60:.0f} minuten oud; "
+                                      "geen bruikbaar rapport voor deze aansluiting")
+                except (TypeError, ValueError):
+                    status, reason = "missing_timestamp", "SOC-rapporttijd ontbreekt of is ongeldig"
+            if error:
+                status = "read_failed"
+                reason = "Auto-SOC kon niet uit Home Assistant worden gelezen"
+            state["soc_observation"] = {
+                "source": self.soc_entity, "raw_state": str(value)[:100],
+                "reported_at": str(reported_at)[:100] if reported_at is not None else None,
+                "checked_at": self.now().isoformat(), "age_seconds": age,
+                "status": status, "reason": reason,
+            }
+            state["vehicle_soc"] = ({"percent": percent, "reported_at": stamp.isoformat(),
+                                     "source": self.soc_entity}
+                                    if status == "ready" and stamp is not None else None)
             self.save(state)
 
     def _target_energy(self, state: Payload) -> float | None:
@@ -138,9 +186,10 @@ class EVSessionManager:
         if not target or not target.get("enabled"):
             return None
         soc = state.get("vehicle_soc")
-        if (not soc or not 0 <= (self.now() - instant(soc["reported_at"])).total_seconds()
-                <= 1800):
-            raise ValueError("Wachten op een actueel SOC-percentage van de auto")
+        if not soc or not self._soc_usable(state, instant(soc["reported_at"])):
+            raise ValueError("Wachten op een actueel SOC-percentage van de auto: "
+                                 + state.get("soc_observation", {}).get("reason",
+                                     "nog geen bruikbaar SOC-rapport ontvangen"))
         return float(max(0.0, target["percent"] - soc["percent"])
                      * target["full_charge_kwh"] * 10)
 
@@ -730,6 +779,8 @@ class EVSessionManager:
                 and power_w >= 0
                 and 0 <= (now - measured_at).total_seconds() <= 15
             )
+            if fresh and power_w is not None and power_w >= 100 and measured_at is not None:
+                state["soc_charge_observed_at"] = measured_at.isoformat()
             session = self.current(state)
             request = state.get("charging_request") or {}
             hold_for_advice = bool(request.get("automatic_execution") and (

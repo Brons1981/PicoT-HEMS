@@ -194,10 +194,6 @@ ook wanneer de actuele EV-koppeling later wordt uitgeschakeld. Oven en andere
 huishoudvraag blijven meetellen. Oude metingen zonder EV-identificatie worden
 niet achteraf geschat of gewist.
 
-Een al opgeslagen oud plan kan nog een anoniem overbruggingslaadblok bevatten.
-Gebruik na installatie van deze fix eenmaal **Maak een nieuw plan** om die oude
-vrije intervallen door de canonieke herberekening te vervangen.
-
 ### Gelijke EV-dekking tijdens en na een sessie
 
 Bij ingeschakelde `energy_device_policy_enabled` of `energy_device_sessions_enabled`

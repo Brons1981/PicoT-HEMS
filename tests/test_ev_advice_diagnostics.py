@@ -149,7 +149,7 @@ console.log(JSON.stringify(nodes));
     nodes = json.loads(result.stdout)
     assert ("Wachten op HEMS" in nodes["ev-advice-status"]["textContent"]) == joint_pending
     assert nodes["ev-advice-execute"]["disabled"] is True
-    assert nodes["ev-advice-submit"]["disabled"] is True
+    assert nodes["ev-advice-submit"]["disabled"] is not joint_pending
     assert nodes["ev-advice-cancel"]["disabled"] is not joint_pending
 
 

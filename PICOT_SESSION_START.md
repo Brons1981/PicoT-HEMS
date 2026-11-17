@@ -1,3 +1,13 @@
+## Release ED dev.16 - 17 november 2026
+
+Eenvoudige EV-laadopdrachten, automatisch bij aansluiten, vaste starttijd,
+instelbaar geschat SOC-doel en eenmalig 100%. Basis main 68503d888892a132febd1faa936809700e10466a.
+Alleen ED en tests/documentatie; HC dev.35 en HEMS dev.339 behouden.
+Publicatie op expliciet verzoek via PR en groene CI. Geen live installatie.
+Na installatie automatisch aansluiten en 80%-doel opslaan; 11,7 kWh is de voorlopige
+AC-rekenbasis. Bestaande vastgezette sessie eerst annuleren voor een eigen starttijd.
+Zie docs/development_log/2026-11-17-ed-simple-charging.md.
+
 ## Release HEMS dev.339 en ED dev.15 - 10 november 2026
 
 Herstel laadadvies bij normale netterugval voor het huis aan de batterijondergrens.
@@ -1043,3 +1053,4 @@ akkoord gegeven op publicatie van de geïsoleerde planovergangenreparatie via PR
 en CI. Zie `docs/development_log/2026-09-27-retained-plan-boundaries.md`.
 Financiële meetverwerking, planuitleg en NOM-vervanging blijven vervolgstappen.
 Installatie en livecontrole volgen na publicatie.
+

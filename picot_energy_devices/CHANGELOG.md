@@ -1,3 +1,13 @@
+# 0.4.0-dev.16
+
+- Kies een vaste starttijd zonder aansluitcontrole of herkenningsproef.
+- Automatisch plannen en uitvoeren met een blijvende opdracht; geen tweede bevestigingsklik. Verlopen HEMS-selecties worden opnieuw aangevraagd.
+- Optioneel automatisch plannen bij aansluiten via binary_sensor.330e_laadkabel, standaard gereed voor 07:00 (instelbaar).
+- Instelbaar SOC-doel (voorstel 80%) en voorlopige rekenbasis 11,7 kWh aan de stekker voor 0-100%. De BMW-SOC is een voorspelling; eindpercentage blijft een benadering.
+- Eenmalig naar 100% behoudt het normale doel voor volgende opdrachten.
+- Schakel na installatie automatisch laden in en sla het laaddoel op. Sla eerst het vaste laadprofiel op als dat nog ontbreekt. Een vastgezet of lopend laadblok eerst annuleren voordat je zelf een starttijd kiest.
+- Bestaande sessies blijven behouden. Gebruik met HEMS dev.339 of nieuwer; geen HEMS-update of planreset nodig voor deze ED-release.
+
 # 0.4.0-dev.15
 
 - Toon de instructie Automatisch uitvoeren alleen wanneer een actueel, uitvoerbaar laadblok beschikbaar is.
@@ -128,3 +138,4 @@ Na installatie: start een proefopname, controleer het vermogensverloop en rond d
 ## 0.1.0
 
 Eerste onafhankelijke Energy Devices-add-on met apparaatregistratie en automatische sessieprofielen.
+

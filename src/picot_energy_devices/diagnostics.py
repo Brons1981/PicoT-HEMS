@@ -40,6 +40,7 @@ SESSION_FIELDS = {
     "remaining_energy_wh", "planned_start", "planned_end", "measured_at", "expected_power_w",
 }
 ADVICE_FIELDS = {
+    "automatic_execution", "source", "status_reason", "soc_target",
     "contract", "session_id", "request_revision", "generated_at", "snapshot_id", "run_id",
     "method_version", "status", "reason", "state", "available_from", "ready_by",
     "remaining_energy_wh", "fixed_power_w", "evidence_source", "evidence_at", "charge_target",

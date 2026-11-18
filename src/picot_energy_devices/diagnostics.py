@@ -39,6 +39,14 @@ SESSION_FIELDS = {
     "expected_duration_seconds", "remaining_duration_seconds", "delivered_energy_wh",
     "remaining_energy_wh", "planned_start", "planned_end", "measured_at", "expected_power_w",
 }
+CONNECTION_FIELDS = {
+    "plug_entity", "soc_entity", "plug_state", "plug_observed_at", "plug_checked_at",
+    "soc_charge_observed_at", "auto_charge_status",
+}
+SOC_FIELDS = {
+    "source", "raw_state", "reported_at", "checked_at", "age_seconds", "status", "reason",
+    "plug_observed_at", "arrival_margin_seconds",
+}
 ADVICE_FIELDS = {
     "automatic_execution", "source", "status_reason", "soc_target",
     "contract", "session_id", "request_revision", "generated_at", "snapshot_id", "run_id",
@@ -109,6 +117,13 @@ class DiagnosticsRecorder:
                     "ev_switch_state": payload.get("ev_switch_state"),
                     "session": ({k: v for k, v in session.items() if k in SESSION_FIELDS}
                                 if isinstance(session, dict) else None)}
+            connection = payload.get("connection")
+            if isinstance(connection, dict):
+                data["connection"] = {k: v for k, v in connection.items()
+                                      if k in CONNECTION_FIELDS}
+                soc = connection.get("soc_observation")
+                data["soc_observation"] = ({k: v for k, v in soc.items() if k in SOC_FIELDS}
+                                           if isinstance(soc, dict) else None)
         elif kind == "startup":
             data = {"version": __version__, "settings": self.options}
         elif kind == "ev_advice":

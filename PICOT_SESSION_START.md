@@ -1,3 +1,10 @@
+## Release ED dev.19 - 18 november 2026
+
+Herstel BMW-SOC vlak voor aansluiten (maximaal 120 seconden), met actuele
+kabelbevestiging en geen later laadvermogen. Diagnose bevat aansluit- en SOC-bewijs.
+HEMS dev.342 en HC blijven behouden. Publicatie op verzoek via PR en groene CI;
+geen live installatie. Zie docs/development_log/2026-11-18-ev-arrival-soc.md.
+
 ## Release HEMS dev.342 en ED dev.18 - 17 november 2026
 
 EV-laadmoment op netprijzen en PV-overschot na huis en Zendure, zonder algemene

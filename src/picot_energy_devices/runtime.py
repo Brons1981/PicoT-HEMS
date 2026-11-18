@@ -317,7 +317,8 @@ def ev_poll_once(
         "local_rpc" if ev_source is not None else "home_assistant"
     )
     if diagnostics is not None:
-        diagnostics.record("ev", dict(snapshot, ev_w=power, ev_switch_state=switch_state,
+        diagnostics.record("ev", dict(snapshot, connection=manager.view(),
+                                    ev_w=power, ev_switch_state=switch_state,
                                       ev_measured_at=measured.isoformat() if measured else None))
     client.publish_ev_session(snapshot)
 

@@ -404,11 +404,11 @@ def test_connection_soc_rechecked_at_action_and_after_charging(tmp_path):
     assert rig.manager.view()["vehicle_soc"] is None
 
 
-def test_recent_report_from_before_connection_is_not_starting_soc(tmp_path):
+def test_report_outside_arrival_margin_is_not_starting_soc(tmp_path):
     rig = Rig(tmp_path / "ev")
     target(rig)
     rig.manager.observe_plug("on", rig.now.isoformat())
-    rig.manager.observe_soc("72", (rig.now-timedelta(minutes=1)).isoformat())
+    rig.manager.observe_soc("72", (rig.now-timedelta(seconds=121)).isoformat())
     assert rig.manager.view()["vehicle_soc"] is None
 
 
@@ -424,3 +424,49 @@ def test_same_connection_soc_survives_restart_with_fresh_plug_check(tmp_path):
     rig.manager.observe_plug("on", connected)
     rig.manager.action({"action": "start_now"})
     assert rig.manager.view()["sessions"][-1]["target_energy_wh"] == pytest.approx(936)
+
+
+@pytest.mark.parametrize("seconds_before", [48, 120])
+def test_arrival_soc_plans_after_three_hours_with_plug_off_and_restart(tmp_path, seconds_before):
+    rig = Rig(tmp_path / "ev")
+    target(rig)
+    connected = rig.now - timedelta(hours=3)
+    reported = connected - timedelta(seconds=seconds_before)
+    rig.manager.observe_soc("38", reported.isoformat())
+    rig.manager.observe_plug("on", connected.isoformat())
+    rig.tick(0, "off")
+    rig.manager.observe_soc("38", reported.isoformat())
+    assert rig.manager.view()["vehicle_soc"]["percent"] == 38
+    assert "beginstand" in rig.manager.view()["soc_observation"]["reason"]
+    rig.manager = EVSessionManager(rig.manager.path, power_entity=POWER,
+                                   switch_entity=SWITCH, now=lambda: rig.now)
+    rig.manager.action({"action": "save_auto_charge", "enabled": True})
+    rig.manager.observe_plug("on", connected.isoformat())
+    request = rig.manager.view()["charging_request"]
+    assert request["remaining_energy_wh"] == pytest.approx(4914)
+    assert rig.commands == []
+
+
+@pytest.mark.parametrize("hours_old", [0, 3])
+def test_arrival_soc_rejected_after_later_charging(tmp_path, hours_old):
+    rig = Rig(tmp_path / "ev")
+    target(rig)
+    connected = rig.now - timedelta(hours=hours_old)
+    reported = connected - timedelta(seconds=48)
+    rig.manager.observe_plug("on", connected.isoformat())
+    rig.tick(2300, "on")
+    rig.manager.observe_soc("38", reported.isoformat())
+    assert rig.manager.view()["vehicle_soc"] is None
+    assert "laadvermogen" in rig.manager.view()["soc_observation"]["reason"]
+
+
+@pytest.mark.parametrize("plug", ["off", "unavailable", "on"])
+def test_old_arrival_soc_requires_fresh_connected_sensor(tmp_path, plug):
+    rig = Rig(tmp_path / "ev")
+    target(rig)
+    connected = rig.now - timedelta(hours=3)
+    rig.manager.observe_plug(plug, connected.isoformat())
+    if plug == "on":
+        rig.now += timedelta(seconds=31)
+    rig.manager.observe_soc("38", (connected-timedelta(seconds=48)).isoformat())
+    assert rig.manager.view()["vehicle_soc"] is None

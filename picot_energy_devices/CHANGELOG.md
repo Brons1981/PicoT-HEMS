@@ -1,3 +1,10 @@
+# 0.4.0-dev.19
+
+- Accepteer een BMW-SOC-rapport tot twee minuten voor het aansluiten als beginstand, ook na wachten of een herstart.
+- Vereis actuele BMW-kabelbevestiging en geen later gemeten laadvermogen voor deze beginstand; de smartplug mag uit blijven.
+- Toon concrete afwijsredenen en neem SOC- en aansluittijden op in de diagnose.
+- HEMS blijft het laadmoment kiezen. Geen wijziging aan batterij-uitsluiting of laadstop.
+
 # 0.4.0-dev.18
 
 - Herstel automatisch een laadopdracht die op oude marktrouteverwijzingen bleef wachten, door een nieuw advies aan te vragen.

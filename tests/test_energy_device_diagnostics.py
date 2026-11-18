@@ -229,3 +229,52 @@ def test_missing_input_origin_is_not_replaced_by_an_earlier_offer_mismatch():
     output = guard.check(result=missing, offered_w=2500, now=now + timedelta(seconds=10))
     assert output["reason"] == "persistent_measurement_loss"
     assert output["latched_origin"]["reason"] == "ev_local_api_unavailable"
+
+
+@pytest.mark.parametrize("seconds_before,status", [(48, "ready"), (121, "stale")])
+def test_ev_poll_exports_arrival_soc_and_connection_evidence(tmp_path, seconds_before, status):
+    from test_ev_sessions import POWER, SWITCH, Rig
+    from test_ev_simple_charging import target
+
+    from picot_energy_devices.runtime import ev_poll_once
+
+    rig = Rig(tmp_path / "ev")
+    rig.now = datetime.now(UTC)
+    target(rig)
+    connected = rig.now - timedelta(hours=3)
+    reported = connected - timedelta(seconds=seconds_before)
+    rig.manager.observe_plug("on", connected.isoformat())
+    rig.manager.observe_soc("38", reported.isoformat())
+
+    class Client:
+        def state(self, entity):
+            if entity == POWER:
+                return {"state": "0", "attributes": {"unit_of_measurement": "W"},
+                        "last_updated": rig.now.isoformat()}
+            if entity == SWITCH:
+                return {"state": "off"}
+            raise ValueError("unavailable")
+
+        def set_ev_switch(self, entity, enabled):
+            pytest.fail("A diagnostic poll must not start charging")
+
+        def publish_ev_session(self, snapshot):
+            pass
+
+    recorder = DiagnosticsRecorder(tmp_path / "telemetry.sqlite3", options={})
+    try:
+        ev_poll_once(rig.manager, Client(), diagnostics=recorder)
+        recorder.queue.join()
+        files = read_zip(recorder.export_zip())
+        samples = [json.loads(line) for line in files["measurements.jsonl"].splitlines()]
+        data = next(row["data"] for row in samples if row["kind"] == "ev")
+        assert data["ev_switch_state"] == "off"
+        assert data["connection"]["plug_state"] == "on"
+        assert data["connection"]["plug_observed_at"] == connected.isoformat()
+        assert data["soc_observation"]["reported_at"] == reported.isoformat()
+        assert data["soc_observation"]["raw_state"] == "38"
+        assert data["soc_observation"]["status"] == status
+        assert data["soc_observation"]["arrival_margin_seconds"] == 120
+        assert "sessions" not in data["connection"]
+    finally:
+        recorder.close()

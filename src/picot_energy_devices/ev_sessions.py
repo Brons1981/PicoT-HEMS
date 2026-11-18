@@ -119,25 +119,34 @@ class EVSessionManager:
             return {**state, "power_entity": self.power_entity, "switch_entity": self.switch_entity,
                     "plug_entity": self.plug_entity, "soc_entity": self.soc_entity}
 
-    def _soc_usable(self, state: Payload, stamp: datetime) -> bool:
+    def _soc_problem(self, state: Payload, stamp: datetime) -> str | None:
         age = (self.now() - stamp).total_seconds()
         if age < 0:
-            return False
-        if state.get("plug_state") == "on" and state.get("plug_observed_at"):
-            if stamp < instant(state["plug_observed_at"]):
-                return False
-        if age <= 1800:
-            return True
+            return "SOC-rapporttijd ligt in de toekomst"
         try:
-            return bool(
-                state.get("plug_state") == "on"
-                and 0 <= (self.now() - instant(state.get("plug_checked_at"))).total_seconds() <= 30
-                and instant(state.get("plug_observed_at")) <= stamp
-                and (not state.get("soc_charge_observed_at")
-                     or instant(state["soc_charge_observed_at"]) <= stamp)
-            )
-        except (TypeError, ValueError):
-            return False
+            connected = (instant(state["plug_observed_at"])
+                         if state.get("plug_state") == "on" else None)
+            before_connection = (connected - stamp).total_seconds() if connected else 0
+            # BMW can publish its arrival SOC just before publishing the cable state.
+            if before_connection > 120:
+                return (f"SOC-rapport is {before_connection:.0f} seconden van vóór aansluiten; "
+                        "maximaal 120 seconden toegestaan")
+            if age <= 1800 and before_connection <= 0:
+                return None
+            if state.get("soc_charge_observed_at") and instant(
+                    state["soc_charge_observed_at"]) > stamp:
+                return "Na dit SOC-rapport is laadvermogen gemeten; nieuw SOC-rapport nodig"
+            if (connected is not None
+                    and 0 <= (self.now() - instant(state.get("plug_checked_at"))).total_seconds()
+                    <= 30):
+                return None
+        except (TypeError, ValueError, KeyError):
+            pass
+        return (f"Auto-SOC is {age / 60:.0f} minuten oud; "
+                "geen actuele bevestiging van deze aansluiting")
+
+    def _soc_usable(self, state: Payload, stamp: datetime) -> bool:
+        return self._soc_problem(state, stamp) is None
 
     def observe_soc(self, value: object, reported_at: object, *, error: str | None = None) -> None:
         with self.lock:
@@ -158,13 +167,16 @@ class EVSessionManager:
                     age = (self.now() - stamp).total_seconds()
                     if age < 0:
                         status, reason = "future", "SOC-rapporttijd ligt in de toekomst"
-                    elif age > 1800 or not self._soc_usable(state, stamp):
-                        if self._soc_usable(state, stamp):
+                    else:
+                        problem = self._soc_problem(state, stamp)
+                        if problem:
+                            status, reason = "stale", problem
+                        elif (state.get("plug_state") == "on"
+                              and stamp < instant(state["plug_observed_at"])):
+                            reason = ("SOC vlak vóór aansluiten geaccepteerd als beginstand "
+                                      "(maximaal 120 seconden); geen later laadvermogen gemeten")
+                        elif age > 1800:
                             reason = "SOC van deze aansluiting; geen later laadvermogen gemeten"
-                        else:
-                            status = "stale"
-                            reason = (f"Auto-SOC is {age / 60:.0f} minuten oud; "
-                                      "geen bruikbaar rapport voor deze aansluiting")
                 except (TypeError, ValueError):
                     status, reason = "missing_timestamp", "SOC-rapporttijd ontbreekt of is ongeldig"
             if error:
@@ -175,6 +187,8 @@ class EVSessionManager:
                 "reported_at": str(reported_at)[:100] if reported_at is not None else None,
                 "checked_at": self.now().isoformat(), "age_seconds": age,
                 "status": status, "reason": reason,
+                "plug_observed_at": state.get("plug_observed_at"),
+                "arrival_margin_seconds": 120,
             }
             state["vehicle_soc"] = ({"percent": percent, "reported_at": stamp.isoformat(),
                                      "source": self.soc_entity}

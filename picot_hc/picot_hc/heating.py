@@ -7,9 +7,10 @@ import uuid
 from datetime import datetime
 
 from .control import PENDING, numeric
+from .bedroom import FLOOR_C, RECOVERY_C, evening_heat
 from .cv_state import passive_idle
 from .core import observation, prices, tariff_confirmed, timestamp
-from .schedule import TZ
+from .schedule import ROOM_FLOOR_RECOVERY_C, TZ
 from .learning import Learning
 from .door_fan import DoorFan
 
@@ -235,6 +236,7 @@ class Heating:
             learning.update(phase='temporary', target=None, preheating=False)
         zones, demand = {}, {}
         floor_mode = False
+        bedroom_evening = config.get('bedroom_evening_enabled') is True
         invalid_temperature = set()
         fresh = (self.control.connected and self.control.received is not None
                  and 0 <= now-self.control.received <= config['stale_seconds'])
@@ -306,7 +308,7 @@ class Heating:
                     own = owned.get('beneden', {})
                     running = (own.get('floor_run') and not own.get('released')
                                and records.get(own.get('command'), {}).get('value') != 'off')
-                    on = temp < target + .3 if running else temp <= target
+                    on = temp < target + ROOM_FLOOR_RECOVERY_C if running else temp <= target
                     if running and now-own.get('since', now) < 600:
                         on = True
                 elif zid == 'beneden':
@@ -326,6 +328,18 @@ class Heating:
         price = price_interval['value'] if price_interval else None
         if not tariff_confirmed(config) or warnings:
             price = None
+        if bedroom_evening and 'boven' in zones:
+            bedroom = zones['boven']
+            if 'boven' not in invalid_temperature and 'boven' not in blocked:
+                own = owned.get('boven', {})
+                command = records.get(own.get('command'), {})
+                running = bool(command and command.get('value') != 'off' and not own.get('released'))
+                goal = evening_heat(now, bedroom['temperature'], own.get('since') if running else None,
+                                    rows if price is not None else [], self.control.states)
+                bedroom.update(goal)
+            else:
+                bedroom.update(target=FLOOR_C, demand=False)
+            demand['boven'] = bedroom['demand']
         gas = numeric(config.get('gas_price'))
         try:
             gas_valid = datetime.fromtimestamp(now, TZ).date() <= datetime.strptime(config['gas_valid_until'], '%Y-%m-%d').date()
@@ -381,9 +395,14 @@ class Heating:
         direct_desired = {}
         decision_basis = 'no_source'
         enabled = settings['enabled'] and self.armed
-        if enabled and price is not None:
+        if enabled:
             for zid in ('beneden', 'boven', 'badkamer'):
+                if price is None and not (zid == 'boven' and bedroom_evening):
+                    continue
                 target = zones[zid]['target']
+                if zid == 'boven' and bedroom_evening:
+                    minimum = sources[zid].get('heating_minimum')
+                    target = max(RECOVERY_C, minimum) if minimum is not None else None
                 if zid == 'beneden' and target is not None:
                     minimum = sources[zid].get('heating_minimum')
                     if minimum is not None:
@@ -400,7 +419,7 @@ class Heating:
             # The room thermostat is downstairs: it cannot independently heat upstairs.
             # The currently physically disabled CV is not a fallback for this
             # below-device-minimum floor policy. Comfort source choice is unchanged.
-            cv_ok = (not floor_mode and demand['beneden'] and eligible('cv', down['target'])
+            cv_ok = (price is not None and not floor_mode and demand['beneden'] and eligible('cv', down['target'])
                      and costs['cv'] is not None)
             if 'beneden' in desired and not floor_mode and not cv_ok:
                 decision_basis = 'airco_available'
@@ -412,7 +431,8 @@ class Heating:
             # Keep a viable incumbent for five minutes before an economic switch.
             for source, own in owned.items():
                 c = records.get(own['command'], {})
-                if floor_mode or own.get('released') or c.get('value') == 'off' or source in desired or now-own['since'] >= 300:
+                if (floor_mode or price is None or (source == 'boven' and bedroom_evening) or own.get('released')
+                        or c.get('value') == 'off' or source in desired or now-own['since'] >= 300):
                     continue
                 viable = (cv_ok if source == 'cv' else demand[source] and eligible(source, zones[source]['target'])
                           and (source != 'beneden' or door_start or door_continue or door_pending))
@@ -430,7 +450,7 @@ class Heating:
             timed = zid == 'badkamer' and self.timer_active(now)
             if not enabled and not timed:
                 zone['reason'] = 'Automatische verwarming staat uit.'
-            elif zone['demand'] and price is None and not timed:
+            elif zone['demand'] and price is None and not timed and not (zid == 'boven' and bedroom_evening):
                 zone['reason'] = 'Geen bevestigd huidig stroomtarief; bronkeuze geblokkeerd.'
             elif zone['demand'] and not any(zid in COVERAGE[s] for s in desired) and zone['reason'] == 'Warmtevraag.':
                 zone['reason'] = 'Warmtevraag; bron geblokkeerd door mogelijkheden, storing of gedeelde cv-grens.'

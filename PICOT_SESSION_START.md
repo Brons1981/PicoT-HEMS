@@ -1,3 +1,8 @@
+## Release HC dev.37 - 24 november 2026
+
+Ruimere schakelband beneden en optionele slaapkamerregeling met 15,5 graden als doel om 18:00. Qlima automatisch beschikbaar van 08:00 tot 20:00. HC kiest op stroomtarief en gebruikt het HEMS-zonneoverschot bij gelijke tarieven. Activeer boven via `bedroom_evening_enabled`.
+
+
 ## Release HEMS dev.343 - 24 november 2026
 
 Herstel het vervolgplan na bevestigd 100% SOC als een aanvullend laadvenster is

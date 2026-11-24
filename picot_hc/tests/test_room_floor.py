@@ -63,6 +63,9 @@ def test_floor_restarts_at_18_and_uses_hysteresis_minimum_runtime(case):
     f.at_time(t+120)
     assert len(f.calls) == 1
     f.at_time(t+632)
+    assert len(f.calls) == 1
+    f.temperature('beneden', 17.5)
+    f.at_time(t+643)
     assert f.calls[-1][1]['hvac_mode'] == 'off'
     f.at_time(t+663)
     f.temperature('beneden', 16.9)
@@ -70,6 +73,64 @@ def test_floor_restarts_at_18_and_uses_hysteresis_minimum_runtime(case):
     assert len(f.calls) == 2
     f.at_time(t+850)
     assert f.calls[-1][1]['temperature'] == 18
+
+
+def test_bedroom_waits_for_daytime_price_and_stops_at_noise_window(case):
+    f = case
+    f.config['bedroom_evening_enabled'] = True
+    f.temperature('beneden', 22)
+    f.temperature('boven', 15.2)
+    prices = f.states[f.config['price_entity']]['attributes']['raw_today']
+    prices[:] = [dict(start=datetime.fromtimestamp(start, UTC).isoformat(),
+                      end=datetime.fromtimestamp(end, UTC).isoformat(), value=value)
+                 for start, end, value in [(NOW-7*3600, NOW+3600, .3),
+                                           (NOW+3600, NOW+2*3600, .12),
+                                           (NOW+2*3600, NOW+9*3600, .35)]]
+    plan = f.at_time(NOW)
+    assert not f.calls
+    assert '15:00' in plan['zones']['boven']['reason']
+    f.at_time(NOW+3600)
+    assert f.calls[-1][1]['entity_id'] == f.config['zones'][1]['device']
+    assert f.calls[-1][1]['temperature'] == 16.0
+    f.at_time(NOW+3631)
+    plan = f.at_time(NOW+6*3600)
+    assert not plan['demand']['boven']
+    assert f.calls[-1][1]['hvac_mode'] == 'off'
+
+
+def test_bedroom_evening_deadline_works_without_tariff_and_preserves_night_rest(case):
+    f = case
+    f.config['bedroom_evening_enabled'] = True
+    f.temperature('beneden', 22)
+    f.temperature('boven', 15.2)
+    del f.states[f.config['price_entity']]
+    assert not f.at_time(NOW+8*3600)['demand']['boven']
+    assert not f.calls
+    assert f.at_time(NOW+3*3600+15*60)['demand']['boven']
+    assert f.calls[-1][1]['temperature'] == 16.0
+
+
+def test_bedroom_prefers_hems_solar_window_at_equal_tariff(case):
+    f = case
+    f.config['bedroom_evening_enabled'] = True
+    f.temperature('beneden', 22)
+    f.temperature('boven', 15.2)
+    def stamp(t):
+        return datetime.fromtimestamp(t, UTC).isoformat()
+
+    periods = [(NOW, NOW+3600, 0), (NOW+3600, NOW+7200, 800)]
+    slots = [dict(starts_at=stamp(a), ends_at=stamp(b), storage_minimum_wh=500,
+                  storage_margin_wh=0, pv_export_wh=solar, grid_import_wh=0, confidence=1)
+             for a, b, solar in periods]
+    f.states['sensor.picot_energy_outlook'] = dict(state='ready', attributes=dict(
+        contract='hems-energy-outlook:v1', status='ready', advisory_only=True,
+        approval_required=True, budgets_additive=False, snapshot_id='test',
+        generated_at=stamp(NOW), valid_until=stamp(NOW+120), horizon_start=stamp(NOW),
+        horizon_end=stamp(NOW+7200), storage_floor_wh=500, projected_minimum_margin_wh=0,
+        slots=slots))
+    plan = f.at_time(NOW)
+    assert not f.calls
+    assert '15:00' in plan['zones']['boven']['reason']
 
 
 def test_manual_heat_below_device_minimum_is_rejected_before_write(case):
@@ -121,7 +182,7 @@ def test_restart_preserves_floor_cycle_deadline(case):
     case.at_time(t+31)
     other = Runtime(case.config, case.store, case.url, 'fake-secret')
     case.runtime, case.heat, case.ctl = other, other.heating, other.control
-    case.temperature('beneden', 17.4)
+    case.temperature('beneden', 17.5)
     case.at_time(t+120)
     assert len(case.calls) == 1
     case.at_time(t+601)

@@ -1,3 +1,10 @@
+## Release HEMS dev.343 - 24 november 2026
+
+Herstel het vervolgplan na bevestigd 100% SOC als een aanvullend laadvenster is
+verlopen. Bewaar de oorspronkelijke opdracht en de bevestiging van het hoofddoel.
+Lopende en toekomstige laadopdrachten houden hun bestaande bescherming.
+Zie docs/development_log/2026-11-24-completed-day-supplemental-recovery.md.
+
 ## Release ED dev.19 - 18 november 2026
 
 Herstel BMW-SOC vlak voor aansluiten (maximaal 120 seconden), met actuele

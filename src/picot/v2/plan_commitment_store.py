@@ -2539,7 +2539,12 @@ class ActivePlanCommitmentStore(RouteChoiceStoreMixin):
                 previous
             )
         for goal in self.load_supplemental_assignments():
-            if goal.execution_scope_id != plan.execution_scope_id or goal.completed_at is not None:
+            # An elapsed window stays linked to its original plan for historical evidence.
+            if (
+                goal.execution_scope_id != plan.execution_scope_id
+                or goal.completed_at is not None
+                or goal.ends_at <= plan.created_at
+            ):
                 continue
             parts = tuple(s for s in plan.segments if s.purpose == goal.assignment_id)
             if not parts or (parts[0].starts_at, parts[-1].ends_at) != (

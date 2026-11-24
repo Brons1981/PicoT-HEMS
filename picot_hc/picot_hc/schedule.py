@@ -13,6 +13,7 @@ from .learning import DEFAULTS as LEARNING_DEFAULTS
 TZ = ZoneInfo('Europe/Amsterdam')
 DOOR = 'binary_sensor.1_3_woonkamer_deur_raam_sensor_achterdeur_contact'
 WEEK = 7 * 1440
+ROOM_FLOOR_RECOVERY_C = 0.5
 
 
 def minutes(value, *, end=False):

@@ -1,3 +1,9 @@
+# 0.1.0-dev.37
+
+- Geef de woonkamer een ruimere schakelband: bij een kamerondergrens van 17 °C stopt HC bij 17,5 °C. De warmtevraagprognose voor HEMS gebruikt dezelfde band.
+- Schakel `bedroom_evening_enabled` in voor een slaapkamerdoel van 15,5 °C om 18:00. HC verwarmt automatisch met de Qlima tussen 08:00 en 20:00. De slaapkamer mag 's nachts afkoelen.
+- Kies bij warmtevraag het goedkoopste beschikbare prijsvenster. Bij gelijke tarieven telt het verwachte PV-overschot uit HEMS mee. Om 17:15 vervalt het wachten als de kamer nog 15,5 °C of kouder is.
+
 # 0.1.0-dev.36
 
 - Start de badkamertimer vanuit een Home Assistant-script, bijvoorbeeld met het iPhone-widget Scripts. Duur en doeltemperatuur zijn instelbaar via de scriptblueprint.

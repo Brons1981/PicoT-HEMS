@@ -16,6 +16,7 @@
     "raw_tomorrow"
   ],
   "price_basis_confirmed": false,
+  "bedroom_evening_enabled": false,
   "zones": [
     {
       "id": "beneden",

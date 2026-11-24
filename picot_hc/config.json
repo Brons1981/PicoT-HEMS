@@ -1,6 +1,6 @@
 {
   "name": "PicoT Home Climate",
-  "version": "0.1.0-dev.36",
+  "version": "0.1.0-dev.37",
   "slug": "picot_hc",
   "description": "Comfortvensters, vaste zonetemperaturen en handmatige bronbediening",
   "arch": [
@@ -36,6 +36,7 @@
       "raw_tomorrow"
     ],
     "price_basis_confirmed": false,
+    "bedroom_evening_enabled": false,
     "zones": [
       {
         "id": "beneden",
@@ -139,6 +140,7 @@
       "str"
     ],
     "price_basis_confirmed": "bool",
+    "bedroom_evening_enabled": "bool?",
     "zones": [
       {
         "id": "str",

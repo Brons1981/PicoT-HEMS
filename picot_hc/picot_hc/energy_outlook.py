@@ -1,4 +1,4 @@
-"""Validate HEMS outlook for display; it never authorizes heating commands."""
+"""Validate the advisory HEMS outlook, which carries no command authority."""
 import math
 from datetime import datetime
 

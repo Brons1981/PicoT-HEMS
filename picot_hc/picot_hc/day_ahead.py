@@ -10,7 +10,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from .energy_model import finite
-from .schedule import TZ, occurrences, wall_time
+from .schedule import ROOM_FLOOR_RECOVERY_C, TZ, occurrences, wall_time
 
 ENTITY = "sensor.picot_hc_day_ahead"
 CONTRACT = "hc-day-ahead:v1"
@@ -234,7 +234,7 @@ def build(
                 start = finish
                 continue
             target = heating_minimum
-            recovery = floor_target + 0.3
+            recovery = floor_target + ROOM_FLOOR_RECOVERY_C
         query = dict(
             context,
             valid=True,

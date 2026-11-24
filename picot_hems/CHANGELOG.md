@@ -1,3 +1,9 @@
+# 2.0.0-dev.343
+
+- Herstel het dagplan nadat de batterij 100% heeft bereikt, ook als een verlopen aanvullende laadopdracht nog openstaat.
+- Bewaar oude laadopdrachten bij hun oorspronkelijke plan en bescherm lopende en toekomstige opdrachten.
+- Geen planreset nodig. Deze update is alleen voor PicoT HEMS.
+
 # 2.0.0-dev.342
 
 - Kies het gunstigste EV-laadblok op netprijzen en aantoonbaar PV-overschot na huis en Zendure; geen algemene afhankelijkheid van batterijplannen.

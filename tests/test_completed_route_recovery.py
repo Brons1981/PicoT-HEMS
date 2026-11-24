@@ -1,5 +1,6 @@
 """Completion during HA downtime must not strand remaining execution."""
 
+import json
 from dataclasses import replace
 from datetime import timedelta
 from zoneinfo import ZoneInfo
@@ -8,7 +9,7 @@ import pytest
 from test_daily_main_active_pipeline import setup
 
 from picot.v2.live_runtime import _restore_daily_charge_context
-from picot.v2.plan_commitment_store import ActivePlanCommitmentStore
+from picot.v2.plan_commitment_store import ActivePlanCommitmentStore, _serialize_execution_plan
 
 
 def completed_case(tmp_path, monkeypatch):
@@ -78,6 +79,77 @@ def test_completed_recovery_waits_for_prices_and_retries(tmp_path, monkeypatch):
     assert store.daily_recalculation_status()["status"] == "pending"
     result = pipeline.run(planning_input=recover(source))
     assert result.evaluation.status == "winner_selected", result.evaluation.reason
+
+
+@pytest.mark.parametrize(
+    ("start_seconds", "end_seconds", "recovers"),
+    [
+        pytest.param(-600, -300, True, id="expired"),
+        pytest.param(-300, 0, True, id="ends-at-recovery"),
+        pytest.param(-300, 1800, False, id="ongoing"),
+        pytest.param(900, 2700, False, id="future"),
+    ],
+)
+def test_completed_recovery_respects_supplemental_window(
+    tmp_path, monkeypatch, start_seconds, end_seconds, recovers
+):
+    store, pipeline, recover, source = completed_case(tmp_path, monkeypatch)
+    completed = store.load_daily_assignments()
+    active = store.load_active_daily_main_plan("battery")
+    start = source.captured_at + timedelta(seconds=start_seconds)
+    end = source.captured_at + timedelta(seconds=end_seconds)
+    assignment_id = "supplemental:previous-plan"
+    segment = replace(
+        next(s for s in active.segments if s.main_assignment_id is not None),
+        segment_id="supplemental-segment",
+        order=1,
+        starts_at=start,
+        ends_at=end,
+        purpose=assignment_id,
+        main_assignment_id=None,
+    )
+    previous = replace(
+        active,
+        plan_id="earlier-plan",
+        created_at=min(start, active.created_at),
+        valid_from=start,
+        valid_until=end,
+        segments=(segment,),
+    )
+    payload = json.loads(store._path.read_text())
+    payload["execution_plans"][previous.plan_id] = _serialize_execution_plan(previous)
+    payload.setdefault("supplemental_assignments", {})[assignment_id] = {
+        "assignment_id": assignment_id,
+        "next_assignment_id": completed[0].assignment_id,
+        "execution_scope_id": "battery",
+        "target_soc": 0.2,
+        "starts_at": start.isoformat(),
+        "ends_at": end.isoformat(),
+        "required_by": end.isoformat(),
+        "plan_id": previous.plan_id,
+        "segment_ids": [segment.segment_id],
+        "completed_at": None,
+        "completion_evidence_id": None,
+    }
+    store._path.write_text(json.dumps(payload))
+    before = store._path.read_bytes()
+    goals = store.load_supplemental_assignments()
+    assert len(goals) == 1
+
+    result = pipeline.run(planning_input=recover(source))
+
+    if recovers:
+        assert result.evaluation.status == "winner_selected", result.evaluation.reason
+        restarted = ActivePlanCommitmentStore(store._path)
+        assert restarted.load_supplemental_assignments() == goals
+        assert restarted.load_daily_assignments() == completed
+        plan = restarted.load_active_daily_main_plan("battery")
+        assert plan is not None and plan.plan_id != active.plan_id
+        assert all(s.purpose != assignment_id for s in plan.segments)
+    else:
+        assert result.evaluation.status == "fallback_active"
+        assert "cannot discard supplemental ownership" in result.evaluation.reason
+        assert store._path.read_bytes() == before
 
 
 def test_completed_recovery_does_not_reopen_goal_after_soc_has_fallen(tmp_path, monkeypatch):

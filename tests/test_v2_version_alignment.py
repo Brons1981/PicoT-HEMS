@@ -16,8 +16,8 @@ def test_v2_runtime_version_matches_home_assistant_addon() -> None:
     assert __version__ == addon_version
 
 
-def test_v2_release_version_is_dev_343() -> None:
-    assert __version__ == "2.0.0-dev.343"
+def test_v2_release_version_is_dev_344() -> None:
+    assert __version__ == "2.0.0-dev.344"
 
 
 def test_mep_has_one_fallback_rte_configuration() -> None:
@@ -175,7 +175,7 @@ def test_release_is_a_supervisor_update_from_existing_dev_versions() -> None:
 
     for installed in (
         "2.0.0-dev.286", "2.0.0-dev.287", "2.0.0-dev.295", "2.0.0-dev.298", "2.0.0-dev.299",
-        "2.0.0-dev.342",
+        "2.0.0-dev.342", "2.0.0-dev.343",
     ):
         assert AwesomeVersion(__version__) > AwesomeVersion(installed)
 

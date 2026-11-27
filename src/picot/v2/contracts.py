@@ -1477,6 +1477,7 @@ class EvaluationRecord:
     daily_pv_surplus_trigger: DailyMainPVSurplusTrigger | None = None
     canonical_record: CanonicalEvaluationRecord | None = None
     execution_continuity: ExecutionContinuityEvidence | None = None
+    peak_refill_comparison: dict[str, float] | None = None
 
     def __post_init__(self) -> None:
         if (self.execution_continuity is not None

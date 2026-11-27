@@ -35,6 +35,7 @@ def build_plan_decision(run: CanonicalPipelineRun) -> dict[str, object]:
         "household_assumption": ("Verwacht huisverbruik uit de beschikbare prognose."
                                  if forecast else "Geen huisverbruiksprognose beschikbaar."),
         "trigger": evaluation.reason,
+        "peak_refill_comparison": evaluation.peak_refill_comparison,
     }
     if evaluation.status == "fallback_active":
         payload.update(status="fallback", reason=(

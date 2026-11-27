@@ -1,3 +1,9 @@
+# 2.0.0-dev.344
+
+- Vergelijk bij de overbrugging batterijondersteuning tijdens dure kwartieren, gevolgd door goedkoper netladen.
+- Herbeoordeel een geplande stand-by als goedkoper bijladen vóór de volgende hoofdlaadbeurt mogelijk is. Behoud het hoofdlaadvenster, de laadverplichtingen en de eindlading.
+- Toon de vermeden netafname, het extra bijladen en het verwachte voordeel op het dashboard.
+
 # 2.0.0-dev.343
 
 - Herstel het dagplan nadat de batterij 100% heeft bereikt, ook als een verlopen aanvullende laadopdracht nog openstaat.

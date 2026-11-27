@@ -1,3 +1,9 @@
+## Release HEMS dev.344 - 27 november 2026
+
+Vergelijk batterijondersteuning tijdens dure kwartieren met goedkoper bijladen
+vóór het bestaande hoofdlaadvenster. Toon de verwachte netafname en financiële
+winst op het dashboard. Zie docs/development_log/2026-11-27-bridge-peak-refill.md.
+
 ## Release HC dev.37 - 24 november 2026
 
 Ruimere schakelband beneden en optionele slaapkamerregeling met 15,5 graden als doel om 18:00. Qlima automatisch beschikbaar van 08:00 tot 20:00. HC kiest op stroomtarief en gebruikt het HEMS-zonneoverschot bij gelijke tarieven. Activeer boven via `bedroom_evening_enabled`.

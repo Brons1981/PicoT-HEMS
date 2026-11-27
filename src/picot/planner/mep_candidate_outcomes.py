@@ -91,6 +91,7 @@ from picot.planner.market_daily_planner import (
     MarketRouteAssessment,
 )
 from picot.planner.market_route_admission import MarketRecoverySegment, common_market_recovery
+from picot.v2.bridge_peak_refill import PEAK_REFILL_PREFIX, peak_refill_energy
 from picot.v2.contracts import (
     MepCandidateOutcome,
     PlanningInputSnapshot,
@@ -1433,6 +1434,7 @@ class MainChargeCandidateSource:
     candidate_id: str
     window: DailyMainChargeWindow | None
     financial: DailyPlanningFinancialResult
+    peak_refill_comparison: dict[str, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1492,6 +1494,7 @@ def produce_main_charge_portfolio(
     incumbent: DailyMainIncumbentAssessment | None = None,
     future_state_trigger: DailyMainPVSurplusTrigger | None = None,
     compare_complete_revision: bool = False,
+    peak_refill_wear_eur_per_kwh: float = 0.0,
 ) -> MainChargeComparablePortfolio:
     """Project feasible main windows into the existing Candidate/Evaluation contract."""
     if windows.snapshot_id != snapshot.snapshot_id or tariffs.snapshot_id != snapshot.snapshot_id:
@@ -1619,6 +1622,13 @@ def produce_main_charge_portfolio(
     sources: list[MainChargeCandidateSource] = []
     market_evidence: list[MarketRevisionCandidateEvidence] = []
     settlement = IndependentDailyFinancialSettlement()
+    refill_reference = windows.peak_refill_reference
+    refill_reference_cost = (
+        settlement.settle_planning_basis(
+            projection=refill_reference, tariffs=tariffs,
+        ).cash_result_eur
+        if refill_reference is not None else None
+    )
     compared: tuple[
         DailyMainChargeWindow | DailyMainIncumbentAssessment | DailyMainRejectedWindow, ...
     ] = (*windows.windows, *windows.rejected_windows)
@@ -1733,6 +1743,32 @@ def produce_main_charge_portfolio(
             invalid = incumbent_invalidity
         invalid += _reserve_invalidity(snapshot, path)
         intervals = window.projection.intervals
+        bridge_cash_result = financial.cash_result_eur
+        peak_refill_comparison = None
+        if (refill_reference is not None and refill_reference_cost is not None
+                and window.schedule.schedule_id.startswith(PEAK_REFILL_PREFIX)):
+            extra_wear = (
+                settlement.storage_discharge_cost(
+                    window.projection, peak_refill_wear_eur_per_kwh,
+                    horizon_end=window.schedule.horizon_end,
+                ) - settlement.storage_discharge_cost(
+                    refill_reference, peak_refill_wear_eur_per_kwh,
+                    horizon_end=window.schedule.horizon_end,
+                )
+            )
+            bridge_cash_result -= extra_wear
+            avoided, refill = peak_refill_energy(refill_reference, window.projection)
+            gain = bridge_cash_result - refill_reference_cost
+            peak_refill_comparison = {
+                "avoided_grid_kwh": avoided / 1000,
+                "extra_refill_kwh": refill / 1000,
+                "saving_eur": gain,
+            }
+            if abs(intervals[-1].storage_energy_at_end_wh
+                   - refill_reference.intervals[-1].storage_energy_at_end_wh) > 1e-6:
+                invalid += ("peak_refill_terminal_inventory_not_equal",)
+            if avoided <= 1e-6 or refill <= 1e-6 or gain <= 0.01 + 1e-9:
+                invalid += ("peak_refill_has_no_clear_saving",)
         if supplemental_comparison:
             assert incumbent is not None
             if (window.schedule.horizon_start != incumbent.schedule.horizon_start
@@ -1817,7 +1853,7 @@ def produce_main_charge_portfolio(
             ),) if window.schedule.schedule_id in recovered_schedule_ids else ()
         elif windows.purpose == "bridge" or supplemental_comparison:
             objectives = _objective_outcomes(
-                financial=financial.cash_result_eur,
+                financial=bridge_cash_result,
                 self_consumption=sum(
                     i.pv_to_household_wh + i.pv_to_storage_input_wh for i in intervals
                 ),
@@ -1861,6 +1897,7 @@ def produce_main_charge_portfolio(
         )
         sources.append(MainChargeCandidateSource(
             candidate_id, window if isinstance(window, DailyMainChargeWindow) else None, financial,
+            peak_refill_comparison,
         ))
         if market_basis is not None:
             remaining = sum(i.storage_export_target_wh for i in window.schedule.intervals

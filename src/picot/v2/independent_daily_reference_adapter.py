@@ -71,6 +71,10 @@ from picot.planner.independent_daily_strategy_generator import (
 from picot.planner.independent_daily_strategy_observer import (
     IndependentDailyStrategyObserver,
 )
+from picot.v2.bridge_peak_refill import (
+    has_cheaper_refill,
+    peak_refill_candidates,
+)
 from picot.v2.contracts import (
     HouseholdLoadForecast,
     PlanningInputSnapshot,
@@ -255,8 +259,17 @@ class IndependentDailyReferenceAdapter:
                                           conversion_model, until, deficits)):
             return DailyBridgeAssessment("deferred_with_recovery", owner.assignment_id,
                                          until, deficits)
+        price_peak_review = (
+            not needed
+            and (state is None or (state.plan_id, state.next_starts_at) != (plan.plan_id, until))
+            and not any(i.intent is DailyStorageIntent.STORAGE_EXPORT for i in schedule.intervals)
+            and has_cheaper_refill(
+                snapshot, schedule, projection, until, conversion_model,
+                inputs.minimum_storage_energy_wh,
+            )
+        )
         trigger = None
-        if needed:
+        if needed or price_peak_review:
             assert owner.route_plan_id is not None
             trigger = DailyBridgeTrigger(
                 owner.assignment_id, owner.route_plan_id, owner.revision, plan.plan_id,
@@ -264,10 +277,12 @@ class IndependentDailyReferenceAdapter:
                 max(previous, key=lambda a: a.delivery_date).assignment_id, until, deficits,
                 missed_goal.assignment_id if missed_goal is not None else None,
                 next(iter(sorted(recovered_ids))) if obsolete_retry else None,
+                price_peak_review=price_peak_review,
             )
             trigger.validate(owner, snapshot.snapshot_id, snapshot.captured_at)
         return DailyBridgeAssessment(
             "completion_reconciliation" if obsolete_retry else
+            "price_peak_review" if price_peak_review else
             "supplemental_goal_review" if missed_goal is not None
             and not any(i.deficit_wh > 1e-6 for i in deficits) else
             "energy_shortfall" if needed else "accepted_grid_support" if state else "sufficient",
@@ -556,11 +571,15 @@ class IndependentDailyReferenceAdapter:
                                              DailyStorageIntent.NOM)
                   for p in snapshot.price_points
                   if p.starts_at <= support[n].starts_at and support[n].ends_at <= p.ends_at}
-        for start, end in (cheap_contiguous_blocks(prices) if household_need else ()):
+        standby_blocks = (
+            cheap_contiguous_blocks(prices)
+            if household_need and not trigger.price_peak_review else ()
+        )
+        for start, end in standby_blocks:
             add(tuple(replace(i, intent=DailyStorageIntent.STANDBY,
                               storage_export_target_wh=0.0)
                       if start <= n <= end else i for n, i in enumerate(support)))
-        for surrounding in dict.fromkeys((support,)):
+        for surrounding in (() if trigger.price_peak_review else (support,)):
             if revision_schedule is not None:
                 for run in runs:
                     add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT,
@@ -594,8 +613,42 @@ class IndependentDailyReferenceAdapter:
                 add(tuple(replace(i, intent=DailyStorageIntent.GRID_REQUIREMENT,
                                   storage_export_target_wh=0.0)
                           if k in consecutive[:lo] else i for k, i in enumerate(surrounding)))
+        peak_refill_reference = None
+        peak_refill_schedules: tuple[DailyReferenceIntentSchedule, ...] = ()
+        if revision_schedule is None and not any(
+            i.intent is DailyStorageIntent.STORAGE_EXPORT for i in baseline.intervals
+        ):
+            protected_goals = tuple(
+                g for g in context.supplemental_assignments
+                if g.execution_scope_id == owner.execution_scope_id and g.completed_at is None
+            )
+            refill_prices = {
+                n: p.value_eur_per_kwh
+                for n in free
+                if n not in pv_surplus and not any(
+                    support[n].starts_at < g.ends_at and g.starts_at < support[n].ends_at
+                    for g in protected_goals
+                )
+                for p in snapshot.price_points
+                if p.starts_at <= support[n].starts_at and support[n].ends_at <= p.ends_at
+            }
+            peak_refill_schedules = peak_refill_candidates(
+                support=support,
+                reference=baseline_projection,
+                free_prices=refill_prices,
+                round_trip_efficiency=(conversion_model.charge_efficiency
+                                       * conversion_model.discharge_efficiency),
+                next_starts_at=trigger.next_starts_at,
+                schedule_for=lambda values: add(values, include=False),
+                project=project,
+            )
+            if peak_refill_schedules:
+                peak_refill_reference = baseline_projection
+        if trigger.price_peak_review:
+            schedules = {k: v for k, v in schedules.items()
+                         if k == baseline.intervals}
         retiring = (self._retirable_supplementals(snapshot, owner.assignment_id)
-                    if retirement_exports_unchanged else ())
+                    if retirement_exports_unchanged and not trigger.price_peak_review else ())
         retirement_schedules = {}
         if retiring:
             # Complete alternatives use the same main/export constraints. No
@@ -615,7 +668,7 @@ class IndependentDailyReferenceAdapter:
             if r.segment.primitive is ExecutionPrimitive.CHARGE_AT_POWER
             else DailyStorageIntent.NOM,
         ) for r in owned)
-        for schedule in schedules.values():
+        for schedule in (*schedules.values(), *peak_refill_schedules):
             retirement_ids = retirement_schedules.get(schedule.schedule_id, ())
             projection = project(schedule)
             # Explicit charging with no acquired storage energy is direct grid
@@ -689,6 +742,7 @@ class IndependentDailyReferenceAdapter:
             simulations, purpose="bridge", rejected_windows=tuple(rejected),
             retained_schedule_id=schedules[baseline.intervals].schedule_id
             if revision_schedule is None else None,
+            peak_refill_reference=peak_refill_reference,
         )
 
     def main_route_shortfalls(

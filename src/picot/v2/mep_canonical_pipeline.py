@@ -1320,6 +1320,7 @@ def _build_daily_main_run(
     future_goal_unresolved = False
     execution_continuity = None
     optional_pv_review = False
+    optional_peak_review = False
     retain_grid_continuity = False
     manual_request = context.recalculation_request
     manual_owner = None
@@ -1457,6 +1458,10 @@ def _build_daily_main_run(
             optional_pv_review = False
         elif pending:
             optional_pv_review = isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
+            optional_peak_review = (
+                isinstance(optimisation_trigger, DailyBridgeTrigger)
+                and optimisation_trigger.price_peak_review
+            )
             if isinstance(optimisation_trigger, DailyMainRecalculationTrigger):
                 # An explicit rebuild uses normal daily Candidate discovery.
                 # Market obligations remain constraints, not a reset trade budget.
@@ -1464,8 +1469,9 @@ def _build_daily_main_run(
                     snapshot=snapshot, assignment=pending[0], conversion_model=conversion,
                     optimisation_trigger=optimisation_trigger,
                 )
-            elif optimisation_trigger is not None and market_revision_available(
-                snapshot, optimisation_trigger,
+            elif (
+                not optional_peak_review and optimisation_trigger is not None
+                and market_revision_available(snapshot, optimisation_trigger)
             ):
                 windows = market_revision_windows(
                     snapshot=snapshot, trigger=optimisation_trigger, conversion_model=conversion,
@@ -1577,6 +1583,7 @@ def _build_daily_main_run(
                         and optimisation_trigger.future_state_evidence_id is not None else None),
                     compare_complete_revision=isinstance(
                         optimisation_trigger, DailyMainPVSurplusTrigger),
+                    peak_refill_wear_eur_per_kwh=market_policy.wear_eur_per_export_kwh,
                 )
         elif not retained:
             raise ValueError("daily_main_active_plan_unavailable")
@@ -1589,7 +1596,9 @@ def _build_daily_main_run(
         reason = str(exc)
     except (ValueError, OSError) as exc:
         planning_blocked = failed_plan_change_blocks_execution(
-            has_retained_plan=bool(retained), optional_change=optional_pv_review)
+            has_retained_plan=bool(retained),
+            optional_change=optional_pv_review or optional_peak_review,
+        )
         reason = str(exc) or exc.__class__.__name__
         if completed_owner is not None:
             reason = "completed_day_recovery_failed:" + reason
@@ -1652,7 +1661,7 @@ def _build_daily_main_run(
             planning_blocked = failed_plan_change_blocks_execution(
                 has_retained_plan=bool(retained), continuing_charge=retain_grid_continuity,
                 optional_change=(isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
-                                 or continuity_repair),
+                                 or optional_peak_review or continuity_repair),
             )
             reason = ("ongoing_load_requires_committed_grid_continuity"
                       if retain_grid_continuity else "daily_main_evaluation_has_no_winner")
@@ -1743,7 +1752,11 @@ def _build_daily_main_run(
         except (ValueError, OSError) as exc:
             planning_blocked = failed_plan_change_blocks_execution(
                 has_retained_plan=bool(retained),
-                optional_change=isinstance(optimisation_trigger, DailyMainPVSurplusTrigger))
+                optional_change=(
+                    optional_peak_review
+                    or isinstance(optimisation_trigger, DailyMainPVSurplusTrigger)
+                ),
+            )
             reason = str(exc) or exc.__class__.__name__
     # A promised storage checkpoint can require acquisition even after every
     # daily goal completed. Bind a shared reserve plan; never reopen a daily owner.
@@ -2104,6 +2117,11 @@ def _build_daily_main_run(
         else "fallback_active",
         canonical_record=result.record if result is not None else None,
         execution_continuity=execution_continuity,
+        peak_refill_comparison=(
+            next((source.peak_refill_comparison for source in comparable.sources
+                  if source.candidate_id == winner_id), None)
+            if canonical_set is not None and comparable is not None else None
+        ),
         evaluated_candidate_ids=result.record.evaluated_candidate_ids if result is not None else (),
         decisive_step=result.record.decisive_step if result is not None else None,
         incumbent_candidate_id=(

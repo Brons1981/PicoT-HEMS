@@ -5950,6 +5950,16 @@ DASHBOARD_HTML = """<!doctype html>
         [decision.incumbent_cost_eur, decision.alternative_cost_eur, decision.improvement_eur]
           .every(finite);
       const standby = decision.standby_comparison;
+      const refill = decision.peak_refill_comparison;
+      if (refill && [refill.avoided_grid_kwh, refill.extra_refill_kwh, refill.saving_eur]
+          .every(finite)) {
+        const kwh = value => new Intl.NumberFormat("nl-NL", {
+          minimumFractionDigits: 2, maximumFractionDigits: 2,
+        }).format(value);
+        paragraph(`Batterijondersteuning voorkomt eerst ${kwh(refill.avoided_grid_kwh)} kWh ` +
+          `netafname. Later aanvullen vraagt ${kwh(refill.extra_refill_kwh)} kWh netstroom. ` +
+          `Verwacht voordeel van de volledige route: ${money(refill.saving_eur)}.`);
+      }
       if (standby && finite(standby.benefit_eur) && standby.benefit_eur > 0) {
         paragraph(`Stand-by van ${formatTimestamp(standby.starts_at)} tot ` +
           `${formatTimestamp(standby.ends_at)} is volgens deze volledige routevergelijking ` +
